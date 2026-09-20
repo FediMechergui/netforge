@@ -1,0 +1,154 @@
+/* Terminal dock tab: console strip + xterm hosts (spec §8.1). */
+
+.terminal-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--bg);
+}
+
+.terminal-strip {
+  display: flex;
+  align-items: stretch;
+  height: 30px;
+  padding: 0 6px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-2);
+  flex: none;
+}
+
+.terminal-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+
+.terminal-chip {
+  display: inline-flex;
+  align-items: stretch;
+  flex: none;
+  border-bottom: 2px solid transparent;
+}
+.terminal-chip.is-active {
+  border-bottom-color: var(--accent);
+  background: var(--panel);
+}
+
+.terminal-chip-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 4px 0 10px;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.terminal-chip-label:hover,
+.terminal-chip.is-active .terminal-chip-label {
+  color: var(--text);
+}
+.terminal-chip.is-active .terminal-chip-name {
+  font-weight: 600;
+}
+.terminal-chip-label:focus-visible,
+.terminal-chip-close:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.terminal-chip-id {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-faint);
+}
+
+.terminal-chip-busy {
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--warn);
+  color: #1a1200;
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.terminal-chip-close {
+  width: 22px;
+  margin: 4px 2px 4px 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+.terminal-chip-close:hover {
+  background: var(--panel-2);
+  color: var(--text);
+}
+
+.terminal-actions {
+  display: flex;
+  align-items: center;
+  flex: none;
+  padding-left: 6px;
+}
+.terminal-actions .btn {
+  height: 24px;
+  font-size: 12px;
+}
+.terminal-open-menu .menu-popup {
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.terminal-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+.terminal-host {
+  position: absolute;
+  inset: 0;
+  padding: 4px 0 0 8px;
+  background: var(--bg);
+  overflow: hidden;
+}
+.terminal-host.is-hidden {
+  display: none;
+}
+.terminal-host .xterm {
+  height: 100%;
+}
+.terminal-host .xterm-viewport {
+  scrollbar-width: thin;
+}
+
+.terminal-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 100%;
+  padding: 16px;
+  color: var(--text-dim);
+  text-align: center;
+}
+.terminal-empty p {
+  margin: 0;
+}
+.terminal-empty-title {
+  color: var(--text);
+  font-weight: 600;
+}

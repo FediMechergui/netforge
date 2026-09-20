@@ -1,0 +1,108 @@
+/**
+ * Bottom status bar: counts, pending events, dropped/left-out trace warnings, tool and selection summary,
+ * canvas scale and camera zoom. Device names are looked up through the snapshot index.
+ */
+import type { Selection } from '@netforge/engine';
+import { selectDevice } from '../store/selectors';
+import { useStore } from '../store/store';
+
+function selectionText(sel: Selection | null, deviceName: (id: string) => string): string {
+  if (!sel) return 'nothing selected';
+  switch (sel.kind) {
+    case 'device':
+      return `device ${deviceName(sel.id)}`;
+    case 'link':
+      return `link ${sel.id}`;
+    case 'port':
+      return `port ${deviceName(sel.ref.device)} · ${sel.ref.port}`;
+    case 'pdu':
+      return `packet #${sel.id}`;
+    case 'session':
+      return `console ${sel.id}`;
+    case 'association':
+      return `wireless connection ${sel.id}`;
+    case 'slot':
+      return `slot ${sel.slot} of ${deviceName(sel.device)}`;
+  }
+}
+
+export function StatusBar() {
+  const ready = useStore((s) => s.ready);
+  const devices = useStore((s) => s.snapshot?.devices.length ?? 0);
+  const links = useStore((s) => s.snapshot?.links.length ?? 0);
+  const pending = useStore((s) => s.snapshot?.pendingEvents ?? 0);
+  const pduCount = useStore((s) => s.snapshot?.pduCount ?? 0);
+  const inflight = useStore((s) => s.inflight.length);
+  const dropped = useStore((s) => s.droppedEvents);
+  const tool = useStore((s) => s.tool);
+  const addDeviceType = useStore((s) => s.addDeviceType);
+  const pendingCable = useStore((s) => s.pendingCable);
+  const zoom = useStore((s) => s.camera.zoom);
+  const seed = useStore((s) => s.snapshot?.seed);
+  const selection = useStore((s) => s.selection);
+  const truncated = useStore((s) => s.eventsTruncated);
+  const metresPerUnit = useStore((s) => s.snapshot?.media?.metresPerUnit);
+  const snapshot = useStore((s) => s.snapshot);
+  const snapshotIndex = useStore((s) => s.snapshotIndex);
+
+  const deviceName = (id: string): string => selectDevice({ snapshot, snapshotIndex }, id)?.name ?? id;
+
+  let toolText: string;
+  if (tool === 'add-device') toolText = `place ${addDeviceType ?? 'device'} — click the canvas`;
+  else if (tool === 'cable') toolText = pendingCable ? `cable from ${deviceName(pendingCable.from.device)} · ${pendingCable.from.port} — pick the other port` : 'cable — click a port';
+  else if (tool === 'pan') toolText = 'pan';
+  else toolText = 'select';
+
+  return (
+    <footer className="statusbar" aria-label="Status bar">
+      <span className="item" title="Engine state">
+        <span className={ready ? 'ok' : 'warn'}>{ready ? '●' : '○'}</span> {ready ? 'engine ready' : 'engine starting'}
+      </span>
+      <span className="item">
+        devices <b>{devices}</b>
+      </span>
+      <span className="item">
+        links <b>{links}</b>
+      </span>
+      <span className="item" title="Scheduler events waiting">
+        pending <b>{pending}</b>
+      </span>
+      <span className="item" title="Frames currently animating">
+        on wire <b>{inflight}</b>
+      </span>
+      <span className="item" title="PDUs created so far">
+        pdus <b>{pduCount}</b>
+      </span>
+      {seed !== undefined && (
+        <span className="item" title="Simulation seed">
+          seed <b>{seed}</b>
+        </span>
+      )}
+      {dropped > 0 && (
+        <span className="item warn" title="The trace ring overflowed; some events never reached the UI">
+          ⚠ {dropped} trace events dropped
+        </span>
+      )}
+      {truncated > 0 && (
+        <span className="item warn" title="Busy batches were trimmed; the Events tab shows the newest events only">
+          ⚠ {truncated} events left out
+        </span>
+      )}
+      <span className="spacer" />
+      <span className="item ellipsis" title="Active tool">
+        {toolText}
+      </span>
+      <span className="item ellipsis" title="Selection">
+        {selectionText(selection, deviceName)}
+      </span>
+      {metresPerUnit !== undefined && (
+        <span className="item" title="Canvas scale used for wireless distances">
+          1 unit = <b>{metresPerUnit}</b> m
+        </span>
+      )}
+      <span className="item" title="Canvas zoom">
+        <b>{Math.round(zoom * 100)}%</b>
+      </span>
+    </footer>
+  );
+}

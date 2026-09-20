@@ -1,0 +1,171 @@
+/* Cable tool and media flyout (ARCHITECTURE-P1 §7 "Cable picker"). The flyout spans the palette tool row. */
+
+.cable-picker {
+  display: flex;
+  flex: 1 1 0;
+  min-width: 0;
+}
+.cable-tool-row {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 2px;
+}
+.cable-tool {
+  flex: 1 1 auto;
+}
+.cable-tool-badge {
+  padding: 0 3px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  font-size: 10px;
+  line-height: 14px;
+  font-variant-numeric: tabular-nums;
+}
+.cable-flyout-toggle {
+  flex: none;
+  width: 22px;
+}
+
+.cable-flyout {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 30;
+  width: 300px;
+  max-width: calc(100vw - 16px);
+  max-height: 70vh;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+.cable-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.cable-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 30px;
+  padding: 3px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.cable-row:hover:not(:disabled) {
+  background: var(--panel-2);
+}
+.cable-row.is-checked {
+  border-color: var(--accent);
+  background: var(--sel);
+  font-weight: 600;
+}
+.cable-row:disabled {
+  color: var(--text-faint);
+  cursor: default;
+}
+.cable-row:focus-visible,
+.cable-target:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.cable-row-mark {
+  width: 12px;
+  text-align: center;
+}
+.cable-glyph {
+  flex: none;
+  color: var(--text-dim);
+}
+.cable-row-text {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+}
+.cable-row-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cable-row-hint {
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 400;
+  white-space: normal;
+}
+.cable-row-badge {
+  flex: none;
+  min-width: 26px;
+  padding: 0 3px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  font-size: 10px;
+  text-align: center;
+}
+
+.cable-note {
+  margin: 4px 6px;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+.cable-section {
+  margin-top: 4px;
+  padding: 4px 2px 2px;
+  border-top: 1px solid var(--border);
+}
+.cable-section-title {
+  padding: 2px 6px;
+  font-weight: 600;
+}
+.cable-targets {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.cable-target {
+  display: block;
+  width: 100%;
+  padding: 3px 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.cable-target:hover {
+  background: var(--sel);
+}
+.cable-pair {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 6px;
+}
+.cable-pair label {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+.cable-pair .btn {
+  align-self: flex-start;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cable-picker *,
+  .cable-flyout * {
+    transition: none !important;
+    animation: none !important;
+  }
+}

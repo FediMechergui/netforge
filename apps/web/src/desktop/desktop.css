@@ -1,0 +1,370 @@
+/* Desktop tab, floating app windows and the desktop apps (ARCHITECTURE-P1 §7 "Desktop tab"). Prefix desk-. */
+
+/* ── window layer ─────────────────────────────────────────────────────────── */
+
+.desk-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  overflow: hidden;
+  pointer-events: none;
+}
+.desk-window {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  color: var(--text);
+  font-size: 12px;
+  pointer-events: auto;
+  overflow: hidden;
+}
+.desk-window.is-top {
+  border-color: var(--accent);
+}
+.desk-titlebar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 4px 0 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel-2);
+  cursor: move;
+  user-select: none;
+  touch-action: none;
+}
+.desk-window.is-top .desk-titlebar {
+  border-bottom: 2px solid var(--accent);
+}
+.desk-titlebar:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.desk-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.desk-window.is-top .desk-title::before {
+  content: '▣ ';
+}
+.desk-close {
+  flex: none;
+  cursor: pointer;
+}
+.desk-body {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+.desk-grip {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+  touch-action: none;
+  background: linear-gradient(135deg, transparent 50%, var(--border-strong) 50%, var(--border-strong) 60%, transparent 60%, transparent 75%, var(--border-strong) 75%, var(--border-strong) 85%, transparent 85%);
+}
+
+/* ── desktop tab ──────────────────────────────────────────────────────────── */
+
+.desk-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+}
+.desk-launchers {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+.desk-launcher {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 8px 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-2);
+  color: var(--text);
+  font: inherit;
+  text-align: center;
+  cursor: pointer;
+}
+.desk-launcher:hover {
+  border-color: var(--border-strong);
+  background: var(--panel-2);
+}
+.desk-launcher.is-open {
+  border: 2px solid var(--accent);
+}
+.desk-launcher[aria-disabled='true'] {
+  color: var(--text-faint);
+  cursor: default;
+}
+.desk-launcher:focus-visible,
+.desk-net-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.desk-launcher-label {
+  font-weight: 600;
+}
+.desk-launcher-hint {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+.desk-glyph {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.desk-glyph .is-filled {
+  fill: currentColor;
+}
+.desk-open-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 0;
+}
+.desk-open-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── app content ──────────────────────────────────────────────────────────── */
+
+.desk-app {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 12px 16px;
+}
+.desk-card + .desk-card {
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.desk-heading {
+  margin: 0 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.desk-empty {
+  margin: 0;
+  padding: 12px;
+  color: var(--text-dim);
+}
+.desk-note,
+.desk-sub,
+.desk-hint {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+.desk-mono {
+  font-family: var(--mono, ui-monospace, monospace);
+}
+.desk-state {
+  margin: 0;
+  font-weight: 600;
+}
+.desk-signal {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0 0;
+  color: var(--text-dim);
+}
+.desk-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+.desk-tag {
+  flex: none;
+  padding: 0 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  font-size: 10px;
+}
+
+/* tables and value lists */
+.desk-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.desk-table th,
+.desk-table td {
+  padding: 3px 6px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+.desk-table thead th {
+  color: var(--text-dim);
+  font-weight: 600;
+}
+.desk-table tr.is-current th::before {
+  content: '▸ ';
+}
+.desk-table tr.is-current {
+  background: var(--sel);
+}
+.desk-info {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 2px 12px;
+  margin: 0;
+}
+.desk-info-row {
+  display: contents;
+}
+.desk-info-row dt {
+  color: var(--text-dim);
+}
+.desk-info-row dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* forms */
+.desk-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.desk-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.desk-field label {
+  color: var(--text-dim);
+}
+.desk-field.has-error .input {
+  border: 2px solid var(--err);
+}
+.desk-error {
+  margin: 0;
+  color: var(--err);
+  font-size: 11px;
+}
+.desk-status {
+  margin: 0;
+}
+.desk-status p {
+  margin: 0;
+}
+.desk-status.is-ok {
+  color: var(--ok);
+}
+.desk-status.is-error {
+  color: var(--err);
+}
+
+/* signal bars: count and height carry the value, colour only reinforces it */
+.desk-bars {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+}
+.desk-bar {
+  fill: none;
+  stroke: var(--text-faint);
+  stroke-width: 0.8;
+}
+.desk-bar.is-on {
+  fill: var(--text);
+  stroke: var(--text);
+}
+
+/* Wi-Fi network list */
+.desk-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.desk-net {
+  border-bottom: 1px solid var(--border);
+}
+.desk-net.is-open {
+  background: var(--bg-2);
+}
+.desk-net-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 6px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.desk-net-row:hover {
+  background: var(--panel-2);
+}
+.desk-net-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.desk-net-meta {
+  flex: none;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+.desk-net-form {
+  padding: 4px 8px 8px 34px;
+}
+
+/* command prompt */
+.desk-prompt {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+}
+.desk-prompt-host {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .desk-layer *,
+  .desk-tab * {
+    transition: none !important;
+    animation: none !important;
+  }
+}

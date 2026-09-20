@@ -1,0 +1,27 @@
+{
+  "name": "netforge",
+  "private": true,
+  "version": "0.0.1",
+  "description": "NetForge — browser-based network simulation and visualization platform",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w @netforge/web",
+    "build": "npm run typecheck && npm run build -w @netforge/web",
+    "test": "npm run test -w @netforge/engine",
+    "test:watch": "npm run test:watch -w @netforge/engine",
+    "typecheck": "npm run typecheck -w @netforge/engine && npm run typecheck -w @netforge/web",
+    "lint": "npm run typecheck"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  },
+  "allowScripts": {
+    "esbuild@0.21.5": true
+  }
+}
