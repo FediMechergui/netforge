@@ -61,9 +61,14 @@ import {
 import { KeyboardCabling, requestKeyboardCabling } from './KeyboardCabling';
 import './a11y.css';
 
-/** The pinned canvas hook; resolved at call time so this module also works while Canvas.tsx does not export it. */
+/**
+ * The pinned canvas hook; resolved at CALL time, never at module scope: Canvas.tsx imports this module, so a
+ * module-scope read of the namespace runs before the canvas module body in a bundled build and throws
+ * (ReferenceError: cannot access before initialization). A function keeps the cycle harmless.
+ */
 type RegisterCanvasA11y = (api: CanvasA11yApi) => () => void;
-const canvasHooks = canvasModule as typeof canvasModule & { registerCanvasA11y?: RegisterCanvasA11y };
+const canvasHooks = (): typeof canvasModule & { registerCanvasA11y?: RegisterCanvasA11y } =>
+  canvasModule as typeof canvasModule & { registerCanvasA11y?: RegisterCanvasA11y };
 
 const DIRECTION_WORDS = Object.freeze({ up: 'above', down: 'below', left: 'to the left', right: 'to the right' });
 
@@ -351,7 +356,7 @@ export function CanvasOutline() {
   const focusDeviceRef = useRef(focusDevice);
   focusDeviceRef.current = focusDevice;
   useEffect(() => {
-    const register = canvasHooks.registerCanvasA11y;
+    const register = canvasHooks().registerCanvasA11y;
     if (typeof register !== 'function') return undefined;
     const api: CanvasA11yApi = {
       focusDevice: (id) => focusDeviceRef.current(id),
