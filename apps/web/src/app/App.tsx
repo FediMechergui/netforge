@@ -6,13 +6,18 @@
  * concept tool in their place (§4.13). The keyboard canvas (`CanvasOutline`) is mounted by canvas/Canvas.tsx
  * inside its own container.
  *
+ * @since P2 A learn surface (`LearnShell`: the landing page, a course, a lesson) covers the whole window when
+ * `view` is one of them; the grid is hidden behind it rather than unmounted, so the sandbox is untouched.
+ *
  * Also owns the wall-clock ticker that expires drop markers / table flashes, the global hotkeys and the
  * preference persistence (store/persist.ts).
  */
 import { useEffect, type CSSProperties } from 'react';
 import { DOCK_MIN_HEIGHT } from '../dock/registry';
 import { Inspector } from '../inspector/Inspector';
+import { LearnShell } from '../learn/LearnShell';
 import { applyThemeAttribute, startPersistence, store, useStore } from '../store/store';
+import { isLearnView } from '../store/types';
 import { Dock } from './Dock';
 import { useHotkeys } from './hotkeys';
 import { PaletteV2 } from './palette/Palette';
@@ -65,22 +70,31 @@ export function App() {
     setInspectorWidth(Math.min(max, Math.max(INSPECTOR_MIN, window.innerWidth - clientX)));
   };
 
+  // P2: a learn surface covers the window. The grid is hidden, NOT unmounted (§4.13's rule for concept tools):
+  // `hidden` takes it out of the tab order and the accessibility tree while the canvas scene, the open consoles
+  // and the dock all survive, so coming back from a lesson lands on the workspace exactly as it was left.
+  const learning = isLearnView(view);
+
   return (
-    <div className={`app ${dockHeight <= DOCK_MIN_HEIGHT ? 'dock-collapsed' : ''}`} style={style}>
-      <TopBar />
-      <aside className="app-palette" aria-label="Device palette">
-        <PaletteV2 />
-      </aside>
-      <Workspace view={view} />
-      <aside className="app-inspector" aria-label="Inspector">
-        <ResizeHandle orientation="vertical" onDrag={onInspectorDrag} label="Resize the inspector" />
-        <Inspector />
-      </aside>
-      <section className="app-dock" aria-label="Bottom dock">
-        <Dock />
-      </section>
-      <StatusBar />
+    <>
+      <div className={`app ${dockHeight <= DOCK_MIN_HEIGHT ? 'dock-collapsed' : ''}`} style={style} hidden={learning}>
+        <TopBar />
+        <aside className="app-palette" aria-label="Device palette">
+          <PaletteV2 />
+        </aside>
+        <Workspace view={view} />
+        <aside className="app-inspector" aria-label="Inspector">
+          <ResizeHandle orientation="vertical" onDrag={onInspectorDrag} label="Resize the inspector" />
+          <Inspector />
+        </aside>
+        <section className="app-dock" aria-label="Bottom dock">
+          <Dock />
+        </section>
+        <StatusBar />
+      </div>
+      {learning && <LearnShell />}
+      {/* Fixed to the viewport, so it is outside the grid and a notification is seen from either side. */}
       <Toast />
-    </div>
+    </>
   );
 }

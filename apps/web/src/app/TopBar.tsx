@@ -4,6 +4,9 @@
  * The View menu carries the wireless overlay toggles (store `overlays`, persisted; every overlay has a non-colour
  * channel on the canvas), the canvas scale used for radio distances (`engine.setCanvasScale`), the dock tabs from
  * the one registry and the pane toggles. The Help list is the `HOTKEYS` table the key handler implements.
+ *
+ * @since P2 `CoursesButton` is the door back to the course layer (learn/LearnShell): the lesson that was open,
+ * or the landing page.
  */
 import { DEFAULT_METRES_PER_UNIT } from '@netforge/engine';
 import { engine, defaultSeed } from '../bridge/client';
@@ -66,6 +69,21 @@ function Brand() {
       </svg>
       NetForge
     </span>
+  );
+}
+
+/**
+ * @since P2 The way back into the course layer from the sandbox: the lesson you were reading if there is one,
+ * the landing page otherwise. Absent in a shell whose store has no learn slice yet (transition rule).
+ */
+function CoursesButton() {
+  const showLearn = useStore((s) => s.showLearn);
+  const lessonId = useStore((s) => s.learn?.lessonId ?? null);
+  if (showLearn === undefined) return null;
+  return (
+    <button type="button" className="btn btn-ghost" title="Theory, a video and the lab that goes with each lesson" onClick={() => showLearn(lessonId === null ? 'landing' : 'lesson')}>
+      {lessonId === null ? 'Courses' : 'Back to the lesson'}
+    </button>
   );
 }
 
@@ -387,6 +405,7 @@ export function TopBar() {
   return (
     <header className="topbar app-top">
       <Brand />
+      <CoursesButton />
       <FileMenu />
       <ViewMenu />
       <SimulateMenu />

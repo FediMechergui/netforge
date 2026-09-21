@@ -1,0 +1,264 @@
+/*
+ * Course layer (P2): the landing page, a course and a lesson, each covering the window over the hidden sandbox.
+ *
+ * Reading text, not instrument panels: a single column with a comfortable measure, larger type than the shell
+ * and generous spacing. The tokens are the shell's own (styles.css), so both themes come for free, and every
+ * state that matters (available / planned, has a video / has a lab) is a glyph and a word in the markup — the
+ * colours here decorate, they never carry meaning.
+ */
+
+/* The sandbox grid stays mounted behind the learn surfaces; `hidden` has to beat `.app { display: grid }`. */
+.app[hidden] {
+  display: none;
+}
+
+.learn {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  grid-template-rows: var(--topbar-h) auto 1fr;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.learn-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+.learn-bar .brand {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.learn-bar .spacer {
+  flex: 1;
+}
+.learn-crumbs {
+  display: flex;
+  gap: 4px;
+}
+
+.learn-scroll {
+  overflow-y: auto;
+}
+
+/* The shell focuses this region on every move between surfaces so the new page is where reading and Tab both
+   resume. That focus is programmatic and never the result of a key press, so it shows no ring. */
+.learn-scroll:focus {
+  outline: none;
+}
+
+.learn-page {
+  max-width: 54rem;
+  margin: 0 auto;
+  padding: 28px 20px 72px;
+  font-size: 14px;
+  line-height: 1.65;
+}
+.learn-page h1 {
+  margin: 8px 0 6px;
+  font-size: 26px;
+  line-height: 1.25;
+}
+.learn-page h2 {
+  margin: 28px 0 6px;
+  font-size: 18px;
+}
+.learn-page h3 {
+  margin: 18px 0 4px;
+  font-size: 15px;
+}
+.learn-page p {
+  margin: 6px 0;
+}
+.learn .dim {
+  color: var(--text-dim);
+}
+.learn-lead {
+  font-size: 16px;
+  color: var(--text);
+}
+.learn .chip {
+  height: auto;
+  padding: 1px 8px;
+}
+
+.learn-hero {
+  padding: 18px 0 8px;
+  border-bottom: 1px solid var(--border);
+}
+.learn-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 0 6px;
+}
+
+/* ── level cards ─────────────────────────────────────────────────────────── */
+
+.learn-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: 14px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.learn-card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 14px 16px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+.learn-card-top {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.learn-card h3 {
+  margin: 2px 0 0;
+  font-size: 16px;
+}
+.learn-card-sub {
+  color: var(--text);
+}
+.learn-card .btn {
+  align-self: flex-start;
+  margin-top: 10px;
+}
+
+/* ── course: modules and lesson rows ─────────────────────────────────────── */
+
+.learn-module + .learn-module {
+  margin-top: 8px;
+}
+.learn-lessons {
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.learn-lesson {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 12px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.learn-lesson:hover {
+  border-color: var(--border-strong);
+  background: var(--panel-2);
+}
+.learn-lesson:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.learn-lesson.is-current {
+  border-color: var(--accent);
+}
+.learn-lesson-title {
+  font-weight: 600;
+}
+.learn-lesson-outcome {
+  grid-column: 1 / -1;
+}
+.learn-marks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  justify-content: flex-end;
+}
+
+/* ── lesson ──────────────────────────────────────────────────────────────── */
+
+.learn-section {
+  margin-top: 10px;
+}
+
+/* The lab renderers style headings as panel labels; in a lesson they are headings again. */
+.learn-body .panel-title {
+  padding: 0;
+  color: var(--text);
+  font-size: 15px;
+  text-transform: none;
+  letter-spacing: normal;
+  margin: 18px 0 4px;
+}
+.learn-body .help-list {
+  display: block;
+  padding: 0 0 0 22px;
+  margin: 8px 0;
+  font-size: inherit;
+  list-style: disc;
+}
+.learn-body ol.help-list {
+  list-style: decimal;
+}
+.learn-body .help-list li {
+  margin: 4px 0;
+}
+.learn-body pre {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  overflow-x: auto;
+  font-size: 12.5px;
+}
+.learn-body code {
+  padding: 0 3px;
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  font-size: 12.5px;
+}
+
+.learn-video {
+  margin: 10px 0 0;
+}
+.learn-video-frame {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--panel);
+}
+.learn-video-frame iframe {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+.learn-video-caption {
+  margin-top: 6px;
+  font-size: 12.5px;
+}
+
+.learn-nav {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 32px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}

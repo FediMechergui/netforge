@@ -44,6 +44,7 @@ import {
   type Store,
   type TableFlash,
   type Theme,
+  type WorkspaceView,
 } from './types';
 
 // Snapshots are large structured-clone objects that arrive several times a second;
@@ -175,6 +176,40 @@ export function setResyncHandler(fn: (() => void) | undefined): void {
   resyncHandler = fn;
 }
 
+// ── entry view (P2 course layer) ─────────────────────────────────────────────
+
+/**
+ * Where a visit starts. A first visit opens the landing page; someone who was last in the sandbox comes back to
+ * the sandbox instead of being sent through the course layer again. Only that one bit is kept: which lesson they
+ * were reading is not worth restoring, and restoring it would be one more stale id to validate.
+ *
+ * ponytail: its own key rather than a field of `persist.ts`'s versioned record — this is a single enum the store
+ * writes on every view change, not a preference the UI edits; fold it in if the record ever needs it.
+ */
+export const ENTRY_VIEW_KEY = 'netforge.entry.v1';
+
+/** The sandbox for anything sandbox-shaped, the landing page for everything else (including junk from storage). */
+export function entryViewOf(v: unknown): WorkspaceView {
+  return v === 'topology' || v === 'concept' ? 'topology' : 'landing';
+}
+
+function readEntryView(): WorkspaceView {
+  try {
+    return entryViewOf(typeof localStorage === 'undefined' ? null : localStorage.getItem(ENTRY_VIEW_KEY));
+  } catch {
+    return 'landing';
+  }
+}
+
+/** Remember which side of the product the visitor is on. Storage may refuse; the entry view is a convenience. */
+function rememberEntryView(v: WorkspaceView): void {
+  try {
+    if (typeof localStorage !== 'undefined') localStorage.setItem(ENTRY_VIEW_KEY, entryViewOf(v));
+  } catch {
+    /* private mode, quota, sandboxed frame: nothing to do */
+  }
+}
+
 let nextMarkerId = 1;
 let nextWindowId = 1;
 let nextAnnouncementId = 1;
@@ -233,11 +268,13 @@ export const useStore = create<Store>()(
     a11y: { canvasFocus: null, announcement: null },
 
     // ── P1 ───────────────────────────────────────────────────────────────
-    view: 'topology',
+    // P2: a first visit opens the landing page; a visitor who left from the sandbox comes back to it.
+    view: readEntryView(),
     conceptTool: 'subnetting',
     simMode: { mode: 'realtime', list: { ...DEFAULT_SIM_FILTERS.list }, breakOn: null, stoppedAt: null, traceHead: 0 },
     netscope: { captures: [], active: null, filterText: '', applied: '', selected: null, pane: 'packets', streamKey: null, heads: {} },
     lab: { active: null, status: null, browserOpen: true },
+    learn: { courseId: null, lessonId: null },
 
     // ── actions ──────────────────────────────────────────────────────────
     applyBatch(batch: EngineBatch) {
@@ -581,11 +618,21 @@ export const useStore = create<Store>()(
 
     // ── P1 ───────────────────────────────────────────────────────────────
     setView(v, tool) {
+      rememberEntryView(v);
       const st = get();
       if (st.view === v && (tool === undefined || st.conceptTool === tool)) return;
       set((s) => {
         s.view = v;
         if (tool !== undefined) s.conceptTool = tool;
+      });
+    },
+
+    showLearn(surface, ids) {
+      rememberEntryView(surface);
+      set((s) => {
+        s.view = surface;
+        if (ids?.courseId !== undefined) s.learn.courseId = ids.courseId;
+        if (ids?.lessonId !== undefined) s.learn.lessonId = ids.lessonId;
       });
     },
 

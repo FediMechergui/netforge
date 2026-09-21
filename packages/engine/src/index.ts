@@ -156,3 +156,7 @@ export * from './sim/lab-checks.js';
 export * from './sim/simulation.js';
 export * from './sim/scenarios.js';
 export * from './sim/snapshot-cache.js';
+
+// curriculum
+export * from './contracts/curriculum.js';
+export * from './curriculum/index.js';

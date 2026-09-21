@@ -194,6 +194,16 @@ export function viewRect(camera: Camera, width: number, height: number): Rect {
   return { minX: -camera.x / z, minY: -camera.y / z, maxX: (width - camera.x) / z, maxY: (height - camera.y) / z };
 }
 
+/** The camera that centres `bounds` in a `width × height` viewport, zoomed to fit with `padding` to spare. */
+export function fitCamera(bounds: Rect, width: number, height: number, padding = 90, maxZoom = 1.4): Camera {
+  const bw = Math.max(1, bounds.maxX - bounds.minX + padding * 2);
+  const bh = Math.max(1, bounds.maxY - bounds.minY + padding * 2);
+  const zoom = Math.min(maxZoom, Math.max(ZOOM_MIN, Math.min(width / bw, height / bh)));
+  const cx = (bounds.minX + bounds.maxX) / 2;
+  const cy = (bounds.minY + bounds.maxY) / 2;
+  return { x: width / 2 - cx * zoom, y: height / 2 - cy * zoom, zoom };
+}
+
 /**
  * Coarse key of a view rectangle: changes when the view moves by more than a quarter of its size or the zoom
  * changes by more than ~19 %. Layers re-cull only when it changes (they cull with a half-view margin).
@@ -221,6 +231,24 @@ export interface SceneLayers {
   overlay: Container;
 }
 
+/**
+ * The host's size, or a viewport-sized stand-in while it has none. A host under a `display:none` ancestor
+ * measures 0x0 — the scene is created behind the landing page, so that is the normal first measurement, not an
+ * edge case. One pixel would be a *valid* size and would survive into `fitTo`, which then divides by it and
+ * clamps the camera to `ZOOM_MIN`; a stand-in in the right order of magnitude simply looks like a slightly
+ * wrong window until the ResizeObserver reports the real one.
+ */
+function hostSize(host: HTMLElement): { readonly width: number; readonly height: number } {
+  return measureHost(host) ?? { width: Math.max(1, window.innerWidth || 1), height: Math.max(1, window.innerHeight || 1) };
+}
+
+/** The host's real size, or null while a `display:none` ancestor leaves it 0x0 and it has none. */
+export function measureHost(host: Pick<HTMLElement, 'clientWidth' | 'clientHeight'>): { readonly width: number; readonly height: number } | null {
+  const w = host.clientWidth;
+  const h = host.clientHeight;
+  return w > 0 && h > 0 ? { width: w, height: h } : null;
+}
+
 export class Scene {
   readonly app: Application;
   readonly host: HTMLElement;
@@ -241,8 +269,7 @@ export class Scene {
   /** Create and initialise the Pixi application inside `host`. */
   static async create(host: HTMLElement): Promise<Scene> {
     const app = new Application();
-    const width = Math.max(1, host.clientWidth);
-    const height = Math.max(1, host.clientHeight);
+    const { width, height } = hostSize(host);
     await app.init({
       width,
       height,
@@ -278,10 +305,12 @@ export class Scene {
     const l = this.layers;
     this.world.addChild(l.rf, l.cables, l.air, l.packets, l.markers, l.devices, l.labels, l.overlay);
 
-    this.width = Math.max(1, host.clientWidth);
-    this.height = Math.max(1, host.clientHeight);
+    const size = hostSize(host);
+    this.width = size.width;
+    this.height = size.height;
 
-    // Size tracking.
+    // Size tracking. This is also what gives a scene born behind the landing page its real size, the moment the
+    // host stops being display:none.
     const ro = new ResizeObserver(() => this.resize());
     ro.observe(host);
     this.cleanups.push(() => ro.disconnect());
@@ -315,17 +344,31 @@ export class Scene {
     return this.app.canvas;
   }
 
-  private resize(force = false): void {
-    if (this.destroyed) return;
-    const w = Math.max(1, this.host.clientWidth);
-    const h = Math.max(1, this.host.clientHeight);
+  /**
+   * Re-measure the host, e.g. after it was hidden and shown again. A hidden host measures 0x0, and the last real
+   * size is a far better guess than one pixel, so `resize` keeps it; this is how a caller asks for the real size
+   * once the host is back on screen. False while the host still has no size, so the caller can wait a frame.
+   */
+  remeasure(): boolean {
+    return this.resize(true);
+  }
+
+  private resize(force = false): boolean {
+    if (this.destroyed) return false;
+    // A display:none ancestor makes the host 0x0. Clamping that to 1 would overwrite the real size and let a
+    // later fitTo divide by one pixel, which pins the camera to ZOOM_MIN with the world in the top-left corner.
+    // Keeping the previous size instead means a scene that is hidden simply holds still.
+    const size = measureHost(this.host);
+    if (size === null) return false;
+    const { width: w, height: h } = size;
     const dpr = window.devicePixelRatio || 1;
-    if (!force && w === this.width && h === this.height && this.app.renderer.resolution === dpr) return;
+    if (!force && w === this.width && h === this.height && this.app.renderer.resolution === dpr) return true;
     this.width = w;
     this.height = h;
     this.app.renderer.resize(w, h, dpr);
     this.gridDirty = true;
     this.dirty = true;
+    return true;
   }
 
   /** Re-read CSS tokens (after a theme switch). */
@@ -368,12 +411,7 @@ export class Scene {
 
   /** Centre and zoom the camera on a world rectangle. */
   fitTo(bounds: Rect, padding = 90, maxZoom = 1.4): void {
-    const bw = Math.max(1, bounds.maxX - bounds.minX + padding * 2);
-    const bh = Math.max(1, bounds.maxY - bounds.minY + padding * 2);
-    const zoom = Math.min(maxZoom, Math.max(ZOOM_MIN, Math.min(this.width / bw, this.height / bh)));
-    const cx = (bounds.minX + bounds.maxX) / 2;
-    const cy = (bounds.minY + bounds.maxY) / 2;
-    this.setCamera({ x: this.width / 2 - cx * zoom, y: this.height / 2 - cy * zoom, zoom });
+    this.setCamera(fitCamera(bounds, this.width, this.height, padding, maxZoom));
   }
 
   /**

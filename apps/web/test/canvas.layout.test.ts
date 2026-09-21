@@ -1,7 +1,7 @@
 // Canvas core geometry (ARCHITECTURE-P1 §7 "Canvas core", §8.1 W6 web-canvas): icon-driven body sizes, edge and
 // antenna anchors, the grouped port picker (slot rows, console row, radios excluded), LED states, the camera
 // view/culling/LOD helpers and the rendering geometry of cables.
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { MEDIA, portKey, type MediaType } from '@netforge/engine';
 import { DEVICE_VISUALS, GENERIC_VISUAL, KIND_DEFAULT_ICON } from '../src/catalog/visuals.js';
 import {
@@ -34,6 +34,9 @@ import {
   LOD_MID_ZOOM,
   ZOOM_MAX,
   ZOOM_MIN,
+  Scene,
+  fitCamera,
+  measureHost,
   inflateRect,
   lodFor,
   parseCssColor,
@@ -272,6 +275,38 @@ describe('camera view, culling and level of detail', () => {
     expect(rectsIntersect(v, { minX: 450, minY: 275, maxX: 500, maxY: 300 })).toBe(true);
     expect(rectsIntersect(v, { minX: 451, minY: 0, maxX: 500, maxY: 10 })).toBe(false);
     expect(inflateRect(v, 10)).toEqual({ minX: 40, minY: -35, maxX: 460, maxY: 285 });
+  });
+
+  // "Open the lab" from a lesson: the lab's snapshot lands while the canvas host is still display:none (0x0).
+  // A fit against a 1x1 stand-in pins the camera to ZOOM_MIN with the world in the corner; the scene must keep
+  // its last real size while hidden and only fit once the host measures again.
+  it('never fits a lab to a hidden host: the scene keeps its real size until the host has one again', () => {
+    const lab = { minX: 60, minY: 60, maxX: 700, maxY: 460 };
+    expect(fitCamera(lab, 1, 1).zoom, 'the stranded camera the bug produced').toBe(ZOOM_MIN);
+    const fitted = fitCamera(lab, 1400, 700);
+    expect(fitted.zoom).toBeGreaterThan(1);
+    expect(fitted.x + 380 * fitted.zoom).toBeCloseTo(700); // the lab's centre sits at the viewport's centre
+    expect(measureHost({ clientWidth: 0, clientHeight: 0 })).toBeNull();
+    expect(measureHost({ clientWidth: 0, clientHeight: 700 })).toBeNull();
+
+    vi.stubGlobal('window', { devicePixelRatio: 1 });
+    try {
+      const resized: number[][] = [];
+      const host = { clientWidth: 0, clientHeight: 0 };
+      const scene = Object.assign(Object.create(Scene.prototype) as Scene, {
+        host,
+        width: 1400,
+        height: 700,
+        app: { renderer: { resolution: 1, resize: (w: number, h: number) => resized.push([w, h]) } },
+      });
+      expect(scene.remeasure(), 'a hidden host has no size to report').toBe(false);
+      expect([scene.width, scene.height, resized]).toEqual([1400, 700, []]);
+      Object.assign(host, { clientWidth: 1200, clientHeight: 640 });
+      expect(scene.remeasure()).toBe(true);
+      expect([scene.width, scene.height, resized]).toEqual([1200, 640, [[1200, 640]]]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('drops detail as the camera zooms out', () => {

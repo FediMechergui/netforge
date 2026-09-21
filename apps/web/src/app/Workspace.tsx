@@ -16,9 +16,12 @@ import type { WorkspaceView } from '../store/types';
 
 export function Workspace({ view }: { view: WorkspaceView }) {
   const concept = view === 'concept';
+  // @since P2 A learn surface covers the window from App; the canvas is hidden for it too, so nothing of the
+  // workspace is announced or tabbed into behind the course layer.
+  const covered = view !== 'topology';
   return (
     <>
-      <main className="app-canvas" aria-label="Topology" hidden={concept}>
+      <main className="app-canvas" aria-label="Topology" hidden={covered}>
         <Canvas />
         <WindowLayer />
       </main>

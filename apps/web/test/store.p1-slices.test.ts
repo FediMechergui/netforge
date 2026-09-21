@@ -49,9 +49,9 @@ beforeEach(() => {
 });
 
 describe('P1 slice defaults', () => {
-  it('starts on the topology, in real time, with no capture and no lab', () => {
+  it('starts a first visit on the course landing page (P2), in real time, with no capture and no lab', () => {
     const s = store.getState();
-    expect(s.view).toBe('topology');
+    expect(s.view).toBe('landing');
     expect(s.conceptTool).toBe('subnetting');
     expect(s.simMode.mode).toBe('realtime');
     expect(s.simMode.list).toEqual(DEFAULT_SIM_FILTERS.list);

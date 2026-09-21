@@ -8,7 +8,8 @@
  * P0.5/P1 members are optional in the type until the web wave that implements them removes the `?`
  * (engine contracts/port.ts TRANSITION RULE). Epoch change additionally clears: simMode.stoppedAt,
  * netscope live captures (keeps i_*), lab.status, desktopWindows, a11y.canvasFocus, eventsTruncated.
- * Persisted to localStorage (try/catch): theme, palette.collapsed/recent, cable.media, overlays, dock layout.
+ * Persisted to localStorage (try/catch): theme, palette.collapsed/recent, cable.media, overlays, dock layout,
+ * and (P2, store/store.ts `rememberEntryView`) whether the last surface was the sandbox or the course layer.
  */
 import type {
   CaptureId,
@@ -41,9 +42,26 @@ export type Tool = 'select' | 'cable' | 'add-device' | 'pan';
 export type DockTab = 'terminal' | 'packets' | 'events' | 'tables' | 'provenance' | 'netscope' | 'sim-events' | 'labs';
 export type Theme = 'dark' | 'light';
 
-/** @since P1 Workspace view: the topology canvas or a full-screen concept tool (Canvas stays mounted, hidden). */
-export type WorkspaceView = 'topology' | 'concept';
+/**
+ * @since P2 Course layer surfaces (apps/web/src/learn/**): the level chooser, one course, one lesson. They cover
+ * the whole window, so the shell hides the sandbox grid behind them instead of unmounting it.
+ */
+export type LearnSurface = 'landing' | 'course' | 'lesson';
+
+/**
+ * @since P1 Workspace view: the topology canvas or a full-screen concept tool (Canvas stays mounted, hidden).
+ * @since P2 …or a learn surface, which covers the whole window (`isLearnView`).
+ */
+export type WorkspaceView = 'topology' | 'concept' | LearnSurface;
 export type ConceptTool = 'subnetting' | 'ipv6';
+
+/** The learn surfaces, in the order you meet them. */
+export const LEARN_SURFACES: readonly LearnSurface[] = Object.freeze(['landing', 'course', 'lesson']);
+
+/** @since P2 True for the views the course layer owns; the two sandbox views ('topology', 'concept') are false. */
+export function isLearnView(v: WorkspaceView | undefined): v is LearnSurface {
+  return v === 'landing' || v === 'course' || v === 'lesson';
+}
 /** @since P0.5 Inspector tabs, derived per device from capabilities and `DeviceModel.gui` (clamped to 'overview'). */
 export type InspectorTab = 'overview' | 'ports' | 'config' | 'tables' | 'processes' | 'physical' | 'desktop' | 'wireless' | 'services';
 
@@ -144,6 +162,15 @@ export interface NetScopeUiState {
   heads: Record<CaptureId, number>;
 }
 
+/**
+ * @since P2 Course layer state: which course the learner opened and which lesson inside it. Ids only — the
+ * course catalogue itself is plain data in the engine (`COURSES`), so nothing of it is copied into the store.
+ */
+export interface LearnUiState {
+  courseId: string | null;
+  lessonId: string | null;
+}
+
 /** @since P1 Lab state (§4.13): the loaded lab's metadata, its last grading, and whether the catalogue is open. */
 export interface LabUiState {
   active: ScenarioMeta | null;
@@ -235,6 +262,8 @@ export interface UiState {
   simMode: SimModeUiState;
   netscope: NetScopeUiState;
   lab: LabUiState;
+  /** @since P2 */
+  learn: LearnUiState;
   inspectorTab: InspectorTab;
   desktopWindows: DesktopWindow[];
   a11y: A11yState;
@@ -279,6 +308,11 @@ export interface UiActions {
   setSimModeUi(p: Partial<SimModeUiState>): void;
   setNetscope(p: Partial<NetScopeUiState>): void;
   setLab(p: Partial<LabUiState>): void;
+  /**
+   * @since P2 Show a learn surface and, with it, what that surface shows. Ids left out keep their value, so
+   * going back from a lesson to its course never loses which course it was.
+   */
+  showLearn(surface: LearnSurface, ids?: Partial<LearnUiState>): void;
   setInspectorTab(t: InspectorTab): void;
   /** Opens (or focuses the existing) window for `device`/`app`; returns its id. The least recently focused window closes beyond DESKTOP_WINDOW_LIMIT. */
   openDesktopWindow(device: DeviceId, app: GuiPanelId): number;

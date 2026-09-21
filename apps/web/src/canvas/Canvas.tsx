@@ -15,9 +15,11 @@
  * Keyboard bridge: `registerCanvasA11y(api)` is the pinned hook the a11y layer calls to hand the canvas its
  * `focusDevice` / `screenPoint` / `beginCable` functions; it returns the unregister function.
  *
- * ponytail: while a concept view covers the workspace (§4.13) the loop returns before it reads the world or
- * draws anything, instead of tearing the scene down and rebuilding it; the rAF callback itself stays
- * scheduled, which is one no-op call per frame against a full re-create of every layer.
+ * ponytail: while anything other than the topology covers the workspace — a concept tool (§4.13) or a course
+ * surface (P2) — the loop returns before it reads the world or draws anything, instead of tearing the scene down
+ * and rebuilding it; the rAF callback itself stays scheduled, which is one no-op call per frame against a full
+ * re-create of every layer. The frame that comes back re-measures the host first, because a covered host has no
+ * size and a fit computed against one would strand the camera.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent, RefObject } from 'react';
@@ -333,6 +335,9 @@ function runCanvas(scene: Scene, tip: HTMLElement, openMenu: (m: ContextMenuRequ
   themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 
   let lastSnapshot: SimSnapshot | null = null;
+  // True while another view covers this cell, so the first frame back re-measures the host. It starts true
+  // because the scene is created before any view is on screen — including behind the landing page.
+  let covered = true;
   let lastEpoch = initial.epoch;
   let lastSelection = initial.selection;
   let lastHover = initial.hover;
@@ -398,12 +403,21 @@ function runCanvas(scene: Scene, tip: HTMLElement, openMenu: (m: ContextMenuRequ
   const frame = (): void => {
     if (!alive) return;
     const st = store.getState();
-    // §4.13: a concept tool covers this cell. The scene stays mounted; it simply stops drawing until the
-    // student comes back, and the next frame then sees the world as it is now.
-    if (st.view === 'concept') {
+    // §4.13: a concept tool — or, since P2, a learn surface — covers this cell. The scene stays mounted; it
+    // simply stops drawing until the student comes back, and the next frame then sees the world as it is now.
+    //
+    // It must stop drawing rather than draw at whatever size a hidden host reports, because a lab loaded from a
+    // lesson posts its snapshot BEFORE the view switches back: a frame that ran here would fit the new world to
+    // a hidden (0x0) host and write that camera to the store, landing the learner at 5% zoom. On the way back,
+    // the host's real size is only restored by the ResizeObserver, which runs after this callback — so ask for
+    // the measurement now, before the first fit of the returning frame — and if the host still has no size (the
+    // view flipped before the DOM showed it), stay covered one more frame rather than fit against a guess.
+    if (st.view !== 'topology' || (covered && !scene.remeasure())) {
+      covered = true;
       raf = requestAnimationFrame(frame);
       return;
     }
+    covered = false;
     const wall = performance.now();
 
     if (st.epoch !== lastEpoch) {
