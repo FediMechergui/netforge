@@ -37,6 +37,9 @@ export const MSG_INTERFACE_NOT_CONFIGURABLE = '% That port has no interface sett
 /** Arg name the banner handler reads the banner type from (`fixedArgs`); `banner login|exec` are in line-auth.ts. */
 export const BANNER_TYPE_ARG = 'type';
 
+/** @since P2 Arg name of the optional tail of `ip route` (`[<nh>] [<ad>] [permanent]`, ARCHITECTURE-P2 §5.2). */
+export const ROUTE_TAIL_ARG = 'tail';
+
 const H = CONFIG_GLOBAL_HANDLERS;
 
 /** The global configuration command table. */
@@ -71,7 +74,9 @@ export const CONFIG_GLOBAL_GRAMMAR: readonly CommandSpec[] = Object.freeze<Comma
     objectives: ['CCNA1.10.2'],
   },
   {
-    path: ['ip', 'route', '<network>', '<mask>', '<nexthop>'],
+    // P2 (ARCHITECTURE-P2 §5.2, D13): `ip route <net> <mask> <nh>|<if> [<nh>] [<ad 1-255>] [permanent]`; the optional
+    // tail is one free-text arg the handler parses, so `?` after the next hop offers it and <cr> together.
+    path: ['ip', 'route', '<network>', '<mask>', '<nexthop>', `<${ROUTE_TAIL_ARG}>`],
     mode: 'config',
     privilege: 15,
     help: 'Add a static route',
@@ -79,6 +84,7 @@ export const CONFIG_GLOBAL_GRAMMAR: readonly CommandSpec[] = Object.freeze<Comma
       network: ipv4Arg('Destination network address'),
       mask: maskArg('Destination network mask'),
       nexthop: wordArg('Next-hop address (A.B.C.D) or exit interface'),
+      [ROUTE_TAIL_ARG]: { type: 'rest', help: 'Optional: next-hop address after an exit interface, distance 1-255, permanent', optional: true },
     },
     handler: H.configIpRoute,
     allowNo: true,

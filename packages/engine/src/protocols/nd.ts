@@ -107,8 +107,8 @@ const TIMER_NBR = 'nd:';
 const TIMER_RS = 'rs:';
 const TIMER_RA = 'ra:';
 const TIMER_RA_SOLICIT = 'ra-solicit:';
-/** Link framing protocols that the framer strips when a packet changes framing. */
-const LINK_FRAMING_PROTOS: readonly string[] = Object.freeze(['ethernet', 'hdlc', 'dot11', 'llc']);
+/** Link framing protocols that the framer strips when a packet changes framing (P2: an 802.1Q tag counts as framing). */
+const LINK_FRAMING_PROTOS: readonly string[] = Object.freeze(['ethernet', 'dot1q', 'hdlc', 'dot11', 'llc']);
 
 /** How a port frames IPv6: Ethernet (also wireless adapters, whose data frames are Ethernet at the daemons), HDLC, or none. */
 type Framing = 'ethernet' | 'hdlc' | 'none';
@@ -595,15 +595,28 @@ export function createNd(): Process {
     if (soliciting.delete(iface)) out.push({ type: 'cancelTimer', key: `${TIMER_RS}${iface}` });
   }
 
+  /** P2 (D16): the RA M/O flags of `iface` from `ipv6 nd managed-config-flag` / `ipv6 nd other-config-flag` (default off). */
+  function raFlags(ctx: ProcessCtx, iface: PortId): { managed: boolean; other: boolean } {
+    let managed = false;
+    let other = false;
+    for (const l of interfaceIpv6Lines(ctx, iface)) {
+      if (l[1] !== 'nd') continue;
+      if (l[2] === 'managed-config-flag') managed = true;
+      else if (l[2] === 'other-config-flag') other = true;
+    }
+    return { managed, other };
+  }
+
   /** Build and send one RA out `iface` (periodic ones are background traffic). */
   function sendRa(ctx: ProcessCtx, view: PortView, periodic: boolean, triggeredBy?: number): Action[] {
     const ll = preferredLinkLocal(view) as Ipv6Address;
+    const flags = raFlags(ctx, view.id);
     const icmp: Record<string, unknown> = {
       type: ICMPV6_RA,
       code: 0,
       curHopLimit: ICMPV6_RA_DEFAULT_HOP_LIMIT,
-      managedFlag: false,
-      otherFlag: false,
+      managedFlag: flags.managed,
+      otherFlag: flags.other,
       routerLifetimeS: ICMPV6_RA_DEFAULT_LIFETIME_S,
       mtu: view.mtu,
     };

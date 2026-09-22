@@ -19,7 +19,16 @@
  *                 (5 per next hop, oldest dropped `queue-full`), write an Incomplete row, broadcast a request and
  *                 retry every `ARP_REQUEST_RETRY_NS` up to `ARP_REQUEST_RETRIES` requests, then drop the queue
  *                 `arp-unresolved` and remove the row.
- *  • `arp.gratuitous` request / `garp:<iface>` timer: announce an interface address (never on HDLC ports).
+ *  • `arp.gratuitous` request / `garp:<iface>` timer: announce an interface address (never on HDLC ports). P2
+ *    (ARCHITECTURE-P2 §2.4, D15): with `address`/`mac` the request announces a VIRTUAL address from its MAC (sha and
+ *    the Ethernet source are that MAC), as ipv4 asks after an `ipv4.virtual` add with `local` true.
+ *  • Virtual addresses (P2 D15): a request for an address in the port's `l3.virtual4` list (an HSRP virtual IP, a
+ *    NAT pool or static inside-global address) is answered with the virtual MAC, whatever its `local` flag.
+ *  • Proxy ARP [S7] (P2 §5.2, D2; the delimited `[S7]` block): on a routing device, a request on an L3 port for a
+ *    target that is not on that port's subnet but reachable through ANOTHER interface is answered with the port's
+ *    own MAC. The two-state read of `proxyArpEnabled`: a stored `no ip proxy-arp` on the interface means off; an
+ *    empty slot means the profile default (`ctx.profile`: on in P2 for a routed interface of a routing device, off
+ *    in P1). A typed `ip proxy-arp` clears the slot and stores nothing, so in a P1 world it is a no-op.
  *  • `arp.probe` request (P1, APIPA conflict detection after RFC 5227 §2.1): `count` probes (default 3) sent
  *    `intervalNs` apart (default 1 s) on the non-periodic timer `arp-probe:<token>` — broadcast requests with
  *    spa 0.0.0.0, sha = the port MAC, tha 0 and tpa = the candidate address; no port address is needed. While the
@@ -39,16 +48,16 @@
  * `arp-probe:<token>` (never periodic).
  *
  * StateView: `{ process: 'arp', state: { pending: [{ ip, iface, retries, requests, queued }],
- *   requestsSent, repliesSent, gratuitousSent, resolved, failed, probes? } }` — `retries` counts
+ *   requestsSent, repliesSent, gratuitousSent, resolved, failed, probes?, proxyRepliesSent? } }` — `retries` counts
  *   retransmissions (requests - 1) for the entry still being resolved; `probes` (only while any runs) lists
- *   `[{ token, owner, iface, address, sent, count }]`.
+ *   `[{ token, owner, iface, address, sent, count }]`; `proxyRepliesSent` [S7] appears once a proxy reply was sent.
  *
  * Debug category: `arp`.
  */
-import { IPV4_ANY, MAC_BROADCAST, MAC_ZERO, broadcastOf, isIpv4, isIpv4Broadcast, normalizeMac } from '../contracts/addr.js';
+import { IPV4_ANY, MAC_BROADCAST, MAC_ZERO, broadcastOf, inSubnet, isIpv4, isIpv4Broadcast, normalizeMac } from '../contracts/addr.js';
 import type { Ipv4Address, MacAddress } from '../contracts/addr.js';
-import { KIND_ENCAP, L3_ROLES, ipDefaultsFor } from '../contracts/catalog.js';
-import type { PortEncap } from '../contracts/catalog.js';
+import { KIND_ENCAP, L3_ROLES, ROLE_TRAITS, defaultRoleFor, ipDefaultsFor } from '../contracts/catalog.js';
+import type { PortEncap, PortRole } from '../contracts/catalog.js';
 import type { ConfigDelta } from '../contracts/config.js';
 import type { PortId, ProcessName } from '../contracts/ids.js';
 import { ARP_OP_REPLY, ARP_OP_REQUEST, ETHERTYPE_ARP, ETHERTYPE_IPV4, HDLC_ADDRESS_UNICAST, HDLC_PROTO_IPV4 } from '../contracts/pdu.js';
@@ -61,6 +70,7 @@ import { SEC } from '../contracts/time.js';
 import type { SimTime } from '../contracts/time.js';
 import { APIPA_PROBES, APIPA_PROBE_INTERVAL_NS } from '../contracts/services.js';
 import type { ArpProbeResultEvent } from '../contracts/transport.js';
+import { ipForwardingEnabled, virtualMacFor } from './ipv4.js';
 
 /** Interval of the cache-ageing sweep. */
 export const ARP_SWEEP_NS: SimTime = 60 * SEC;
@@ -70,8 +80,8 @@ export const ARP_QUEUE_LIMIT = 5;
 export const ARP_HANDLES: readonly DemuxSelector[] = Object.freeze([
   Object.freeze({ layer: 'ethernet', ethertype: ETHERTYPE_ARP, roles: L3_ROLES }),
 ]) as readonly DemuxSelector[];
-/** Link framing protocols that `arp.sendVia` strips when a packet changes framing. */
-export const LINK_FRAMING_PROTOS: readonly string[] = Object.freeze(['ethernet', 'hdlc', 'dot11', 'llc']);
+/** Link framing protocols that `arp.sendVia` strips when a packet changes framing (P2: an 802.1Q tag counts as framing). */
+export const LINK_FRAMING_PROTOS: readonly string[] = Object.freeze(['ethernet', 'dot1q', 'hdlc', 'dot11', 'llc']);
 /** Debug events retained per daemon (newest last). */
 const DEBUG_RING = 256;
 const TIMER_SWEEP = 'arp-sweep';
@@ -142,6 +152,49 @@ function rewrapPdu(ctx: ProcessCtx, pdu: Pdu, op: RewrapOp, cause: string | unde
   else pdu.rewrap({ now: ctx.now, device: ctx.deviceId }, op, cause);
 }
 
+// ── [S7] proxy ARP ───────────────────────────────────────────────────────────
+
+/** Effective role of a port view (live role, else the spec default for the model capabilities). */
+function roleOfView(ctx: Pick<ProcessCtx, 'model'>, view: PortView): PortRole {
+  return view.role ?? view.spec.role ?? defaultRoleFor(view.spec.kind, ctx.model.capabilities ?? []);
+}
+
+/**
+ * [S7] The two-state proxy ARP read of `iface` (ARCHITECTURE-P2 §5.2, D2): a stored `no ip proxy-arp` under
+ * `interface <iface>` means off; an empty slot means the profile default — on in the P2 profile for a routed (L3)
+ * interface of a routing device, off in the P1 profile. `ip proxy-arp` stores nothing (storeNegation), so typing it
+ * in a P1 world changes nothing.
+ */
+export function proxyArpEnabled(ctx: Pick<ProcessCtx, 'config' | 'profile' | 'model' | 'ports'>, iface: PortId): boolean {
+  const lower = iface.toLowerCase();
+  for (const section of ctx.config.root.children) {
+    if (section.key !== 'interface') continue;
+    const name = section.args[0];
+    if (name === undefined || (name !== iface && name.toLowerCase() !== lower)) continue;
+    for (const c of section.children) {
+      if (c.key === 'no' && c.args.length === 2 && c.args[0] === 'ip' && c.args[1] === 'proxy-arp') return false;
+    }
+  }
+  if (ctx.profile !== 'P2' || !ctx.model.ipForwarding) return false;
+  const view = ctx.ports.get(iface);
+  return view !== undefined && ROLE_TRAITS[roleOfView(ctx, view)].l3;
+}
+
+/**
+ * [S7] The egress interface through which this device would forward to `target`, when proxy ARP on `port` should
+ * answer for it: proxy ARP on, routing on, the target off the port's own subnet and reachable through another
+ * interface. Undefined otherwise.
+ */
+function proxyArpVia(ctx: ProcessCtx, port: PortId, target: Ipv4Address): PortId | undefined {
+  if (!proxyArpEnabled(ctx, port) || !ipForwardingEnabled(ctx)) return undefined;
+  const l3 = ctx.ports.get(port)?.l3.ipv4;
+  if (l3 === undefined || inSubnet(target, l3.address, l3.prefixLen)) return undefined;
+  const via = ctx.sourceFor(target)?.iface;
+  return via === undefined || via === port ? undefined : via;
+}
+
+// ── end [S7] ─────────────────────────────────────────────────────────────────
+
 /** The arp daemon (`Process` with name `'arp'`), one instance per device. */
 export function createArp(): Process {
   const pending = new Map<string, Pending>();
@@ -153,6 +206,8 @@ export function createArp(): Process {
   let gratuitousSent = 0;
   let resolved = 0;
   let failed = 0;
+  /** [S7] Proxy replies sent (shown only once non-zero). */
+  let proxyRepliesSent = 0;
 
   function debug(ctx: ProcessCtx, message: string, data?: Record<string, unknown>): void {
     const ev: DebugEvent = data
@@ -335,10 +390,14 @@ export function createArp(): Process {
     p.queue.push(cause !== undefined ? { pdu, cause } : { pdu });
   }
 
-  function gratuitous(ctx: ProcessCtx, iface: PortId): Action[] {
+  /**
+   * Announce the interface address from the port MAC, or (P2, D15) `virtualAddress` from `virtualMac` (default: the
+   * port MAC). A virtual announcement is deduplicated per (iface, address); the interface one per iface, as before.
+   */
+  function gratuitous(ctx: ProcessCtx, iface: PortId, virtualAddress?: Ipv4Address, virtualMac?: MacAddress): Action[] {
     const out: Action[] = [];
     const port = ctx.ports.get(iface);
-    const address = port?.l3.ipv4?.address;
+    const address = virtualAddress ?? port?.l3.ipv4?.address;
     if (port === undefined || !port.operUp || address === undefined) {
       debug(ctx, `no announcement for ${iface}: ${port === undefined ? 'unknown port' : !port.operUp ? 'port is down' : 'no address'}`, { iface });
       return out;
@@ -347,13 +406,14 @@ export function createArp(): Process {
       debug(ctx, `no announcement for ${iface}: the link does not use ARP`, { iface, address });
       return out;
     }
-    const last = announced.get(iface);
+    const dedupeKey = virtualAddress === undefined ? iface : `${iface}|${virtualAddress}`;
+    const last = announced.get(dedupeKey);
     if (last !== undefined && last.at === ctx.now && last.address === address) {
       debug(ctx, `announcement of ${address} on ${iface} already sent`, { iface, address });
       return out;
     }
-    announced.set(iface, { at: ctx.now, address });
-    const mac = ctx.macOf(iface);
+    announced.set(dedupeKey, { at: ctx.now, address });
+    const mac = virtualAddress !== undefined ? (virtualMac ?? ctx.macOf(iface)) : ctx.macOf(iface);
     const pdu = ctx.newPdu(
       [
         { proto: 'ethernet', fields: { dst: MAC_BROADCAST, src: mac, type: ETHERTYPE_ARP } },
@@ -363,7 +423,7 @@ export function createArp(): Process {
     );
     gratuitousSent++;
     out.push({ type: 'send', port: iface, pdu });
-    debug(ctx, `announcing ${address} is at ${mac} on ${iface}`, { iface, address, mac, pdu: pdu.id });
+    debug(ctx, `announcing ${address} is at ${mac} on ${iface}${virtualAddress !== undefined ? ' (virtual address)' : ''}`, { iface, address, mac, pdu: pdu.id });
     return out;
   }
 
@@ -582,6 +642,43 @@ export function createArp(): Process {
         debug(ctx, `replied to ${spa}: ${tpa} is at ${myMac}`, { port, ip: tpa, mac: myMac, to: spa, pdu: reply.id });
         return out;
       }
+      // P2 (D15): a virtual address of this port is answered with its virtual MAC (the Ethernet source too)
+      const virtualMac = virtualMacFor(ctx.ports.get(port), tpa);
+      if (virtualMac !== undefined) {
+        debug(ctx, `request for virtual address ${tpa} from ${spa} (${sha}) on ${port}: replying from ${virtualMac}`, { port, ip: spa, mac: sha, target: tpa, pdu: pdu.id });
+        out.push({ type: 'consume', pdu });
+        learn(ctx, spa, sha, port, out);
+        const reply = ctx.newPdu(
+          [
+            { proto: 'ethernet', fields: { dst: sha, src: virtualMac, type: ETHERTYPE_ARP } },
+            { proto: 'arp', fields: { op: ARP_OP_REPLY, sha: virtualMac, spa: tpa, tha: sha, tpa: spa } },
+          ],
+          { triggeredBy: pdu.id, tag: 'arp-reply' },
+        );
+        repliesSent++;
+        out.push({ type: 'send', port, pdu: reply });
+        debug(ctx, `replied to ${spa}: ${tpa} is at ${virtualMac}`, { port, ip: tpa, mac: virtualMac, to: spa, pdu: reply.id });
+        return out;
+      }
+      // [S7] proxy ARP: answer for a target reachable through another interface with this port's own MAC
+      const proxyVia = proxyArpVia(ctx, port, tpa);
+      if (proxyVia !== undefined) {
+        debug(ctx, `proxy reply to ${spa} for ${tpa} on ${port}: reachable through ${proxyVia}`, { port, ip: spa, target: tpa, via: proxyVia, pdu: pdu.id });
+        out.push({ type: 'consume', pdu });
+        learn(ctx, spa, sha, port, out);
+        const reply = ctx.newPdu(
+          [
+            { proto: 'ethernet', fields: { dst: sha, src: myMac, type: ETHERTYPE_ARP } },
+            { proto: 'arp', fields: { op: ARP_OP_REPLY, sha: myMac, spa: tpa, tha: sha, tpa: spa } },
+          ],
+          { triggeredBy: pdu.id, tag: 'arp-reply' },
+        );
+        repliesSent++;
+        proxyRepliesSent++;
+        out.push({ type: 'send', port, pdu: reply });
+        debug(ctx, `replied to ${spa} on behalf of ${tpa}: at ${myMac} (proxy)`, { port, ip: tpa, mac: myMac, to: spa, pdu: reply.id });
+        return out;
+      }
       if (known !== undefined && !known.incomplete) {
         learn(ctx, spa, sha, port, out);
       } else {
@@ -665,7 +762,7 @@ export function createArp(): Process {
 
     onRequest(ctx: ProcessCtx, req: ProcessRequest): Action[] {
       if (req.kind === 'arp.sendVia') return sendVia(ctx, req.pdu, req.nextHop, req.iface, req.cause);
-      if (req.kind === 'arp.gratuitous') return gratuitous(ctx, req.iface);
+      if (req.kind === 'arp.gratuitous') return gratuitous(ctx, req.iface, req.address, req.mac);
       if (req.kind === 'arp.probe') return startProbe(ctx, req);
       return [];
     },
@@ -681,6 +778,7 @@ export function createArp(): Process {
         for (const p of probes.values()) running.push({ token: p.token, owner: p.owner, iface: p.iface, address: p.address, sent: p.sent, count: p.count });
         state.probes = running;
       }
+      if (proxyRepliesSent > 0) state.proxyRepliesSent = proxyRepliesSent;
       return { process: 'arp', state };
     },
 

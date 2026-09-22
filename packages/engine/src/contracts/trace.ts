@@ -31,6 +31,10 @@ export interface PduSummary {
   tag?: string;
   /** @since P0.5 Full layer stack, outermost first (sim-mode protocol filters, NetScope). */
   layers?: ProtoName[];
+  /** @since P2 (optional by meaning) Outermost 802.1Q VID, present only for tagged frames (packet colouring). */
+  vlan?: number;
+  /** @since P2 (optional by meaning; wireless) Present only while the frame is inside a CAPWAP tunnel. */
+  tunnel?: 'capwap';
 }
 
 /** What a structural `topologyChanged` event is about. `module` @since P0.5 (id = `${deviceId}/${slotId}`). */
@@ -68,6 +72,13 @@ export type TraceEvent =
       medium?: string;
       /** @since P0.5 AssociationSnapshot.id when the drop concerns a station. */
       association?: string;
+      /**
+       * @since P2 (optional by meaning) Present only when the dropped PDU has meta.background (BPDUs on host ports, HSRP
+       * hellos at hosts, HDLC keepalives, beacons). The trace filter, the canvas drop markers, the worker delta and the
+       * sim-mode list skip them by default. P1 background PDUs that are dropped gain the key (a listed P1 digest change,
+       * ARCHITECTURE-P2 §9.3 (b), made by W2 device — not before).
+       */
+      background?: true;
     }
   /** A PDU was created by a device process. */
   | { t: SimTime; kind: 'pduCreated'; pdu: PduSummary; device: DeviceId; process: ProcessName }

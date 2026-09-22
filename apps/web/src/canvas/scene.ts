@@ -3,10 +3,15 @@
  *
  * One `Scene` per <Canvas/> mount. It owns the Pixi `Application`, the camera
  * (world container transform), the background dot grid, and the draw layers in
- * paint order: rf (range rings) → cables → air (association lines, radio beams)
+ * paint order: rf (range rings) → vlan → stp → capwap (the topology overlays'
+ * underlays: VLAN tints and trunk rails, the active spanning tree, controller
+ * tunnels; ARCHITECTURE-P2 §6) → cables → air (association lines, radio beams)
  * → packets → markers → devices → labels (signal bars, dBm text, phase badges,
- * channel labels) → overlay (cable preview, keyboard focus ring). Devices sit
- * above packets so their ports stay clickable.
+ * channel labels, VLAN chips, spanning-tree letters and crowns) → overlay
+ * (cable preview, keyboard focus ring). Devices sit above packets so their
+ * ports stay clickable; the overlay underlays sit below the cables so a trunk
+ * rail or the active tree reads as a track the cable runs on, never as a dash
+ * pattern (D20).
  *
  * The camera zooms from ZOOM_MIN (0.05, so kilometre radio links fit on screen)
  * to ZOOM_MAX. `viewBounds()` gives the visible world rectangle for culling and
@@ -217,9 +222,22 @@ export function viewKey(view: Rect, zoom: number): string {
   return `${qx},${qy},${qz}`;
 }
 
+/**
+ * The topology overlays' underlay containers, in paint order (bottom first) — the same order and ids as the overlay
+ * registry (`canvas/overlays/registry.ts` `OVERLAY_MODULES`), so a registry entry finds its container by id.
+ */
+export const TOPO_LAYER_ORDER = Object.freeze(['vlan', 'stp', 'capwap'] as const);
+export type TopoLayerId = (typeof TOPO_LAYER_ORDER)[number];
+
 export interface SceneLayers {
   /** Range rings (under everything drawn on the ground). */
   rf: Container;
+  /** @since P2 VLAN overlay underlay: access tints and trunk rails (chips go to `labels`). */
+  vlan: Container;
+  /** @since P2 Spanning-tree overlay underlay: the active tree (letters, crowns and crosses go to `labels`). */
+  stp: Container;
+  /** @since P2 Controller-tunnel overlay underlay (W6). */
+  capwap: Container;
   cables: Container;
   /** Association lines and point-to-point radio beams. */
   air: Container;
@@ -288,6 +306,9 @@ export class Scene {
     this.host = host;
     this.layers = {
       rf: new Container(),
+      vlan: new Container(),
+      stp: new Container(),
+      capwap: new Container(),
       cables: new Container(),
       air: new Container(),
       packets: new Container(),
@@ -303,7 +324,7 @@ export class Scene {
     app.stage.addChild(this.grid);
     app.stage.addChild(this.world);
     const l = this.layers;
-    this.world.addChild(l.rf, l.cables, l.air, l.packets, l.markers, l.devices, l.labels, l.overlay);
+    this.world.addChild(l.rf, l.vlan, l.stp, l.capwap, l.cables, l.air, l.packets, l.markers, l.devices, l.labels, l.overlay);
 
     const size = hostSize(host);
     this.width = size.width;
@@ -342,6 +363,11 @@ export class Scene {
 
   get canvas(): HTMLCanvasElement {
     return this.app.canvas;
+  }
+
+  /** The underlay container of a topology overlay (by registry id). */
+  topoLayer(id: TopoLayerId): Container {
+    return this.layers[id];
   }
 
   /**

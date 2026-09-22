@@ -19,7 +19,7 @@ import type { PortView } from '../../contracts/port.js';
 import type { NdRow, Route6Row } from '../../contracts/tables.js';
 import { macToDotted } from '../../contracts/addr.js';
 import { ipv6Scope, normalizeIpv6, parseCidr6 } from '../../core/addr6.js';
-import { HANDLERS } from '../grammar/index.js';
+import { HANDLERS, ROUTE6_DISTANCE_ARG } from '../grammar/index.js';
 import { fmtSince, padRight, table } from '../format.js';
 import { MSG_NO_INTERFACE_SELECTED, outcomeOf, selectedInterface } from './common.js';
 
@@ -43,6 +43,10 @@ export const MSG_EUI64_NEEDS_64 = '% An eui-64 address needs a /64 prefix: the h
 export const MSG_NOT_LINK_LOCAL = '% A link-local address starts with fe80::.';
 /** Message for an `ipv6 route` next hop that is neither an address nor an interface. */
 export const MSG_BAD_IPV6_NEXT_HOP = '% Next hop must be an IPv6 address (X:X:X:X::X) or an interface name.';
+/** @since P2 Message for a second next-hop address on an `ipv6 route` line whose hop is already an address. */
+export const MSG_ROUTE6_TWO_HOPS = '% A next-hop address may follow an exit interface only; this route already names a next hop.';
+/** @since P2 Message for an `ipv6 route` distance outside 1–255. */
+export const MSG_BAD_ROUTE6_DISTANCE = '% The administrative distance of a route is a number from 1 to 255.';
 /** Message for `show ipv6 interface <name>` with a name the device does not have. */
 export const MSG_NO_SUCH_INTERFACE = '% No interface of that name exists on this device.';
 
@@ -71,7 +75,11 @@ const ipv6Address: CommandHandler = (ctx, args, negate) => {
   return outcomeOf(ctx.config(['ipv6', 'address', prefix, ...(kind === undefined ? [] : [kind])], false));
 };
 
-/** `ipv6 route <prefix> <next hop|interface> [<next hop>]` and its `no` form. */
+/**
+ * `ipv6 route <prefix> <next hop|interface> [<next hop>] [<distance>]` and its `no` form (P2, ARCHITECTURE-P2 §5.2:
+ * the distance is stored only when it is not the default 1; `no ipv6 route P hop [via]` removes every stored line
+ * for that prefix and hop whatever its distance, or the exact line when none matches).
+ */
 const ipv6Route: CommandHandler = (ctx, args, negate) => {
   const prefix = args['prefix'] ?? '';
   const nextHopRaw = args['nexthop'] ?? '';
@@ -80,14 +88,32 @@ const ipv6Route: CommandHandler = (ctx, args, negate) => {
   const address = normalizeIpv6(nextHopRaw);
   let nextHop: string;
   if (address !== null) {
+    if (via !== undefined) return { error: MSG_ROUTE6_TWO_HOPS };
     nextHop = address;
   } else {
     const port = ctx.resolvePort(nextHopRaw);
     if (port === undefined || !ctx.ports.has(port)) return { error: MSG_BAD_IPV6_NEXT_HOP };
     nextHop = port;
   }
-  const line = ['ipv6', 'route', prefix, nextHop, ...(via === undefined ? [] : [via])];
-  return outcomeOf(ctx.config(line, negate));
+  const distanceText = args[ROUTE6_DISTANCE_ARG];
+  const distance = distanceText === undefined ? undefined : Number(distanceText);
+  if (distance !== undefined && (!Number.isInteger(distance) || distance < 1 || distance > 255)) return { error: MSG_BAD_ROUTE6_DISTANCE };
+  const head = [prefix, nextHop, ...(via === undefined ? [] : [via])];
+  const line = ['ipv6', 'route', ...head, ...(distance !== undefined && distance !== 1 ? [String(distance)] : [])];
+  if (!negate) return outcomeOf(ctx.config(line, false));
+  const matches = ctx.running.query('ipv6.route').map((n) => n.args).filter((stored) => {
+    if (stored.length < head.length) return false;
+    for (let i = 0; i < head.length; i++) if (stored[i] !== head[i]) return false;
+    // without a typed via, a stored route with a next hop after the interface is another route
+    const after = stored[head.length];
+    return via !== undefined || after === undefined || /^\d{1,3}$/.test(after);
+  });
+  if (matches.length === 0) return outcomeOf(ctx.config(line, true));
+  for (const stored of matches) {
+    const error = ctx.config(['ipv6', 'route', ...stored], true);
+    if (error !== undefined) return { error };
+  }
+  return {};
 };
 
 // ── show ipv6 … ─────────────────────────────────────────────────────────────

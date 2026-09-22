@@ -26,7 +26,8 @@ import { revealDockTab, toastError } from './PacketInspector';
 import { fmtBps, portAddress, PortLed, portStatus } from './PortInspector';
 import { RadioLinkPanel } from './RadioLinkPanel';
 import { ServicesPanel } from './ServicesPanel';
-import { TablesView, useTickNow } from './TablesView';
+import { TablesTab } from './TablesTab';
+import { useTickNow } from './TablesView';
 import { WirelessPanel } from './WirelessPanel';
 import {
   associationsOfDevice,
@@ -157,7 +158,7 @@ export function DeviceInspector({ device }: { device: DeviceSnapshot }) {
         {tab === 'overview' && <OverviewTab device={device} model={model} />}
         {tab === 'ports' && <PortsTab device={device} />}
         {tab === 'config' && <ConfigTab device={device} highlight={local.highlight} nonce={local.nonce} />}
-        {tab === 'tables' && <TablesView device={device} />}
+        {tab === 'tables' && <TablesTab device={device} />}
         {tab === 'processes' && <ProcessesTab processes={device.processes} booted={device.booted} />}
         {tab === 'physical' && <ModulesPanel device={device} />}
         {tab === 'desktop' && <DesktopTab device={device} />}

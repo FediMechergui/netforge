@@ -55,11 +55,12 @@ const echoSpecs = (payloadLen = 56, ttl = 128): LayerSpec[] => [
 ];
 
 describe('pdu/codecs registry', () => {
-  it('registers the five P0 codecs in insertion order, then the P0.5 link codecs, then the P1 codecs (§9.2)', () => {
+  it('registers the five P0 codecs in insertion order, then the P0.5 link codecs, then the P1 codecs (§9.2), then the P2 codecs (P2 §9 item 4)', () => {
     expect([...CODECS.keys()]).toEqual([
       'ethernet', 'arp', 'ipv4', 'icmpv4', 'payload',
       'hdlc', 'dot11', 'dot11-mgmt', 'llc', 'eapol',
       'ipv6', 'ipv6-hopopts', 'ipv6-route', 'ipv6-frag', 'ipv6-dstopts', 'icmpv6', 'udp', 'tcp', 'dhcp', 'dns', 'http',
+      'dot1q', 'stp', 'lacp', 'dtp', 'dhcpv6', 'capwap', 'hsrp', 'pagp',
     ]);
     expect(getCodec('ethernet')).toBe(ethernetCodec);
     expect(getCodec('arp')).toBe(arpCodec);

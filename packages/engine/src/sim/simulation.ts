@@ -36,7 +36,7 @@
  * `notes` and `lab` are retained for export. Links get `kind = linkKindOf(resolvedMedia)` when omitted, `dce_end` →
  * `dceEnd` and `distance_m` → `distanceOverrideM`. The trace ring is kept (its cursor stays monotonic).
  *
- * `exportTopology` writes the latest schema id. It keeps NVRAM and RAM apart: `config` is the device's
+ * `exportTopology` writes TOPOLOGY_SCHEMA_ID (1.1). It keeps NVRAM and RAM apart: `config` is the device's
  * startup-config (`startup.render()`; absent after `erase startup-config`; for a never-booted device the spec's
  * startup text), and a booted device also gets `runningConfig = running.render()`. It writes `modules` only for
  * models with slots, `hardware.macSalt` only when > 0, `ui` when set, link `kind` only for radio links, `dce_end` and
@@ -66,6 +66,30 @@
  * `loadTopology` drops every capture but keeps the `c_<n>` counter, so an id never names two different captures in
  * one session.
  *
+ * P2 (ARCHITECTURE-P2 D2, §2.9, §0 rule 13; W1 sim): a world has a defaults profile. `SimulationOptions.profile`
+ * (default 'P1') is the profile of the initial world; `Simulation.profile` reads the current world's, and every device
+ * the world builds gets it as `DeviceSpec.profile` — written only when it is not 'P1' (absent means 'P1', so a P1
+ * device spec keeps its P1 shape). `SimulationOptions.catalog` (tests and tooling only; never passed by apps/web)
+ * replaces `createCatalog(PROCESS_FACTORIES)` everywhere the facade needs a catalog: device creation, media wiring,
+ * the CLI runtime and the load gate. test/p2.world.ts builds P2-stage worlds through it before the catalog flips.
+ *
+ * P2 W2 sim (§2.9, §3.8 step 7): `loadTopology` gives the new world the profile of the document, `t.profile ?? 'P1'`
+ * (a 1.1 document never carries one: io/schema.ts strips the 1.2 key, so it loads as P1). `exportTopology` writes
+ * `profile: 'P2'` only for a P2 world and then `schema = schemaIdFor(t)` (1.2) in the same step; a P1 world exports
+ * byte-identically as 1.1. The `err-disable` fault (target device + port, `params.cause` one of ERR_DISABLE_CAUSES,
+ * default 'fault') goes through `DeviceRuntime.errDisablePort` — the lab-check clone re-applies err-disabled ports
+ * with it. The snapshot carries `profile: 'P2'` for a P2 world and nothing for a P1 one (sim/snapshot-cache.ts).
+ *
+ * [S1] Time travel (D18, §2.13, §3.13; the `// [S1]` block below): the facade journals every OUTERMOST mutating call
+ * through sim/journal.ts — `{at: position(), op, traceHead}`, the op deep-copied at record time — and nothing reached
+ * from inside another facade call or a dispatch (the run methods run nested). `position()` is the world's
+ * `(dispatched, now)`; `journal()` a structured-clone copy. `loadTopology` starts a new journal whose origin holds the
+ * facade counters from BEFORE the load. `SimulationOptions.resume` (a replay) starts the trace ring at
+ * `counters.traceHead` (trace/ring.ts `startHead`), `topologyVersion` and the `r_<n>` request counter at their values,
+ * and carries `sessions` / `headless` as the counts the journal reports; `journal: false` records no entry;
+ * `pduRegistryLimit` bounds the id → PDU registry (replayers run with a small one). Reads never record and never
+ * change state (`sim.observation-purity.test.ts`).
+ *
  * Determinism: no wall clock and no Math.random anywhere; every iteration that affects behaviour is over arrays or
  * insertion-ordered Maps.
  */
@@ -81,13 +105,25 @@ import type {
   CaptureStatistics,
   FollowStreamResult,
 } from '../contracts/capture.js';
-import { HARDWARE_MESSAGES, SLOT_ACCEPTS, type HardwareResult, type ModuleInstall, type ModuleType, type PortEncap, type SlotId } from '../contracts/catalog.js';
+import {
+  DEFAULTS_PROFILES,
+  HARDWARE_MESSAGES,
+  SLOT_ACCEPTS,
+  type DefaultsProfile,
+  type HardwareResult,
+  type ModuleInstall,
+  type ModuleType,
+  type PortEncap,
+  type SlotId,
+} from '../contracts/catalog.js';
 import type { CliRuntime, ConfigureOptions, ConfigureResult } from '../contracts/cli.js';
 import type { DeviceCatalog, DeviceModel, DeviceRuntime, DeviceRuntimeDeps, DeviceSpec } from '../contracts/device.js';
 import type { FaultSpec, SimEvent } from '../contracts/events.js';
 import type { DeviceId, LinkId, PduId, PortId, PortRef, ProcessName } from '../contracts/ids.js';
+import type { FacadeCounters, JournalOp, JournalOrigin, JournalPosition, SimJournal } from '../contracts/journal.js';
 import { NO_IMPAIRMENTS, linkKindOf, type CableValidation, type Impairments, type LinkKind, type LinkState } from '../contracts/link.js';
 import type { Pdu, PduView } from '../contracts/pdu.js';
+import { ERR_DISABLE_CAUSES, type ErrDisableCause } from '../contracts/port.js';
 import type { Rng } from '../contracts/rng.js';
 import type { SimSnapshot } from '../contracts/snapshot.js';
 import type { Action, ProcessRequest } from '../contracts/process.js';
@@ -108,6 +144,7 @@ import { SEC, assertSimTime, type SimTime } from '../contracts/time.js';
 import {
   DEFAULT_METRES_PER_UNIT,
   TOPOLOGY_SCHEMA_ID,
+  schemaIdFor,
   type Topology,
   type TopologyDevice,
   type TopologyDeviceUi,
@@ -139,6 +176,7 @@ import {
   type ConfigureEnv,
 } from './configure.js';
 import { buildSimSnapshot, createRenderCache } from './snapshot-cache.js';
+import { createJournalRecorder } from './journal.js';
 
 /** Trace ring capacity when `SimulationOptions.traceCapacity` is not given (turbo mode: 0). */
 export const DEFAULT_TRACE_CAPACITY = 200_000;
@@ -157,6 +195,27 @@ export const SIM_PROCESS_NAME = 'sim';
 
 /** Default number of admin toggles of a `port-flap` fault (down, then up). */
 export const DEFAULT_FLAP_COUNT = 2;
+
+/** @since P2 Cause of an `err-disable` fault whose `params.cause` is absent or not an `ErrDisableCause`. */
+export const DEFAULT_ERR_DISABLE_CAUSE: ErrDisableCause = 'fault';
+
+/** @since P2 True when `v` names an err-disable cause (`ERR_DISABLE_CAUSES`). */
+export function isErrDisableCause(v: unknown): v is ErrDisableCause {
+  return typeof v === 'string' && (ERR_DISABLE_CAUSES as readonly string[]).includes(v);
+}
+
+/** @since P2 [S1] The facade counters of a world built from nothing (`FacadeCounters`, all zero). */
+export const ZERO_FACADE_COUNTERS: FacadeCounters = Object.freeze({ traceHead: 0, sessions: 0, headless: 0, requests: 0, topologyVersion: 0 });
+
+/** @since P2 [S1] Validated copy of `SimulationOptions.resume`; throws a RangeError for a counter that is not a non-negative safe integer. */
+export function checkedFacadeCounters(c: FacadeCounters): FacadeCounters {
+  const keys = ['traceHead', 'sessions', 'headless', 'requests', 'topologyVersion'] as const;
+  for (const k of keys) {
+    const v = c[k];
+    if (!Number.isSafeInteger(v) || v < 0) throw new RangeError(`resume.${k} must be a non-negative integer, got ${String(v)}`);
+  }
+  return { traceHead: c.traceHead, sessions: c.sessions, headless: c.headless, requests: c.requests, topologyVersion: c.topologyVersion };
+}
 
 /**
  * @since P1 The allowlist behind `hostRequest` (§4.4 step 0): the daemon each GUI app request is mapped onto.
@@ -200,6 +259,8 @@ interface World {
   retained: RetainedSections;
   /** Topology-version bumps made while the world was built aside (applied when it is swapped in). */
   pendingVersionBumps: number;
+  /** @since P2 The world's defaults profile (D2); every device built into this world gets it as `DeviceSpec.profile`. */
+  readonly profile: DefaultsProfile;
 }
 
 /** Read a finite number parameter. */
@@ -244,6 +305,15 @@ function fillHardware(template: string, values: Readonly<Record<string, string>>
   return template.replace(/\{(\w+)\}/g, (whole, key: string) => values[key] ?? whole);
 }
 
+/** @since P2 The initial world's profile: `opts.profile`, default 'P1'; throws a RangeError for anything else. */
+function initialProfile(profile: DefaultsProfile | undefined): DefaultsProfile {
+  if (profile === undefined) return 'P1';
+  if (!DEFAULTS_PROFILES.includes(profile)) {
+    throw new RangeError(`profile must be one of ${DEFAULTS_PROFILES.join(', ')}, got ${String(profile)}`);
+  }
+  return profile;
+}
+
 /** Validated and deep-copied GUI state; throws a readable error for an invalid value. */
 function checkedUi(ui: TopologyDeviceUi): TopologyDeviceUi {
   const r = deviceUiSchema.safeParse(ui);
@@ -260,17 +330,24 @@ export function createSimulation(opts: SimulationOptions): Simulation {
   if (!Number.isSafeInteger(seed)) throw new RangeError(`seed must be a safe integer, got ${seed}`);
   const mode: FidelityMode = opts.mode ?? 'simulation';
   const capacity = opts.traceCapacity ?? (mode === 'turbo' ? 0 : DEFAULT_TRACE_CAPACITY);
-  const ring = createTraceRing(capacity);
+  // [S1] a replay resumes the facade counters of its origin (§2.13): the ring starts at the live trace head.
+  const resume: FacadeCounters = opts.resume === undefined ? ZERO_FACADE_COUNTERS : checkedFacadeCounters(opts.resume);
+  const pduRegistryLimit = opts.pduRegistryLimit ?? PDU_REGISTRY_LIMIT;
+  if (!Number.isSafeInteger(pduRegistryLimit) || pduRegistryLimit < 0) {
+    throw new RangeError(`pduRegistryLimit must be a non-negative integer, got ${String(pduRegistryLimit)}`);
+  }
+  const ring = createTraceRing(capacity, resume.traceHead);
   const listeners: ((ev: TraceEvent) => void)[] = [];
-  const catalog: DeviceCatalog = createCatalog(PROCESS_FACTORIES);
+  /** P2 §0 rule 13: `opts.catalog` (tests and tooling only) replaces the built-in catalog everywhere. */
+  const catalog: DeviceCatalog = opts.catalog ?? createCatalog(PROCESS_FACTORIES);
+  const profile0 = initialProfile(opts.profile);
   const renderCache = createRenderCache();
   /** P1 live captures (`c_<n>`); also the link model's tap. Cleared by `loadTopology` (captures die with the world). */
   const hub = createCaptureHub();
-  let topologyVersion = 0;
+  let topologyVersion = resume.topologyVersion;
   let cliRef: CliRuntime | undefined;
   /** `hostRequest` ticket counter (`r_<n>`, never the rng); it keeps counting across `loadTopology`. */
-  let requestCounter = 0;
-
+  let requestCounter = resume.requests;
   /** The trace sink every module writes to: ring, listeners, debug → CLI, config events → render cache. */
   const sink: TraceSink = {
     emit(ev: TraceEvent): void {
@@ -284,8 +361,9 @@ export function createSimulation(opts: SimulationOptions): Simulation {
     },
   };
 
-  let world: World = makeWorld(DEFAULT_METRES_PER_UNIT);
+  let world: World = makeWorld(DEFAULT_METRES_PER_UNIT, profile0);
 
+  /** The CLI core counts the console/vty sessions (`s_<n>`) and headless runs (`h_<n>`), seeded from `resume` ([S1]). */
   const cliCore = createCliRuntime({
     device: (id) => world.devices.get(id),
     catalog,
@@ -293,7 +371,22 @@ export function createSimulation(opts: SimulationOptions): Simulation {
     now: () => world.scheduler.now,
     radioView: (ref) => world.media.links.radioPortView(ref),
     airView: (device) => world.media.links.airView(device),
+    resume: { sessions: resume.sessions, headless: resume.headless },
   });
+
+  // [S1] ── facade counters and the input journal (file header; sim/journal.ts) ──────────────────────────────────
+  /** The world's position: events popped by its scheduler, and its sim time (§2.13 `JournalPosition`). */
+  const position = (): JournalPosition => ({ dispatched: world.scheduler.dispatched, now: world.scheduler.now });
+  /** The counters a replay must start from so ids and cursors match this world. */
+  const counters = (): FacadeCounters => {
+    const cli = cliCore.counters();
+    return { traceHead: ring.head, sessions: cli.sessions, headless: cli.headless, requests: requestCounter, topologyVersion };
+  };
+  const journalOrigin = (profile: DefaultsProfile, topology: Topology | null): JournalOrigin => ({ seed, mode, profile, topology, counters: counters() });
+  const recorder = createJournalRecorder({ position, traceHead: () => ring.head }, journalOrigin(profile0, null), opts.journal ?? true);
+  /** Run a mutating facade call: recorded as `op` when outermost (sim/journal.ts). */
+  const apply = <T>(op: JournalOp, fn: () => T): T => recorder.apply(op, fn);
+  // [S1] ── end ───────────────────────────────────────────────────────────────────────────────────────────────────
 
   /**
    * Device operations without a time argument (`applyConfigLine`, table clears) stamp the device's last dispatched
@@ -304,50 +397,59 @@ export function createSimulation(opts: SimulationOptions): Simulation {
     if (dev !== undefined) dev.applyActions(SIM_PROCESS_NAME, [], world.scheduler.now);
   }
 
-  /** The CLI runtime as exposed by the facade: calls that act on a device first sync that device's clock. */
+  /**
+   * The CLI runtime as exposed by the facade: calls that act on a device first sync that device's clock. [S1] The
+   * mutating calls (open, close, exec, interrupt, configure) are journaled when outermost; a `userCommand` dispatch
+   * or `sim.configure` reaches them nested and records nothing more.
+   */
   const cli: CliRuntime = {
     onOutput: (session, text, now) => cliCore.onOutput(session, text, now),
     onDone: (session, now) => cliCore.onDone(session, now),
     onDebugEvent: (ev) => cliCore.onDebugEvent(ev),
-    open: (device, via) => cliCore.open(device, via),
-    close: (id) => cliCore.close(id),
-    exec(id, line) {
-      const s = cliCore.session(id);
-      if (s !== undefined) syncClock(world.devices.get(s.device));
-      return cliCore.exec(id, line);
-    },
+    open: (device, via) =>
+      apply({ op: 'cliOpen', device, via }, () => cliCore.open(device, via)),
+    close: (id) => apply({ op: 'cliClose', session: id }, () => cliCore.close(id)),
+    exec: (id, line) =>
+      apply({ op: 'cliExec', session: id, line }, () => {
+        const s = cliCore.session(id);
+        if (s !== undefined) syncClock(world.devices.get(s.device));
+        return cliCore.exec(id, line);
+      }),
     complete: (id, partial) => cliCore.complete(id, partial),
     help: (id, partial) => cliCore.help(id, partial),
-    interrupt(id) {
-      const s = cliCore.session(id);
-      if (s !== undefined) syncClock(world.devices.get(s.device));
-      cliCore.interrupt(id);
-    },
+    interrupt: (id) =>
+      apply({ op: 'cliInterrupt', session: id }, () => {
+        const s = cliCore.session(id);
+        if (s !== undefined) syncClock(world.devices.get(s.device));
+        cliCore.interrupt(id);
+      }),
     session: (id) => cliCore.session(id),
     sessions: () => cliCore.sessions(),
     canOpen: (device, via) => cliCore.canOpen(device, via),
-    configure(device, commands, options) {
-      syncClock(world.devices.get(device));
-      try {
-        return cliCore.configure(device, commands, options);
-      } finally {
-        renderCache.invalidate(device);
-      }
-    },
+    configure: (device, commands, options) =>
+      apply(options === undefined ? { op: 'configure', device, commands } : { op: 'configure', device, commands, opts: options }, () => {
+        syncClock(world.devices.get(device));
+        try {
+          return cliCore.configure(device, commands, options);
+        } finally {
+          renderCache.invalidate(device);
+        }
+      }),
     onPortsRemoved: (device, ports) => cliCore.onPortsRemoved(device, ports),
+    counters: () => cliCore.counters(),
   };
   cliRef = cli;
 
   // ── world construction ────────────────────────────────────────────────────
 
-  function makeWorld(metresPerUnit: number): World {
+  function makeWorld(metresPerUnit: number, profile: DefaultsProfile): World {
     const scheduler = createTrackedScheduler();
     const rng = createRng(seed);
     const registry = new Map<PduId, Pdu>();
     const pdus = createPduFactory({
       onCreate: (pdu) => {
         registry.set(pdu.id, pdu);
-        if (registry.size > PDU_REGISTRY_LIMIT) {
+        if (registry.size > pduRegistryLimit) {
           // ids are monotonic, so the first key in insertion order is the oldest
           const oldest = registry.keys().next();
           if (oldest.done !== true) registry.delete(oldest.value);
@@ -372,6 +474,7 @@ export function createSimulation(opts: SimulationOptions): Simulation {
       metresPerUnit,
       retained: {},
       pendingVersionBumps: 0,
+      profile,
     };
   }
 
@@ -506,6 +609,8 @@ export function createSimulation(opts: SimulationOptions): Simulation {
     if (spec.startupConfig !== undefined) dspec.startupConfig = spec.startupConfig;
     if (spec.runningConfig !== undefined) dspec.runningConfig = spec.runningConfig;
     if (ui !== undefined) dspec.ui = ui;
+    // P2 (D2): the world's profile, written only when it is not the default 'P1' (optional by meaning).
+    if (w.profile !== 'P1') dspec.profile = w.profile;
     const dev = createDevice(dspec, deviceDeps(w, id), w.scheduler.now);
     w.macBases.set(deviceMacBase(id, macSalt), id);
     w.devices.set(id, dev);
@@ -620,19 +725,26 @@ export function createSimulation(opts: SimulationOptions): Simulation {
 
   function loadTopology(t: Topology): void {
     const topo = prepareTopologyLoad(t, catalog);
-    const next = makeWorld(topo.canvas?.metresPerUnit ?? DEFAULT_METRES_PER_UNIT);
-    try {
-      populate(next, topo);
-    } catch (e) {
-      if (e instanceof TopologyLoadError) throw e;
-      throw topologyLoadError([{ message: e instanceof Error ? e.message : String(e) }]);
-    }
-    for (const s of cli.sessions()) cli.close(s.id);
-    world = next;
-    hub.clear();
-    renderCache.clear();
-    topologyVersion += 1 + next.pendingVersionBumps;
-    next.pendingVersionBumps = 0;
+    // [S1] the new journal's origin holds the document as given and the counters from BEFORE the load (§2.13);
+    // nothing inside records.
+    const origin = journalOrigin(topo.profile ?? 'P1', structuredClone(t));
+    recorder.nested(() => {
+      // D2: the world takes the document's profile; a 1.1 document never carries one (io/schema.ts strips it).
+      const next = makeWorld(topo.canvas?.metresPerUnit ?? DEFAULT_METRES_PER_UNIT, topo.profile ?? 'P1');
+      try {
+        populate(next, topo);
+      } catch (e) {
+        if (e instanceof TopologyLoadError) throw e;
+        throw topologyLoadError([{ message: e instanceof Error ? e.message : String(e) }]);
+      }
+      for (const s of cli.sessions()) cli.close(s.id);
+      world = next;
+      hub.clear();
+      renderCache.clear();
+      topologyVersion += 1 + next.pendingVersionBumps;
+      next.pendingVersionBumps = 0;
+    });
+    recorder.reset(origin);
   }
 
   function exportTopology(): Topology {
@@ -682,6 +794,11 @@ export function createSimulation(opts: SimulationOptions): Simulation {
     if (w.retained.notes !== undefined) topo.notes = w.retained.notes;
     if (w.metresPerUnit !== DEFAULT_METRES_PER_UNIT) topo.canvas = { metresPerUnit: w.metresPerUnit };
     if (w.retained.lab !== undefined) topo.lab = { ...w.retained.lab };
+    // P2 (D2, §2.9): `profile` only for a P2 world, and then the schema that can express it (1.2), in the same step.
+    if (w.profile === 'P2') {
+      topo.profile = 'P2';
+      topo.schema = schemaIdFor(topo);
+    }
     return topo;
   }
 
@@ -768,6 +885,18 @@ export function createSimulation(opts: SimulationOptions): Simulation {
         if (device === undefined || dev === undefined || dev.bootedAt === undefined) return;
         const commands = configFragmentCommands(params);
         if (commands !== undefined) configureDevice(configureEnv, device, commands, CONFIG_FRAGMENT_OPTIONS);
+        return;
+      }
+      case 'err-disable': {
+        // P2 §3.8 step 7: the same effects as an `errDisable` action, through the runtime's fault path.
+        const { device, port } = fault.target;
+        if (device === undefined || port === undefined) return;
+        const dev = w.devices.get(device);
+        if (dev === undefined) return;
+        const r = resolvePortRef(w, { device, port });
+        if (!r.ok) return;
+        const cause = params?.['cause'];
+        dev.errDisablePort(r.ref.port, isErrDisableCause(cause) ? cause : DEFAULT_ERR_DISABLE_CAUSE, now);
         return;
       }
       default:
@@ -927,33 +1056,43 @@ export function createSimulation(opts: SimulationOptions): Simulation {
     get catalog(): DeviceCatalog {
       return catalog;
     },
+    get profile(): DefaultsProfile {
+      return world.profile;
+    },
+    // [S1] ── position and journal (structured-clone copies; sim/journal.ts) ──
+    position,
+    journal: (): SimJournal => recorder.journal(),
+    // [S1] ── end ──
     device: (id) => world.devices.get(id),
     devices: () => Array.from(world.devices.values()),
 
     loadTopology,
     exportTopology,
-    addDevice: (spec) => addDeviceTo(world, spec),
-    removeDevice,
-    renameDevice(id: DeviceId, name: string): void {
-      const dev = requireDevice(id);
-      const clean = name.trim();
-      if (clean === '' || /\s/.test(clean)) throw new Error('A device name must be a single word.');
-      dev.spec.name = clean;
-      syncClock(dev);
-      const r = dev.applyConfigLine([], ['hostname', clean], false);
-      renderCache.invalidate(id);
-      if (!r.ok) throw new Error(r.error ?? 'The new name was rejected.');
-    },
-    moveDevice(id: DeviceId, position: { x: number; y: number }): void {
-      const dev = requireDevice(id);
-      const w = world;
-      dev.spec.position = roundPosition(position);
-      sink.emit({ t: w.scheduler.now, kind: 'topologyChanged', what: 'device', id, op: 'move' });
-      w.media.scheduleMove(id, w.scheduler.now);
-    },
-    setPower(id: DeviceId, on: boolean): void {
-      requireDevice(id).setPower(on, world.scheduler.now);
-    },
+    addDevice: (spec) => apply({ op: 'addDevice', spec }, () => addDeviceTo(world, spec)),
+    removeDevice: (id) => apply({ op: 'removeDevice', id }, () => removeDevice(id)),
+    renameDevice: (id: DeviceId, name: string): void =>
+      apply({ op: 'renameDevice', id, name }, () => {
+        const dev = requireDevice(id);
+        const clean = name.trim();
+        if (clean === '' || /\s/.test(clean)) throw new Error('A device name must be a single word.');
+        dev.spec.name = clean;
+        syncClock(dev);
+        const r = dev.applyConfigLine([], ['hostname', clean], false);
+        renderCache.invalidate(id);
+        if (!r.ok) throw new Error(r.error ?? 'The new name was rejected.');
+      }),
+    moveDevice: (id: DeviceId, to: { x: number; y: number }): void =>
+      apply({ op: 'moveDevice', id, position: to }, () => {
+        const dev = requireDevice(id);
+        const w = world;
+        dev.spec.position = roundPosition(to);
+        sink.emit({ t: w.scheduler.now, kind: 'topologyChanged', what: 'device', id, op: 'move' });
+        w.media.scheduleMove(id, w.scheduler.now);
+      }),
+    setPower: (id: DeviceId, on: boolean): void =>
+      apply({ op: 'setPower', id, on }, () => {
+        requireDevice(id).setPower(on, world.scheduler.now);
+      }),
     validateLink(spec: AddLinkSpec): CableValidation {
       const w = world;
       const a = resolvePortRef(w, spec.a);
@@ -962,21 +1101,23 @@ export function createSimulation(opts: SimulationOptions): Simulation {
       if (!b.ok) return { ok: false, reason: b.reason };
       return w.media.links.validate(a.ref, b.ref, spec.media ?? 'auto', spec.lengthM ?? DEFAULT_LINK_LENGTH_M);
     },
-    addLink: (spec) => addLinkTo(world, spec),
-    removeLink: (id) => removeLinkIn(world, id),
-    setImpairments,
+    addLink: (spec) => apply({ op: 'addLink', spec }, () => addLinkTo(world, spec)),
+    removeLink: (id) => apply({ op: 'removeLink', id }, () => removeLinkIn(world, id)),
+    setImpairments: (id, imp) => apply({ op: 'setImpairments', id, imp }, () => setImpairments(id, imp)),
     link: (id: LinkId): LinkState | undefined => world.media.links.get(id),
-    injectFault(at: SimTime, fault: FaultSpec): void {
-      assertSimTime(at, 'injectFault(at)');
-      world.scheduler.schedule(at, { kind: 'fault', fault });
-    },
+    injectFault: (at: SimTime, fault: FaultSpec): void =>
+      apply({ op: 'injectFault', at, fault }, () => {
+        assertSimTime(at, 'injectFault(at)');
+        world.scheduler.schedule(at, { kind: 'fault', fault });
+      }),
 
-    runUntil: (t: SimTime, options?: RunOptions) => run.runUntil(t, options),
-    runFor: (dt: SimTime, options?: RunOptions) => run.runFor(dt, options),
-    step: () => run.step(),
-    runToIdle: (maxEvents: number = DEFAULT_MAX_IDLE_EVENTS): RunStats => run.runToIdle(maxEvents),
+    // time: never journaled (a replay reaches positions by event count), but nested so no dispatch records
+    runUntil: (t: SimTime, options?: RunOptions) => recorder.nested(() => run.runUntil(t, options)),
+    runFor: (dt: SimTime, options?: RunOptions) => recorder.nested(() => run.runFor(dt, options)),
+    step: () => recorder.nested(() => run.step()),
+    runToIdle: (maxEvents: number = DEFAULT_MAX_IDLE_EVENTS): RunStats => recorder.nested(() => run.runToIdle(maxEvents)),
     nextEventTime: () => run.nextEventTime(),
-    stepToNext: (filter, options) => run.stepToNext(filter, options),
+    stepToNext: (filter, options) => recorder.nested(() => run.stepToNext(filter, options)),
 
     snapshot(options?: SnapshotOptions): SimSnapshot {
       const w = world;
@@ -990,6 +1131,7 @@ export function createSimulation(opts: SimulationOptions): Simulation {
         sessions: cli.sessions(),
         pduCount: w.pdus.created,
         pendingEvents: w.scheduler.size,
+        profile: w.profile,
       };
       return buildSimSnapshot(options?.devices === undefined ? input : { ...input, subset: options.devices });
     },
@@ -998,27 +1140,28 @@ export function createSimulation(opts: SimulationOptions): Simulation {
     onTrace: addListener,
     traceQuery: (q) => run.traceQuery(q),
 
-    configure(device: DeviceId, commands: readonly string[], options?: ConfigureOptions): ConfigureResult {
-      return configureDevice(configureEnv, device, commands, options);
-    },
-    insertModule(device: DeviceId, slot: SlotId, module: ModuleType): HardwareResult {
-      return insertModuleOp(configureEnv, device, slot, module);
-    },
-    removeModule(device: DeviceId, slot: SlotId): HardwareResult {
-      return removeModuleOp(configureEnv, device, slot);
-    },
-    setDeviceUi(device: DeviceId, ui: TopologyDeviceUi): void {
-      requireDevice(device).spec.ui = checkedUi(ui);
-    },
-    setCanvasScale(metresPerUnit: number): void {
-      if (typeof metresPerUnit !== 'number' || !Number.isFinite(metresPerUnit) || metresPerUnit <= 0 || metresPerUnit > MAX_METRES_PER_UNIT) {
-        throw new RangeError(`metresPerUnit must be greater than 0 and at most ${MAX_METRES_PER_UNIT}, got ${metresPerUnit}`);
-      }
-      const w = world;
-      w.metresPerUnit = metresPerUnit;
-      w.media.setScale(metresPerUnit, w.scheduler.now);
-    },
-    hostRequest,
+    configure: (device: DeviceId, commands: readonly string[], options?: ConfigureOptions): ConfigureResult =>
+      apply(options === undefined ? { op: 'configure', device, commands } : { op: 'configure', device, commands, opts: options }, () =>
+        configureDevice(configureEnv, device, commands, options),
+      ),
+    insertModule: (device: DeviceId, slot: SlotId, module: ModuleType): HardwareResult =>
+      apply({ op: 'insertModule', device, slot, module }, () => insertModuleOp(configureEnv, device, slot, module)),
+    removeModule: (device: DeviceId, slot: SlotId): HardwareResult =>
+      apply({ op: 'removeModule', device, slot }, () => removeModuleOp(configureEnv, device, slot)),
+    setDeviceUi: (device: DeviceId, ui: TopologyDeviceUi): void =>
+      apply({ op: 'setDeviceUi', device, ui }, () => {
+        requireDevice(device).spec.ui = checkedUi(ui);
+      }),
+    setCanvasScale: (metresPerUnit: number): void =>
+      apply({ op: 'setCanvasScale', metresPerUnit }, () => {
+        if (typeof metresPerUnit !== 'number' || !Number.isFinite(metresPerUnit) || metresPerUnit <= 0 || metresPerUnit > MAX_METRES_PER_UNIT) {
+          throw new RangeError(`metresPerUnit must be greater than 0 and at most ${MAX_METRES_PER_UNIT}, got ${metresPerUnit}`);
+        }
+        const w = world;
+        w.metresPerUnit = metresPerUnit;
+        w.media.setScale(metresPerUnit, w.scheduler.now);
+      }),
+    hostRequest: (device, req) => apply({ op: 'hostRequest', device, req }, () => hostRequest(device, req)),
 
     startCapture: (spec: CaptureSpec): CaptureId => hub.start(spec, resolveCapturePoints(spec, captureResolver)).id,
     stopCapture(id: CaptureId): void {

@@ -154,6 +154,15 @@ export interface BssSnapshot {
   /** Co-channel BSSs sharing airtime with this one. */
   contention: MediumId[];
   busyUntil: SimTime;
+  // ── P2 (wireless; each optional by meaning: present only when not the default) ──
+  /** @since P2 (optional by meaning) BSS index on its radio; absent = 0. */
+  index?: number;
+  /** @since P2 (optional by meaning) Controller WLAN id. */
+  wlanId?: number;
+  /** @since P2 (optional by meaning) VLAN the WLAN maps to. */
+  vlan?: number;
+  /** @since P2 (optional by meaning) Present only for a centrally switched BSS. */
+  switching?: 'central';
 }
 
 export interface CellSnapshot {

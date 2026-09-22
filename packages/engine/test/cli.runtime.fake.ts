@@ -18,7 +18,7 @@ import type { TraceEvent, TraceSink } from '../src/contracts/trace.js';
 import { emptyCounters } from '../src/contracts/port.js';
 import { createConfigAst } from '../src/cli/config-ast.js';
 import { deriveCliSpec } from '../src/device/catalog/define.js';
-import { portStateFields, testModel, type TestPortInput, p0Tables } from './port.fixtures.js';
+import { P2_DEVICE, portStateFields, testModel, type TestPortInput, p0Tables } from './port.fixtures.js';
 
 export interface ConfigCall {
   context: string[][];
@@ -184,6 +184,9 @@ export class FakeDevice implements DeviceRuntime {
   rejectConfig: string | undefined = undefined;
   readonly capabilities: readonly Capability[];
   portsVersion = 0;
+  // P2 (ARCHITECTURE-P2 §9.2 W1 item 7): the required runtime members, copied from P2_DEVICE.
+  readonly profile = P2_DEVICE.profile;
+  errDisablePort = P2_DEVICE.errDisablePort;
 
   constructor(readonly id: DeviceId, kind: FakeKind, hostname: string) {
     this.model = MODELS[kind];

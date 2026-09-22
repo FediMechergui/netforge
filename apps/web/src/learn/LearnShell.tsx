@@ -20,15 +20,71 @@
  * no worker round trip and nothing of it copied into the store, which holds two ids and nothing more.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { COURSES, courseById, lessonById, lessonsOf, type Course, type Lesson, type ScenarioMeta } from '@netforge/engine';
-import { engine } from '../bridge/client';
+import {
+  COURSES,
+  courseById,
+  lessonById,
+  lessonsOf,
+  type Course,
+  type DefaultsProfile,
+  type Lesson,
+  type ScenarioMeta,
+  type SimSnapshot,
+} from '@netforge/engine';
+import { defaultSeed, engine } from '../bridge/client';
 import { loadLab } from '../labs/LabPanel';
 import { showDockTab } from '../shared/openDeviceSurface';
 import { useStore } from '../store/store';
+import type { WorkspaceView } from '../store/types';
+import { sandboxEntryProfile } from './course-profile';
 import { CourseView } from './CourseView';
 import { Landing } from './Landing';
 import { LessonView, type LessonLink } from './LessonView';
 import './learn.css';
+
+// ── P2 (ARCHITECTURE-P2 D2, §2.14; W2 web-shell): the course context of the sandbox ───────────────────────────────
+// The shell records the course of the lesson being read (`learn.lastCourse`, persisted: what a new world at app
+// start or File → New takes its defaults profile from), and when the learner steps into the sandbox from the course
+// layer while the world is still empty, rebuilds it with the profile of the course they are in — so a CCNA 1 lesson
+// that says "drag two PCs and a switch and ping" still pings at once. A world with devices in it is never touched.
+
+/**
+ * @since P2 The course context of a sandbox entry: the course of the lesson being read, or of the course page being
+ * browsed; null from the landing page (no course chosen) or when the ids name nothing the catalogue knows.
+ */
+export function sandboxEntryCourse(view: WorkspaceView | undefined, course: Course | undefined, lesson: Lesson | undefined): string | null {
+  if (view === 'lesson') return lesson === undefined ? null : (course?.id ?? null);
+  if (view === 'course') return course?.id ?? null;
+  return null;
+}
+
+/** What `enterSandbox` needs from the app (injected so the rule can be tested without a worker). */
+export interface SandboxEntryDeps {
+  /** The world as the store mirrors it. */
+  snapshot(): Pick<SimSnapshot, 'devices' | 'profile'> | null | undefined;
+  /** A seed for the rebuilt world. */
+  seed(): number;
+  /** `EngineApi.reset` with the profile of the course context. */
+  reset(seed: number, profile: DefaultsProfile): Promise<unknown>;
+}
+
+const liveDeps: SandboxEntryDeps = {
+  snapshot: () => useStore.getState().snapshot,
+  seed: () => defaultSeed(),
+  reset: (seed, profile) => engine.reset(seed, profile),
+};
+
+/**
+ * @since P2 Entering the sandbox from the course layer (D2): an empty world whose profile is not the course context's
+ * is rebuilt with that profile under a fresh seed; a world with devices placed, the right profile already, no course
+ * context or no snapshot yet is left exactly as it is. Resolves with the profile the world was rebuilt with, or null.
+ */
+export async function enterSandbox(courseId: string | null, deps: SandboxEntryDeps = liveDeps): Promise<DefaultsProfile | null> {
+  const profile = sandboxEntryProfile({ courseId, snapshot: deps.snapshot() });
+  if (profile === null) return null;
+  await deps.reset(deps.seed(), profile);
+  return profile;
+}
 
 /** The lessons either side of one, in course order; nulls at the two ends. */
 export function neighbours(course: Course | undefined, lessonId: string): { readonly previous: LessonLink | null; readonly next: LessonLink | null } {
@@ -49,6 +105,7 @@ export function LearnShell() {
   const showLearn = useStore((s) => s.showLearn);
   const setView = useStore((s) => s.setView);
   const setLab = useStore((s) => s.setLab);
+  const setLastCourse = useStore((s) => s.setLastCourse);
   const [scenarios, setScenarios] = useState<readonly ScenarioMeta[]>([]);
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -57,6 +114,23 @@ export function LearnShell() {
   const lesson = view === 'lesson' && learn?.lessonId != null ? lessonById(learn.lessonId) : undefined;
   const course = (learn?.courseId != null ? courseById(learn.courseId) : undefined) ?? (lesson === undefined ? undefined : courseOfLesson(lesson.id));
   const labName = lesson?.lab;
+
+  // D2: the course of the lesson being read is the course context of the next new world (persisted).
+  useEffect(() => {
+    if (lesson !== undefined && course !== undefined) setLastCourse?.(course.id);
+  }, [lesson, course, setLastCourse]);
+
+  // D2: into the sandbox with the world prepared for the course the learner is in (an empty world only); the view
+  // switches once the world is ready, or as it was when the engine refused, with a note that says so.
+  const openSandbox = useCallback(async (): Promise<void> => {
+    setMessage(null);
+    try {
+      await enterSandbox(sandboxEntryCourse(view, course, lesson));
+    } catch {
+      setMessage('The sandbox could not be prepared for this course; it opens as it was.');
+    }
+    setView?.('topology');
+  }, [view, course, lesson, setView]);
 
   // Same element, different page: React reuses `main.learn-scroll` across a move between surfaces, so its
   // scrollTop survives and the button that was clicked is unmounted under the pointer. Start the new page at the
@@ -151,7 +225,7 @@ export function LearnShell() {
           ))}
         </nav>
         <span className="spacer" />
-        <button type="button" className="btn" onClick={() => setView?.('topology')}>
+        <button type="button" className="btn" onClick={() => void openSandbox()}>
           Open the sandbox
         </button>
       </header>
@@ -177,7 +251,7 @@ export function LearnShell() {
         ) : (
           <Landing
             onOpenCourse={(courseId) => showLearn?.('course', { courseId })}
-            onOpenSandbox={() => setView?.('topology')}
+            onOpenSandbox={() => void openSandbox()}
           />
         )}
       </main>

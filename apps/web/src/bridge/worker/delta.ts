@@ -9,6 +9,8 @@
  *   linkState, phyNegotiated → "links changed" plus both link ends,
  *   segmentChanged → "links changed" plus every member device,
  *   collision → every station.
+ * P2 (ARCHITECTURE-P2 §2.7, §6): a `drop` flagged `background` (a BPDU a host discards, a keepalive) marks nothing —
+ * it changes no table and no state a delta would carry, and marking would refresh every host twice a second.
  * API calls whose effect may emit no dirtying event mark their targets explicitly (`markDevices`, `markLinks`).
  *
  * A delta is valid only while the store's topologyVersion equals the snapshot's; the batcher sends a full snapshot
@@ -75,7 +77,7 @@ export function createDirtyTracker(linkEnds: LinkEndsResolver): DirtyTracker {
           mark(ev.device);
           return;
         case 'drop':
-          mark(ev.device);
+          if (ev.background !== true) mark(ev.device);
           return;
         case 'debug':
           mark(ev.event.device);

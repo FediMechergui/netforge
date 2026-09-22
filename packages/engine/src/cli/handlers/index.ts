@@ -23,13 +23,44 @@ import { hostNetHandlers } from './host-net.js';
 import { ipv6Handlers } from './ipv6.js';
 import { lineAuthHandlers } from './line-auth.js';
 import { pcHandlers } from './pc.js';
+import { routingHandlers } from './routing.js';
 import { serialHandlers } from './serial.js';
 import { servicesHandlers } from './services.js';
 import { showHandlers } from './show.js';
-import { switchportHandlers } from './switchport.js';
+import { subifHandlers } from './subif.js';
+import { switchportHandlers, switchportP2Handlers } from './switchport.js';
 import { tracerouteHandlers } from './traceroute.js';
 import { transportHandlers } from './transport.js';
+import { vlanHandlers } from './vlan.js';
 import { wirelessHandlers } from './wireless.js';
+import { spanningTreeHandlers } from './spanning-tree.js';
+import { etherchannelHandlers } from './etherchannel.js';
+import { portSecurityHandlers } from './port-security.js';
+import { errdisableHandlers } from './errdisable.js';
+import { natHandlers } from './nat.js';
+import { aclHandlers } from './acl.js';
+import { dhcpv6Handlers } from './dhcpv6.js';
+import { hsrpHandlers } from './hsrp.js';
+
+/**
+ * @since P2 (ARCHITECTURE-P2 §7 W2 and W3 cli) The handlers of the P2 fragments (`P2_HANDLERS` ids): VLANs, the P2
+ * switchport lines and switching show commands, subinterfaces and ranges, the routing switches (W2); spanning tree,
+ * EtherChannel, port security, err-disable recovery, NAT, access lists, DHCPv6 and [S2] HSRP (W3).
+ */
+export const P2_HANDLER_REGISTRY: Record<string, CommandHandler> = {
+  ...vlanHandlers,
+  ...switchportP2Handlers,
+  ...subifHandlers,
+  ...routingHandlers,
+  ...spanningTreeHandlers,
+  ...etherchannelHandlers,
+  ...portSecurityHandlers,
+  ...errdisableHandlers,
+  ...natHandlers,
+  ...aclHandlers,
+  ...dhcpv6Handlers,
+  ...hsrpHandlers,
+};
 
 /** Handler id → handler, for every command in the grammar that needs no runtime binding. */
 export const HANDLER_REGISTRY: Record<string, CommandHandler> = {
@@ -49,4 +80,5 @@ export const HANDLER_REGISTRY: Record<string, CommandHandler> = {
   ...transportHandlers,
   ...tracerouteHandlers,
   ...lineAuthHandlers,
+  ...P2_HANDLER_REGISTRY,
 };

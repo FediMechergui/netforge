@@ -27,6 +27,20 @@
  *  - `parseConfigText` rebuilds a tree from text through the shared indentation walker
  *    (cli/config-text.ts) such that `parseConfigText(ast.render()).render() === ast.render()`.
  *
+ * P2 (ARCHITECTURE-P2 §5, D2; W1 cli):
+ *  - identity is per rule: a single-valued line replaces (and an identity-only `no` form removes) only a node whose own
+ *    rule has the same identity length (`switchport port-security` never replaces `switchport port-security maximum 2`);
+ *    the identity-only default line of a stored-negation rule (`switchport`, `keepalive`) clears only nodes of its own
+ *    rule, so `switchport` keeps `switchport mode …`; `no switchport` still removes every `switchport …` child;
+ *  - `bothForms` rules (`ip routing`): the line and its `no` form share one slot and each is
+ *    stored as typed (the negation as a `no …` node, the shape the runtime already stores for a global negation);
+ *  - VLAN lists (`<vlan-list>` rules, cli/config-rules.ts): `vlan 10,20` stores the sections `vlan 10` and `vlan 20`,
+ *    and a line typed under `vlan 10,20` applies to each;
+ *  - the completeness rule: `apply(context, line, negate, {defaults})` with the device's default slots stores
+ *    explicitly a line that would leave a default slot empty, and restores the default line for
+ *    `negationRestoresDefault` rules (`slotKeyOf`, `defaultSlotsOf`, `DefaultSlots`). Without `defaults`, `apply` is
+ *    exactly `set` / `unset`.
+ *
  * Storage conventions (shared with every process that consumes `ConfigDelta`):
  *  - a line of a rule with `group` (`ip address A M` under an interface) is stored as a group node
  *    `ip` (no args) with a child `address` whose args are `[A, M]` (path `ip.address`);
@@ -46,9 +60,12 @@ import type {
   ConfigRenderSlot,
   ConfigRuleSet,
   ConfigTreeChange,
+  DefaultSlots,
 } from '../contracts/config.js';
 import {
   DEFAULT_CONFIG_RULES,
+  expandVlanListContext,
+  expandVlanListLine,
   groupKeysOf,
   isNegationDefaultLine,
   normalizeConfigLine,
@@ -56,6 +73,9 @@ import {
   ruleIdentity,
 } from './config-rules.js';
 import { walkConfigText } from './config-text.js';
+
+/** @since P2 The default slots of a device (declared in contracts/config.ts; re-exported, never redeclared). */
+export type { DefaultSlots } from '../contracts/config.js';
 
 /** First rendered line — an original NetForge comment, never vendor text. */
 export const CONFIG_HEADER_COMMENT = '! NetForge NFOS configuration';
@@ -300,17 +320,56 @@ class ConfigAstImpl implements ConfigAst {
     return group === undefined ? [node.key, ...node.args] : [group, node.key, ...node.args];
   }
 
-  /** Remove every node of `container` whose first `ident` tokens equal `norm`'s; returns their value args. */
-  private removeIdentity(container: ConfigNode, norm: readonly string[], ident: number, group: string | undefined): string[][] {
+  /**
+   * Remove every node of `container` whose first `ident` tokens equal `norm`'s; returns their value args. With
+   * `sameRule`, only nodes whose own rule (in `context`) is that rule are removed.
+   */
+  private removeIdentity(
+    container: ConfigNode,
+    norm: readonly string[],
+    ident: number,
+    group: string | undefined,
+    sameRule?: { rule: ConfigLineRule; context: readonly (readonly string[])[] },
+  ): string[][] {
     const removed: string[][] = [];
     const kept: ConfigNode[] = [];
     for (const c of container.children) {
       const t = this.tokensOf(c, group);
-      if (c.key !== NO_KEY && prefixEqual(t, norm, ident)) removed.push(t.slice(ident));
+      const hit = c.key !== NO_KEY && prefixEqual(t, norm, ident) && (sameRule === undefined || this.rules.ruleFor(sameRule.context, t) === sameRule.rule);
+      if (hit) removed.push(t.slice(ident));
       else kept.push(c);
     }
     if (removed.length > 0) container.children.splice(0, container.children.length, ...kept);
     return removed;
+  }
+
+  /** Identity length of a stored line (`tokens`, group key included) under its own rule in `context`. */
+  private identityOf(context: readonly (readonly string[])[], tokens: readonly string[]): number {
+    return ruleIdentity(this.rules.ruleFor(context, tokens), tokens);
+  }
+
+  /** Whether `context` holds a stored `no …` node whose args are exactly `args`. */
+  private hasNegation(context: readonly (readonly string[])[], args: readonly string[]): boolean {
+    const ctxNode = this.walk(context, false);
+    return ctxNode !== undefined && ctxNode.children.some((c) => c.key === NO_KEY && sameArgs(c.args, args));
+  }
+
+  /**
+   * Whether the slot of `norm` (rule `rule`) holds a positive line: for a single-valued rule any node of the same
+   * identity under the same identity length, for a multi-valued rule the exact line.
+   */
+  private slotHasValue(context: readonly (readonly string[])[], rule: ConfigLineRule, norm: readonly string[], ident: number): boolean {
+    const ctxNode = this.walk(context, false);
+    if (ctxNode === undefined) return false;
+    const group = this.groupFor(rule, norm);
+    const container = group === undefined ? ctxNode : this.findGroup(ctxNode, group, false);
+    if (container === undefined) return false;
+    return container.children.some((c) => {
+      if (c.key === NO_KEY) return false;
+      const t = this.tokensOf(c, group);
+      if (rule.cardinality === 'multi') return sameArgs(t, norm);
+      return prefixEqual(t, norm, ident) && this.identityOf(context, t) === ident;
+    });
   }
 
   /** Remove stored `no …` nodes in `ctxNode` carrying the identity of `norm`; true when one was removed. */
@@ -357,11 +416,68 @@ class ConfigAstImpl implements ConfigAst {
   }
 
   set(context: readonly (readonly string[])[], line: readonly string[]): ConfigDelta | undefined {
+    return this.expanded(context, line, (ctx, norm) => this.setOne(ctx, norm));
+  }
+
+  unset(context: readonly (readonly string[])[], line: readonly string[]): ConfigDelta | undefined {
+    return this.expanded(context, line, (ctx, norm) => this.unsetOne(ctx, norm));
+  }
+
+  /**
+   * `set` (negate false) or `unset` (negate true) of one typed line. With `opts.defaults` (the device's default slots,
+   * ARCHITECTURE-P2 §5, D2) the completeness rule applies:
+   *  (1) a line that would leave a default slot empty is stored explicitly: the `no` form of an ordinary rule stores
+   *      `no <identity>` (a multi-valued rule: `no <line>`), the identity-only line of a stored-negation rule stores
+   *      itself (`switchport`), and a later positive line of the slot cancels that explicit negation;
+   *  (2) the `no` form of a `negationRestoresDefault` rule (`spanning-tree mode`) stores the slot's default line, or
+   *      clears the slot when it is not a default slot.
+   * Section lines are containers, not slots; `bothForms` rules need no special case (both forms are stored anyway).
+   * Without `defaults` this is exactly `set` / `unset`.
+   */
+  apply(
+    context: readonly (readonly string[])[],
+    line: readonly string[],
+    negate: boolean,
+    opts: { defaults?: DefaultSlots } = {},
+  ): ConfigDelta | undefined {
+    const defaults = opts.defaults;
+    if (defaults === undefined) return negate ? this.unset(context, line) : this.set(context, line);
+    return this.expanded(context, line, (ctx, norm) => this.applyOne(ctx, norm, negate, defaults));
+  }
+
+  /**
+   * Run `fn` over every stored (context, line) pair a typed line stands for (VLAN lists: `vlan 10,20` is two
+   * sections; a line typed under `vlan 10,20` applies to both). One pair returns its delta unchanged; several return
+   * one delta for the typed line (without `before`) when any of them changed the tree.
+   */
+  private expanded(
+    context: readonly (readonly string[])[],
+    line: readonly string[],
+    fn: (ctx: readonly (readonly string[])[], norm: readonly string[]) => ConfigDelta | undefined,
+  ): ConfigDelta | undefined {
     if (line.length === 0 || line[0] === '') return undefined;
-    const rule = this.rules.ruleFor(context, line);
-    const norm = normalizeConfigLine(context, line, this.rules);
+    const contexts = expandVlanListContext(context, this.rules);
+    let count = 0;
+    const deltas: ConfigDelta[] = [];
+    for (const ctx of contexts) {
+      const norm = normalizeConfigLine(ctx, line, this.rules);
+      for (const one of expandVlanListLine(ctx, norm, this.rules)) {
+        count++;
+        const d = fn(ctx, one);
+        if (d !== undefined) deltas.push(d);
+      }
+    }
+    if (count === 1) return deltas[0];
+    const first = deltas[0];
+    if (first === undefined) return undefined;
+    return { op: first.op, context: copyContext(context), line: normalizeConfigLine(context, line, this.rules) };
+  }
+
+  /** `set` of one normalized stored line (no VLAN list left in it or its context). */
+  private setOne(context: readonly (readonly string[])[], norm: readonly string[]): ConfigDelta | undefined {
+    const rule = this.rules.ruleFor(context, norm);
     const ctxNode = this.walk(context, true) as ConfigNode;
-    const delta: ConfigDelta = { op: 'set', context: copyContext(context), line: norm };
+    const delta: ConfigDelta = { op: 'set', context: copyContext(context), line: norm.slice() };
 
     if (rule?.section !== undefined) {
       const args = norm.slice(1);
@@ -374,12 +490,12 @@ class ConfigAstImpl implements ConfigAst {
 
     const ident = ruleIdentity(rule, norm);
     const group = this.groupFor(rule, norm);
-    const cancelled = rule?.storeNegation === true && this.cancelNegation(ctxNode, norm, ident);
+    const cancelled = (rule?.storeNegation === true || rule?.bothForms === true) && this.cancelNegation(ctxNode, norm, ident);
 
     if (isNegationDefaultLine(rule, norm)) {
-      // `switchport` / `keepalive`: the default state — clear any stored value, store nothing
+      // `switchport` / `keepalive`: the default state — clear stored values of this rule only, store nothing
       const container = group === undefined ? ctxNode : this.findGroup(ctxNode, group, false);
-      const removed = container === undefined ? [] : this.removeIdentity(container, norm, ident, group);
+      const removed = container === undefined ? [] : this.removeIdentity(container, norm, ident, group, { rule: rule as ConfigLineRule, context });
       if (container !== undefined && group !== undefined) this.dropEmptyGroup(ctxNode, container);
       if (!cancelled && removed.length === 0) return undefined;
       if (removed.length > 0) delta.before = removed[0] as string[];
@@ -394,7 +510,7 @@ class ConfigAstImpl implements ConfigAst {
       const t = this.tokensOf(c, group);
       if (!prefixEqual(t, norm, ident)) continue;
       if (sameArgs(t, norm)) return cancelled ? delta : undefined;
-      if (single && c.key === leafKey) {
+      if (single && c.key === leafKey && this.identityOf(context, t) === ident) {
         delta.before = t.slice(ident);
         c.args = leafArgs;
         return delta;
@@ -404,27 +520,32 @@ class ConfigAstImpl implements ConfigAst {
     return delta;
   }
 
-  unset(context: readonly (readonly string[])[], line: readonly string[]): ConfigDelta | undefined {
-    if (line.length === 0 || line[0] === '') return undefined;
-    const rule = this.rules.ruleFor(context, line);
-    const norm = normalizeConfigLine(context, line, this.rules);
+  /** `unset` of one normalized stored line (no VLAN list left in it or its context). */
+  private unsetOne(context: readonly (readonly string[])[], norm: readonly string[]): ConfigDelta | undefined {
+    const rule = this.rules.ruleFor(context, norm);
     const ident = ruleIdentity(rule, norm);
 
     if (isNegationDefaultLine(rule, norm) && norm[0] !== NO_KEY) {
-      // stored negation: remove positives of this identity, persist `no <identity>`
+      // stored negation: remove positives of this identity, persist `no <identity>`. The head of a family
+      // (`switchport`, a rule naming exactly its one line) removes the whole family below it; any other rule
+      // (`keepalive`, `spanning-tree vlan <v>`) removes only its own values.
       const ctxNode = this.walk(context, true) as ConfigNode;
       const group = this.groupFor(rule, norm);
       const container = group === undefined ? ctxNode : this.findGroup(ctxNode, group, false);
-      const removed = container === undefined ? [] : this.removeIdentity(container, norm, ident, group);
+      const r = rule as ConfigLineRule;
+      const familyHead = r.pattern.length === r.identity && r.pattern.every((el) => !(el.startsWith('<') && el.endsWith('>')));
+      const removed = container === undefined ? [] : this.removeIdentity(container, norm, ident, group, familyHead ? undefined : { rule: r, context });
       if (container !== undefined && group !== undefined) this.dropEmptyGroup(ctxNode, container);
       const negated = norm.slice(0, ident);
       const exists = ctxNode.children.some((c) => c.key === NO_KEY && sameArgs(c.args, negated));
       if (!exists) ctxNode.children.push({ key: NO_KEY, args: negated, children: [] });
       if (exists && removed.length === 0) return undefined;
-      const delta: ConfigDelta = { op: 'unset', context: copyContext(context), line: norm };
+      const delta: ConfigDelta = { op: 'unset', context: copyContext(context), line: norm.slice() };
       if (removed.length > 0) delta.before = removed[0] as string[];
       return delta;
     }
+
+    if (rule?.bothForms === true && rule.section === undefined) return this.unsetBothForms(context, rule, norm, ident);
 
     const ctxNode = this.walk(context, false);
     if (!ctxNode) return undefined;
@@ -434,7 +555,7 @@ class ConfigAstImpl implements ConfigAst {
       const idx = ctxNode.children.findIndex((c) => c.key === norm[0] && sameArgs(c.args, args));
       if (idx === -1) return undefined;
       ctxNode.children.splice(idx, 1);
-      return { op: 'unset', context: copyContext(context), line: norm, before: norm.slice(ident) };
+      return { op: 'unset', context: copyContext(context), line: norm.slice(), before: norm.slice(ident) };
     }
 
     const group = this.groupFor(rule, norm);
@@ -442,14 +563,16 @@ class ConfigAstImpl implements ConfigAst {
     if (!container) return undefined;
 
     // With value args: remove the one node whose tokens match exactly. Identity only: remove the
-    // single-valued node, or every node of a multi-valued identity.
+    // single-valued node of this identity (a node whose own rule has the same identity length), or every
+    // node of a multi-valued identity.
     const withArgs = norm.length > ident;
     const removeAll = !withArgs && rule?.cardinality !== 'single';
     let before: string[] | undefined;
     const kept: ConfigNode[] = [];
     for (const c of container.children) {
       const t = this.tokensOf(c, group);
-      const matches = prefixEqual(t, norm, ident) && (!withArgs || sameArgs(t, norm));
+      const matches =
+        prefixEqual(t, norm, ident) && (withArgs ? sameArgs(t, norm) : removeAll || this.identityOf(context, t) === ident);
       if (matches && (before === undefined || removeAll)) {
         if (before === undefined) before = t.slice(ident);
         continue;
@@ -459,7 +582,126 @@ class ConfigAstImpl implements ConfigAst {
     if (before === undefined) return undefined;
     container.children.splice(0, container.children.length, ...kept);
     if (group !== undefined) this.dropEmptyGroup(ctxNode, container);
-    return { op: 'unset', context: copyContext(context), line: norm, before };
+    return { op: 'unset', context: copyContext(context), line: norm.slice(), before };
+  }
+
+  /** `no` form of a `bothForms` rule: remove the positive line(s) of the identity and store `no <identity>`. */
+  private unsetBothForms(
+    context: readonly (readonly string[])[],
+    rule: ConfigLineRule,
+    norm: readonly string[],
+    ident: number,
+  ): ConfigDelta | undefined {
+    const ctxNode = this.walk(context, true) as ConfigNode;
+    const group = this.groupFor(rule, norm);
+    const container = group === undefined ? ctxNode : this.findGroup(ctxNode, group, false);
+    const removed = container === undefined ? [] : this.removeIdentity(container, norm, ident, group, { rule, context });
+    if (container !== undefined && group !== undefined) this.dropEmptyGroup(ctxNode, container);
+    const negated = norm.slice(0, ident);
+    const exists = ctxNode.children.some((c) => c.key === NO_KEY && sameArgs(c.args, negated));
+    if (!exists) ctxNode.children.push({ key: NO_KEY, args: negated, children: [] });
+    if (exists && removed.length === 0) return undefined;
+    const delta: ConfigDelta = { op: 'unset', context: copyContext(context), line: norm.slice() };
+    if (removed.length > 0) delta.before = removed[0] as string[];
+    return delta;
+  }
+
+  /** One stored line through the completeness rule (see `apply`). */
+  private applyOne(
+    context: readonly (readonly string[])[],
+    norm: readonly string[],
+    negate: boolean,
+    defaults: DefaultSlots,
+  ): ConfigDelta | undefined {
+    const rule = this.rules.ruleFor(context, norm);
+    if (rule === undefined || rule.section !== undefined || rule.bothForms === true) {
+      return negate ? this.unsetOne(context, norm) : this.setOne(context, norm);
+    }
+    const ident = ruleIdentity(rule, norm);
+    const identity = norm.slice(0, ident);
+    const def = defaults.get(slotKeyOf(context, norm, this.rules));
+
+    if (negate && rule.negationRestoresDefault === true) {
+      // (2) `no spanning-tree mode`: the device's default line, or an empty slot when the slot has none
+      if (def !== undefined && def[0] !== NO_KEY) return this.setOne(context, def);
+      return this.unsetOne(context, identity);
+    }
+    if (def === undefined) return negate ? this.unsetOne(context, norm) : this.setOne(context, norm);
+
+    if (rule.storeNegation === true) {
+      const defIsDefaultState = sameArgs(def, identity);
+      if (!negate && isNegationDefaultLine(rule, norm)) {
+        // (1) `switchport` where D fills the slot otherwise (`no switchport`): store the default line itself
+        return defIsDefaultState ? this.setOne(context, norm) : this.storeDefaultLine(context, rule, identity, ident);
+      }
+      if (negate && !isNegationDefaultLine(rule, norm)) {
+        // (1) `no keepalive 10` back to the default state where D holds another value: store `keepalive`
+        const d = this.unsetOne(context, norm);
+        if (d === undefined || defIsDefaultState) return d;
+        if (!this.slotHasValue(context, rule, norm, ident) && !this.hasNegation(context, identity)) {
+          this.storeDefaultLine(context, rule, identity, ident);
+        }
+        return d;
+      }
+      return negate ? this.unsetOne(context, norm) : this.setOne(context, norm);
+    }
+
+    const negArgs = rule.cardinality === 'multi' ? norm.slice() : identity;
+    if (!negate) {
+      // a positive line of a default slot cancels an explicit negation stored by (1)
+      const ctxNode = this.walk(context, false);
+      const cancelled = ctxNode !== undefined && this.cancelNegation(ctxNode, norm, ident);
+      const d = this.setOne(context, norm);
+      if (d === undefined && cancelled) return { op: 'set', context: copyContext(context), line: norm.slice() };
+      return d;
+    }
+    // (1) `no ip address`, `no capwap enable` where D holds a value: store `no <identity>` once the slot is empty
+    const d = this.unsetOne(context, norm);
+    if (def[0] === NO_KEY || this.slotHasValue(context, rule, norm, ident)) return d;
+    if (this.hasNegation(context, negArgs)) return d;
+    const ctxNode = this.walk(context, true) as ConfigNode;
+    ctxNode.children.push({ key: NO_KEY, args: negArgs, children: [] });
+    return d ?? { op: 'unset', context: copyContext(context), line: norm.slice() };
+  }
+
+  /**
+   * Store the identity-only line of a stored-negation rule explicitly (`switchport`): cancel its stored negation and
+   * any other value of its own rule, then keep the line itself.
+   */
+  private storeDefaultLine(
+    context: readonly (readonly string[])[],
+    rule: ConfigLineRule,
+    identity: readonly string[],
+    ident: number,
+  ): ConfigDelta | undefined {
+    const ctxNode = this.walk(context, true) as ConfigNode;
+    const cancelled = this.cancelNegation(ctxNode, identity, ident);
+    const group = this.groupFor(rule, identity);
+    const container = group === undefined ? ctxNode : (this.findGroup(ctxNode, group, true) as ConfigNode);
+    const kept: ConfigNode[] = [];
+    let before: string[] | undefined;
+    let exists = false;
+    for (const c of container.children) {
+      const t = this.tokensOf(c, group);
+      if (c.key !== NO_KEY && prefixEqual(t, identity, ident) && this.rules.ruleFor(context, t) === rule) {
+        if (sameArgs(t, identity)) {
+          exists = true;
+          kept.push(c);
+          continue;
+        }
+        if (before === undefined) before = t.slice(ident);
+        continue;
+      }
+      kept.push(c);
+    }
+    container.children.splice(0, container.children.length, ...kept);
+    if (!exists) {
+      container.children.push({ key: (group === undefined ? identity[0] : identity[1]) as string, args: identity.slice(group === undefined ? 1 : 2), children: [] });
+    }
+    if (exists && !cancelled && before === undefined) return undefined;
+    const delta: ConfigDelta = { op: 'set', context: copyContext(context), line: identity.slice() };
+    if (before !== undefined) delta.before = before;
+    return delta;
   }
 
   render(): string {
@@ -804,16 +1046,78 @@ export function applyConfigChange(ast: ConfigAst, change: ConfigTreeChange): Con
  * `no X` lines unset `X` under their context. A negation that changes nothing is kept as a `no …`
  * line at global level (e.g. `no ip domain-lookup`); in a sub-mode it is kept only when its rule has
  * `storeNegation` (`no switchport`), otherwise dropped (`no shutdown` is the default state).
+ *
+ * @since P2 With `opts.defaults` (the device's default slots, §5) every line goes through `apply` with them, so the
+ * explicit forms the completeness rule stored (`no ip address` under an interface whose default line sets one) are
+ * kept; a device parsing its saved configuration passes them. Without `defaults` parsing is exactly as before.
  */
-export function parseConfigText(text: string, rules: ConfigRuleSet = DEFAULT_CONFIG_RULES): ConfigAst {
+export function parseConfigText(
+  text: string,
+  rules: ConfigRuleSet = DEFAULT_CONFIG_RULES,
+  opts: { defaults?: DefaultSlots } = {},
+): ConfigAst {
   const ast = createConfigAst(rules);
+  const defaults = opts.defaults;
   for (const line of walkConfigText(text, rules)) {
     if (line.negate) {
-      const delta = ast.unset(line.context, line.tokens);
+      const delta = defaults === undefined ? ast.unset(line.context, line.tokens) : ast.apply(line.context, line.tokens, true, { defaults });
       if (delta === undefined && line.context.length === 0) ast.set(line.context, [NO_KEY, ...line.tokens]);
       continue;
     }
-    ast.set(line.context, line.tokens);
+    if (defaults === undefined) ast.set(line.context, line.tokens);
+    else ast.apply(line.context, line.tokens, false, { defaults });
   }
   return ast;
+}
+
+// ───────────────────────────── completeness rule (P2) ─────────────────────────────
+
+/**
+ * @since P2 (ARCHITECTURE-P2 §5) Slot key of a line under the rule table: the context path plus the rule's identity
+ * tokens — the key the AST uses to decide what a later line replaces. A single-valued rule keys on its identity
+ * (`ip address …` under one interface is one slot), a multi-valued rule, a section and a line without a rule key on
+ * the whole line. A leading `no` is ignored, so a line and its negation share their slot (`no ip routing`).
+ */
+export function slotKeyOf(
+  context: readonly (readonly string[])[],
+  line: readonly string[],
+  rules: ConfigRuleSet = DEFAULT_CONFIG_RULES,
+): string {
+  const tokens = line.length > 1 && line[0] === NO_KEY ? line.slice(1) : line;
+  const norm = normalizeConfigLine(context, tokens, rules);
+  const r = rules.ruleFor(context, norm);
+  const whole = r === undefined || r.section !== undefined || r.cardinality === 'multi';
+  const identity = whole ? norm : norm.slice(0, ruleIdentity(r, norm));
+  return JSON.stringify([context, identity]);
+}
+
+/**
+ * @since P2 (ARCHITECTURE-P2 §5, D2) The default slots of a device: slot key → the default line, from the tree of its
+ * default lines D (defaultConfig + profileConfig), computed once per boot by the runtime. A stored negation of D is
+ * recorded as `['no', …]`; section lines are containers, not slots (their children are recorded under them).
+ */
+export function defaultSlotsOf(defaults: ConfigAst, rules: ConfigRuleSet = DEFAULT_CONFIG_RULES): DefaultSlots {
+  const out = new Map<string, readonly string[]>();
+  const groups = groupKeysOf(rules);
+  const visit = (context: readonly (readonly string[])[], nodes: readonly ConfigNode[]): void => {
+    for (const node of nodes) {
+      if (groups.has(node.key) && node.args.length === 0) {
+        for (const leaf of node.children) {
+          const tokens = [node.key, leaf.key, ...leaf.args];
+          out.set(slotKeyOf(context, tokens, rules), tokens);
+          visit([...context, tokens], leaf.children);
+        }
+        continue;
+      }
+      if (node.key === NO_KEY && node.args.length > 0) {
+        out.set(slotKeyOf(context, node.args, rules), [NO_KEY, ...node.args]);
+        continue;
+      }
+      const tokens = [node.key, ...node.args];
+      if (rules.ruleFor(context, tokens)?.section === undefined) out.set(slotKeyOf(context, tokens, rules), tokens);
+      visit([...context, tokens], node.children);
+    }
+  };
+  visit([], defaults.root.children);
+  return out;
 }

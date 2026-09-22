@@ -10,9 +10,9 @@ import type { DeviceId, LinkId, PduId, PortId, PortRef, SessionId } from './ids.
 import type { MacAddress } from './addr.js';
 import type { DeviceKind } from './device.js';
 import type { LinkState, PortPhy, PortPhySettings } from './link.js';
-import type { PortCounters, PortKind, PortL3 } from './port.js';
+import type { PortCounters, PortKind, PortL3, SwitchportConfig } from './port.js';
 import type { StateView } from './process.js';
-import type { ArpRow, CamRow, RouteRow, TableColumn, TableName } from './tables.js';
+import type { ArpRow, CamRow, ChannelMemberState, PortSecurityRow, RouteRow, TableColumn, TableName } from './tables.js';
 import type { SimTime } from './time.js';
 import type { PduSummary } from './trace.js';
 import type { CliSessionView } from './cli.js';
@@ -37,6 +37,19 @@ import type {
 import type { MediaSnapshot, MediumId, MediumKind } from './medium.js';
 import type { RadioPortView } from './rf.js';
 import type { TopologyDeviceUi } from './topology.js';
+
+/** @since P2 L2 view of one bridged port of a VLAN-aware device, derived at snapshot time from config plus tables (D6). */
+export interface PortL2View {
+  config: SwitchportConfig;
+  /** Effective operation: static modes as configured; dynamic modes from the dtp row (access until negotiated). */
+  oper: 'access' | 'trunk';
+  /** Trunk: VLANs allowed AND existing (canonical list). */
+  active?: string;
+  /** VLANs this port forwards in (canonical list); absent when spanning tree runs for none of its VLANs. */
+  forwarding?: string;
+  channel?: { group: number; bundle: PortId; state: ChannelMemberState };
+  security?: { status: PortSecurityRow['status']; count: number; max: number; violations: number };
+}
 
 export interface PortSnapshot {
   id: PortId;
@@ -82,6 +95,17 @@ export interface PortSnapshot {
   phySettings?: PortPhySettings;
   /** @since P0.5 Radio ports. */
   radio?: RadioPortView;
+
+  // ── P2 (optional by meaning: absent keeps P1 snapshots stable) ──
+  /**
+   * @since P2 (optional by meaning) Present iff the device is VLAN-aware and the view differs from the default
+   * (config ≠ DEFAULT_SWITCHPORT, oper 'trunk', channel or security present).
+   */
+  l2?: PortL2View;
+  /** @since P2 (optional by meaning) Subinterfaces: the parent port. */
+  parent?: PortId;
+  /** @since P2 (optional by meaning) Subinterfaces: the 802.1Q encapsulation. */
+  dot1q?: { vid: number; native: boolean };
 }
 
 /** @since P0.5 A module slot of a chassis. */
@@ -190,6 +214,8 @@ export interface SimSnapshot {
   pendingEvents: number;
   /** @since P0.5 Segments, BSSs, cells, associations; omitted when none exist and the scale is the default. */
   media?: MediaSnapshot;
+  /** @since P2 (optional by meaning) The world's defaults profile when it is 'P2'; absent = 'P1' (D2). */
+  profile?: 'P2';
 }
 
 export type Selection =

@@ -489,8 +489,10 @@ export function createAirMedium(host: MediumHost): AirMedium {
       if (stationKey !== undefined && (!dataLegs.has(leg.arrivalSeq) || (portKey(leg.to) !== stationKey && portKey(leg.from) !== stationKey))) continue;
       host.cancel(leg.arrivalSeq);
       dataLegs.delete(leg.arrivalSeq);
-      const drop: TraceEvent = { t: now, kind: 'drop', pdu: leg.pdu, reason: reason === 'out-of-range' ? 'out-of-range' : reason === 'not-associated' ? 'not-associated' : 'link-down', medium: bss.id };
+      const drop: Extract<TraceEvent, { kind: 'drop' }> = { t: now, kind: 'drop', pdu: leg.pdu, reason: reason === 'out-of-range' ? 'out-of-range' : reason === 'not-associated' ? 'not-associated' : 'link-down', medium: bss.id };
       if (stationKey !== undefined) drop.association = `${bss.id}|${stationKey}`;
+      // P2 (§2.7): a dropped background leg (beacon) is marked so the trace filter and the canvas can hide it
+      if (leg.background === true) drop.background = true;
       host.emit(drop);
       host.emit({ t: now, kind: 'frameAbort', pdu: leg.pdu, link: bss.id, from: leg.from, to: leg.to, abortAt: now, arrive: leg.arrive, reason });
       host.inflight.delete(leg.pdu.id, leg.link, leg.to);
@@ -640,13 +642,14 @@ export function createAirMedium(host: MediumHost): AirMedium {
 
   // ── transmission ──
   const emitDrop = (pdu: Pdu, reason: 'link-down' | 'not-associated' | 'out-of-range' | 'encapsulation-mismatch' | 'link-loss', detail: string, now: SimTime, at?: PortRef, medium?: MediumId, association?: string): void => {
-    const ev: TraceEvent = { t: now, kind: 'drop', pdu: summarizePdu(pdu), reason, detail };
+    const ev: Extract<TraceEvent, { kind: 'drop' }> = { t: now, kind: 'drop', pdu: summarizePdu(pdu), reason, detail };
     if (at !== undefined) {
       ev.device = at.device;
       ev.port = at.port;
     }
     if (medium !== undefined) ev.medium = medium;
     if (association !== undefined) ev.association = association;
+    if (pdu.meta.background === true) ev.background = true;
     host.emit(ev);
   };
 
@@ -1012,8 +1015,9 @@ export function createAirMedium(host: MediumHost): AirMedium {
         if (leg.arrivalSeq === undefined) continue;
         host.cancel(leg.arrivalSeq);
         dataLegs.delete(leg.arrivalSeq);
-        const drop: TraceEvent = { t: now, kind: 'drop', pdu: leg.pdu, reason: 'link-down', medium: scope };
+        const drop: Extract<TraceEvent, { kind: 'drop' }> = { t: now, kind: 'drop', pdu: leg.pdu, reason: 'link-down', medium: scope };
         if (detail !== undefined) drop.detail = detail;
+        if (leg.background === true) drop.background = true;
         host.emit(drop);
         host.emit({ t: now, kind: 'frameAbort', pdu: leg.pdu, link: scope, from: leg.from, to: leg.to, abortAt: now, arrive: leg.arrive, reason: 'link-down' });
         host.inflight.delete(leg.pdu.id, leg.link, leg.to);

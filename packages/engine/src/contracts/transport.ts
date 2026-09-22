@@ -20,9 +20,11 @@
  * cached child stream (never `ctx.rng.split('isn')` per use: split is pure and would repeat the same ISN). All TCP
  * arithmetic (SRTT/RTTVAR shifts, cwnd bytes) is integer.
  */
-import type { IpAddress, IpFamily, Ipv4Address, MacAddress } from './addr.js';
-import type { PortId } from './ids.js';
+import type { IpAddress, IpFamily, Ipv4Address, Ipv6Address, MacAddress } from './addr.js';
+import type { PortId, ProcessName } from './ids.js';
 import type { LayerSpec, Pdu } from './pdu.js';
+import type { L2ChangeKind } from './process.js';
+import type { WifiAssocState } from './medium.js';
 import type { SimTime } from './time.js';
 import { MS, SEC } from './time.js';
 
@@ -115,13 +117,21 @@ export interface ResolveEvent {
   cname?: string;
 }
 
-/** DHCP client lease changes, delivered to interested daemons (dns-client). */
+/**
+ * DHCP client lease changes, delivered to interested daemons (dns-client).
+ * `family` @since P2 (optional by meaning): absent = IPv4 (dhcp-client); dhcpv6-client sends
+ * {kind:'dhcp.lease', family: 6, iface, op, dnsServers, domainName}. Consumer rule (dns-client, W3 svc): learned
+ * servers are keyed by (iface, family); a lease replaces only its own family's list and 'lost' removes only that
+ * family's list; the resolver order is the IPv4 list, then the IPv6 list. A v4-only world never sets family, so
+ * dns-client's behaviour and debug text there are unchanged.
+ */
 export interface LeaseEvent {
   kind: 'dhcp.lease';
   iface: PortId;
   op: 'bound' | 'renewed' | 'lost';
   dnsServers: IpAddress[];
   domainName?: string;
+  family?: 6;
 }
 
 /** @since P1 arp → owner: outcome of an `arp.probe` request (APIPA conflict detection). */
@@ -135,8 +145,68 @@ export interface ArpProbeResultEvent {
   mac?: MacAddress;
 }
 
-/** Every event a process can receive via Action 'event'. Extension events are namespaced 'ext.*'. */
-export type ProcessEvent = SocketEvent | ProbeResultEvent | ResolveEvent | LeaseEvent | ArpProbeResultEvent | { kind: `ext.${string}`; [k: string]: unknown };
+// ── P2 events (ARCHITECTURE-P2 §2.5) ──
+
+/** @since P2 runtime → every other L2 daemon, after an `l2Changed` action (D6). */
+export interface L2ChangedEvent {
+  kind: 'l2.changed';
+  what: L2ChangeKind;
+  port?: PortId;
+  vlan?: number;
+  /** The daemon that issued the `l2Changed` action. */
+  from: ProcessName;
+}
+
+/**
+ * @since P2 stp → eth-switch: flush ('flush' deletes the VLAN's dynamic rows on exactly `ports` now) or fast-age
+ * ('fast-age' caps expiresAt at now + ageingNs for the VLAN's dynamic rows on exactly `ports`). stp names the ports:
+ * 802.1w lists the non-edge ports it flushes (edge ports are never flushed); 802.1D lists every STP port of the VLAN.
+ * Secure rows are never touched (D12).
+ */
+export interface L2FlushEvent {
+  kind: 'l2.flush';
+  vlan: number;
+  mode: 'flush' | 'fast-age';
+  ports: readonly PortId[];
+  ageingNs?: SimTime;
+}
+
+/** @since P2 ipv6 → dhcpv6-client: the M/O flags of the router last heard on `iface` (sent only when they change and dhcpv6-client exists). */
+export interface RaFlagsEvent {
+  kind: 'ipv6.ra';
+  iface: PortId;
+  router: Ipv6Address;
+  managed: boolean;
+  other: boolean;
+}
+
+/**
+ * @since P2 (wireless) wlan-ap → capwap-wtp: an association grant of a CENTRAL BSS changed (sent only when capwap-wtp
+ * is in model.processes; local BSSs never send it, so P1 wireless traces are unchanged). capwap-wtp turns each into
+ * one WTP Event Request station report (§3.12 step 5).
+ */
+export interface WlanGrantEvent {
+  kind: 'wlan.grant';
+  op: 'add' | 'del';
+  port: PortId;
+  station: MacAddress;
+  bssid: MacAddress;
+  wlanId: number;
+  state: WifiAssocState;
+}
+
+/** Every event a process can receive via Action 'event'. Extension events are namespaced 'ext.*'. P2 adds the four events above. */
+export type ProcessEvent =
+  | SocketEvent
+  | ProbeResultEvent
+  | ResolveEvent
+  | LeaseEvent
+  | ArpProbeResultEvent
+  | L2ChangedEvent
+  | L2FlushEvent
+  | RaFlagsEvent
+  | WlanGrantEvent
+  | { kind: `ext.${string}`; [k: string]: unknown };
 
 /** Payload accepted by udp.send: raw bytes OR application layer specs encoded by the transport. */
 export type AppPayload = { data: Uint8Array; app?: undefined } | { app: readonly LayerSpec[]; data?: undefined };

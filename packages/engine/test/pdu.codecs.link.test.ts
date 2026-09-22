@@ -561,10 +561,15 @@ describe('eapol codec', () => {
 });
 
 describe('llc codec', () => {
-  it('rejects non-SNAP headers, reports truncation and validates ranges', () => {
-    const bad = llcCodec.decode(new Uint8Array([0x42, 0x42, 0x03, 0, 0, 0, 0x08, 0x00]), 0, 8);
-    expect(bad.error).toMatch(/not an LLC\/SNAP header/);
-    expect(bad.next).toBeUndefined();
+  it('decodes non-SNAP headers by their DSAP (P2 §9 item 5), reports truncation and validates ranges', () => {
+    const stp = llcCodec.decode(new Uint8Array([0x42, 0x42, 0x03, 0, 0, 0, 0x08, 0x00]), 0, 8);
+    expect(stp.error).toBeUndefined();
+    expect(stp.fields).toEqual({ dsap: 0x42, ssap: 0x42, control: 3 });
+    expect(stp.next).toEqual({ proto: 'stp', offset: 3, length: 5 });
+    const unregistered = llcCodec.decode(new Uint8Array([0xf0, 0xf0, 0x03, 0, 0, 0, 0x08, 0x00]), 0, 8);
+    expect(unregistered.error).toBeUndefined();
+    expect(unregistered.fields).toEqual({ dsap: 0xf0, ssap: 0xf0, control: 3 });
+    expect(unregistered.next).toBeUndefined();
     expect(llcCodec.decode(new Uint8Array([0xaa, 0xaa]), 0, 2).error).toMatch(/truncated/);
     expect(() => llcCodec.encode({}, new Uint8Array(0))).toThrow(/llc\.type/);
     expect(() => llcCodec.encode({ type: 0x0800, oui: 0x1000000 }, new Uint8Array(0))).toThrow(/oui out of range/);

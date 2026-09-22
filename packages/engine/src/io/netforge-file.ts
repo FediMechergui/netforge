@@ -153,12 +153,14 @@ function canonicalLink(l: TopologyLink): TopologyLink {
 /**
  * Rebuild a topology with a fixed key order and no undefined-valued keys, so two equal topologies always serialise
  * to the same bytes. Whitelists (every other key is dropped):
- *   root    schema, seed, devices, links, objectives, notes, canvas, lab
+ *   root    schema, seed, devices, links, objectives, notes, canvas, lab, profile
  *   device  id, type, name, position, power, config, runningConfig, modules, hardware (macSalt), ui
  *   link    id, a, b, media, length_m, impairments, kind, dce_end, distance_m
- * The 1.1 keys come after every P0 key, so a document without them serialises exactly as in P0. A `hardware` block
- * without `macSalt` is dropped. `withConfig=false` strips `devices[].config` and `devices[].runningConfig` (the
- * archive keeps configs in `configs/`). The schema id is copied as is (writers never migrate).
+ * The 1.1 keys come after every P0 key, and the 1.2 key `profile` (@since P2) after every 1.1 key, so a document
+ * without them serialises exactly as before (a P1 document is byte-identical). A `hardware` block without `macSalt`
+ * is dropped. `withConfig=false` strips `devices[].config` and `devices[].runningConfig` (the archive keeps configs in
+ * `configs/`). The schema id is copied as is (writers never migrate): a writer that sets `profile` also sets
+ * `schema = schemaIdFor(t)` (ARCHITECTURE-P2 §2.9), because a document read as 1.1 drops `profile`.
  */
 export function canonicalTopology(t: Topology, withConfig = true): Topology {
   const out: Topology = {
@@ -171,6 +173,7 @@ export function canonicalTopology(t: Topology, withConfig = true): Topology {
   if (t.notes !== undefined) out.notes = t.notes;
   if (t.canvas !== undefined) out.canvas = { metresPerUnit: t.canvas.metresPerUnit };
   if (t.lab !== undefined) out.lab = { name: t.lab.name, version: t.lab.version };
+  if (t.profile !== undefined) out.profile = t.profile;
   return out;
 }
 

@@ -143,6 +143,15 @@ export const PORT_STATE_REASON_TEXT: Readonly<Record<string, string>> = Object.f
   'keepalive-missed': 'keepalives stopped arriving',
   associated: 'joined a wireless network',
   disassociated: 'left a wireless network',
+  // Virtual interface down reasons (P1 evaluateVirtualOper; P2 §3.0 table) and the P2 runtime reasons (§2.4, §3.7).
+  'no-bridged-port-up': 'no switch port in its VLAN is up and forwarding',
+  'vlan-missing': 'its VLAN does not exist on this switch',
+  'no-bundled-member': 'no member link is bundled into it',
+  'bundle-up': 'a member link joined the bundle',
+  'parent-down': 'its parent interface is down',
+  'no-encapsulation': 'it has no 802.1Q encapsulation yet',
+  'err-disabled': 'shut down by a protection feature (error-disabled)',
+  'err-recovered': 'recovered from the error-disabled state',
 });
 
 /** Wording of a port-state reason (the raw value when unknown, empty when absent). */

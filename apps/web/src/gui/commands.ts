@@ -19,6 +19,10 @@
  *   ip default-gateway <gw> / no ip default-gateway / ip route 0.0.0.0 0.0.0.0 <gw> / no ip route …
  *   host shell: ip address A M [GW] / no ip address / adapter <if> up|down / wifi connect <ssid> [key <pass>] /
  *   wifi disconnect
+ *   P2 (ARCHITECTURE-P2 §5.1, §5.2, §5.5; W3 web-inspector): switchport mode access / switchport access vlan <v>
+ *   (the port inspector's quick action); ipv6 address dhcp | autoconfig (nfos interface lines) and the host-shell
+ *   forms ipv6 address dhcp [<adapter>] / ipv6 autoconfig [<adapter>] with their `no` forms (the Desktop IP
+ *   configuration app's IPv6 choice); [S4] voice vlan <v> / no voice vlan (the IP phone's Voice VLAN field).
  */
 import type { CliGrammar, ConfigureOptions, PortId } from '@netforge/engine';
 import { normalizeIpv4, normalizeMask } from './forms.js';
@@ -378,4 +382,93 @@ export function homeRouterCommands(next: HomeRouterForm, previous?: HomeRouterFo
     b.section(radio.port, wirelessApLines(radio, before, `radios.${i}.`));
   });
   return b.build();
+}
+
+// ── P2: switching quick action (ARCHITECTURE-P2 §5.5 "Port inspector, switching section") ────────────────────────
+
+/**
+ * Make a bridged port a plain access port of one VLAN: `interface <port>` + `switchport mode access` +
+ * `switchport access vlan <v>` (nfos grammar only; the handler creates a missing VLAN itself, §5.1). Field keys
+ * `mode` and `accessVlan`. The VLAN is sent as typed (trimmed) so a refused value maps back to its field.
+ */
+export function switchportAccessCommands(port: PortId, vlan: number | string): CommandPlan {
+  const v = typeof vlan === 'number' ? String(vlan) : vlan.trim();
+  return new PlanBuilder('nfos')
+    .section(port, [
+      [['switchport', 'mode'], ['mode', 'mode'], ['access', 'mode']],
+      [['switchport', 'accessVlan'], ['access', 'accessVlan'], ['vlan', 'accessVlan'], [v, 'accessVlan']],
+    ])
+    .build();
+}
+
+// ── P2: IPv6 automatic addressing (ARCHITECTURE-P2 §5.2 `ipv6 address dhcp`, §5.5 "IP configuration app") ───────
+
+/**
+ * How an adapter obtains its IPv6 address automatically: nothing configured (a manual `ipv6 address` line, when
+ * present, is left alone), stateless autoconfiguration from router advertisements, or DHCPv6.
+ */
+export type Ipv6AddressMode = 'none' | 'autoconfig' | 'dhcp';
+
+/** The modes in display order. */
+export const IPV6_ADDRESS_MODES: readonly Ipv6AddressMode[] = Object.freeze(['none', 'autoconfig', 'dhcp']);
+
+/** Field key of the IPv6 choice. */
+export const IPV6_MODE_FIELD = 'ipv6';
+
+/** The tokens after `ipv6` of each automatic mode's line, per grammar (`undefined` = no line). */
+function ipv6ModeTokens(grammar: CliGrammar, mode: Ipv6AddressMode): readonly string[] | undefined {
+  if (mode === 'none') return undefined;
+  if (mode === 'dhcp') return ['address', 'dhcp'];
+  return grammar === 'host' ? ['autoconfig'] : ['address', 'autoconfig'];
+}
+
+/**
+ * Lines that move an adapter from `previous` to `next`.
+ *  - nfos: inside `interface <adapter>`: `no ipv6 address dhcp` / `no ipv6 address autoconfig` for the mode left,
+ *    then `ipv6 address dhcp` / `ipv6 address autoconfig` for the mode chosen.
+ *  - host: the flat lines `[no] ipv6 address dhcp [<adapter>]` (§5.5 host-shell expansion) and
+ *    `[no] ipv6 autoconfig [<adapter>]`; the adapter is named only when it is not `defaultAdapter`.
+ * Without a baseline only the chosen mode's line is sent. Every token belongs to the field `ipv6`.
+ */
+export function ipv6ModeCommands(grammar: CliGrammar, adapter: PortId, next: Ipv6AddressMode, previous?: Ipv6AddressMode, defaultAdapter?: PortId): CommandPlan {
+  const b = new PlanBuilder(grammar);
+  if (previous === next) return b.build();
+  const lines: Token[][] = [];
+  const line = (mode: Ipv6AddressMode, negate: boolean): void => {
+    const rest = ipv6ModeTokens(grammar, mode);
+    if (rest === undefined) return;
+    const tokens: Token[] = [];
+    if (negate) tokens.push(['no', IPV6_MODE_FIELD]);
+    tokens.push(['ipv6', IPV6_MODE_FIELD], ...rest.map((t) => [t, IPV6_MODE_FIELD] as const));
+    if (grammar === 'host' && adapter !== '' && adapter !== defaultAdapter) tokens.push([adapter, IPV6_MODE_FIELD]);
+    lines.push(tokens);
+  };
+  if (previous !== undefined) line(previous, true);
+  line(next, false);
+  if (grammar === 'host') {
+    for (const l of lines) b.global(l);
+    return b.build();
+  }
+  return b.section(adapter, lines).build();
+}
+
+// ── P2 [S4]: the IP phone's Voice VLAN (ARCHITECTURE-P2 §5.5 "IP phone") ────────────────────────────────────────
+
+/** Field key of the Voice VLAN input. */
+export const VOICE_VLAN_FIELD = 'voiceVlan';
+
+/**
+ * `voice vlan <v>` (a global line of the phone; the same shape in both grammars) or `no voice vlan` when the field is
+ * cleared and a value was configured. Nothing is sent when the trimmed value is unchanged. Field key `voiceVlan`.
+ */
+export function voiceVlanCommands(grammar: CliGrammar, next: string, previous?: string): CommandPlan {
+  const b = new PlanBuilder(grammar);
+  const n = next.trim();
+  const p = previous?.trim();
+  if (n === (p ?? '')) return b.build();
+  if (n === '') {
+    if (p !== undefined && p !== '') b.global([['no', VOICE_VLAN_FIELD], ['voice', VOICE_VLAN_FIELD], ['vlan', VOICE_VLAN_FIELD]]);
+    return b.build();
+  }
+  return b.global([['voice', VOICE_VLAN_FIELD], ['vlan', VOICE_VLAN_FIELD], [n, VOICE_VLAN_FIELD]]).build();
 }

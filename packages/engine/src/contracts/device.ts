@@ -14,7 +14,7 @@ import type { ConfigAst } from './config.js';
 import type { Scheduler } from './events.js';
 import type { FrameRxInfo, PortPhySettings, TransmitFn, TxOutcome } from './link.js';
 import type { Pdu, PduFactory } from './pdu.js';
-import type { PortSpec, PortState, PortView } from './port.js';
+import type { ErrDisableCause, PortSpec, PortState, PortView } from './port.js';
 import type { Action, Process, ProcessFactory, StateView, DebugEvent } from './process.js';
 import type { Rng } from './rng.js';
 import type { DeviceTables, TableFactory, TableName } from './tables.js';
@@ -26,6 +26,7 @@ import type { RadioSettings } from './rf.js';
 import type {
   Capability,
   CliSpec,
+  DefaultsProfile,
   DeviceCategory,
   DeviceIconId,
   GuiPanelId,
@@ -37,6 +38,7 @@ import type {
   PortRole,
   SlotId,
   SlotSpec,
+  SubinterfaceSpec,
   VirtualFamilySpec,
 } from './catalog.js';
 
@@ -130,6 +132,21 @@ export interface DeviceModel {
   ipDefaults: IpDefaults;
   /** @since P0.5 PoE budget for `poe-source` models (behaviour P2+). */
   poeBudgetW?: number;
+
+  // ── P2 (optional by meaning, filled by defineModel; ARCHITECTURE-P2 §2.9, D2) ──
+  /**
+   * @since P2 (optional by meaning) Config text lines replayed at EVERY boot after `defaultConfig` and before the saved
+   * configuration, for every key k with `profileIncludes(profile, k)`. Together with `defaultConfig` they are the
+   * device's default lines D of the completeness rule (D2): the runtime passes D's slots to the config store (§5).
+   */
+  profileConfig?: Readonly<Partial<Record<DefaultsProfile, readonly string[]>>>;
+  /** @since P2 (optional by meaning) Subinterface support (routers, multilayer switches; D11). */
+  subinterfaces?: SubinterfaceSpec;
+  /**
+   * @since P2 (optional by meaning) Builds `profileConfig` (NF-C9300: 'rapid-pvst') and is the mode that
+   * `no spanning-tree mode` restores in a P2 world (§5.1).
+   */
+  stpDefaultMode?: 'pvst' | 'rapid-pvst';
 }
 
 /** What port-name resolution works against: the model plus the live instance port set. */
@@ -141,8 +158,11 @@ export interface PortNameSource {
 /** Result of resolving a typed port name against a live device. */
 export type PortResolution =
   | { kind: 'existing'; port: PortId }
-  /** Names a creatable virtual interface of an allowed family that does not exist yet. */
-  | { kind: 'virtual'; port: PortId; family: string }
+  /**
+   * Names a creatable virtual interface of an allowed family that does not exist yet.
+   * `parent` @since P2 (optional by meaning): subinterfaces (family 'subinterface') name the physical port.
+   */
+  | { kind: 'virtual'; port: PortId; family: string; parent?: PortId }
   | { kind: 'unknown' }
   | { kind: 'ambiguous'; candidates: readonly PortId[] };
 
@@ -179,6 +199,8 @@ export interface DeviceSpec {
   macSalt: number;
   /** @since P0.5 Opaque persisted GUI state (D11); never read by the engine. */
   ui?: TopologyDeviceUi;
+  /** @since P2 (optional by meaning) Set by the Simulation from the world (D2); absent = 'P1'. */
+  profile?: DefaultsProfile;
 }
 
 /** Constructor dependencies supplied by the Simulation (sim owner) to `device/device.ts`. */
@@ -306,4 +328,11 @@ export interface DeviceRuntime {
   onTxOutcome(port: PortId, outcome: TxOutcome, now: SimTime): void;
   /** @since P0.5 Medium notification: fans `Process.onMediumEvent` in model order and applies actions. */
   onMediumEvent(port: PortId, ev: MediumEvent, now: SimTime): void;
+
+  // ── P2 (ARCHITECTURE-P2 §2.9; required since W1 device — hand-built typed fakes spread `P2_DEVICE` from
+  //    test/port.fixtures.ts) ──
+  /** @since P2 The world's defaults profile (D2), from `DeviceSpec.profile ?? 'P1'`. */
+  readonly profile: DefaultsProfile;
+  /** @since P2 Fault path (`err-disable` fault, lab-check clone): the same effects as an `errDisable` action. */
+  errDisablePort(port: PortId, cause: ErrDisableCause, now: SimTime): void;
 }

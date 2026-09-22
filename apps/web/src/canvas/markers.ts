@@ -13,6 +13,12 @@
  * Collision bursts: every `collision` trace event on a hub segment flashes a jagged starburst on the cable of each
  * station that detected it (above the device when the station has no cable on the canvas), labelled "collision"
  * or "late collision" — shape and text, never colour alone. Under reduced motion the burst is static.
+ *
+ * @since P2 (ARCHITECTURE-P2 §2.7, §6, §10.2) A BACKGROUND drop — a BPDU a host discards on its port, a keepalive —
+ * spawns no marker unless the "Background frames" overlay is on: `spawnsDropMarker` is the one rule, applied to the
+ * store's event stream by `dropEventsToMark` (the store's marker spawn follows the same rule, W2 web-shell). An idle
+ * current-defaults world with two PCs drops a BPDU every 2 s per PC; without this rule the canvas would show a
+ * permanent rain of "dropped" pills over hosts that are doing exactly what a host should.
  */
 import { Container, Graphics, type Text } from 'pixi.js';
 import type { LinkId, PduId, PortRef, TraceEvent } from '@netforge/engine';
@@ -26,6 +32,25 @@ import { makeText, setText, type ThemeColors } from './scene';
 export const COLLISION_BURST_MS = 1400;
 /** Live bursts kept at most (a collision storm cannot grow the list unbounded). */
 export const MAX_COLLISION_BURSTS = 60;
+
+/** A `drop` trace event. */
+export type DropEvent = Extract<TraceEvent, { kind: 'drop' }>;
+
+/**
+ * Whether a trace event spawns a drop marker: it must be a `drop`, and a background drop (`background: true`) only
+ * while background frames are shown.
+ */
+export function spawnsDropMarker(ev: Pick<TraceEvent, 'kind'> & { background?: boolean }, showBackground: boolean): ev is DropEvent {
+  if (ev.kind !== 'drop') return false;
+  return ev.background !== true || showBackground;
+}
+
+/** The drop events of a batch that spawn markers, in order. */
+export function dropEventsToMark(events: readonly TraceEvent[], showBackground: boolean): DropEvent[] {
+  const out: DropEvent[] = [];
+  for (const ev of events) if (spawnsDropMarker(ev, showBackground)) out.push(ev);
+  return out;
+}
 
 /** Title and optional detail line for a marker (vocabulary wording; `other` shows its detail as the title). */
 export function dropReasonText(reason: string, detail?: string): { title: string; detail: string } {

@@ -22,11 +22,14 @@
  *  • `fixTrailer` attributes bytes between the inner layer's declared end and the FCS to the trailer.
  *  • P1: `ctx.fcsLen === 0` (an ieee802_11 capture record, FCS stripped) bounds the body to the remaining bytes
  *    and leaves `fcs`/`fcsValid` undefined. Any value other than the native 4 falls back to 0.
+ *  • P2 FCS-in-tunnel rule (ARCHITECTURE-P2 §2.3): a native 802.11 frame carried inside a CAPWAP tunnel (its nearest
+ *    outer layer is `capwap`) has no FCS. Decode then behaves as with `ctx.fcsLen === 0`; encode omits the FCS.
  */
 import type { Codec, CodecContext, DecodedLayer, FieldValue, LayerView, MutationReason, ProtoName } from '../../contracts/pdu.js';
 import { DOT11_FCS, DOT11_HEADER, DOT11_MAX_FRAME } from '../../contracts/pdu.js';
 import { bytesToMac, macToBytes } from '../../contracts/addr.js';
 import { crc32, numField, readU16LE, readU32LE, strField, writeU16LE, writeU32LE } from '../checksum.js';
+import { isTunnelledFrame } from './ethernet.js';
 
 /** 802.11 frame type as carried in `dot11.frameType`. */
 export type Dot11FrameType = 'mgmt' | 'ctrl' | 'data';
@@ -172,7 +175,7 @@ function decode(bytes: Uint8Array, offset: number, length: number, ctx?: CodecCo
   if (fields.toDs === true && fields.fromDs === true) {
     return { fields, fieldRanges, headerLength: layout.header, length: avail, error: '4-address (WDS) 802.11 frames are not simulated' };
   }
-  if (ctx?.fcsLen !== undefined && ctx.fcsLen !== DOT11_FCS) {
+  if ((ctx?.fcsLen !== undefined && ctx.fcsLen !== DOT11_FCS) || isTunnelledFrame(ctx)) {
     const body = avail - layout.header;
     const name = nextFor(info, body);
     const bare: DecodedLayer = { fields, fieldRanges, headerLength: layout.header, length: avail };
@@ -210,7 +213,7 @@ function boolField(fields: Readonly<Record<string, FieldValue>>, key: string): b
   throw new Error(`dot11.${key} must be a boolean`);
 }
 
-function encode(fields: Record<string, FieldValue>, payload: Uint8Array): Uint8Array {
+function encode(fields: Record<string, FieldValue>, payload: Uint8Array, ctx?: CodecContext): Uint8Array {
   const p = 'dot11';
   const subtype = strField(p, fields, 'subtype', null);
   const info = dot11SubtypeInfo(subtype);
@@ -229,7 +232,8 @@ function encode(fields: Record<string, FieldValue>, payload: Uint8Array): Uint8A
   const layout = layoutOf(info);
   if (info.frameType === 'ctrl' && payload.length > 0) throw new Error(`dot11: control frame "${subtype}" carries no body`);
   const body = layout.header + payload.length;
-  const total = body + DOT11_FCS;
+  const tunnelled = isTunnelledFrame(ctx);
+  const total = body + (tunnelled ? 0 : DOT11_FCS);
   if (total > DOT11_MAX_FRAME) throw new Error(`dot11 frame too large: ${total} bytes (max ${DOT11_MAX_FRAME})`);
 
   const out = new Uint8Array(total);
@@ -250,7 +254,7 @@ function encode(fields: Record<string, FieldValue>, payload: Uint8Array): Uint8A
   }
   if (layout.seq) writeU16LE(out, off, seq << 4); // QoS control (qos-data) stays zero
   out.set(payload, layout.header);
-  writeU32LE(out, body, crc32(out, 0, body));
+  if (!tunnelled) writeU32LE(out, body, crc32(out, 0, body));
   return out;
 }
 

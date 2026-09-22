@@ -8,6 +8,11 @@
  * lacks (`missingTypes`) are listed but disabled with the reason. A failed load (`TopologyLoadError`) reports its
  * per-device problems; the workspace is unchanged in that case. Saving a project that holds Wi-Fi passphrases or
  * radio pairing keys shows a notice, because those are stored as plain text in the file.
+ *
+ * P2 (ARCHITECTURE-P2 D2; W2 web-shell): "New (empty)" builds the world with the profile of the course context
+ * (`profileForCourse(learn.lastCourse)`: classic defaults after a CCNA 1 lesson, current ones otherwise), and
+ * "Use current defaults" (`engine.useCurrentDefaults`) moves a classic world — a template, a saved file, a CCNA 1
+ * lab — to the current defaults in place, keeping every device, cable and configuration.
  */
 import { useRef, useState } from 'react';
 import {
@@ -23,6 +28,7 @@ import {
 } from '@netforge/engine';
 import { defaultSeed, engine } from '../bridge/client';
 import type { EngineError } from '../bridge/errors';
+import { profileForCourse, profileOfSnapshot } from '../learn/course-profile';
 import { store, useStore } from '../store/store';
 import { Menu, MenuHeading, MenuItem, MenuSeparator } from './Menu';
 import { reportError } from './PlaybackControls';
@@ -163,10 +169,30 @@ async function openFile(file: File): Promise<void> {
 
 async function newEmpty(): Promise<void> {
   try {
-    await engine.reset(defaultSeed());
+    // D2: the empty world takes the defaults of the course the learner is in (classic after a CCNA 1 lesson).
+    await engine.reset(defaultSeed(), profileForCourse(store.getState().learn.lastCourse));
     store.getState().select(null);
     store.getState().setTool('select');
     store.getState().toast('New empty workspace.');
+  } catch (err) {
+    reportError(err);
+  }
+}
+
+/** The menu label of the profile move (exported so the menu and its test agree on the wording). */
+export const USE_CURRENT_DEFAULTS_LABEL = 'Use current defaults';
+
+/**
+ * @since P2 Move the world to the current defaults (D2): the worker exports it, keeps a multilayer switch routing,
+ * marks it a current-defaults world and reloads it. Devices, cables and configurations stay; the epoch changes.
+ */
+export async function useCurrentDefaults(): Promise<void> {
+  if (!store.getState().ready) return;
+  try {
+    await engine.pause();
+    const snap = await engine.useCurrentDefaults();
+    store.getState().select(null);
+    store.getState().toast(`Current defaults in use: ${snap.devices.length} devices kept their configuration; spanning tree now runs on the switches.`);
   } catch (err) {
     reportError(err);
   }
@@ -237,6 +263,7 @@ export function scenarioSubtitle(m: ScenarioMeta): string {
 
 export function FileMenu() {
   const ready = useStore((s) => s.ready);
+  const profile = useStore((s) => profileOfSnapshot(s.snapshot));
   const fileInput = useRef<HTMLInputElement>(null);
   const [scenarios, setScenarios] = useState<ScenarioMeta[] | null>(null);
 
@@ -330,6 +357,21 @@ export function FileMenu() {
               disabled={!ready}
             >
               Save as JSON
+            </MenuItem>
+            <MenuSeparator />
+            <MenuItem
+              onSelect={() => {
+                close();
+                void useCurrentDefaults();
+              }}
+              disabled={!ready || profile === 'P2'}
+              sub={
+                profile === 'P2'
+                  ? 'Already in use in this world.'
+                  : 'Keep every device and setting; switch on the defaults of the later courses, spanning tree first.'
+              }
+            >
+              {USE_CURRENT_DEFAULTS_LABEL}
             </MenuItem>
           </>
         )}

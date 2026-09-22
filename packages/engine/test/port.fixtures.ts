@@ -16,10 +16,12 @@ import {
   type DeviceIconId,
   type PortSpecDerived,
 } from '../src/contracts/catalog.js';
-import type { DeviceKind, DeviceModel } from '../src/contracts/device.js';
+import type { DeviceKind, DeviceModel, DeviceRuntime } from '../src/contracts/device.js';
+import type { PortId } from '../src/contracts/ids.js';
 import type { LinkModelDeps } from '../src/contracts/link.js';
-import type { PortSpec, PortState } from '../src/contracts/port.js';
-import type { ProcessCtx } from '../src/contracts/process.js';
+import type { ErrDisableCause, PortSpec, PortState } from '../src/contracts/port.js';
+import type { FsmTransition, ProcessCtx } from '../src/contracts/process.js';
+import type { SimTime } from '../src/contracts/time.js';
 import type { ArpRow, CamRow, DeviceTables, Lpm6Result, RouteRow, Table, TableName, TableRow } from '../src/contracts/tables.js';
 import { deriveCliSpec, deriveTables } from '../src/device/catalog/define.js';
 
@@ -115,6 +117,40 @@ export const NO_IPV6_CTX: Pick<ProcessCtx, 'lpm6' | 'ownAddress6' | 'isLocalDest
   isLocalDestination6: () => false,
   connectedPortFor6: () => undefined,
   sourceFor6: () => undefined,
+});
+
+/**
+ * The two P2 `ProcessCtx` members (ARCHITECTURE-P2 §0 rule 2; required from W1 device) for a hand-built harness: the
+ * P1 defaults profile, and a `transition` that records through the harness's own `debug` — one debug call with the
+ * same category and message and the transition under `data.fsm` — so a fake that records debug events also records
+ * transitions. Spread it FIRST so a harness's own member wins. P0/P1 daemons never call `transition`, so spreading
+ * this in changes no behaviour.
+ */
+export const P2_CTX: Pick<ProcessCtx, 'profile' | 'transition'> = Object.freeze({
+  profile: 'P1' as const,
+  transition(this: Pick<ProcessCtx, 'debug'>, category: string, message: string, fsm: FsmTransition, data?: Record<string, unknown>): void {
+    this.debug(category, message, { ...(data ?? {}), fsm });
+  },
+});
+
+/** One `errDisablePort` call recorded by `P2_DEVICE`. */
+export interface ErrDisablePortCall {
+  readonly port: PortId;
+  readonly cause: ErrDisableCause;
+  readonly now: SimTime;
+}
+
+/**
+ * The two P2 `DeviceRuntime` members (§0 rule 2; required from W1 device) for a hand-built fake: the P1 defaults
+ * profile, and an `errDisablePort` that records each call on the fake itself (`errDisablePortCalls`, created on first
+ * use) and changes nothing else. An object literal spreads it FIRST; a class copies the two members
+ * (`readonly profile = P2_DEVICE.profile; errDisablePort = P2_DEVICE.errDisablePort;`).
+ */
+export const P2_DEVICE: Pick<DeviceRuntime, 'profile' | 'errDisablePort'> = Object.freeze({
+  profile: 'P1' as const,
+  errDisablePort(this: { errDisablePortCalls?: ErrDisablePortCall[] }, port: PortId, cause: ErrDisableCause, now: SimTime): void {
+    (this.errDisablePortCalls ??= []).push({ port, cause, now });
+  },
 });
 
 /**

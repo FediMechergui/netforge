@@ -14,8 +14,10 @@
  *    device kind. With AD 1 it beats a DHCP-learned default (`D`, AD 254); withdrawing it restores that default.
  *  • `unset` → request `ipv4.route {op:'withdraw'}` for the same key; a default route offered by someone else
  *    (`ip route 0.0.0.0 0.0.0.0 …`, a DHCP lease) is left alone.
- *  • Only while the device does not route (`!model.ipForwarding`): a routing device keeps the line in its
- *    configuration but offers nothing (its default route comes from `ip route`).
+ *  • Only while the device does not route: `!model.ipForwarding`, or (P2, ARCHITECTURE-P2 §3.5) a stored
+ *    `no ip routing` in the running config (`ipRoutingSwitchedOff`, protocols/ipv4.ts). A routing device keeps the
+ *    line in its configuration but offers nothing (its default route comes from `ip route`). When the `ip routing`
+ *    line changes, a configured gateway is offered or withdrawn accordingly.
  *
  * ipv4 answers each offer or withdrawal with the ProcessEvent `ext.ipv4.route` (protocols/ipv4.ts
  * `RouteDecisionEvent`); this daemon logs the outcome, after the RIB write.
@@ -35,7 +37,7 @@ import type { Action, DebugEvent, Process, ProcessCtx, StateView } from '../cont
 import { routeKey } from '../contracts/tables.js';
 import type { RouteRow } from '../contracts/tables.js';
 import type { ProcessEvent } from '../contracts/transport.js';
-import { ROUTE_DECISION_EVENT, routeCause, type RouteDecisionEvent } from './ipv4.js';
+import { ROUTE_DECISION_EVENT, ipForwardingEnabled, routeCause, type RouteDecisionEvent } from './ipv4.js';
 
 const CATEGORY = 'ip routing';
 const DEBUG_RING = 64;
@@ -87,12 +89,34 @@ export function createHost(): Process {
 
   function setGateway(ctx: ProcessCtx, gw: Ipv4Address): Action[] {
     defaultGateway = gw;
-    if (ctx.model.ipForwarding) {
+    if (ipForwardingEnabled(ctx)) {
+      const out = withdrawOffer(ctx);
       debug(ctx, `default gateway ${gw} stored; not used while this device routes`, { gateway: gw });
-      return [];
+      return out;
     }
     offered = gw;
     return [{ type: 'request', to: 'ipv4', req: { kind: 'ipv4.route', op: 'offer', row: defaultGatewayRow(gw, ctx.now), owner: HOST_PROCESS } }];
+  }
+
+  /** Withdraw the offered candidate, if any (the gateway line itself stays). */
+  function withdrawOffer(ctx: ProcessCtx): Action[] {
+    if (offered === null) return [];
+    const gw = offered;
+    offered = null;
+    return [{ type: 'request', to: 'ipv4', req: { kind: 'ipv4.route', op: 'withdraw', row: defaultGatewayRow(gw, ctx.now), owner: HOST_PROCESS } }];
+  }
+
+  /** P2 §3.5: `ip routing` / `no ip routing` changed — re-evaluate whether the gateway is offered. */
+  function onRoutingLine(ctx: ProcessCtx): Action[] {
+    if (defaultGateway === null) return [];
+    if (ipForwardingEnabled(ctx)) {
+      if (offered === null) return [];
+      debug(ctx, `default gateway ${defaultGateway} no longer used: this device routes (ip routing)`, { gateway: defaultGateway });
+      return withdrawOffer(ctx);
+    }
+    if (offered !== null) return [];
+    debug(ctx, `default gateway ${defaultGateway} offered: routing is switched off (no ip routing)`, { gateway: defaultGateway });
+    return setGateway(ctx, defaultGateway);
   }
 
   function clearGateway(ctx: ProcessCtx): Action[] {
@@ -146,6 +170,7 @@ export function createHost(): Process {
     },
 
     onConfig(ctx: ProcessCtx, delta: ConfigDelta): Action[] {
+      if (delta.context.length === 0 && delta.line.length === 2 && delta.line[0] === 'ip' && delta.line[1] === 'routing') return onRoutingLine(ctx);
       if (!isOurs(delta)) return [];
       if (delta.op === 'unset') return clearGateway(ctx);
       const gw = delta.line[2];

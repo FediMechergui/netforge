@@ -97,6 +97,8 @@ export const PANEL_TAB: Readonly<Record<GuiPanelId, InspectorTab>> = Object.free
   'radio.link': 'wireless',
   'cell.tower': 'wireless',
   'modem.status': 'wireless',
+  // P2 (wave 0 stub): the controller panel is a settings panel of a network appliance.
+  'wlc.controller': 'wireless',
 });
 
 /** The P0 tab set, used for snapshots without catalog v2 fields (hand-built fixtures). */

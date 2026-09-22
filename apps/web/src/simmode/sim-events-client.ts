@@ -8,6 +8,9 @@
  * Filter rules are trace/filter.ts': present keys AND, array members OR, and A PRESENT EMPTY ARRAY MATCHES NOTHING
  * — `buildTraceFilter` therefore omits every empty group. `includeBackground` is always written, so an unchanged
  * default produces exactly the §4.11 shape `{kinds:['frameTx','drop','tableWrite'], includeBackground:false}`.
+ * P2 (ARCHITECTURE-P2 §2.7, §6): the background filter covers DROPS as well as frames — a `drop` flagged
+ * `background` (a BPDU a host discards, a keepalive) is a background event (`isBackgroundEvent`), and the engine's
+ * `traceQuery` leaves it out unless `includeBackground` is true, so an idle switched world lists nothing by default.
  *
  * ponytail: one ascending window of rows, trimmed at whichever end the reader is moving away from, instead of a
  * sparse cursor index — the list can only ever scroll to rows next to the ones it already holds. A backward trim
@@ -76,8 +79,21 @@ export interface ChipSelection {
   readonly protos: readonly ProtoName[];
   readonly devices: readonly DeviceId[];
   readonly tags: readonly string[];
-  /** Let keepalives and beacons through (`TraceFilter.includeBackground`). */
+  /** Let background traffic through (`TraceFilter.includeBackground`): keepalives and beacons, and (P2) their drops. */
   readonly background: boolean;
+}
+
+/**
+ * @since P2 True for an event the background filter hides: a `frameTx` of a keepalive or beacon, or (§2.7) a `drop`
+ * of a background PDU (a BPDU discarded by a host, a hello nobody joined). Every other event is foreground.
+ */
+export function isBackgroundEvent(ev: TraceEvent): boolean {
+  return (ev.kind === 'frameTx' || ev.kind === 'drop') && ev.background === true;
+}
+
+/** @since P2 True when the chips would list `ev`: a background event only with the background chip on. */
+export function listsBackground(sel: Pick<ChipSelection, 'background'>, ev: TraceEvent): boolean {
+  return sel.background || !isBackgroundEvent(ev);
 }
 
 /** Nothing switched on: matches every foreground event. */

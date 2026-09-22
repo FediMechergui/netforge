@@ -31,6 +31,8 @@ import { hostAdapters, hostPort } from './pc.js';
 export const MSG_NO_SUCH_ADAPTER = '% No such network adapter on this device.';
 /** Error for a host with no network adapter at all. */
 export const MSG_NO_ADAPTER = '% This host has no network interface.';
+/** [S4] `voice vlan` outside 1–4094. */
+export const MSG_BAD_VOICE_VLAN = '% Give a VLAN number between 1 and 4094.';
 
 /** The adapter a host command acts on: the named one, else the default adapter. */
 function targetAdapter(ctx: CommandCtx, raw: string | undefined): PortView | { error: string } {
@@ -96,6 +98,30 @@ const ipv6Autoconfig: CommandHandler = (ctx, args, negate) => {
   return { output: `${target.id} is listening for a router advertisement. Use "ipv6config" to see the address.` };
 };
 
+/**
+ * @since P2 `ipv6 address dhcp [<adapter>]` / its `no` form (ARCHITECTURE-P2 §5.5): the same `ipv6 address dhcp`
+ * interface line a router stores, so dhcpv6-client reads it the same way; `ipv6 enable` first, as autoconfig does.
+ */
+const ipv6AddressDhcp: CommandHandler = (ctx, args, negate) => {
+  const target = targetAdapter(ctx, args['adapter']);
+  if ('error' in target) return { error: target.error };
+  const context = [['interface', target.id]];
+  if (negate) return outcome(ctx.config(['ipv6', 'address', 'dhcp'], true, context));
+  const first = ctx.config(['ipv6', 'enable'], false, context);
+  if (first !== undefined) return { error: first };
+  const error = ctx.config(['ipv6', 'address', 'dhcp'], false, context);
+  if (error !== undefined) return { error };
+  return { output: `${target.id} is asking a DHCPv6 server for an address. Use "ipv6config" to see the lease.` };
+};
+
+/** [S4] `voice vlan <v>` / `no voice vlan` (§5.5): the global line the phone tags its own frames with. */
+const voiceVlan: CommandHandler = (ctx, args, negate) => {
+  if (negate) return outcome(ctx.config(['voice', 'vlan'], true, globalContext()));
+  const vlan = Number(args['vlan']);
+  if (!Number.isInteger(vlan) || vlan < 1 || vlan > 4094) return { error: MSG_BAD_VOICE_VLAN };
+  return outcome(ctx.config(['voice', 'vlan', String(vlan)], false, globalContext()));
+};
+
 /** `ipv6config`: the IPv6 state of every adapter, the default router and the neighbours. */
 const ipv6config: CommandHandler = (ctx) => {
   const adapters = hostAdapters(ctx);
@@ -119,5 +145,8 @@ export const hostNetHandlers: Readonly<Record<string, CommandHandler>> = {
   [HANDLERS.hostIpDns]: ipDns,
   [HANDLERS.hostIpv6Address]: ipv6Address,
   [HANDLERS.hostIpv6Autoconfig]: ipv6Autoconfig,
+  [HANDLERS.hostIpv6AddressDhcp]: ipv6AddressDhcp,
+  [HANDLERS.hostVoiceVlan]: voiceVlan,
   [HANDLERS.hostIpv6config]: ipv6config,
 };
+

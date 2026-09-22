@@ -173,8 +173,14 @@ export const VIRTUAL_NAME_PATTERN: string = (() => {
   return `(?:${alts.join('|')})[0-9]+`;
 })();
 
-/** RegExp source matching any typed interface name that is NOT a virtual interface name. */
-export const PHYSICAL_NAME_PATTERN = `(?!${VIRTUAL_NAME_PATTERN}$)[\\s\\S]+`;
+/**
+ * @since P2 RegExp source (no anchors) matching a typed router subinterface name `<parent>.<n>` (`g0/0.10`,
+ * `GigabitEthernet0/0.20`): the same shape cli/modes.ts `isSubinterfaceName` accepts.
+ */
+export const SUBIF_NAME_PATTERN = '[A-Za-z][A-Za-z-]*\\d[\\d/]*\\.\\d+';
+
+/** RegExp source matching any typed interface name that is NOT a virtual interface name nor (P2) a subinterface name. */
+export const PHYSICAL_NAME_PATTERN = `(?!(?:${VIRTUAL_NAME_PATTERN}|${SUBIF_NAME_PATTERN})$)[\\s\\S]+`;
 
 /** A debug category as the grammar ships it: the contract definition plus whether `?` lists it. */
 export interface GrammarDebugCategory extends DebugCategoryDef {

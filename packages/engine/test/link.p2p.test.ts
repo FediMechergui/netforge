@@ -405,6 +405,21 @@ describe('link/media/p2p through the link model', () => {
     ]);
   });
 
+  it('a background leg aborted by a cut carries background: true on its drop (P2 §2.7)', () => {
+    const h = modelHarness();
+    const a = h.add('d_pc1', 'pc', 'Gi0', 'ethernet');
+    const b = h.add('d_pc2', 'pc', 'Gi0', 'ethernet');
+    h.model.add({ id: 'l_1', a, b, media: 'copper-crossover', lengthM: 1, impairments: { ...NO_IMPAIRMENTS, latencyNs: 1_000_000 } }, 0);
+    const pdu = h.pdus.build(arpFrame(), meta({ background: true, tag: 'keepalive' }));
+    const r = h.model.transmit(a, pdu, 0);
+    if (!r.ok) throw new Error('expected ok');
+    h.events.length = 0;
+    h.model.cut('l_1', true, 100);
+    expect(h.events.filter((e) => e.kind === 'drop')).toEqual([
+      { t: 100, kind: 'drop', pdu: summarizePdu(pdu), link: 'l_1', reason: 'link-down', detail: 'cut', background: true },
+    ]);
+  });
+
   it('background frames are flagged on frameTx and in flight', () => {
     const h = modelHarness();
     const a = h.add('d_pc1', 'pc', 'Gi0', 'ethernet');
@@ -458,6 +473,22 @@ describe('link/media/p2p serial line protocol gate', () => {
     const ka = fakePdu(layer('hdlc', 4, 18, 2, { protocol: HDLC_PROTO_KEEPALIVE }));
     expect(p2p.transmit(h.A, ka, 0)).toEqual({ ok: false, reason: 'link-down' });
     expect(h.events[0]).toMatchObject({ kind: 'drop', reason: 'link-down', detail: 'no-clock' });
+  });
+
+  it('a keepalive refused with link-down carries background: true; a data frame refused the same way does not (P2 §2.7)', () => {
+    const h = hostHarness();
+    h.addLink('serial-dce', 'serial', 64_000, { up: false, carrier: true, downReason: 'no-clock', negotiatedBps: undefined });
+    const pa = h.port(h.A);
+    pa.operUp = false;
+    pa.phy = { carrier: true, lineProtocol: false, lineProtocolReason: 'no-clock', dce: true };
+    const p2p = createCableP2P(h.host, { linkOf: () => undefined });
+    const ka = fakePdu(layer('hdlc', 4, 18, 2, { protocol: HDLC_PROTO_KEEPALIVE }), { tag: 'keepalive', background: true });
+    expect(p2p.transmit(h.A, ka, 0)).toEqual({ ok: false, reason: 'link-down' });
+    expect(h.events).toEqual([{ t: 0, kind: 'drop', pdu: summarizePdu(ka), device: 'd_a', port: 'P0', reason: 'link-down', detail: 'no-clock', background: true }]);
+    h.events.length = 0;
+    const data = fakePdu(layer('hdlc', 4, 40, 2, { protocol: 0x0800 }));
+    expect(p2p.transmit(h.A, data, 1)).toEqual({ ok: false, reason: 'link-down' });
+    expect(h.events).toEqual([{ t: 1, kind: 'drop', pdu: summarizePdu(data), device: 'd_a', port: 'P0', reason: 'link-down', detail: 'no-clock' }]);
   });
 
   it('without carrier nothing is sent, even with a stale operUp', () => {

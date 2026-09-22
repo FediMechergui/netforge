@@ -66,6 +66,7 @@ import type {
   CliSessionView,
   ConfigureOptions,
   ConfigureResult,
+  DefaultsProfile,
   DeviceId,
   DeviceModel,
   DeviceSnapshot,
@@ -74,7 +75,10 @@ import type {
   HostAppRequest,
   HostAppTicket,
   Impairments,
+  JournalPosition,
   LabStatus,
+  LaneBucket,
+  LaneId,
   LinkId,
   LinkSnapshot,
   LinkState,
@@ -84,10 +88,14 @@ import type {
   PduId,
   PduJson,
   ScenarioMeta,
+  SeekTarget,
   SessionId,
   SimSnapshot,
   SimTime,
   SlotId,
+  TimelineMarkQuery,
+  TimelineQuery,
+  TimeTravelBudget,
   Topology,
   TopologyDeviceUi,
   TraceEvent,
@@ -201,6 +209,24 @@ export interface EngineBatch {
   captureHeads?: Record<CaptureId, number>;
   /** @since P1 Latest lab status when it changed (null = no active lab). */
   lab?: LabStatus | null;
+
+  // ── P2 [SHOULD S1] time travel (both optional by meaning) ──
+  /**
+   * @since P2 (optional by meaning) Set while reviewing the past: snapshot/delta and `now` come from the cursor
+   * replay and apply as today; `events` go to `timeline.reviewEvents`, never to the store's `events`; the epoch does
+   * not change. `null` ends review (the batch carries a full live snapshot that restores the mirror).
+   */
+  review?: ReviewInfo | null;
+  /** @since P2 (optional by meaning) The live head of the timeline (the scrubber's right end). */
+  timelineHead?: { t: SimTime; at: JournalPosition; lanesRevision: number };
+}
+
+/** @since P2 [SHOULD S1] Where review is: the cursor replay's position and time, the live position, and whether they meet. */
+export interface ReviewInfo {
+  at: JournalPosition;
+  t: SimTime;
+  live: JournalPosition;
+  atLive: boolean;
 }
 
 /** Result of `init`. */
@@ -225,7 +251,11 @@ export interface SubscribeOptions {
 export type BatchListener = (batch: EngineBatch) => void;
 
 export interface EngineApi {
-  init(opts: { seed: number }): Promise<InitResult>;
+  /**
+   * `profile` @since P2 (optional by meaning; default 'P1'). The CALLER chooses it from the course context (D2): the
+   * web shell passes profileForCourse(lastCourse) (learn/course-profile.ts: 'P1' for CCNA 1, else 'P2').
+   */
+  init(opts: { seed: number; profile?: DefaultsProfile }): Promise<InitResult>;
 
   // topology
   /**
@@ -312,8 +342,31 @@ export interface EngineApi {
   pdu(id: PduId): Promise<PduJson | undefined>;
   /** Register the batch listener (Comlink.proxy). Only one listener; later calls replace it. `opts` @since P0.5. */
   subscribe(listener: BatchListener, opts?: SubscribeOptions): Promise<void>;
-  /** Reset to an empty simulation with a new seed. */
-  reset(seed: number): Promise<SimSnapshot>;
+  /**
+   * Reset to an empty simulation with a new seed. `profile` @since P2 (optional by meaning; default 'P1'): File → New
+   * passes the course context's profile; entering the sandbox from a lesson while the world has no devices passes that
+   * lesson's course profile (D2).
+   */
+  reset(seed: number, profile?: DefaultsProfile): Promise<SimSnapshot>;
+  /**
+   * @since P2 "Use current defaults" (File menu, D2): export → write `ip routing` on devices whose P2 profileConfig
+   * holds `no ip routing` and whose running config has no `ip routing` line → profile 'P2' and schema =
+   * schemaIdFor(t) → load; epoch++. Pauses first; the batch it posts carries a full snapshot (and the lab status when
+   * the document names a lab). Required since W2 web-shell.
+   */
+  useCurrentDefaults(): Promise<SimSnapshot>;
+
+  // time travel — P2 [SHOULD S1]; optional in the type until the W4 web-shell item implements them
+  /** @since P2 Enter (or move within) review at `target`; the replayed events are counted, not timed. */
+  seek?(target: SeekTarget): Promise<{ snapshot: SimSnapshot; review: ReviewInfo; replayedEvents: number }>;
+  /** @since P2 End review; resolves with the live snapshot. */
+  leaveReview?(): Promise<SimSnapshot>;
+  /** @since P2 Bucketed lane activity for the timeline strip. */
+  timelineBuckets?(q: TimelineQuery): Promise<LaneBucket[]>;
+  /** @since P2 Individual marks of one lane. */
+  timelineMarks?(q: TimelineMarkQuery): Promise<{ cursor: number; t: SimTime; lane: LaneId; event: TraceEvent }[]>;
+  /** @since P2 Change the time machine's memory budget ("history off" = no replayers). */
+  setTimeTravelBudget?(b: Partial<TimeTravelBudget>): Promise<void>;
   /** @since P1 Page the trace ring (sim-events list; the store's 5000-event ring is never used for it). */
   traceQuery(q: TraceQuery): Promise<TraceQueryResult>;
   /** @since P0.5 */

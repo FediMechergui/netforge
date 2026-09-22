@@ -15,7 +15,7 @@
  * owners), `DEBUG_CATEGORY_DEFS` the debug category registry. Every string is original wording (spec §1.6).
  */
 import type { CommandSpec } from '../../contracts/cli.js';
-import { CORE_DEBUG_CATEGORIES, CORE_EXEC_GRAMMAR, CORE_EXEC_HANDLERS, type GrammarDebugCategory } from './core-exec.js';
+import { CORE_DEBUG_CATEGORIES, CORE_EXEC_GRAMMAR, CORE_EXEC_HANDLERS, debugSpecs, type GrammarDebugCategory } from './core-exec.js';
 import { SHOW_GRAMMAR, SHOW_HANDLERS } from './show.js';
 import { CONFIG_GLOBAL_GRAMMAR, CONFIG_GLOBAL_HANDLERS } from './config-global.js';
 import { CONFIG_IF_GRAMMAR, CONFIG_IF_HANDLERS } from './config-if.js';
@@ -32,6 +32,18 @@ import { TRANSPORT_DEBUG_CATEGORIES, TRANSPORT_GRAMMAR, TRANSPORT_HANDLERS } fro
 import { TRACEROUTE_DEBUG_CATEGORIES, TRACEROUTE_GRAMMAR } from './traceroute.js';
 import { LINE_AUTH_GRAMMAR, LINE_AUTH_HANDLERS } from './line-auth.js';
 import { HOST_SHELL_GRAMMAR, HOST_SHELL_HANDLERS } from './host-shell.js';
+import { VLAN_GRAMMAR, VLAN_HANDLERS } from './vlan.js';
+import { SWITCHPORT_P2_GRAMMAR, SWITCHPORT_P2_HANDLERS } from './switchport.js';
+import { SUBIF_GRAMMAR, SUBIF_HANDLERS } from './subif.js';
+import { ROUTING_GRAMMAR, ROUTING_HANDLERS } from './routing.js';
+import { L2_CONTROL_DEBUG_CATEGORIES, L2_CONTROL_DEBUG_OBJECTIVES, SPANNING_TREE_GRAMMAR, SPANNING_TREE_HANDLERS } from './spanning-tree.js';
+import { ETHERCHANNEL_DEBUG_CATEGORIES, ETHERCHANNEL_DEBUG_OBJECTIVES, ETHERCHANNEL_GRAMMAR, ETHERCHANNEL_HANDLERS } from './etherchannel.js';
+import { PORT_SECURITY_DEBUG_CATEGORIES, PORT_SECURITY_DEBUG_OBJECTIVES, PORT_SECURITY_GRAMMAR, PORT_SECURITY_HANDLERS } from './port-security.js';
+import { ERRDISABLE_GRAMMAR, ERRDISABLE_HANDLERS } from './errdisable.js';
+import { NAT_DEBUG_CATEGORIES, NAT_DEBUG_OBJECTIVES, NAT_GRAMMAR, NAT_HANDLERS } from './nat.js';
+import { ACL_GRAMMAR, ACL_HANDLERS } from './acl.js';
+import { DHCPV6_DEBUG_CATEGORIES, DHCPV6_DEBUG_OBJECTIVES, DHCPV6_GRAMMAR, DHCPV6_HANDLERS } from './dhcpv6.js';
+import { HSRP_DEBUG_CATEGORIES, HSRP_DEBUG_OBJECTIVES, HSRP_GRAMMAR, HSRP_HANDLERS } from './hsrp.js';
 
 export * from './core-exec.js';
 export * from './show.js';
@@ -50,6 +62,48 @@ export * from './transport.js';
 export * from './traceroute.js';
 export * from './line-auth.js';
 export * from './host-shell.js';
+export * from './vlan.js';
+export * from './subif.js';
+export * from './routing.js';
+export * from './spanning-tree.js';
+export * from './etherchannel.js';
+export * from './port-security.js';
+export * from './errdisable.js';
+export * from './nat.js';
+export * from './acl.js';
+export * from './dhcpv6.js';
+export * from './hsrp.js';
+
+/**
+ * @since P2 (ARCHITECTURE-P2 §5.4; W3 cli) The debug categories of the P2 daemons, in the §5.4 table order. Each is
+ * keyed on the capability rows of its daemon (`capabilitiesRunning`), which the W4 catalog fills when it registers
+ * the daemons (§2.1): until then the categories are registered but offered on no device.
+ */
+export const P2_DEBUG_CATEGORIES: readonly GrammarDebugCategory[] = Object.freeze([
+  ...L2_CONTROL_DEBUG_CATEGORIES,
+  ...ETHERCHANNEL_DEBUG_CATEGORIES,
+  ...PORT_SECURITY_DEBUG_CATEGORIES,
+  ...NAT_DEBUG_CATEGORIES,
+  ...HSRP_DEBUG_CATEGORIES,
+  ...DHCPV6_DEBUG_CATEGORIES,
+]);
+
+/** @since P2 Objectives of the P2 debug categories. */
+export const P2_DEBUG_OBJECTIVES: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  ...L2_CONTROL_DEBUG_OBJECTIVES,
+  ...ETHERCHANNEL_DEBUG_OBJECTIVES,
+  ...PORT_SECURITY_DEBUG_OBJECTIVES,
+  ...NAT_DEBUG_OBJECTIVES,
+  ...HSRP_DEBUG_OBJECTIVES,
+  ...DHCPV6_DEBUG_OBJECTIVES,
+});
+
+/**
+ * @since P2 The `debug <category>` specs of the P2 categories. They join the P1 table's `core-exec` fragment (not the
+ * P2 fragments): the registry rule `DEBUG_CATEGORY_DEFS` ⇔ `debug` specs of `GRAMMAR` is pinned by
+ * cli.parser.grammar.test.ts, and their handler is the runtime-bound `exec.debug`.
+ */
+export const P2_DEBUG_GRAMMAR: readonly CommandSpec[] = Object.freeze(debugSpecs(P2_DEBUG_CATEGORIES, P2_DEBUG_OBJECTIVES));
 
 /** Handler ids resolved by the CLI runtime's registry: the union of every fragment. Never rename. */
 export const HANDLERS = Object.freeze({
@@ -75,7 +129,8 @@ export type HandlerId = (typeof HANDLERS)[keyof typeof HANDLERS];
 
 /** The grammar fragments by name, in table order (focused tests and runtime injection). */
 export const GRAMMAR_FRAGMENTS: Readonly<Record<string, readonly CommandSpec[]>> = Object.freeze({
-  'core-exec': CORE_EXEC_GRAMMAR,
+  // P2 (W3 cli): the P2 `debug` specs follow the core EXEC specs (see `P2_DEBUG_GRAMMAR`).
+  'core-exec': Object.freeze([...CORE_EXEC_GRAMMAR, ...P2_DEBUG_GRAMMAR]),
   show: SHOW_GRAMMAR,
   'config-global': CONFIG_GLOBAL_GRAMMAR,
   'config-if': CONFIG_IF_GRAMMAR,
@@ -97,6 +152,58 @@ export const GRAMMAR_FRAGMENTS: Readonly<Record<string, readonly CommandSpec[]>>
 /** The full built-in command table: every fragment concatenated in `GRAMMAR_FRAGMENTS` order. */
 export const GRAMMAR: readonly CommandSpec[] = Object.freeze(Object.values(GRAMMAR_FRAGMENTS).flat());
 
+// ── P2 (ARCHITECTURE-P2 §7 W2 cli) ───────────────────────────────────────────────────────────────────────────────
+// The P2 fragments are assembled beside the P1 table, not inside it: `HANDLERS` and `GRAMMAR_FRAGMENTS` are pinned
+// exactly by cli.parser.grammar.test.ts (`EXPECTED_IDS`), whose migration §9.2 schedules for the W4 catalog flip
+// (item 18: the union with the P2 fragments). Until then the runtime's built-in table is `BUILTIN_GRAMMAR` (P1 table
+// followed by the P2 fragments) and `HANDLER_REGISTRY` carries the P2 handlers under `P2_HANDLERS`; W4 folds the
+// P2 fragments into `GRAMMAR_FRAGMENTS` / `HANDLERS` together with that migration. New ids join `P2_HANDLERS`.
+
+/**
+ * @since P2 Handler ids of the P2 fragments (W2: vlan, the P2 switchport lines, subinterfaces and ranges, routing;
+ * W3: spanning tree, EtherChannel, port security, err-disable recovery, NAT, access lists, DHCPv6 and [S2] HSRP).
+ */
+export const P2_HANDLERS = Object.freeze({
+  ...VLAN_HANDLERS,
+  ...SWITCHPORT_P2_HANDLERS,
+  ...SUBIF_HANDLERS,
+  ...ROUTING_HANDLERS,
+  ...SPANNING_TREE_HANDLERS,
+  ...ETHERCHANNEL_HANDLERS,
+  ...PORT_SECURITY_HANDLERS,
+  ...ERRDISABLE_HANDLERS,
+  ...NAT_HANDLERS,
+  ...ACL_HANDLERS,
+  ...DHCPV6_HANDLERS,
+  ...HSRP_HANDLERS,
+});
+
+/** @since P2 Union of every handler id in `P2_HANDLERS`. */
+export type P2HandlerId = (typeof P2_HANDLERS)[keyof typeof P2_HANDLERS];
+
+/** @since P2 The P2 grammar fragments by name, in table order. */
+export const P2_GRAMMAR_FRAGMENTS: Readonly<Record<string, readonly CommandSpec[]>> = Object.freeze({
+  vlan: VLAN_GRAMMAR,
+  'switchport-p2': SWITCHPORT_P2_GRAMMAR,
+  subif: SUBIF_GRAMMAR,
+  routing: ROUTING_GRAMMAR,
+  // W3 cli
+  'spanning-tree': SPANNING_TREE_GRAMMAR,
+  etherchannel: ETHERCHANNEL_GRAMMAR,
+  'port-security': PORT_SECURITY_GRAMMAR,
+  errdisable: ERRDISABLE_GRAMMAR,
+  nat: NAT_GRAMMAR,
+  acl: ACL_GRAMMAR,
+  dhcpv6: DHCPV6_GRAMMAR,
+  hsrp: HSRP_GRAMMAR,
+});
+
+/** @since P2 Every P2 spec, in `P2_GRAMMAR_FRAGMENTS` order. */
+export const P2_GRAMMAR: readonly CommandSpec[] = Object.freeze(Object.values(P2_GRAMMAR_FRAGMENTS).flat());
+
+/** @since P2 The command table the CLI runtime uses by default: the P1 table followed by the P2 fragments. */
+export const BUILTIN_GRAMMAR: readonly CommandSpec[] = Object.freeze([...GRAMMAR, ...P2_GRAMMAR]);
+
 /** The debug category registry (`debug <category>` specs and handler validation derive from it). */
 export const DEBUG_CATEGORY_DEFS: readonly GrammarDebugCategory[] = Object.freeze([
   ...CORE_DEBUG_CATEGORIES,
@@ -107,6 +214,7 @@ export const DEBUG_CATEGORY_DEFS: readonly GrammarDebugCategory[] = Object.freez
   ...DNS_DEBUG_CATEGORIES,
   ...TRANSPORT_DEBUG_CATEGORIES,
   ...TRACEROUTE_DEBUG_CATEGORIES,
+  ...P2_DEBUG_CATEGORIES,
 ]);
 
 /**
@@ -155,6 +263,47 @@ export const LITERAL_HELP: Readonly<Record<string, string>> = Object.freeze({
   service: 'Device-wide service switches',
   line: 'Console and remote terminal lines',
   username: 'User names for line login',
+  // P2 (ARCHITECTURE-P2 §5; W2 cli)
+  range: 'Several interfaces at once',
+  vlan: 'VLAN settings',
+  switchport: 'Switched-port settings',
+  mode: 'Port mode',
+  dynamic: 'Negotiate the port mode with the neighbour',
+  access: 'Access-port settings',
+  trunk: 'Trunk settings',
+  native: 'Native VLAN of a trunk',
+  allowed: 'VLANs allowed on a trunk',
+  voice: 'Voice VLAN settings',
+  encapsulation: 'Frame encapsulation',
+  status: 'Port status table',
+  routing: 'Packet forwarding between interfaces',
+  // P2 (ARCHITECTURE-P2 §5.1, §5.2, §5.4; W3 cli)
+  'spanning-tree': 'Spanning-tree settings',
+  extend: 'Bridge identifier settings',
+  portfast: 'Edge-port settings',
+  bpduguard: 'Spanning-tree frame guard',
+  'detected-protocols': 'Which spanning-tree flavour each port fell back to',
+  dtp: 'Trunk negotiation',
+  'channel-group': 'Bundle this port into a Port-channel',
+  'port-channel': 'Port-channel settings',
+  etherchannel: 'Port-channel bundles',
+  lacp: 'Link aggregation control',
+  'port-security': 'Secure address settings',
+  'mac-address': 'Secure address entries',
+  errdisable: 'Error-disable settings',
+  recovery: 'Automatic recovery settings',
+  nat: 'Address translation settings',
+  pool: 'Address pool settings',
+  inside: 'The private side of the translation',
+  source: 'Translate source addresses',
+  list: 'Choose the sources with an access list',
+  static: 'A fixed translation',
+  translation: 'Translation table settings',
+  'access-list': 'Access list entries',
+  standby: 'First-hop redundancy settings',
+  preempt: 'Take the active role back',
+  delay: 'Wait before taking over',
+  prefix: 'Address prefix settings',
 });
 
 /** Help for the parser's pseudo-keywords. Original wording. */

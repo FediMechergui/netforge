@@ -20,7 +20,8 @@
  * - `tables`: `tableWrite`/`tableExpire` `table`.
  * - `tags`: `PduSummary.tag`, exact string equality.
  * - `includeBackground`: unless it is `true`, a `frameTx` flagged `background` never matches (keepalives, beacons),
- *   whatever the other keys say.
+ *   whatever the other keys say; @since P2 (ARCHITECTURE-P2 §2.7) the same holds for a `drop` flagged `background`
+ *   (a keepalive, beacon, BPDU or HSRP hello dropped at a device).
  *
  * Pure: no allocation beyond small per-call arrays, no state, no clock, no rng. The filter is structured-clone
  * data, so identical filters give identical results on both sides of the worker boundary.
@@ -139,10 +140,11 @@ function protosOf(pdu: PduSummary): readonly ProtoName[] {
 
 /**
  * Whether `ev` satisfies `filter` (see the module header for the per-key rules). Present keys AND together, array
- * members OR together, and a background `frameTx` is excluded unless `includeBackground` is `true`.
+ * members OR together, and a background `frameTx` or (P2) a background `drop` is excluded unless `includeBackground`
+ * is `true`.
  */
 export function matchesTraceFilter(filter: TraceFilter, ev: TraceEvent): boolean {
-  if (ev.kind === 'frameTx' && ev.background === true && filter.includeBackground !== true) return false;
+  if ((ev.kind === 'frameTx' || ev.kind === 'drop') && ev.background === true && filter.includeBackground !== true) return false;
 
   if (filter.kinds !== undefined && !filter.kinds.includes(ev.kind)) return false;
 

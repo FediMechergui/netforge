@@ -349,6 +349,8 @@ export function createIcmpv4(): Process {
     const reqSrc = String(ip.fields.src);
     const reqDst = String(ip.fields.dst);
     let src: Ipv4Address | undefined = ctx.ownAddress(reqDst) !== undefined ? reqDst : undefined;
+    // P2 (D15): a request to a LOCAL virtual address of the ingress port (an HSRP virtual IP) is answered from it
+    if (src === undefined && (ctx.ports.get(port)?.l3.virtual4 ?? []).some((v) => v.local && v.address === reqDst)) src = reqDst;
     if (src === undefined) src = ctx.ports.get(port)?.l3.ipv4?.address ?? ctx.sourceFor(reqSrc)?.address;
     if (src === undefined) {
       debug(ctx, `echo request ${reqSrc} > ${reqDst} on ${port}: no address to reply from`, { pdu: pdu.id, port });

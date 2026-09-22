@@ -29,6 +29,16 @@
  *
  * Module removal (§3.11): `onPortsRemoved` drops sessions whose context names a removed port to `config`.
  *
+ * P2 (ARCHITECTURE-P2 §2.11, §5.1, §7 W2 cli): the built-in table is `BUILTIN_GRAMMAR` (the P1 table followed by
+ * the P2 fragments). Two interface-context modes reuse the `config-if` command set: `config-subif` (a router
+ * subinterface, context `[['interface', 'GigabitEthernet0/0.10']]`) is matched as `config-if` with its own context,
+ * so every `config-if` spec whose port requirement the subinterface meets applies there; `config-if-range` (context
+ * `[['interface', 'range', <ports…>]]`, entered by `interface range`) is matched as `config-if` against the FIRST port,
+ * and a `config-if` line is then re-matched and run once per port of the list with that port's own context (so port
+ * requirements and interface args are checked per port; a port's error is printed with its name and the others
+ * still run). Lines whose spec admits `config-if-range` itself (`exit`, `end`, `do …`, and a global line reached by
+ * the parent-mode fallback) run once, in the session's real mode.
+ *
  * Input (P1, §4.10): a handler answering `CommandOutcome.ask` leaves the session waiting for input. The result and
  * the `cliPrompt` event carry `input`; the next `exec` line is the answer: it is neither parsed nor trimmed nor
  * recorded in history, and it goes to `resume(ctx, answer, attempt)`. A resume that asks the SAME question again
@@ -91,8 +101,18 @@ import { formatSimTime, type SimTime } from '../contracts/time.js';
 import { walkConfigText } from './config-text.js';
 import { PASSWORD_PROMPT, secretsFor, USERNAME_PROMPT, verifySecret } from './secrets.js';
 import { CONFIG_SECRET_MASK } from './config-rules.js';
-import { GRAMMAR, HANDLERS } from './grammar.js';
-import { contextDepth, contextKeyOf, isConfigClassMode, modeForContext, modeInGrammar, modePromptSuffix, parentMode } from './modes.js';
+import { BUILTIN_GRAMMAR, HANDLERS } from './grammar.js';
+import {
+  contextDepth,
+  contextKeyOf,
+  INTERFACE_RANGE_KEYWORD,
+  isConfigClassMode,
+  modeForContext,
+  modeInGrammar,
+  modePromptSuffix,
+  parentMode,
+  specModeAllows,
+} from './modes.js';
 import {
   complete as parserComplete,
   help as parserHelp,
@@ -165,13 +185,33 @@ function refusedRun(commands: readonly string[], error: CliError, mode: CliMode)
   return { ok: false, lines, applied: 0, finalMode: mode };
 }
 
-/** Selected interface of a context stack: the port named by its innermost `interface` entry. */
+/**
+ * Selected interface of a context stack: the port named by its innermost `interface` entry. An `interface range …`
+ * entry (P2) selects no single interface: `rangePortsOf` lists its ports.
+ */
 export function selectedInterface(context: readonly (readonly string[])[]): PortId | undefined {
   for (let i = context.length - 1; i >= 0; i--) {
     const entry = context[i] as readonly string[];
-    if (contextKeyOf(entry) === 'interface' && entry[1] !== undefined) return entry[1];
+    if (contextKeyOf(entry) === 'interface' && entry[1] !== undefined) return entry[1] === INTERFACE_RANGE_KEYWORD ? undefined : entry[1];
   }
   return undefined;
+}
+
+/** @since P2 The ports of the innermost `interface range …` context entry, or undefined when the stack has none. */
+export function rangePortsOf(context: readonly (readonly string[])[]): PortId[] | undefined {
+  for (let i = context.length - 1; i >= 0; i--) {
+    const entry = context[i] as readonly string[];
+    if (contextKeyOf(entry) === 'interface' && entry[1] === INTERFACE_RANGE_KEYWORD) return entry.slice(2);
+  }
+  return undefined;
+}
+
+/**
+ * @since P2 The mode a session's lines are MATCHED in: `config-subif` and `config-if-range` reuse the `config-if`
+ * command set (module header); every other mode is matched as itself.
+ */
+export function matchModeOf(mode: CliMode): CliMode {
+  return mode === 'config-subif' || mode === 'config-if-range' ? 'config-if' : mode;
 }
 
 /** Deep copy of a context stack. */
@@ -451,13 +491,14 @@ class HeadlessJobRefused extends Error {
  * `deps.grammar` when given, else the built-in `GRAMMAR`.
  */
 export function createCliRuntime(deps: CliRuntimeDeps, handlers?: Record<string, CommandHandler>): CliRuntime {
-  const grammar: readonly CommandSpec[] = deps.grammar ?? GRAMMAR;
+  const grammar: readonly CommandSpec[] = deps.grammar ?? BUILTIN_GRAMMAR;
   const scope = createScopeCache();
   const sessions = new Map<SessionId, SessionState>();
   const headlessSessions = new Map<SessionId, SessionState>();
   const debugByDevice = new Map<DeviceId, Set<string>>();
-  let nextSession = 0;
-  let nextHeadless = 0;
+  // [S1] counted from `deps.resume` so a replay numbers its sessions exactly as the live world did (§2.13)
+  let nextSession = deps.resume?.sessions ?? 0;
+  let nextHeadless = deps.resume?.headless ?? 0;
 
   // ── small helpers ──────────────────────────────────────────────────────────
 
@@ -467,7 +508,17 @@ export function createCliRuntime(deps: CliRuntimeDeps, handlers?: Record<string,
   /** Context a command sees in `mode`: the session stack in configuration-class modes, none elsewhere. */
   const contextIn = (s: SessionState, mode: CliMode): string[][] => (isConfigClassMode(mode) ? copyContext(s.context) : []);
 
-  const viewOf = (s: SessionState, mode: CliMode = s.mode): CliSessionView => {
+  /**
+   * Context a line is MATCHED in (P2, module header): in `config-if-range` the first port of the range stands for the
+   * list (port requirements and interface args are re-checked per port when the line runs); elsewhere `contextIn`.
+   */
+  const matchContextIn = (s: SessionState, mode: CliMode): string[][] => {
+    if (mode !== 'config-if-range') return contextIn(s, mode);
+    const first = rangePortsOf(s.context)?.[0];
+    return first === undefined ? [] : [['interface', first]];
+  };
+
+  const viewOf = (s: SessionState, mode: CliMode = s.mode, contextOverride?: string[][]): CliSessionView => {
     const v: CliSessionView = {
       id: s.id,
       device: s.device,
@@ -480,7 +531,7 @@ export function createCliRuntime(deps: CliRuntimeDeps, handlers?: Record<string,
       // sessions close with their device, so the device is always there; 'nfos' only guards a stale id
       grammar: deps.device(s.device)?.model.cli.grammar ?? 'nfos',
     };
-    const context = contextIn(s, mode);
+    const context = contextOverride ?? contextIn(s, mode);
     const iface = selectedInterface(context);
     if (iface !== undefined) v.iface = iface;
     if (isConfigClassMode(mode)) v.context = context;
@@ -634,8 +685,8 @@ export function createCliRuntime(deps: CliRuntimeDeps, handlers?: Record<string,
 
   // ── command context ───────────────────────────────────────────────────────
 
-  const buildCtx = (s: SessionState, dev: DeviceRuntime, mode: CliMode, now: SimTime): CommandCtx => {
-    const context = contextIn(s, mode);
+  const buildCtx = (s: SessionState, dev: DeviceRuntime, mode: CliMode, now: SimTime, contextOverride?: string[][]): CommandCtx => {
+    const context = contextOverride ?? contextIn(s, mode);
     const ifaceId = selectedInterface(context);
     const ifaceView = ifaceId === undefined ? undefined : dev.portView(ifaceId);
     const apply = (ctxPath: string[][], line: string[], negate: boolean): { ok: boolean; error?: string } =>
@@ -665,7 +716,7 @@ export function createCliRuntime(deps: CliRuntimeDeps, handlers?: Record<string,
     };
     const ctx: CommandCtx = {
       now,
-      session: viewOf(s, mode),
+      session: viewOf(s, mode, contextOverride),
       deviceId: dev.id,
       hostname: dev.hostname,
       model: dev.model,
@@ -836,9 +887,10 @@ export function createCliRuntime(deps: CliRuntimeDeps, handlers?: Record<string,
   // ── matching with the parent-mode fallback ─────────────────────────────────
 
   /**
-   * Match `line` in `mode`. An `unrecognized` line in a configuration sub-mode (the session's own mode) is retried
-   * in each ancestor configuration mode with the context truncated to that mode's depth; `fallback` carries the
-   * mode and context of the first ancestor that matched.
+   * Match `line` in `mode` (P2: `config-subif` and `config-if-range` are matched as `config-if`, `matchModeOf`). An
+   * `unrecognized` line in a configuration sub-mode (the session's own mode) is retried in each ancestor
+   * configuration mode with the context truncated to that mode's depth; `fallback` carries the mode and context of
+   * the first ancestor that matched.
    */
   const matchLine = (
     s: SessionState,
@@ -846,7 +898,7 @@ export function createCliRuntime(deps: CliRuntimeDeps, handlers?: Record<string,
     line: string,
     mode: CliMode,
   ): { m: MatchResult; fallback?: { mode: CliMode; context: string[][] } } => {
-    const m = matchCommand(grammar, matchContext(s, dev, mode, contextIn(s, mode)), line);
+    const m = matchCommand(grammar, matchContext(s, dev, matchModeOf(mode), matchContextIn(s, mode)), line);
     if (m.ok || m.kind !== 'unrecognized' || mode !== s.mode || !isConfigClassMode(mode) || mode === 'config') return { m };
     const seen = new Set<CliMode>([mode]);
     let cur = parentMode(mode);
@@ -890,7 +942,7 @@ export function createCliRuntime(deps: CliRuntimeDeps, handlers?: Record<string,
     const m = found.m;
     // Masking runs BEFORE the failure return: a line that carries a secret and then fails to parse (wrong mode,
     // over-long value) was still typed in the clear, and `exec` recorded it last.
-    const spans = m.ok ? (m.secretSpans ?? []) : secretSpansOf(grammar, matchContext(s, dev, mode, contextIn(s, mode)), line);
+    const spans = m.ok ? (m.secretSpans ?? []) : secretSpansOf(grammar, matchContext(s, dev, matchModeOf(mode), matchContextIn(s, mode)), line);
     if (!nested && !s.headless && spans.length > 0 && s.history.length > 0) {
       s.history[s.history.length - 1] = maskSpans(line, spans);
     }
@@ -913,6 +965,11 @@ export function createCliRuntime(deps: CliRuntimeDeps, handlers?: Record<string,
     }
 
     s.closing = false;
+    // P2: a `config-if` line typed in `config-if-range` runs once per port of the range (module header).
+    const range = runMode === 'config-if-range' && found.fallback === undefined && m.doPrefix !== true && !specModeAllows(m.spec.mode, 'config-if-range')
+      ? rangePortsOf(s.context)
+      : undefined;
+    if (range !== undefined) return runOnRange(s, dev, line, range, now);
     const ctx = buildCtx(s, dev, effectiveMode, now);
     let outcome: CommandOutcome;
     try {
@@ -948,6 +1005,43 @@ export function createCliRuntime(deps: CliRuntimeDeps, handlers?: Record<string,
     if (closed && !nested) closeNow(s);
     const r: LineOutcome = { output, handlerOutput, closed, noDevice: false };
     if (error !== undefined) r.error = error;
+    return r;
+  }
+
+  /**
+   * P2: run a `config-if` line on every port of an `interface range` (module header). Each port is matched and run
+   * with its own `[['interface', p]]` context in mode `config-if`, so a port that fails the spec's requirement (or
+   * an interface arg) is reported by name — `<port>: <message>` — and the others still run. The outcome joins the
+   * ports' outputs; its error is the joined errors (the first line's message for a `ConfigureLineResult`).
+   */
+  function runOnRange(s: SessionState, dev: DeviceRuntime, line: string, ports: readonly PortId[], now: SimTime): LineOutcome {
+    const outputs: string[] = [];
+    const errors: string[] = [];
+    for (const port of ports) {
+      const context: string[][] = [['interface', port]];
+      const pm = matchCommand(grammar, matchContext(s, dev, 'config-if', context), line);
+      if (!pm.ok) {
+        errors.push(`${port}: ${pm.error.message}`);
+        continue;
+      }
+      const handler = registry[pm.spec.handler];
+      if (handler === undefined) {
+        errors.push(`${port}: ${MSG_NO_HANDLER}`);
+        continue;
+      }
+      let outcome: CommandOutcome;
+      try {
+        outcome = handler(buildCtx(s, dev, 'config-if', now, context), pm.args, pm.negated);
+      } catch (e) {
+        if (e instanceof HeadlessJobRefused) return failure(CLI_MESSAGES.notHeadless, { message: CLI_MESSAGES.notHeadless });
+        throw e;
+      }
+      if (outcome.output !== undefined && outcome.output !== '') outputs.push(`${port}: ${outcome.output}`);
+      if (outcome.error !== undefined) errors.push(`${port}: ${outcome.error}`);
+    }
+    const handlerOutput = outputs.join('\n');
+    const r: LineOutcome = { output: joinOutput(handlerOutput, errors.join('\n')), handlerOutput, closed: false, noDevice: false };
+    if (errors.length > 0) r.error = { message: errors.join('\n') };
     return r;
   }
 
@@ -1234,7 +1328,7 @@ export function createCliRuntime(deps: CliRuntimeDeps, handlers?: Record<string,
       const dev = s === undefined ? undefined : deps.device(s.device);
       if (s === undefined || dev === undefined) return { items: [], error: { message: MSG_NO_SESSION } };
       if (s.pending !== undefined || s.mode === 'login') return { items: [] };
-      return parserComplete(grammar, matchContext(s, dev, s.mode, contextIn(s, s.mode)), partial);
+      return parserComplete(grammar, matchContext(s, dev, matchModeOf(s.mode), matchContextIn(s, s.mode)), partial);
     },
 
     help(id, partial) {
@@ -1242,7 +1336,7 @@ export function createCliRuntime(deps: CliRuntimeDeps, handlers?: Record<string,
       const dev = s === undefined ? undefined : deps.device(s.device);
       if (s === undefined || dev === undefined) return { items: [], error: { message: MSG_NO_SESSION } };
       if (s.pending !== undefined || s.mode === 'login') return { items: [] };
-      return parserHelp(grammar, matchContext(s, dev, s.mode, contextIn(s, s.mode)), partial);
+      return parserHelp(grammar, matchContext(s, dev, matchModeOf(s.mode), matchContextIn(s, s.mode)), partial);
     },
 
     interrupt(id) {
@@ -1285,12 +1379,17 @@ export function createCliRuntime(deps: CliRuntimeDeps, handlers?: Record<string,
 
     configure,
 
+    counters() {
+      return { sessions: nextSession, headless: nextHeadless };
+    },
+
     onPortsRemoved(device, ports) {
       const removed = new Set<PortId>(ports);
       const now = deps.now();
       for (const s of [...sessions.values(), ...headlessSessions.values()]) {
         if (s.device !== device) continue;
-        const hit = s.context.some((entry) => contextKeyOf(entry) === 'interface' && entry[1] !== undefined && removed.has(entry[1]));
+        // an `interface range …` entry names its ports from the third token (P2)
+        const hit = s.context.some((entry) => contextKeyOf(entry) === 'interface' && entry.slice(1).some((p) => removed.has(p)));
         if (!hit) continue;
         s.mode = 'config';
         s.context = [];

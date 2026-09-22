@@ -9,7 +9,7 @@
  */
 import type { CommandSpec } from '../../contracts/cli.js';
 import { BRIDGING_CAPABILITIES } from '../../contracts/catalog.js';
-import { ifaceArg, NFOS_ONLY } from './core-exec.js';
+import { ifaceArg, intArg, NFOS_ONLY } from './core-exec.js';
 
 /** Handler ids of the shared show commands. */
 export const SHOW_HANDLERS = {
@@ -27,6 +27,20 @@ export const SHOW_HANDLERS = {
 } as const;
 
 const H = SHOW_HANDLERS;
+
+/**
+ * @since P2 (ARCHITECTURE-P2 §5.4; W2 cli) Arg names the P2 forms of the P1 show commands pass through `fixedArgs`:
+ * `show interfaces status err-disabled` (`STATUS_FILTER_ARG` = 'err-disabled'), `show mac address-table
+ * dynamic|static|count` (`MAC_KIND_ARG` = 'dynamic' | 'static', `MAC_COUNT_ARG` = 'count'; `vlan <v>` and
+ * `interface <if>` are ordinary args named `MAC_VLAN_ARG` and `MAC_IFACE_ARG`) and `show ip route static`
+ * (`ROUTE_SOURCE_ARG` = 'S').
+ */
+export const STATUS_FILTER_ARG = 'filter';
+export const MAC_KIND_ARG = 'kind';
+export const MAC_COUNT_ARG = 'count';
+export const MAC_VLAN_ARG = 'vlan';
+export const MAC_IFACE_ARG = 'iface';
+export const ROUTE_SOURCE_ARG = 'source';
 
 /** The shared show command table. */
 export const SHOW_GRAMMAR: readonly CommandSpec[] = Object.freeze<CommandSpec[]>([
@@ -62,6 +76,19 @@ export const SHOW_GRAMMAR: readonly CommandSpec[] = Object.freeze<CommandSpec[]>
     objectives: ['CCNA1.4.2'],
   },
   {
+    path: ['show', 'interfaces', 'status', 'err-disabled'],
+    mode: '@exec',
+    privilege: 1,
+    help: 'Only the ports switched off by an error, with the reason',
+    filterable: true,
+    handler: H.showInterfacesStatus,
+    fixedArgs: { [STATUS_FILTER_ARG]: 'err-disabled' },
+    grammars: NFOS_ONLY,
+    requiresAny: BRIDGING_CAPABILITIES,
+    since: 'P2',
+    objectives: ['CCNA2.4.1'],
+  },
+  {
     path: ['show', 'arp'],
     mode: '@exec',
     privilege: 1,
@@ -92,6 +119,71 @@ export const SHOW_GRAMMAR: readonly CommandSpec[] = Object.freeze<CommandSpec[]>
     objectives: ['CCNA1.7.2'],
   },
   {
+    path: ['show', 'mac', 'address-table', 'dynamic'],
+    mode: '@exec',
+    privilege: 1,
+    help: 'Only the learned (dynamic) MAC address entries',
+    filterable: true,
+    handler: H.showMac,
+    fixedArgs: { [MAC_KIND_ARG]: 'dynamic' },
+    grammars: NFOS_ONLY,
+    requiresAny: BRIDGING_CAPABILITIES,
+    since: 'P2',
+    objectives: ['CCNA1.7.2'],
+  },
+  {
+    path: ['show', 'mac', 'address-table', 'static'],
+    mode: '@exec',
+    privilege: 1,
+    help: 'Only the fixed (static and secure) MAC address entries',
+    filterable: true,
+    handler: H.showMac,
+    fixedArgs: { [MAC_KIND_ARG]: 'static' },
+    grammars: NFOS_ONLY,
+    requiresAny: BRIDGING_CAPABILITIES,
+    since: 'P2',
+    objectives: ['CCNA1.7.2'],
+  },
+  {
+    path: ['show', 'mac', 'address-table', 'vlan', `<${MAC_VLAN_ARG}>`],
+    mode: '@exec',
+    privilege: 1,
+    help: 'Only the MAC address entries of one VLAN',
+    args: { [MAC_VLAN_ARG]: intArg('VLAN number', 1, 4094) },
+    filterable: true,
+    handler: H.showMac,
+    grammars: NFOS_ONLY,
+    requiresAny: BRIDGING_CAPABILITIES,
+    since: 'P2',
+    objectives: ['CCNA1.7.2'],
+  },
+  {
+    path: ['show', 'mac', 'address-table', 'interface', `<${MAC_IFACE_ARG}>`],
+    mode: '@exec',
+    privilege: 1,
+    help: 'Only the MAC address entries learned on one port',
+    args: { [MAC_IFACE_ARG]: ifaceArg('The port whose entries to list') },
+    filterable: true,
+    handler: H.showMac,
+    grammars: NFOS_ONLY,
+    requiresAny: BRIDGING_CAPABILITIES,
+    since: 'P2',
+    objectives: ['CCNA1.7.2'],
+  },
+  {
+    path: ['show', 'mac', 'address-table', 'count'],
+    mode: '@exec',
+    privilege: 1,
+    help: 'How many MAC address entries the table holds, by kind',
+    filterable: true,
+    handler: H.showMac,
+    fixedArgs: { [MAC_COUNT_ARG]: 'count' },
+    grammars: NFOS_ONLY,
+    requiresAny: BRIDGING_CAPABILITIES,
+    since: 'P2',
+    objectives: ['CCNA1.7.2'],
+  },
+  {
     path: ['show', 'ip', 'route'],
     mode: '@exec',
     privilege: 1,
@@ -101,6 +193,19 @@ export const SHOW_GRAMMAR: readonly CommandSpec[] = Object.freeze<CommandSpec[]>
     grammars: NFOS_ONLY,
     requiresAny: ['routing'],
     objectives: ['CCNA2.1.2'],
+  },
+  {
+    path: ['show', 'ip', 'route', 'static'],
+    mode: '@exec',
+    privilege: 1,
+    help: 'Only the static routes of the IPv4 routing table',
+    filterable: true,
+    handler: H.showIpRoute,
+    fixedArgs: { [ROUTE_SOURCE_ARG]: 'S' },
+    grammars: NFOS_ONLY,
+    requiresAny: ['routing'],
+    since: 'P2',
+    objectives: ['CCNA2.1.3'],
   },
   {
     path: ['show', 'version'],

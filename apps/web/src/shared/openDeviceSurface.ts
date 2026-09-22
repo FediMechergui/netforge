@@ -48,6 +48,8 @@ export const SURFACE_PANEL_TAB: Readonly<Record<GuiPanelId, InspectorTab>> = Obj
   'radio.link': 'wireless',
   'cell.tower': 'wireless',
   'modem.status': 'wireless',
+  // P2 (wave 0 stub): the controller panel is a settings panel of a network appliance.
+  'wlc.controller': 'wireless',
 });
 
 const INSPECTOR_TABS: readonly InspectorTab[] = ['overview', 'ports', 'config', 'tables', 'processes', 'physical', 'desktop', 'wireless', 'services'];

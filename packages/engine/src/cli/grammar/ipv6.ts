@@ -19,6 +19,7 @@ import {
   choiceArg,
   debugSpecs,
   ifaceArg,
+  intArg,
   IPV6_CAPABILITIES,
   ipv6Arg,
   L3_PORT,
@@ -26,6 +27,9 @@ import {
   prefix6Arg,
   wordArg,
 } from './core-exec.js';
+
+/** @since P2 Arg name of the optional administrative distance of `ipv6 route` (ARCHITECTURE-P2 §5.2). */
+export const ROUTE6_DISTANCE_ARG = 'distance';
 
 /** Handler ids of the IPv6 commands. */
 export const IPV6_HANDLERS = {
@@ -132,7 +136,9 @@ export const IPV6_GRAMMAR: readonly CommandSpec[] = Object.freeze<CommandSpec[]>
     objectives: ['CCNA1.12.3'],
   },
   {
-    path: ['ipv6', 'route', '<prefix>', '<nexthop>', '<via>'],
+    // P2 (ARCHITECTURE-P2 §5.2): `ipv6 route <p/len> <nh>|<if> [<nh>] [<ad>]` — the distance follows the optional
+    // next hop here; the spec below takes it straight after a next-hop address (an address is never a distance).
+    path: ['ipv6', 'route', '<prefix>', '<nexthop>', '<via>', `<${ROUTE6_DISTANCE_ARG}>`],
     mode: 'config',
     privilege: 15,
     help: 'Add a static IPv6 route',
@@ -140,12 +146,30 @@ export const IPV6_GRAMMAR: readonly CommandSpec[] = Object.freeze<CommandSpec[]>
       prefix: prefix6Arg('Destination prefix'),
       nexthop: wordArg('Next-hop address (X:X:X:X::X) or exit interface'),
       via: ipv6Arg('Next-hop address, when the previous value is an exit interface', true),
+      [ROUTE6_DISTANCE_ARG]: intArg('Administrative distance of this route (default 1)', 1, 255, true),
     },
     handler: H.configIpv6Route,
     allowNo: true,
     grammars: NFOS_ONLY,
     requiresAny: ['routing'],
     since: 'P1',
+    objectives: ['CCNA2.1.3'],
+  },
+  {
+    path: ['ipv6', 'route', '<prefix>', '<nexthop>', `<${ROUTE6_DISTANCE_ARG}>`],
+    mode: 'config',
+    privilege: 15,
+    help: 'Add a static IPv6 route with an administrative distance',
+    args: {
+      prefix: prefix6Arg('Destination prefix'),
+      nexthop: wordArg('Next-hop address (X:X:X:X::X) or exit interface'),
+      [ROUTE6_DISTANCE_ARG]: intArg('Administrative distance of this route (default 1)', 1, 255),
+    },
+    handler: H.configIpv6Route,
+    allowNo: true,
+    grammars: NFOS_ONLY,
+    requiresAny: ['routing'],
+    since: 'P2',
     objectives: ['CCNA2.1.3'],
   },
   {

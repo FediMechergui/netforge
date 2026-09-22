@@ -151,19 +151,51 @@ export function contextKeyOf(entry: readonly string[]): string {
   return entry[0] ?? '';
 }
 
+/** @since P2 Second token of an `interface range …` context entry (the session mode `config-if-range`, §2.11). */
+export const INTERFACE_RANGE_KEYWORD = 'range';
+
 /**
- * Mode entered by a context entry: the first non-reserved registered mode whose context key
- * matches, else the first reserved one, else undefined.
+ * @since P2 True for a canonical subinterface id: a port id followed by `.` and a number (`GigabitEthernet0/0.10`,
+ * D11). Port ids never contain a dot otherwise.
+ */
+export function isSubinterfaceName(name: string): boolean {
+  return /^[A-Za-z][A-Za-z-]*\d[\d/]*\.\d+$/.test(name);
+}
+
+/**
+ * @since P2 Refinement of modes that share a context key with another mode (`interface`, §2.11): true when `entry`
+ * belongs to `mode` specifically, false when it does not, undefined for a mode without a refinement.
+ */
+function refinementAccepts(mode: CliMode, entry: readonly string[]): boolean | undefined {
+  switch (mode) {
+    case 'config-subif':
+      return entry[0] === 'interface' && entry[1] !== undefined && isSubinterfaceName(entry[1]);
+    case 'config-if-range':
+      return entry[0] === 'interface' && entry[1] === INTERFACE_RANGE_KEYWORD;
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * Mode entered by a context entry, among the registered modes whose context key matches: a mode whose refinement
+ * accepts the entry (P2: a subinterface entry → `config-subif`, an `interface range …` entry → `config-if-range`),
+ * else a mode without a refinement; non-reserved before reserved at each step, declaration order within. Undefined
+ * when no mode has the key. Since the W2 cli item entered `config-subif` and `config-if-range`, a subinterface entry
+ * and an `interface range …` entry map to those modes; every other `interface` entry still maps to `config-if`.
  */
 export function modeForContextEntry(entry: readonly string[]): CliMode | undefined {
   const key = contextKeyOf(entry);
-  let reserved: CliMode | undefined;
+  const specific: ModeDef[] = [];
+  const general: ModeDef[] = [];
   for (const def of allModes()) {
     if (def.contextKey !== key) continue;
-    if (def.reserved !== true) return def.name;
-    if (reserved === undefined) reserved = def.name;
+    const accepts = refinementAccepts(def.name, entry);
+    if (accepts === true) specific.push(def);
+    else if (accepts === undefined) general.push(def);
   }
-  return reserved;
+  const open = (list: readonly ModeDef[]): ModeDef | undefined => list.find((d) => d.reserved !== true);
+  return (open(specific) ?? open(general) ?? specific[0] ?? general[0])?.name;
 }
 
 /** Mode for a whole context stack: `config` for an empty stack, else the mode of the innermost entry. */

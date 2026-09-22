@@ -4,6 +4,11 @@
  * headless `configure` with the canonical lines of gui/commands.ts (`interface X` + `[no] shutdown`, or the host
  * shell's `adapter X up|down`), so the change lands in the running-config exactly as if it had been typed
  * (ARCHITECTURE-P1 D9, §3.12). Whether a port may be toggled comes from its role traits, never the device kind.
+ *
+ * P2 (ARCHITECTURE-P2 §5.5, §6; W3 web-inspector): a bridged port of a VLAN-aware device gets the "Switching"
+ * section (`SwitchportSection`): mode, VLANs, trunk facts, spanning-tree role and state per VLAN, channel membership,
+ * port-security state and the access-port quick action. Whether it applies follows the port role and the device's
+ * catalog entry (or the tables it declares), never the device kind.
  */
 import { Fragment, useState } from 'react';
 import type { DeviceSnapshot, PortCounters, PortId, PortRef, PortSnapshot } from '@netforge/engine';
@@ -16,8 +21,11 @@ import { formatBps, formatSignal } from '../vocab/fields';
 import { lineProtocolText } from '../vocab/media';
 import { assocStateVocab } from '../vocab/trace-kinds';
 import { toastError, useDeviceIndex } from './PacketInspector';
+import { SwitchportSection, switchportSectionApplies } from './SwitchportSection';
+import { useTickNow } from './TablesView';
 import {
   PHY_VIA_TEXT,
+  catalogModel,
   RADIO_MODE_LABELS,
   RF_BAND_LABELS,
   associationOfStation,
@@ -126,6 +134,9 @@ function PortDetails({ device, port }: { device: DeviceSnapshot; port: PortSnaps
   const devices = useDeviceIndex();
   const link = useStore((s) => linkById(s, port.link));
   const association = useStore((s) => (port.radio !== undefined ? associationOfStation(s.snapshot, { device: device.id, port: port.id }) : undefined));
+  const model = useStore((s) => catalogModel(s.catalog, device.type));
+  const switching = switchportSectionApplies(device, port, model);
+  const now = useTickNow(1000, switching);
   const segmentId = port.phy?.segment ?? link?.segment;
   const status = portStatus(port, device);
   const address = portAddress(port);
@@ -348,6 +359,7 @@ function PortDetails({ device, port }: { device: DeviceSnapshot; port: PortSnaps
             </dd>
           </dl>
         </section>
+        {switching && <SwitchportSection device={device} port={port} now={now} />}
         {radio !== undefined && (
           <section className="insp-section" aria-label="Radio">
             <div className="panel-title">Radio</div>

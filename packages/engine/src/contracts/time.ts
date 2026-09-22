@@ -40,6 +40,21 @@ export function formatSimTime(t: SimTime): string {
   return `${pad(h, 2)}:${pad(m, 2)}:${pad(s, 2)}.${pad(us, 6)}`;
 }
 
+const SIM_TIME_TEXT = /^(\d{2,}):([0-5]\d):([0-5]\d)\.(\d{6})$/;
+
+/**
+ * @since P2 [SHOULD S1] Inverse of `formatSimTime`: `hh:mm:ss.uuuuuu` (at least two hour digits, minutes and seconds
+ * below 60, exactly six microsecond digits) → integer ns. `parseSimTime(formatSimTime(t))` is `t` rounded down to
+ * whole microseconds. Anything else, or a time beyond MAX_SIM_TIME, gives undefined.
+ */
+export function parseSimTime(text: string): SimTime | undefined {
+  const m = SIM_TIME_TEXT.exec(text);
+  if (m === null) return undefined;
+  const totalS = Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]);
+  const t = (totalS * 1_000_000 + Number(m[4])) * US;
+  return Number.isSafeInteger(t) && t <= MAX_SIM_TIME ? t : undefined;
+}
+
 /** Serialization delay of `bytes` on a link of `bps`, rounded up to whole ns. */
 export function serializationNs(bytes: number, bps: number): SimTime {
   if (bps <= 0) throw new RangeError('bps must be > 0');

@@ -6,7 +6,7 @@
  * concept tool in their place (§4.13). The keyboard canvas (`CanvasOutline`) is mounted by canvas/Canvas.tsx
  * inside its own container.
  *
- * @since P2 A learn surface (`LearnShell`: the landing page, a course, a lesson) covers the whole window when
+ * @since course A learn surface (`LearnShell`: the landing page, a course, a lesson) covers the whole window when
  * `view` is one of them; the grid is hidden behind it rather than unmounted, so the sandbox is untouched.
  *
  * Also owns the wall-clock ticker that expires drop markers / table flashes, the global hotkeys and the

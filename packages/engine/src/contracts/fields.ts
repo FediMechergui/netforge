@@ -69,11 +69,14 @@ export const PROTO_FIELDS: Readonly<Record<string, ProtoFieldTable>> = Object.fr
   ethernet: table('ethernet', 'P0', [
     f('dst', 'mac', 'Destination MAC.', REQ),
     f('src', 'mac', 'Source MAC.', REQ),
-    f('type', 'uint', 'Ethertype of the payload.', u(16, REQ)),
+    f('type', 'uint', 'Ethertype of the payload; a value up to 0x05dc is an 802.3 length (the payload is LLC).', u(16, REQ)),
     f('fcs', 'uint', 'CRC-32 frame check sequence.', u(32, DERDEC)),
     f('fcsValid', 'bool', 'FCS matched the frame.', DEC),
     f('padding', 'uint', 'Number of pad bytes added to reach 64 bytes.', DEC),
-  ], 'Frames include the 4-byte FCS and are padded to 64 bytes.'),
+  ], 'Frames include the 4-byte FCS and are padded to 64 bytes. P2: `type` ≤ ETH_LENGTH_MAX means 802.3 length ' +
+    'framing — decode makes the next layer `llc`, bounded by the length; encode writes the LLC payload length when the ' +
+    'builder passes any value ≤ 0x05DC (builders pass 0; LINK_FIELDS fills 0 when the next proto is `llc`). The codec ' +
+    'omits and expects no FCS inside a CAPWAP tunnel (`ctx.outer.at(-1)?.proto === \'capwap\'`).'),
   arp: table('arp', 'P0', [
     f('htype', 'uint', 'Hardware type.', u(16, { default: 1 })),
     f('ptype', 'uint', 'Protocol type.', u(16, { default: 0x0800 })),
@@ -152,12 +155,15 @@ export const PROTO_FIELDS: Readonly<Record<string, ProtoFieldTable>> = Object.fr
     f('rssiDbm', 'int', 'Simulated received signal annotation.', { bits: 16, decodeOnly: true }),
   ]),
   llc: table('llc', 'P0.5', [
-    f('dsap', 'uint', 'Always 0xaa (SNAP).', u(8, { default: 0xaa })),
-    f('ssap', 'uint', 'Always 0xaa (SNAP).', u(8, { default: 0xaa })),
-    f('control', 'uint', 'Always 0x03.', u(8, { default: 0x03 })),
-    f('oui', 'uint', 'Always 0.', u(24, { default: 0 })),
-    f('type', 'uint', 'Ethertype of the payload.', u(16, REQ)),
-  ], 'LLC/SNAP after an 802.11 data header; transparent for topProto.'),
+    f('dsap', 'uint', 'Destination service access point (0xaa = SNAP; 0x42 = spanning tree).', u(8, { default: 0xaa })),
+    f('ssap', 'uint', 'Source service access point (0xaa = SNAP).', u(8, { default: 0xaa })),
+    f('control', 'uint', 'Control byte (0x03, unnumbered information).', u(8, { default: 0x03 })),
+    f('oui', 'uint', 'SNAP only: organisation code (0, or the NF OUI for NF control protocols).', u(24, { default: 0 })),
+    f('type', 'uint', 'SNAP only: ethertype of the payload when oui is 0, an NF protocol id when oui is the NF OUI.', u(16)),
+  ], 'LLC after an 802.11 data header or an 802.3 length; transparent for topProto. SNAP (dsap = ssap = 0xaa) ' +
+    'dispatches on `type` in the ethertype space (oui 0) or the nf.pid space (oui NF_OUI); non-SNAP frames (@since P2) ' +
+    'have no oui/type and dispatch on `dsap` in the llc.sap space. The SNAP encode and decode paths are byte-identical ' +
+    'to P1.'),
   eapol: table('eapol', 'P0.5', [
     f('version', 'uint', 'EAPOL version.', u(8, { default: 2 })),
     f('packetType', 'uint', '3 = key.', u(8, { default: 3 })),
@@ -307,6 +313,118 @@ export const PROTO_FIELDS: Readonly<Record<string, ProtoFieldTable>> = Object.fr
     f('headers', 'string', "'Name: value' lines joined by '\\n'.", { default: '' }),
     f('body', 'string', 'UTF-8 body.', { default: '' }),
   ], "Real HTTP/1.1 text. A message split across TCP segments decodes with error 'partial'; reassembly belongs to the socket owner and NetScope follow-stream."),
+
+  // ── P2 (ARCHITECTURE-P2 §2.3). Codecs arrive in W1 (pdu) and W3 (lag, pagp); until then these names decode as payload. ──
+  dot1q: table('dot1q', 'P2', [
+    f('pcp', 'uint', 'Priority code point.', u(3, { default: 0 })),
+    f('dei', 'bool', 'Drop eligible indicator.', { default: false }),
+    f('vid', 'uint', 'VLAN identifier.', u(12, REQ)),
+    f('type', 'uint', 'Ethertype of the payload, or an 802.3 length (up to 0x05dc) when the payload is LLC; filled from the next layer.', u(16)),
+  ], '802.1Q tag. `type` follows the ethernet.type 802.3 rule exactly: when the next layer is llc the builder passes 0 ' +
+    'and the codec writes the LLC payload length; on decode a value ≤ ETH_LENGTH_MAX makes the next layer llc, bounded ' +
+    'by the length (a tagged per-VLAN BPDU is [ethernet 0x8100, dot1q {type = length}, llc, stp]). Transparent for ' +
+    'topProto; trailer fix-up like llc.'),
+  stp: table('stp', 'P2', [
+    f('protocolId', 'uint', 'Protocol identifier (always 0).', u(16, { default: 0 })),
+    f('version', 'uint', '0 STP, 2 RST, 3 MST.', u(8, REQ)),
+    f('bpduType', 'uint', '0x00 configuration, 0x80 topology change notice, 0x02 RST/MST.', u(8, REQ)),
+    f('flags', 'uint', 'Configuration/RST only: bit0 TC, bit1 proposal, bits2-3 role (0 unknown, 1 alternate/backup, 2 root, 3 designated), bit4 learning, bit5 forwarding, bit6 agreement, bit7 TC-ack.', u(8)),
+    f('rootPriority', 'uint', 'Root bridge priority (includes the VLAN, extended system id).', u(16)),
+    f('rootMac', 'mac', 'Root bridge address.'),
+    f('rootPathCost', 'uint', 'Cost of the sender\'s path to the root.', u(32)),
+    f('bridgePriority', 'uint', 'Sender bridge priority (includes the VLAN).', u(16)),
+    f('bridgeMac', 'mac', 'Sender bridge address.'),
+    f('portId', 'uint', 'Sender port identifier (priority and number).', u(16)),
+    f('messageAge', 'uint', 'Message age, in 1/256 s.', u(16)),
+    f('maxAge', 'uint', 'Maximum age, in 1/256 s.', u(16)),
+    f('helloTime', 'uint', 'Hello time, in 1/256 s.', u(16)),
+    f('forwardDelay', 'uint', 'Forward delay, in 1/256 s.', u(16)),
+    f('v1Length', 'uint', 'RST only: version 1 length (always 0).', u(8, DER)),
+    f('pvid', 'uint', 'NF per-VLAN TLV (00 00 00 02 <vid>) appended to trunk BPDUs; absent on access ports.', u(16)),
+    f('flagsText', 'string', "The flags as letters, e.g. 'TC,P,D,L,F'.", DEC),
+  ], 'IEEE BPDU after LLC SAP 0x42 to 01:80:c2:00:00:00, one per VLAN (D8, D9). Topology change notices are 4 bytes.'),
+  lacp: table('lacp', 'P2', [
+    f('subtype', 'uint', 'Slow protocol subtype (1 = LACP).', u(8, { default: 1 })),
+    f('version', 'uint', 'LACP version.', u(8, { default: 1 })),
+    f('actorSystemPriority', 'uint', 'Sender system priority.', u(16)),
+    f('actorSystem', 'mac', 'Sender system address.'),
+    f('actorKey', 'uint', 'Sender operational key.', u(16)),
+    f('actorPortPriority', 'uint', 'Sender port priority.', u(16)),
+    f('actorPort', 'uint', 'Sender port number.', u(16)),
+    f('actorState', 'uint', 'Sender state bits: 0 activity, 1 timeout, 2 aggregation, 3 sync, 4 collecting, 5 distributing, 6 defaulted, 7 expired.', u(8)),
+    f('partnerSystemPriority', 'uint', 'Partner system priority as the sender knows it.', u(16)),
+    f('partnerSystem', 'mac', 'Partner system address as the sender knows it.'),
+    f('partnerKey', 'uint', 'Partner operational key.', u(16)),
+    f('partnerPortPriority', 'uint', 'Partner port priority.', u(16)),
+    f('partnerPort', 'uint', 'Partner port number.', u(16)),
+    f('partnerState', 'uint', 'Partner state bits (same layout as actorState).', u(8)),
+    f('collectorMaxDelay', 'uint', 'Collector maximum delay.', u(16, { default: 0 })),
+  ], 'Fixed 110-byte LACPDU on ethertype 0x8809 to 01:80:c2:00:00:02; TLV types, lengths and reserved bytes are derived. The codec errors on a subtype other than 1 and stops.'),
+  dtp: table('dtp', 'P2', [
+    f('version', 'uint', 'Message version.', u(8, { default: 1 })),
+    f('domain', 'string', "Negotiation domain (up to 32 characters; '' = none).", { default: '' }),
+    f('adminMode', 'uint', 'Sender admin mode: 1 access, 2 trunk, 3 desirable, 4 auto.', u(8, REQ)),
+    f('operTrunk', 'bool', 'The sender is trunking.', REQ),
+    f('trunkType', 'uint', 'Trunk encapsulation (1 = 802.1Q).', u(8, { default: 1 })),
+    f('neighbor', 'mac', 'Sender port address.', REQ),
+  ], 'Original NF format (D8): 802.3 + LLC/SNAP with the NF OUI and PID 1, to the NF L2 control group; TLVs are type u16, length u16, value.'),
+  dhcpv6: table('dhcpv6', 'P2', [
+    f('msgType', 'uint', '1 SOLICIT, 2 ADVERTISE, 3 REQUEST, 4 CONFIRM, 5 RENEW, 6 REBIND, 7 REPLY, 8 RELEASE, 9 DECLINE, 10 RECONFIGURE, 11 INFORMATION-REQUEST, 12 RELAY-FORW, 13 RELAY-REPL.', u(8, REQ)),
+    f('transactionId', 'uint', 'Transaction id (not in relay messages).', u(24)),
+    f('clientDuid', 'string', 'Client identifier, hex (link-layer DUID from the MAC).'),
+    f('serverDuid', 'string', 'Server identifier, hex.'),
+    f('iaid', 'uint', 'Identity association id.', u(32)),
+    f('iaAddress', 'ipv6', 'Address offered or leased (stateful).'),
+    f('preferredLifetimeS', 'uint', 'Preferred lifetime of the address.', u(32)),
+    f('validLifetimeS', 'uint', 'Valid lifetime of the address.', u(32)),
+    f('t1S', 'uint', 'Renew time.', u(32)),
+    f('t2S', 'uint', 'Rebind time.', u(32)),
+    f('dnsServers', 'string', 'DNS recursive name servers, comma-separated.'),
+    f('domainList', 'string', 'Domain search list.'),
+    f('statusCode', 'uint', 'Status code (0 success).', u(16)),
+    f('rapidCommit', 'bool', 'Rapid commit option present.'),
+    f('elapsedTimeCs', 'uint', 'Elapsed time, in hundredths of a second.', u(16)),
+    f('oro', 'string', 'Option request option: requested option codes, comma-separated.'),
+    f('hopCount', 'uint', 'Relay messages: hop count.', u(8)),
+    f('linkAddress', 'ipv6', 'Relay messages: link address.'),
+    f('peerAddress', 'ipv6', 'Relay messages: peer address.'),
+  ], 'UDP 546 (client) / 547 (server). The relay-message option chains to an inner dhcpv6 layer.'),
+  capwap: table('capwap', 'P2', [
+    f('radioId', 'uint', 'Radio identifier.', u(8)),
+    f('wbid', 'uint', 'Wireless binding (1 = IEEE 802.11).', u(8, { default: 1 })),
+    f('tbit', 'bool', 'A native 802.11 frame follows (no FCS).'),
+    f('messageType', 'uint', 'Control only: 1/2 discovery, 3/4 join, 5/6 configuration status, 9/10 WTP event, 11/12 change state event, 13/14 echo, 3398913/3398914 IEEE 802.11 WLAN configuration.', u(32)),
+    f('seq', 'uint', 'Sequence number.', u(8)),
+    f('wtpName', 'string', 'Access point name.'),
+    f('acName', 'string', 'Controller name.'),
+    f('resultCode', 'uint', 'Result code.', u(32)),
+    f('wlans', 'string', "WLAN configuration: '<id>:<ssid>:<security>:<vlan>:<keyTag>' (never a passphrase)."),
+    f('stations', 'string', "WTP event station reports: '<add|del>:<station mac>:<bssid>:<wlanId>' joined by ';' (NF vendor-specific element)."),
+    f('keepAlive', 'bool', 'Data channel keep-alive.'),
+  ], 'UDP 5246 (control) / 5247 (data); control vs data by the outer udp port. Control messages after the simulated DTLS step carry meta.protected. Inspector labels are the RFC names.'),
+  // [SHOULD S2]
+  hsrp: table('hsrp', 'P2', [
+    f('version', 'uint', 'HSRP version (1 or 2).', u(8, REQ)),
+    f('opCode', 'uint', '0 hello, 1 coup, 2 resign.', u(8, { default: 0 })),
+    f('state', 'uint', '0 initial, 1 learn, 2 listen, 4 speak, 8 standby, 16 active.', u(8, REQ)),
+    f('helloMs', 'uint', 'Hello interval in ms (v1 carries seconds; the codec converts).', u(32, { default: 3000 })),
+    f('holdMs', 'uint', 'Hold time in ms (v1 carries seconds; the codec converts).', u(32, { default: 10000 })),
+    f('priority', 'uint', 'Router priority.', u(32, { default: 100 })),
+    f('group', 'uint', 'Standby group (v1: up to 255).', u(16, REQ)),
+    f('authData', 'bytes', 'v1 authentication data (eight zero bytes by default).'),
+    f('virtualIp', 'ipv4', 'Virtual gateway address.'),
+    f('identifier', 'mac', 'v2: sender identifier.'),
+  ], 'UDP 1985 to 224.0.0.2 (v1) / 224.0.0.102 (v2); v2 is the group-state TLV.'),
+  // [SHOULD S3]
+  pagp: table('pagp', 'P2', [
+    f('version', 'uint', 'Message version.', u(8)),
+    f('mode', 'uint', '1 desirable, 2 auto.', u(8)),
+    f('device', 'mac', 'Sender device address.'),
+    f('port', 'uint', 'Sender port number.', u(16)),
+    f('group', 'uint', 'Sender channel group.', u(16)),
+    f('partnerDevice', 'mac', 'Partner device address as the sender knows it.'),
+    f('partnerPort', 'uint', 'Partner port number as the sender knows it.', u(16)),
+  ], 'Original NF format (D8): 802.3 + LLC/SNAP with the NF OUI and PID 3, to the NF L2 control group.'),
 });
 
 /** One next-protocol dispatch entry (pdu/codecs/dispatch.ts builds its tables from these). */
@@ -322,7 +440,12 @@ export interface DispatchEntry {
 const d = (space: DispatchSpace, key: number, proto: ProtoName, since: BuildStage, reserved?: true): DispatchEntry =>
   Object.freeze(reserved ? { space, key, proto, since, reserved } : { space, key, proto, since });
 
-/** Ethertype (ethernet.type, llc.type, hdlc.protocol), IP protocol (ipv4.protocol, ipv6.nextHeader) and well-known port dispatch. */
+/**
+ * Ethertype (ethernet.type, llc.type, hdlc.protocol), IP protocol (ipv4.protocol, ipv6.nextHeader) and well-known port
+ * dispatch. P2 adds the spaces 'llc.sap' (non-SNAP llc.dsap) and 'nf.pid' (llc.type when llc.oui is NF_OUI); a
+ * P2 entry whose codec is not registered yet decodes as payload (dispatch.ts), so the entries are decode-neutral
+ * until their codec lands.
+ */
 export const DISPATCH_TABLE: readonly DispatchEntry[] = Object.freeze([
   d('ethertype', 0x0800, 'ipv4', 'P0'),
   d('ethertype', 0x0806, 'arp', 'P0'),
@@ -352,4 +475,15 @@ export const DISPATCH_TABLE: readonly DispatchEntry[] = Object.freeze([
   d('tcp.port', 25, 'smtp', 'P1', true),
   d('tcp.port', 110, 'pop3', 'P1', true),
   d('tcp.port', 143, 'imap', 'P1', true),
+  // ── P2 ──
+  d('ethertype', 0x8100, 'dot1q', 'P2'),
+  d('ethertype', 0x8809, 'lacp', 'P2'), // slow protocols; the lacp codec errors on subtype ≠ 1 and stops
+  d('llc.sap', 0x42, 'stp', 'P2'),
+  d('nf.pid', 0x0001, 'dtp', 'P2'),
+  d('udp.port', 546, 'dhcpv6', 'P2'),
+  d('udp.port', 547, 'dhcpv6', 'P2'),
+  d('udp.port', 5246, 'capwap', 'P2'),
+  d('udp.port', 5247, 'capwap', 'P2'),
+  d('udp.port', 1985, 'hsrp', 'P2'), // [SHOULD S2]
+  d('nf.pid', 0x0003, 'pagp', 'P2'), // [SHOULD S3]
 ]);

@@ -40,6 +40,39 @@
  *  - PHY and radio settings rendered from running-config for the link model (`phySettings`, `radioSettings`),
  *    deferred transmit outcomes (`onTxOutcome`) and medium notifications (`onMediumEvent`).
  *
+ * P2 (ARCHITECTURE-P2 D2, D6, D12, §2.4, §2.9, §3.0; W1 device):
+ *  - defaults profile: `profile` is `spec.profile ?? 'P1'`; at every boot the model's `profileConfig[k]` lines are
+ *    replayed for every k with `profileIncludes(profile, k)` (DEFAULTS_PROFILES order), after `defaultConfig` and
+ *    before the saved configuration. A P1 world replays nothing new;
+ *  - actions `errDisable` / `errRecover` (and the fault path `errDisablePort`): set or clear `PortState.errDisabled`,
+ *    `portState` reason `err-disabled` / `err-recovered`, a log line, `deps.onPortAdmin` so the link model recomputes,
+ *    then the virtual oper recompute; `shutdown` (setPortAdmin false) clears an err-disable cause;
+ *  - action `l2Changed`: `l2.changed` is delivered to every other L2 daemon present, in `L2_PROCESSES` order, each
+ *    one's actions applied depth-first before the next is called, then the virtual oper recompute — all inside the
+ *    issuing call's action budget;
+ *  - action `configLine`: `applyConfigLine` exactly as for a typed line (configChange trace, onConfig fan-out to every
+ *    daemon including the issuer);
+ *  - pipeline steps 10, 10a, 10b and 12 of P2 run in `frameArrivalVerdict` / `ingressVerdict`.
+ *
+ * P2 (ARCHITECTURE-P2 D2, D11, D15, §3.0, §3.4, §5; W2 device):
+ *  - completeness rule: the device's `DefaultSlots` (`deviceDefaultSlots`: the slots of its default lines D =
+ *    `defaultConfig` + `profileConfig`) are computed once and passed to EVERY config apply — the boot replay of D
+ *    itself, the saved lines, typed lines, `configLine` actions, `setPortAdmin` — and to the parse of a saved
+ *    configuration text, so an explicit `no ip address` under a default slot survives export and reload;
+ *  - subinterfaces (`<parent>.<n>`, D11): created by `interface GigabitEthernet0/0.10` (global line, section line or
+ *    `ensureVirtualPort`) from `planSubinterface` / `createSubinterfacePortState`; `encapsulation dot1Q <vid>
+ *    [native]` is special-cased in `applyConfigLine` (only on a subinterface, `CLI_MESSAGES.encapNotHere` elsewhere;
+ *    a VID already carried by a sibling → `CLI_MESSAGES.duplicateVid`) and sets `PortState.dot1q`; step 10a's `subif`
+ *    verdict is applied here (pop with `vlanPopOp`, provenance stamped with this device and cause `encapsulation
+ *    dot1Q <v>`, mirrored as `mutation` events, counted on the subinterface, then `subinterfaceVerdict`); egress
+ *    `parent` counts on the subinterface, pushes the tag unless native and transmits on the parent;
+ *  - virtual oper lookups (`VirtualOperLookups`): on a VLAN-aware device (`isVlanAware`) the SVI rule reads the
+ *    `vlans`, `etherchannel`, `dtp`, `stp` and `stp-bridge` rows and `readSwitchport`; `bundledMembers` reads the
+ *    `etherchannel` rows for Port-channels. Recompute sites: the P1 ones, `l2Changed`, `errDisable`, `errRecover`
+ *    and every applied config line whose first token is in `VIRTUAL_RECOMPUTE_KEYS`;
+ *  - `setPortL3` merges `virtual4` and [S2] `groups4` like the other members; a drop of a PDU with
+ *    `meta.background` carries `background: true` (§2.7).
+ *
  * Power-off semantics (RAM is lost, NVRAM survives): every daemon's `onShutdown` runs first (its actions apply while the
  * ports are still up; P1), then tables are cleared (declared order), processes and timers
  * dropped, virtual interfaces other than the auto ones removed, roles/encapsulations/admin state/counters/L3
@@ -52,13 +85,18 @@
  */
 import { deviceMacBase } from '../contracts/addr.js';
 import {
+  DEFAULTS_PROFILES,
   HARDWARE_MESSAGES,
+  L2_PROCESSES,
   PROCESS_ORDER,
   ROLE_KINDS,
   ROLE_TRAITS,
   SLOT_ACCEPTS,
   expandCapabilities,
+  isVlanAware,
+  profileIncludes,
   type Capability,
+  type DefaultsProfile,
   type HardwareErrorCode,
   type HardwareResult,
   type ModuleModel,
@@ -68,24 +106,40 @@ import {
   type SlotSpec,
 } from '../contracts/catalog.js';
 import { CLI_MESSAGES } from '../contracts/cli.js';
-import type { ConfigAst, ConfigDelta, ConfigNode } from '../contracts/config.js';
+import type { ConfigAst, ConfigDelta, ConfigNode, DefaultSlots } from '../contracts/config.js';
 import type { DeviceModel, DeviceRuntime, DeviceRuntimeDeps, DeviceSpec, PortResolution } from '../contracts/device.js';
 import type { DeviceId, PortId, ProcessName } from '../contracts/ids.js';
 import type { DropReason, FrameRxInfo, PortPhySettings, TxOutcome } from '../contracts/link.js';
 import type { AirView, MediumEvent } from '../contracts/medium.js';
-import type { Pdu, PduFactory } from '../contracts/pdu.js';
-import type { Ipv6PortAddress, PortIpv4Address, PortL3, PortState, PortView } from '../contracts/port.js';
+import type { Pdu, PduFactory, RewrapOp } from '../contracts/pdu.js';
+import type { ErrDisableCause, Ipv6PortAddress, PortIpv4Address, PortL3, PortState, PortView, VirtualIpv4 } from '../contracts/port.js';
 import type { Action, DebugEvent, DemuxLayer, Process, ProcessCtx, StateView } from '../contracts/process.js';
+import type { L2ChangedEvent } from '../contracts/transport.js';
 import { CHANNELS, type ChannelWidthMhz, type RadioSettings, type RfBand, type WifiSecurity } from '../contracts/rf.js';
-import type { DeviceTables, Table, TableFactory, TableName, TableRow } from '../contracts/tables.js';
+import {
+  stpKey,
+  vlanKey,
+  type DeviceTables,
+  type DtpRow,
+  type EtherchannelRow,
+  type StpPortRow,
+  type Table,
+  type TableFactory,
+  type TableName,
+  type TableRow,
+} from '../contracts/tables.js';
 import type { SimTime } from '../contracts/time.js';
 import type { TraceEvent, TraceSink } from '../contracts/trace.js';
-import { createConfigAst, parseConfigText } from '../cli/config-ast.js';
+import { createConfigAst, defaultSlotsOf, parseConfigText } from '../cli/config-ast.js';
+import { DEFAULT_CONFIG_RULES } from '../cli/config-rules.js';
 import { normalizeIpv6 } from '../core/addr6.js';
 import { configTextLinesOf } from '../cli/config-text.js';
+import { vlanPopOp, vlanPushOp } from '../pdu/vlan.js';
+import { carries, channelOperOf, isImplicitVlan, operOf, type L2PortView } from '../protocols/l2/membership.js';
+import { readSwitchport } from '../protocols/l2/switchport-config.js';
 import { CATALOG_STAGE } from './catalog/index.js';
 import { deriveProcesses, deriveTables, modulePortSpecs } from './catalog/define.js';
-import { resolvePortName } from './catalog/names.js';
+import { parseSubinterfaceName, resolvePortName } from './catalog/names.js';
 import {
   buildDemuxIndex,
   countIngress,
@@ -93,6 +147,7 @@ import {
   frameArrivalVerdict,
   ingressVerdict,
   loopIngressLayer,
+  subinterfaceVerdict,
   type DemuxIndex,
   type FrameVerdict,
 } from './pipeline.js';
@@ -101,11 +156,13 @@ import {
   autoVirtualPortStates,
   checkVirtualPortRemoval,
   createPortState,
+  createSubinterfacePortState,
   createVirtualPortState,
   fixedPortStates,
   insertPorts,
   isAutoInstance,
   parseVirtualPortName,
+  planSubinterface,
   planVirtualPort,
   recomputeVirtualOper,
   removePorts,
@@ -114,8 +171,12 @@ import {
   seedRunningConfig,
   specEncap,
   specRole,
+  subinterfacesOf,
+  sviVlanOf,
+  vlanMissingMessage,
   vlanUnsupportedMessage,
   type PortBuildContext,
+  type VirtualOperLookups,
 } from './ports.js';
 import { createProcessCtx, pduSummary, type ProcessHost } from './process-ctx.js';
 
@@ -130,6 +191,89 @@ const FACILITY_LINK = 'LINK';
 
 /** Syslog facility used for runtime/system messages. */
 const FACILITY_SYS = 'SYS';
+
+/** @since P2 Learner-facing names of the err-disable causes, used in the runtime's log lines (original wording). */
+export const ERR_DISABLE_CAUSE_TEXT: Readonly<Record<ErrDisableCause, string>> = Object.freeze({
+  'psecure-violation': 'a port security violation',
+  bpduguard: 'BPDU guard',
+  'channel-misconfig': 'an EtherChannel misconfiguration',
+  fault: 'an injected fault',
+});
+
+/** @since P2 Log line of an `errDisable` action (severity 4; `detail` appended when given). Original wording. */
+export function errDisabledMessage(port: PortId, cause: ErrDisableCause, detail?: string): string {
+  const base = `Interface ${port} is error-disabled by ${ERR_DISABLE_CAUSE_TEXT[cause]}`;
+  return detail === undefined || detail === '' ? `${base}.` : `${base}: ${detail}.`;
+}
+
+/** @since P2 Log line of an `errRecover` action (severity 5). Original wording. */
+export function errRecoveredMessage(port: PortId, cause: ErrDisableCause): string {
+  return `Interface ${port} leaves the error-disabled state (${ERR_DISABLE_CAUSE_TEXT[cause]}) and may come up again.`;
+}
+
+/**
+ * @since P2 The `profileConfig` lists a device replays at boot in a world of `profile` (D2): one list per key k with
+ * `profileIncludes(profile, k)`, in DEFAULTS_PROFILES order, empty lists left out. A P1 world gets only a 'P1' key's
+ * lines (no model has one today), so it replays nothing new.
+ */
+export function profileConfigLines(model: Pick<DeviceModel, 'profileConfig'>, profile: DefaultsProfile): readonly (readonly string[])[] {
+  const out: (readonly string[])[] = [];
+  for (const k of DEFAULTS_PROFILES) {
+    if (!profileIncludes(profile, k)) continue;
+    const lines = model.profileConfig?.[k];
+    if (lines !== undefined && lines.length > 0) out.push(lines);
+  }
+  return out;
+}
+
+/**
+ * @since P2 The default lines D of the completeness rule (D2, §5): `defaultConfig`, then every `profileConfigLines`
+ * list, as one config text line list (W2 device computes the device's `DefaultSlots` from it).
+ */
+export function deviceDefaultLines(model: Pick<DeviceModel, 'defaultConfig' | 'profileConfig'>, profile: DefaultsProfile): readonly string[] {
+  const out: string[] = [...(model.defaultConfig ?? [])];
+  for (const lines of profileConfigLines(model, profile)) out.push(...lines);
+  return out;
+}
+
+/**
+ * @since P2 The device's default slots (D2, §5): `defaultSlotsOf` over the parsed default lines D of `model` in a
+ * world of `profile`. The runtime computes it once per device (D depends only on the model and the profile) and
+ * passes it to every config apply. A model without default lines gives an empty map, with which `ConfigAst.apply` is
+ * exactly `set` / `unset` (no P1 device has a default slot).
+ */
+export function deviceDefaultSlots(model: Pick<DeviceModel, 'defaultConfig' | 'profileConfig'>, profile: DefaultsProfile): DefaultSlots {
+  const lines = deviceDefaultLines(model, profile);
+  if (lines.length === 0) return new Map();
+  return defaultSlotsOf(parseConfigText(lines.join('\n')));
+}
+
+/**
+ * @since P2 First tokens of the config lines after which the runtime recomputes virtual oper state (§3.0 "Virtual
+ * oper state"): switchport membership, VLAN creation, channel membership, subinterface encapsulation, spanning tree.
+ */
+export const VIRTUAL_RECOMPUTE_KEYS: readonly string[] = Object.freeze(['switchport', 'vlan', 'channel-group', 'encapsulation', 'spanning-tree']);
+
+/** @since P2 The `encapsulation` keyword of a subinterface line, compared without case (`dot1Q`, `dot1q`). */
+export const DOT1Q_ENCAPSULATION = 'dot1q';
+
+/** @since P2 Provenance cause of the pop at subinterface ingress and the push at subinterface egress (§3.4). */
+export function dot1qCause(vid: number): string {
+  return `encapsulation dot1Q ${vid}`;
+}
+
+/**
+ * @since P2 Parse the arguments of `encapsulation dot1Q <vid> [native]` (`args` = the tokens after `encapsulation`):
+ * the VID must be 1–4094 and the only optional word is `native`. Undefined when the arguments are not that.
+ */
+export function parseDot1qArgs(args: readonly string[]): { vid: number; native: boolean } | undefined {
+  if (args.length < 2 || args.length > 3 || (args[0] as string).toLowerCase() !== DOT1Q_ENCAPSULATION) return undefined;
+  if (!/^[0-9]+$/.test(args[1] as string)) return undefined;
+  const vid = Number(args[1]);
+  if (!Number.isSafeInteger(vid) || vid < 1 || vid > 4094) return undefined;
+  if (args.length === 3 && args[2] !== 'native') return undefined;
+  return { vid, native: args.length === 3 };
+}
 
 /**
  * Interface config keys whose change the link model must see (`DeviceRuntimeDeps.onPortPhyConfig`): speed,
@@ -163,6 +307,12 @@ export const DEVICE_CONFIG_MESSAGES = Object.freeze({
   encapsulationNotSerial: 'Encapsulation can only be changed on serial interfaces.',
   /** `setPortRole` on a port the device does not have. */
   unknownInterface: 'Unknown interface {name}',
+  /** @since P2 `encapsulation dot1Q …` on a subinterface with a missing or invalid VLAN id, or an unknown extra word. */
+  dot1qArguments: 'Enter "encapsulation dot1Q <vlan> [native]" with a VLAN id from 1 to 4094.',
+  /** @since P2 `encapsulation <other>` on a subinterface (only 802.1Q is carried there). */
+  subinterfaceEncapsulation: 'A subinterface carries 802.1Q only: enter "encapsulation dot1Q <vlan> [native]".',
+  /** @since P2 A send on a subinterface whose encapsulation is not set (it is down, so no daemon should reach this). */
+  subinterfaceNoEncapsulation: 'no-encapsulation',
 });
 
 /** Link-layer port kinds that carry a radio (ctx.air is offered only to devices with one). */
@@ -192,6 +342,24 @@ interface PendingAction {
   process: ProcessName;
   action: Action;
 }
+
+/** Actions a handler returned, applied depth-first as the actions of `process`. */
+interface FollowUp {
+  process: ProcessName;
+  actions: Action[];
+}
+
+/**
+ * @since P2 A deferred runtime step of a multi-target action (`l2Changed`): run when it reaches the top of the stack,
+ * so each fan-out target is called only after the previous target's actions were applied. Counts against the budget.
+ */
+interface PendingStep {
+  process: ProcessName;
+  step: () => FollowUp | undefined;
+}
+
+/** What `applyOne` hands back: follow-up actions, or (P2) steps to run in order. */
+type ApplyResult = FollowUp | { steps: readonly (() => FollowUp | undefined)[] } | undefined;
 
 /**
  * The pdu still in hand in an action, if any (for budget-exhaustion drops): the pdu of send/deliver/drop/consume/
@@ -259,6 +427,21 @@ export function mergePortL3(current: Readonly<PortL3>, a: SetPortL3Action): Port
   } else if (a.groups6 !== null) {
     out.groups6 = a.groups6.map((g) => normalizeIpv6(g) ?? g);
   }
+
+  // P2 (D15): the virtual addresses written by ipv4 on `ipv4.virtual`; copied entry by entry in the order given
+  if (a.virtual4 === undefined) {
+    if (current.virtual4 !== undefined) out.virtual4 = current.virtual4;
+  } else if (a.virtual4 !== null) {
+    out.virtual4 = a.virtual4.map((v): VirtualIpv4 => ({ address: v.address, mac: v.mac, owner: v.owner, local: v.local }));
+  }
+
+  // [S2] the joined IPv4 groups written by ipv4 on `ipv4.group`
+  if (a.groups4 === undefined) {
+    if (current.groups4 !== undefined) out.groups4 = current.groups4;
+  } else if (a.groups4 !== null) {
+    out.groups4 = [...a.groups4];
+  }
+  // [/S2]
   return out;
 }
 
@@ -345,6 +528,8 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
   readonly pdus: PduFactory;
 
   private readonly deps: DeviceRuntimeDeps;
+  /** @since P2 The device's default slots (D2, §5), passed to every config apply and to the parse of saved text. */
+  private readonly defaultSlots: DefaultSlots;
   private runningAst: ConfigAst;
   /** One-shot running-config from `spec.runningConfig`, consumed by the first boot; dropped on power-off. */
   private pendingRunning: ConfigAst | undefined;
@@ -407,9 +592,10 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
 
     this.tables = createDeviceTables(spec.id, this.computeTableNames(), deps.tables, deps.trace, () => this.clock);
 
+    this.defaultSlots = deviceDefaultSlots(model, spec.profile ?? 'P1');
     this.runningAst = this.freshRunning();
-    if (spec.startupConfig !== undefined) this.startup = parseConfigText(spec.startupConfig);
-    if (spec.runningConfig !== undefined && spec.power) this.pendingRunning = parseConfigText(spec.runningConfig);
+    if (spec.startupConfig !== undefined) this.startup = this.parseSavedConfig(spec.startupConfig);
+    if (spec.runningConfig !== undefined && spec.power) this.pendingRunning = this.parseSavedConfig(spec.runningConfig);
 
     if (spec.power) this.setPower(true, now);
   }
@@ -427,6 +613,11 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
   /** Effective capabilities: model capabilities plus those added by installed modules (CAPABILITIES order). */
   get capabilities(): readonly Capability[] {
     return this.effectiveCaps;
+  }
+
+  /** @since P2 The world's defaults profile (D2): `spec.profile`, absent = 'P1'. Read at every boot and by `ctx.profile`. */
+  get profile(): DefaultsProfile {
+    return this.spec.profile ?? 'P1';
   }
 
   /** RF view for daemons: resolved once per power cycle, only for devices with a radio port. */
@@ -515,9 +706,57 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
       booted: this.bootedAt !== undefined,
       capabilities: this.effectiveCaps,
       index: this.demuxIndex,
+      subinterfaces: this.subinterfacesFor(port),
+      groupFilter: true,
     });
+    if (verdict.kind === 'subif') {
+      // Step 10a hand-over (D11, §3.4 step 3): pop the tag (stamped with this device, cause `encapsulation dot1Q <v>`),
+      // count on the subinterface, then steps 10b–15 on it.
+      const sub = this.ports.get(verdict.port);
+      if (sub === undefined || sub.dot1q === undefined) {
+        port.counters.inDrops++;
+        this.emitDrop(pdu, 'other', `no-subinterface:${verdict.port}`, port.id);
+        return;
+      }
+      // Steps 3–4 on the subinterface itself (step 5 is inherited from the parent, which already passed): a shut or
+      // oper-down subinterface receives nothing, exactly like a physical port.
+      if (!sub.adminUp) {
+        sub.counters.inDrops++;
+        this.emitDrop(pdu, 'port-admin-down', undefined, sub.id);
+        return;
+      }
+      if (!sub.operUp) {
+        sub.counters.inDrops++;
+        this.emitDrop(pdu, 'link-down', undefined, sub.id);
+        return;
+      }
+      if (verdict.pop) this.rewrap(pdu, vlanPopOp(), dot1qCause(sub.dot1q.vid));
+      sub.counters.inPackets++;
+      sub.counters.inBytes += pdu.size;
+      sub.lastInput = now;
+      const onSub = subinterfaceVerdict({ port: sub, frame: pdu, capabilities: this.effectiveCaps, index: this.demuxIndex, groupFilter: true });
+      const next = this.applyVerdict(sub, pdu, onSub);
+      if (next !== undefined) this.applyActions(next.process, next.actions, now);
+      return;
+    }
     const next = this.applyVerdict(port, pdu, verdict);
     if (next !== undefined) this.applyActions(next.process, next.actions, now);
+  }
+
+  /** The subinterfaces of a `routed` port for step 10a (undefined on any other port: nothing to classify). */
+  private subinterfacesFor(port: PortState): PortState[] | undefined {
+    if (effectivePortRole(port, this.effectiveCaps) !== 'routed') return undefined;
+    return subinterfacesOf(this.ports.values(), port.id);
+  }
+
+  /** A recorded structural rewrite by the runtime itself (D12): stamped with this device and mirrored as `mutation` events. */
+  private rewrap(pdu: Pdu, op: RewrapOp, cause: string): void {
+    const from = pdu.provenance.length;
+    pdu.rewrap({ now: this.clock, device: this.id }, op, cause);
+    const prov = pdu.provenance;
+    for (let i = from; i < prov.length; i++) {
+      this.trace.emit({ t: this.clock, kind: 'mutation', pdu: pdu.id, mutation: prov[i] as NonNullable<(typeof prov)[number]> });
+    }
   }
 
   onTimer(process: ProcessName, key: string, now: SimTime): void {
@@ -550,11 +789,12 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
     }
     this.demuxIndex = buildDemuxIndex(this.processOrder, this.processes);
 
-    // 2. load configuration: model defaults, then the startup-config from NVRAM — or, on the
-    //    first boot of a device restored from a saved project, its saved running-config
+    // 2. load configuration: model defaults, then (P2, D2) the defaults of the world's profile, then the startup-config
+    //    from NVRAM — or, on the first boot of a device restored from a saved project, its saved running-config
     if (this.model.defaultConfig !== undefined && this.model.defaultConfig.length > 0) {
       this.replayConfig(parseConfigText(this.model.defaultConfig.join('\n')));
     }
+    for (const lines of profileConfigLines(this.model, this.profile)) this.replayConfig(parseConfigText(lines.join('\n')));
     const initial = this.pendingRunning ?? this.startup;
     this.pendingRunning = undefined;
     if (initial !== undefined) this.replayConfig(initial);
@@ -633,31 +873,34 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
 
   applyActions(process: ProcessName, actions: Action[], now: SimTime): void {
     this.clock = now;
-    const stack: PendingAction[] = [];
+    const stack: (PendingAction | PendingStep)[] = [];
     for (let i = actions.length - 1; i >= 0; i--) stack.push({ process, action: actions[i] as Action });
     let budget = ACTION_BUDGET;
 
     while (stack.length > 0) {
       if (budget === 0) {
-        // exhausted: drop every pdu still in hand and stop
+        // exhausted: drop every pdu still in hand and stop (deferred steps carry none)
         while (stack.length > 0) {
-          const left = stack.pop() as PendingAction;
-          const pdu = pduOf(left.action);
+          const left = stack.pop() as PendingAction | PendingStep;
+          const pdu = 'action' in left ? pduOf(left.action) : undefined;
           if (pdu !== undefined) this.emitDrop(pdu, 'other', 'action-budget', undefined);
         }
         return;
       }
       budget--;
-      const { process: owner, action } = stack.pop() as PendingAction;
-      const more = this.applyOne(owner, action, now);
-      if (more !== undefined) {
-        for (let i = more.actions.length - 1; i >= 0; i--) stack.push({ process: more.process, action: more.actions[i] as Action });
+      const item = stack.pop() as PendingAction | PendingStep;
+      const more: ApplyResult = 'action' in item ? this.applyOne(item.process, item.action, now) : item.step();
+      if (more === undefined) continue;
+      if ('steps' in more) {
+        for (let i = more.steps.length - 1; i >= 0; i--) stack.push({ process: item.process, step: more.steps[i] as () => FollowUp | undefined });
+        continue;
       }
+      for (let i = more.actions.length - 1; i >= 0; i--) stack.push({ process: more.process, action: more.actions[i] as Action });
     }
   }
 
-  /** Apply one action; returns follow-up actions (deliver/request/egress/ingress) to push, or undefined. */
-  private applyOne(owner: ProcessName, a: Action, now: SimTime): { process: ProcessName; actions: Action[] } | undefined {
+  /** Apply one action; returns follow-up actions (deliver/request/egress/ingress) or (P2) deferred steps, or undefined. */
+  private applyOne(owner: ProcessName, a: Action, now: SimTime): ApplyResult {
     switch (a.type) {
       case 'send':
         return this.applySend(owner, a.port, a.pdu, now);
@@ -742,9 +985,86 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
         }
         return { process: a.to, actions: target.onEvent(ctx, a.ev) };
       }
+      // ── P2 (ARCHITECTURE-P2 §2.4) ──
+      case 'errDisable':
+        this.errDisable(a.port, a.cause, a.detail, now);
+        return undefined;
+      case 'errRecover':
+        this.errRecover(a.port, a.cause, now);
+        return undefined;
+      case 'l2Changed':
+        return { steps: this.l2ChangedSteps(owner, a, now) };
+      case 'configLine': {
+        const result = this.applyConfigLine(a.context.map((c) => [...c]), [...a.line], a.negate);
+        if (!result.ok) this.runtimeDebug(owner, `config line "${a.negate ? 'no ' : ''}${a.line.join(' ')}" refused: ${result.error ?? 'unknown reason'}`, now);
+        return undefined;
+      }
       default:
         return undefined;
     }
+  }
+
+  /**
+   * @since P2 The `l2Changed` fan-out (D6): one step per other L2 daemon present (`L2_PROCESSES` order, the issuer
+   * skipped, daemons without `onEvent` skipped) delivering `l2.changed`, then one step recomputing virtual oper state.
+   * Each target is looked up when its step runs, after the previous target's actions were applied.
+   */
+  private l2ChangedSteps(issuer: ProcessName, a: Extract<Action, { type: 'l2Changed' }>, now: SimTime): (() => FollowUp | undefined)[] {
+    const steps: (() => FollowUp | undefined)[] = [];
+    for (const name of L2_PROCESSES) {
+      if (name === issuer || !this.processes.has(name)) continue;
+      steps.push(() => {
+        const target = this.processes.get(name);
+        const ctx = this.ctxs.get(name);
+        if (target === undefined || ctx === undefined || target.onEvent === undefined) return undefined;
+        const ev: L2ChangedEvent = { kind: 'l2.changed', what: a.what, from: issuer };
+        if (a.port !== undefined) ev.port = a.port;
+        if (a.vlan !== undefined) ev.vlan = a.vlan;
+        return { process: name, actions: target.onEvent(ctx, ev) };
+      });
+    }
+    steps.push(() => {
+      this.recomputeVirtual(now);
+      return undefined;
+    });
+    return steps;
+  }
+
+  /**
+   * @since P2 Err-disable `portId` for `cause` (the `errDisable` action and `errDisablePort`): no-op when the port is
+   * unknown or already err-disabled; otherwise set the cause, emit `portState` reason `err-disabled` and a severity-4
+   * log, let the link model recompute the link (a physical port goes down) and recompute virtual oper state.
+   */
+  private errDisable(portId: PortId, cause: ErrDisableCause, detail: string | undefined, now: SimTime): void {
+    this.clock = now;
+    const port = this.ports.get(portId);
+    if (port === undefined || port.errDisabled !== undefined) return;
+    port.errDisabled = cause;
+    this.emitPortState(portId, 'err-disabled');
+    this.trace.emit({ t: now, kind: 'log', device: this.id, severity: 4, facility: FACILITY_LINK, message: errDisabledMessage(portId, cause, detail) });
+    if (!this.isVirtual(port)) this.deps.onPortAdmin({ device: this.id, port: portId }, port.adminUp, now);
+    this.recomputeVirtual(now);
+  }
+
+  /**
+   * @since P2 Clear `cause` from `portId` (the `errRecover` action): no-op unless the port is err-disabled for exactly
+   * `cause`; otherwise clear it, emit `portState` reason `err-recovered` and a severity-5 log, let the link model
+   * recompute (up again when admin up and cabled) and recompute virtual oper state.
+   */
+  private errRecover(portId: PortId, cause: ErrDisableCause, now: SimTime): void {
+    this.clock = now;
+    const port = this.ports.get(portId);
+    if (port === undefined || port.errDisabled !== cause) return;
+    delete port.errDisabled;
+    this.emitPortState(portId, 'err-recovered');
+    this.trace.emit({ t: now, kind: 'log', device: this.id, severity: 5, facility: FACILITY_LINK, message: errRecoveredMessage(portId, cause) });
+    if (!this.isVirtual(port)) this.deps.onPortAdmin({ device: this.id, port: portId }, port.adminUp, now);
+    this.recomputeVirtual(now);
+  }
+
+  /** @since P2 Fault path (`err-disable` fault, lab-check clone): the same effects as an `errDisable` action. */
+  errDisablePort(port: PortId, cause: ErrDisableCause, now: SimTime): void {
+    this.errDisable(port, cause, undefined, now);
   }
 
   /** §3.2 egress by the role's egress trait. */
@@ -779,6 +1099,40 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
       this.countOut(port, pdu.size, now);
       return { process: owner, actions: [{ type: 'ingress', port: portId, pdu, layer: loopIngressLayer(pdu) }] };
     }
+    if (egress === 'parent') {
+      // P2 (D11, §3.4 step 3): count on the subinterface, push its tag unless native, transmit on the parent.
+      const parent = port.spec.parent === undefined ? undefined : this.ports.get(port.spec.parent);
+      if (parent === undefined) {
+        this.emitDrop(pdu, 'other', `no-parent:${portId}`, portId);
+        return undefined;
+      }
+      if (port.dot1q === undefined) {
+        this.emitDrop(pdu, 'other', DEVICE_CONFIG_MESSAGES.subinterfaceNoEncapsulation, portId);
+        return undefined;
+      }
+      // a shut or oper-down subinterface transmits nothing (the link model gates the parent only)
+      if (!port.adminUp) {
+        port.counters.outDrops++;
+        this.emitDrop(pdu, 'port-admin-down', undefined, portId);
+        return undefined;
+      }
+      if (!port.operUp) {
+        port.counters.outDrops++;
+        this.emitDrop(pdu, 'link-down', undefined, portId);
+        return undefined;
+      }
+      this.countOut(port, pdu.size, now);
+      if (!port.dot1q.native) this.rewrap(pdu, vlanPushOp(port.dot1q.vid), dot1qCause(port.dot1q.vid));
+      this.transmitOn(parent, pdu, now);
+      return undefined;
+    }
+    this.transmitOn(port, pdu, now);
+    return undefined;
+  }
+
+  /** The link egress (`ROLE_TRAITS[role].egress === 'link'`, and the parent of a subinterface): `deps.transmit` and the port's counters. */
+  private transmitOn(port: PortState, pdu: Pdu, now: SimTime): void {
+    const portId = port.id;
     // Read the size before transmit: the air medium rewraps the pdu in place (Ethernet -> 802.11), and outBytes
     // counts the frame as the port handed it over, matching inBytes on the receive side.
     const bytes = pdu.size;
@@ -794,7 +1148,6 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
     } else {
       port.counters.outDrops++;
     }
-    return undefined;
   }
 
   /** The `ingress` action (§3.1 last paragraph): steps 11–15 on `portId` starting at `layer`. */
@@ -809,7 +1162,7 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
       port.counters.inBytes += pdu.size;
       port.lastInput = now;
     }
-    const verdict = ingressVerdict({ port, frame: pdu, layer, capabilities: this.effectiveCaps, index: this.demuxIndex });
+    const verdict = ingressVerdict({ port, frame: pdu, layer, capabilities: this.effectiveCaps, index: this.demuxIndex, groupFilter: true });
     return this.applyVerdict(port, pdu, verdict);
   }
 
@@ -847,7 +1200,7 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
     if (first !== undefined && first[0] === 'interface') {
       const name = first[1];
       ifacePort = name === undefined ? undefined : this.ports.get(name);
-      if (ifacePort === undefined && name !== undefined && parseVirtualPortName(this.model, name) !== undefined) {
+      if (ifacePort === undefined && name !== undefined && this.isCreatableName(name)) {
         const made = this.ensureVirtualPort(name, now);
         if (!made.ok) return { ok: false, error: made.error };
         ifacePort = this.ports.get(made.port);
@@ -855,13 +1208,13 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
       if (ifacePort === undefined) return { ok: false, error: `Unknown interface ${name ?? ''}`.trimEnd() };
     }
 
-    // global `interface N` / `no interface N`: virtual interface create and remove (§3.10)
+    // global `interface N` / `no interface N`: virtual interface create and remove (§3.10; P2: subinterfaces too)
     if (context.length === 0 && key === 'interface') {
       const name = line[1];
       if (name === undefined || name === '') return { ok: false, error: 'An interface name is required' };
       if (negate) return this.removeVirtualPort(name, now);
       if (!this.ports.has(name)) {
-        if (parseVirtualPortName(this.model, name) === undefined) return { ok: false, error: `Unknown interface ${name}` };
+        if (!this.isCreatableName(name)) return { ok: false, error: `Unknown interface ${name}` };
         const made = this.ensureVirtualPort(name, now);
         if (!made.ok) return { ok: false, error: made.error };
       }
@@ -878,14 +1231,26 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
       if (!flipped.ok) return flipped;
     }
     if (ifacePort !== undefined && key === 'encapsulation') {
-      const encap = this.checkEncapsulation(ifacePort, negate ? undefined : line[1]);
-      if (!encap.ok) return { ok: false, error: encap.error };
-      ifacePort.encap = encap.encap;
+      if (effectivePortRole(ifacePort, this.effectiveCaps) === 'subif') {
+        // P2 (§3.4 step 2): `encapsulation dot1Q <vid> [native]` sets the subinterface's tag; its `no` form clears it
+        const dot1q = this.checkDot1q(ifacePort, negate ? undefined : line.slice(1));
+        if (!dot1q.ok) return { ok: false, error: dot1q.error };
+        if (dot1q.dot1q === undefined) delete ifacePort.dot1q;
+        else ifacePort.dot1q = dot1q.dot1q;
+      } else if (line[1] !== undefined && line[1].toLowerCase() === DOT1Q_ENCAPSULATION) {
+        return { ok: false, error: fill(CLI_MESSAGES.encapNotHere, { port: ifacePort.id }) };
+      } else {
+        const encap = this.checkEncapsulation(ifacePort, negate ? undefined : line[1]);
+        if (!encap.ok) return { ok: false, error: encap.error };
+        ifacePort.encap = encap.encap;
+      }
     }
 
-    let delta = negate ? this.runningAst.unset(context, line) : this.runningAst.set(context, line);
-    if (delta === undefined && negate && context.length === 0 && key !== 'hostname') {
-      // `no <something>` that removes nothing at global level is kept as a `no` line (round-trip)
+    // P2 (D2, §5): every apply carries the device's default slots (the completeness rule)
+    let delta = this.runningAst.apply(context, line, negate, { defaults: this.defaultSlots });
+    if (delta === undefined && negate && context.length === 0 && key !== 'hostname' && DEFAULT_CONFIG_RULES.ruleFor(context, line)?.negationRestoresDefault !== true) {
+      // `no <something>` that removes nothing at global level is kept as a `no` line (round-trip); not for a rule whose
+      // `no` form means "back to the default" (P2 `spanning-tree mode`): the default is already what the slot holds
       delta = this.runningAst.set([], ['no', ...line]);
     }
 
@@ -901,10 +1266,44 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
     if (delta === undefined) return { ok: true };
     this.fanOutConfig(delta, now);
     this.trace.emit({ t: now, kind: 'configChange', device: this.id, line: line.join(' '), negate, context: context.map((c) => c.slice()) });
+    // P2 (§3.0 "Virtual oper state"): a recompute site after the lines that change what an SVI, a Port-channel or a
+    // subinterface derives its state from (the daemons wrote their rows in the fan-out above)
+    if (VIRTUAL_RECOMPUTE_KEYS.includes(key)) this.recomputeVirtual(now);
     if (ifacePort !== undefined && PHY_CONFIG_KEYS.includes(key) && !this.isVirtual(ifacePort)) {
       this.deps.onPortPhyConfig?.({ device: this.id, port: ifacePort.id }, now);
     }
     return { ok: true };
+  }
+
+  /**
+   * @since P2 `encapsulation dot1Q <vid> [native]` on subinterface `port` (`args` = the tokens after `encapsulation`;
+   * undefined = the `no` form, which clears the tag). Refused with original wording when the arguments are not an
+   * 802.1Q line, and with `CLI_MESSAGES.duplicateVid` when a sibling subinterface of the same parent already carries
+   * the VID (§3.4 step 2).
+   */
+  private checkDot1q(port: PortState, args: readonly string[] | undefined): { ok: true; dot1q: PortState['dot1q'] | undefined } | { ok: false; error: string } {
+    if (args === undefined) return { ok: true, dot1q: undefined };
+    if (args[0] === undefined || args[0].toLowerCase() !== DOT1Q_ENCAPSULATION) return { ok: false, error: DEVICE_CONFIG_MESSAGES.subinterfaceEncapsulation };
+    const parsed = parseDot1qArgs(args);
+    if (parsed === undefined) return { ok: false, error: DEVICE_CONFIG_MESSAGES.dot1qArguments };
+    if (port.spec.parent !== undefined) {
+      for (const other of subinterfacesOf(this.ports.values(), port.spec.parent)) {
+        if (other.id !== port.id && other.dot1q !== undefined && other.dot1q.vid === parsed.vid) {
+          return { ok: false, error: fill(CLI_MESSAGES.duplicateVid, { vlan: parsed.vid, other: other.id }) };
+        }
+      }
+    }
+    return { ok: true, dot1q: { vid: parsed.vid, native: parsed.native } };
+  }
+
+  /** True when `name` is a virtual interface this model can create (a family instance, or P2 a subinterface name). */
+  private isCreatableName(name: PortId): boolean {
+    return parseVirtualPortName(this.model, name) !== undefined || parseSubinterfaceName(name) !== undefined;
+  }
+
+  /** @since P2 Parse a saved configuration text with the device's default slots (explicit negations of D are kept, §5). */
+  private parseSavedConfig(text: string): ConfigAst {
+    return parseConfigText(text, DEFAULT_CONFIG_RULES, { defaults: this.defaultSlots });
   }
 
   /** `encapsulation X` on `port` (undefined value = `no encapsulation`, back to the spec default). */
@@ -946,7 +1345,7 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
       if (l.context.length === 0 && l.tokens[0] === 'interface' && !l.negate) {
         const name = l.tokens[1] ?? '';
         if (this.ports.has(name)) continue;
-        const made = parseVirtualPortName(this.model, name) !== undefined ? this.ensureVirtualPort(name, this.clock) : undefined;
+        const made = this.isCreatableName(name) ? this.ensureVirtualPort(name, this.clock) : undefined;
         if (made === undefined || !made.ok) {
           skipped.push(name);
           this.trace.emit({ t: this.clock, kind: 'log', device: this.id, severity: 4, facility: FACILITY_SYS, message: `Startup configuration refers to an unknown interface ${name}`.trimEnd() });
@@ -1030,9 +1429,10 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
     if (port === undefined) return;
     const role = effectivePortRole(port, this.effectiveCaps);
     if (!ROLE_TRAITS[role].configurable) return;
-    // keep the running-config in step even when called directly (CLI device op)
-    if (adminUp) this.runningAst.unset([['interface', portId]], ['shutdown']);
-    else this.runningAst.set([['interface', portId]], ['shutdown']);
+    // keep the running-config in step even when called directly (CLI device op); P2: through the completeness rule
+    this.runningAst.apply([['interface', portId]], ['shutdown'], adminUp, { defaults: this.defaultSlots });
+    // P2 (D12): `shutdown` clears an err-disable cause, so the following `no shutdown` brings the port back.
+    if (!adminUp && port.errDisabled !== undefined) delete port.errDisabled;
     if (port.adminUp === adminUp) return;
     port.adminUp = adminUp;
     this.trace.emit({ t: now, kind: 'portState', device: this.id, port: portId, adminUp, operUp: port.operUp, reason: adminUp ? 'admin-up' : 'admin-down' });
@@ -1161,6 +1561,7 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
 
   ensureVirtualPort(name: PortId, now: SimTime): { ok: true; port: PortId; created: boolean } | { ok: false; error: string } {
     this.clock = now;
+    if (!this.ports.has(name) && parseSubinterfaceName(name) !== undefined) return this.ensureSubinterface(name, now);
     const plan = planVirtualPort(this.model, this.ports, name, this.effectiveCaps);
     if (!plan.ok) return { ok: false, error: plan.error };
     if (!plan.created) return { ok: true, port: plan.port, created: false };
@@ -1170,6 +1571,25 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
     this.version++;
     this.emitPortState(state.id, 'virtual-created');
     if (state.adminUp) this.logUnsupportedVlan(state, now);
+    this.recomputeVirtual(now);
+    return { ok: true, port: state.id, created: true };
+  }
+
+  /**
+   * @since P2 `interface <parent>.<n>` (D11, §3.4 step 1): a `subif` port with the parent's MAC, ordinal and MTU,
+   * administratively up, its own interface section, `portState` reason `virtual-created`; it stays down until
+   * `encapsulation dot1Q` is set (`no-encapsulation`).
+   */
+  private ensureSubinterface(name: PortId, now: SimTime): { ok: true; port: PortId; created: boolean } | { ok: false; error: string } {
+    const plan = planSubinterface(this.model, this.ports, name, this.effectiveCaps);
+    if (!plan.ok) return { ok: false, error: plan.error };
+    if (!plan.created) return { ok: true, port: plan.port, created: false };
+    const parent = this.ports.get(plan.parent) as PortState;
+    const state = createSubinterfacePortState(parent, plan.number);
+    insertPorts(this.ports, this.model, [state]);
+    seedInterfaceSection(this.runningAst, state, this.effectiveCaps);
+    this.version++;
+    this.emitPortState(state.id, 'virtual-created');
     this.recomputeVirtual(now);
     return { ok: true, port: state.id, created: true };
   }
@@ -1365,16 +1785,92 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
 
   /** Recompute virtual oper state; per change emit `portState` then fan `onLinkChange` out. */
   private recomputeVirtual(now: SimTime): void {
-    const changes = recomputeVirtualOper(this.ports, { power: this.power, booted: this.bootedAt !== undefined }, this.effectiveCaps, now);
+    const changes = recomputeVirtualOper(this.ports, { power: this.power, booted: this.bootedAt !== undefined }, this.effectiveCaps, now, this.virtualLookups());
     for (const change of changes) {
       this.emitPortState(change.port, change.reason);
       this.fanLinkChange(change.port, change.operUp, now);
     }
   }
 
-  /** Log that an administratively enabled SVI other than Vlan1 stays down (VLANs arrive in P2). */
+  // ── P2 virtual oper lookups (ARCHITECTURE-P2 §3.0 "Virtual oper state", D6) ──
+
+  /** @since P2 True when this device runs the `vlan` daemon (D5): the SVI rule becomes the VLAN-aware one. */
+  private get vlanAware(): boolean {
+    return isVlanAware({ processes: this.processOrder });
+  }
+
+  /** @since P2 Does VLAN `vlan` exist here: implicit (1, 1002–1005) or a `vlans` row. */
+  private vlanExists(vlan: number): boolean {
+    if (isImplicitVlan(vlan)) return true;
+    return this.tables.get('vlans')?.has(vlanKey(vlan)) === true;
+  }
+
+  /** @since P2 The `etherchannel` row of member `port`, if any. */
+  private channelRowOf(port: PortId): EtherchannelRow | undefined {
+    return this.tables.get<EtherchannelRow>('etherchannel')?.get(port);
+  }
+
+  /** @since P2 Member ports whose `etherchannel` row names `bundle` with state `bundled`, in row order. */
+  private bundledMembers(bundle: PortId): PortId[] {
+    const rows = this.tables.get<EtherchannelRow>('etherchannel')?.rows() ?? [];
+    const out: PortId[] = [];
+    for (const r of rows) if (r.bundle === bundle && r.state === 'bundled') out.push(r.port);
+    return out;
+  }
+
+  /** @since P2 The L2 view of a bridged port for `carries` (§3.0): its switchport lines and its oper mode. */
+  private l2ViewOf(port: PortState): L2PortView {
+    const role = effectivePortRole(port, this.effectiveCaps);
+    const config = readSwitchport(this.runningAst, port.id, this.model);
+    const dtp = this.tables.get<DtpRow>('dtp');
+    const oper = role === 'channel'
+      ? channelOperOf(config, this.bundledMembers(port.id).map((m) => dtp?.get(m)))
+      : operOf(config, dtp?.get(port.id));
+    return { port: port.id, config, oper, role };
+  }
+
+  /**
+   * @since P2 The SVI carrier test of the VLAN-aware rule: bridged port `portId` counts for `Vlan<vlan>` when it is
+   * not a non-`individual` member of a bundle, carries `vlan` (`carries` ≠ undefined) and, when spanning tree runs
+   * for `vlan` (an `stp-bridge` row), forwards in it. Oper up and the bridged role are checked by the rule itself.
+   */
+  private sviCarrier(portId: PortId, vlan: number): boolean {
+    const port = this.ports.get(portId);
+    if (port === undefined) return false;
+    const member = this.channelRowOf(portId);
+    if (member !== undefined && member.state !== 'individual') return false;
+    if (carries(this.l2ViewOf(port), vlan, (v) => this.vlanExists(v)) === undefined) return false;
+    if (this.tables.get('stp-bridge')?.has(vlanKey(vlan)) !== true) return true;
+    return this.tables.get<StpPortRow>('stp')?.get(stpKey(vlan, portId))?.state === 'forwarding';
+  }
+
+  /**
+   * @since P2 The lookups injected into `recomputeVirtualOper`: `bundledMembers` always (a device without
+   * `etherchannel` rows has no bundled member, which is the P1 answer), the two SVI lookups only on a VLAN-aware
+   * device (elsewhere the P1 SVI rule applies unchanged).
+   */
+  private virtualLookups(): VirtualOperLookups {
+    const bundledMembers = (bundle: PortId): readonly PortId[] => this.bundledMembers(bundle);
+    if (!this.vlanAware) return { bundledMembers };
+    return {
+      vlanExists: (vlan) => this.vlanExists(vlan),
+      sviCarrier: (port, vlan) => this.sviCarrier(port, vlan),
+      bundledMembers,
+    };
+  }
+
+  /**
+   * Log why an administratively enabled SVI stays down: on a VLAN-aware device (P2) an SVI whose VLAN does not exist
+   * (`vlanMissingMessage`, §9.2 W4 item 16); elsewhere an SVI other than Vlan1 (`vlanUnsupportedMessage`, P1 wording).
+   */
   private logUnsupportedVlan(port: PortState, now: SimTime): void {
     if (effectivePortRole(port, this.effectiveCaps) !== 'svi') return;
+    if (this.vlanAware) {
+      const vlan = sviVlanOf(port.id);
+      if (vlan === undefined || this.vlanExists(vlan)) return;
+      this.trace.emit({ t: now, kind: 'log', device: this.id, severity: 4, facility: FACILITY_SYS, message: vlanMissingMessage(port.id, vlan) });
+      return;
+    }
     const parsed = parseVirtualPortName(this.model, port.id);
     if (parsed === undefined || parsed.number === SVI_SUPPORTED_VLAN) return;
     this.trace.emit({ t: now, kind: 'log', device: this.id, severity: 4, facility: FACILITY_SYS, message: vlanUnsupportedMessage(port.id) });
@@ -1392,6 +1888,9 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
     const ev: Extract<TraceEvent, { kind: 'drop' }> = { t: this.clock, kind: 'drop', pdu: pduSummary(pdu), device: this.id, reason };
     if (port !== undefined) ev.port = port;
     if (detail !== undefined) ev.detail = detail;
+    // P2 (§2.7): a dropped background PDU (keepalive, beacon, BPDU at a host, HSRP hello) is marked so the trace
+    // filter, the canvas markers and the sim-mode list can hide it by default
+    if (pdu.meta.background === true) ev.background = true;
     this.trace.emit(ev);
   }
 

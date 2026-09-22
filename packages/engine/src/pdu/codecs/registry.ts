@@ -25,6 +25,10 @@
  *    decodes without inventing one. `decodeStandalone` (contracts/pdu.ts StandaloneDecodeFn) decodes bytes with
  *    the registry alone — no PduIds — and adds the one-line summary and top protocol with the same rules as
  *    `PduView.summary()` / `topProto()` (`chainSummary` / `chainTopProto`).
+ *  • P2 (ARCHITECTURE-P2 §2.3, §9 item 4): the P2 codecs follow the P1 codecs in the order dot1q, stp, lacp, dtp,
+ *    dhcpv6, capwap, then the approved SHOULD codecs in S-number order (hsrp [S2]; pagp [S3] is appended by its W3
+ *    owner). `fillLinkField` is field-aware (dispatch.ts `linkFieldFill`): the 802.3 length rule for ethernet/dot1q
+ *    in front of llc, and the llc selector spaces (`ethertype`, `nf.pid`, `llc.sap`).
  */
 import type {
   Codec,
@@ -54,13 +58,21 @@ import { tcpCodec } from './tcp.js';
 import { dhcpCodec } from './dhcp.js';
 import { dnsCodec } from './dns.js';
 import { httpCodec } from './http.js';
-import { keyForProto, linkFieldFor } from './dispatch.js';
+import { dot1qCodec } from './dot1q.js';
+import { stpCodec } from './stp.js';
+import { lacpCodec } from './lacp.js';
+import { dtpCodec } from './dtp.js';
+import { dhcpv6Codec } from './dhcpv6.js';
+import { capwapCodec } from './capwap.js';
+import { hsrpCodec } from './hsrp.js'; // [SHOULD S2]
+import { pagpCodec } from './pagp.js'; // [SHOULD S3] (registered by the W3 lag item, a reviewed edit)
+import { linkFieldFill } from './dispatch.js';
 
 /**
  * All registered codecs, keyed by protocol name, in registry order: the five P0 codecs, then the P0.5
  * link-layer codecs (hdlc, dot11, dot11-mgmt, llc, eapol), then the P1 codecs in contracts/fields.ts order
- * (ipv6, ipv6-hopopts, ipv6-route, ipv6-frag, ipv6-dstopts, icmpv6, udp, tcp, dhcp, dns, http). Plugins may
- * `set` more.
+ * (ipv6, ipv6-hopopts, ipv6-route, ipv6-frag, ipv6-dstopts, icmpv6, udp, tcp, dhcp, dns, http), then the P2 codecs
+ * (dot1q, stp, lacp, dtp, dhcpv6, capwap, hsrp, pagp). Plugins may `set` more.
  */
 export const CODECS: Map<ProtoName, Codec> = new Map<ProtoName, Codec>([
   [ethernetCodec.proto, ethernetCodec],
@@ -84,6 +96,15 @@ export const CODECS: Map<ProtoName, Codec> = new Map<ProtoName, Codec>([
   [dhcpCodec.proto, dhcpCodec],
   [dnsCodec.proto, dnsCodec],
   [httpCodec.proto, httpCodec],
+  // P2 (ARCHITECTURE-P2 §9 item 4): appended after the P1 codecs, then the approved SHOULD codecs in S-number order.
+  [dot1qCodec.proto, dot1qCodec],
+  [stpCodec.proto, stpCodec],
+  [lacpCodec.proto, lacpCodec],
+  [dtpCodec.proto, dtpCodec],
+  [dhcpv6Codec.proto, dhcpv6Codec],
+  [capwapCodec.proto, capwapCodec],
+  [hsrpCodec.proto, hsrpCodec], // [SHOULD S2]
+  [pagpCodec.proto, pagpCodec], // [SHOULD S3]
 ]);
 
 /** Codec for `proto`, or undefined when nothing is registered under that name. */
@@ -276,12 +297,8 @@ export function fillLinkField(
   innerProto: ProtoName | undefined,
 ): Record<string, FieldValue> {
   if (innerProto === undefined) return fields;
-  const lf = linkFieldFor(proto);
-  if (!lf) return fields;
-  const current = fields[lf.field];
-  if (current !== undefined && current !== null) return fields;
-  const key = keyForProto(lf.space, innerProto);
-  return key === undefined ? fields : { ...fields, [lf.field]: key };
+  const add = linkFieldFill(proto, fields, innerProto);
+  return add === undefined ? fields : { ...fields, ...add };
 }
 
 /**

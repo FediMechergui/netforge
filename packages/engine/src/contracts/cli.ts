@@ -48,6 +48,17 @@ export type CliMode =
   | 'config-router'
   | 'config-subif'
   | 'config-vlan'
+  // ── P2 (ARCHITECTURE-P2 §2.11) ──
+  /** @since P2 `interface range …`: the session holds a port list and applies each line to each port. */
+  | 'config-if-range'
+  /** @since P2 `ipv6 dhcp pool <name>`. */
+  | 'config-dhcpv6'
+  /** @since P2 `ip access-list standard <name>`. */
+  | 'config-std-nacl'
+  /** @since P2 (wireless) `wlan <id> <profile> <ssid>` on the controller. */
+  | 'config-wlan'
+  /** @since P2 (wireless) `wlc-interface <name>` on the controller. */
+  | 'config-wlc-if'
   | (string & {});
 
 export type PrivilegeLevel = 0 | 1 | 15;
@@ -72,7 +83,11 @@ export type ArgType =
   | 'hex'
   | 'secret' // the terminal may mask; stored hashed where the rule says so
   | 'int-range' // 1-4,7
-  | 'quoted'; // "text with spaces" or one token
+  | 'quoted' // "text with spaces" or one token
+  // ── P2 ──
+  | 'vlan-list' // @since P2 10,20,30-35 (1-4094)
+  | 'mac-any' // @since P2 aabb.cc00.0100 or aa:bb:cc:00:01:00, normalised to canonical
+  | 'if-range'; // @since P2 fa0/1 - 12, gi0/1
 
 /** Dynamic completion sources for args. */
 export type CompletionSource = 'interfaces' | 'host-adapters' | 'virtual-interfaces' | 'ssids-seen' | 'dhcp-pools' | (string & {});
@@ -253,6 +268,12 @@ export interface CliRuntimeDeps {
   radioView(ref: PortRef): RadioPortView | undefined;
   /** @since P0.5 RF view of a device's radios (the link model's `airView`); feeds `CommandCtx.air`. */
   airView(device: DeviceId): AirView;
+  /**
+   * @since P2 [S1] The session counters to resume from (ARCHITECTURE-P2 §2.13 `FacadeCounters`): the next console
+   * or vty session is `s_<sessions + 1>` and the next headless run `h_<headless + 1>`, so a replay built from a
+   * journal's origin numbers its sessions exactly as the live world did. Absent: both start at 0.
+   */
+  resume?: { sessions: number; headless: number };
 }
 
 /** @since P0.5 Options of a headless configure run (D9). */
@@ -326,6 +347,8 @@ export interface CliRuntime {
   configure(device: DeviceId, commands: readonly string[], opts?: ConfigureOptions): ConfigureResult;
   /** @since P0.5 Module removal: sessions in a sub-mode of a removed port drop to 'config'. */
   onPortsRemoved(device: DeviceId, ports: readonly PortId[]): void;
+  /** @since P2 [S1] Sessions opened (`s_<n>`) and headless runs (`h_<n>`) so far, counted from `CliRuntimeDeps.resume`. */
+  counters(): { sessions: number; headless: number };
 }
 
 /** @since P0.5 Options of `CommandCtx.enterMode`. */
@@ -430,6 +453,12 @@ export const MODE_PROMPT: Readonly<Record<string, string>> = {
   'config-router': '(config-router)#',
   'config-subif': '(config-subif)#',
   'config-vlan': '(config-vlan)#',
+  // P2
+  'config-if-range': '(config-if-range)#',
+  'config-dhcpv6': '(config-dhcpv6)#',
+  'config-std-nacl': '(config-std-nacl)#',
+  'config-wlan': '(config-wlan)#',
+  'config-wlc-if': '(config-wlc-if)#',
 };
 
 /** @since P0.5 Mode classes: `exit` pops a config-class mode to its parent; `end` returns to priv-exec; `do` works only in config class. */
@@ -461,8 +490,19 @@ export const MODES: Readonly<Record<string, ModeDef>> = Object.freeze({
   'config-line': { name: 'config-line', class: 'config', parent: 'config', prompt: '(config-line)#', contextKey: 'line', grammars: ['nfos'] },
   'dhcp-config': { name: 'dhcp-config', class: 'config', parent: 'config', prompt: '(dhcp-config)#', contextKey: 'ip dhcp pool', grammars: ['nfos'] },
   'config-router': { name: 'config-router', class: 'config', parent: 'config', prompt: '(config-router)#', contextKey: 'router', grammars: ['nfos'], reserved: true },
-  'config-subif': { name: 'config-subif', class: 'config', parent: 'config', prompt: '(config-subif)#', contextKey: 'interface', grammars: ['nfos'], reserved: true },
-  'config-vlan': { name: 'config-vlan', class: 'config', parent: 'config', prompt: '(config-vlan)#', contextKey: 'vlan', grammars: ['nfos'], reserved: true },
+  'config-subif': { name: 'config-subif', class: 'config', parent: 'config', prompt: '(config-subif)#', contextKey: 'interface', grammars: ['nfos'] },
+  'config-vlan': { name: 'config-vlan', class: 'config', parent: 'config', prompt: '(config-vlan)#', contextKey: 'vlan', grammars: ['nfos'] },
+  // ── P2 (ARCHITECTURE-P2 §2.11, §9.2 W2 item 12b). A mode is registered RESERVED until the cli item whose grammar
+  // enters it drops the flag in that change, so the mode helpers (`modesOfClass`, pinned by cli.modes-rules.test.ts)
+  // change only together with the grammar: config-vlan, config-subif (above) and config-if-range were entered by the
+  // W2 cli item; config-dhcpv6 and config-std-nacl by the W3 cli item; config-wlan and config-wlc-if: W5 cli.
+  // config-if-range is declared after config-if and is reached only through the `interface range …` refinement of
+  // `modeForContextEntry`, so a plain 'interface' context entry still maps to config-if.
+  'config-if-range': { name: 'config-if-range', class: 'config', parent: 'config', prompt: '(config-if-range)#', contextKey: 'interface', grammars: ['nfos'] },
+  'config-dhcpv6': { name: 'config-dhcpv6', class: 'config', parent: 'config', prompt: '(config-dhcpv6)#', contextKey: 'ipv6 dhcp pool', grammars: ['nfos'] },
+  'config-std-nacl': { name: 'config-std-nacl', class: 'config', parent: 'config', prompt: '(config-std-nacl)#', contextKey: 'ip access-list standard', grammars: ['nfos'] },
+  'config-wlan': { name: 'config-wlan', class: 'config', parent: 'config', prompt: '(config-wlan)#', contextKey: 'wlan', grammars: ['nfos'], reserved: true },
+  'config-wlc-if': { name: 'config-wlc-if', class: 'config', parent: 'config', prompt: '(config-wlc-if)#', contextKey: 'wlc-interface', grammars: ['nfos'], reserved: true },
 });
 
 /** @since P0.5 Debug categories are data (`debug <category>` grammar and validation derive from the registry). */
@@ -488,4 +528,31 @@ export const CLI_MESSAGES = Object.freeze({
   switchedPort: '% This interface is switched. Enter "no switchport" first to give it an address.',
   /** `no switchport` on a port whose allowedRoles lack 'routed'. */
   roleLocked: '% This interface cannot change between switched and routed operation.',
+  // ── P2 (ARCHITECTURE-P2 §2.11; `{…}` placeholders are filled by the handler) ──
+  /** @since P2 `switchport access vlan <v>` created the missing VLAN. */
+  vlanCreated: '% VLAN {vlan} did not exist, so it has been created.',
+  /** @since P2 `ip address` on a subinterface without `encapsulation dot1Q`. */
+  subifNeedsEncap: '% Give this subinterface an 802.1Q encapsulation (encapsulation dot1Q <vlan>) before an address.',
+  /** @since P2 `encapsulation dot1Q` on a physical port. */
+  encapNotHere: '% 802.1Q encapsulation belongs on a subinterface such as {port}.10.',
+  /** @since P2 Two subinterfaces of one port for one VLAN. */
+  duplicateVid: '% VLAN {vlan} is already carried by {other} on this interface.',
+  /** @since P2 `switchport port-security` on a dynamic port. */
+  securityNeedsStaticMode: '% Port security needs a fixed mode. Enter "switchport mode access" (or trunk) first.',
+  /** @since P2 `switchport nonegotiate` on a dynamic port. */
+  nonegotiateNeedsStaticMode: '% Negotiation can only be switched off on an access or trunk port.',
+  /** @since P2 A switchport line on a port that is not switched. */
+  notSwitchport: '% {port} is not a switched port.',
+  /** @since P2 A spanning-tree line for a VLAN with no instance. */
+  stpVlanMissing: '% There is no spanning tree for VLAN {vlan} on this switch.',
+  /** @since P2 `channel-group <n>` created the Port-channel. */
+  channelCreated: 'Port-channel{group} was created for this bundle.',
+  /** @since P2 `no spanning-tree extend system-id` (refused; deviation (13)). */
+  extendSystemIdFixed: '% This switch always adds the VLAN number to its bridge priority; that cannot be switched off.',
+  /** @since P2 `spanning-tree portfast` on an operational trunk (the line is stored). */
+  portfastOnTrunk: '% Note: {port} is trunking, so PortFast has no effect here until it stops trunking (or use "spanning-tree portfast trunk").',
+  /** @since P2 `spanning-tree vlan <v> root primary` when the root already uses priority 0 (nothing stored). */
+  rootPriorityExhausted: '% VLAN {vlan} cannot be won by priority alone: the current root already uses priority 0.',
+  /** @since P2 (wireless) A WLAN names a controller interface that does not exist. */
+  wlcInterfaceMissing: '% There is no controller interface named {name}. Create it first under "wlc-interface {name}".',
 });

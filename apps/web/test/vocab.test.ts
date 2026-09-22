@@ -3,20 +3,26 @@
 import { describe, expect, it } from 'vitest';
 import {
   CAPABILITIES,
+  CAPWAP_MSG,
   DEVICE_CATEGORIES,
   DISPATCH_TABLE,
   GUI_PANELS,
+  LANE_IDS,
   MEDIA,
+  NF_OUI,
   PORT_ROLES,
   PROTO_FIELDS,
   TABLE_DESCRIPTORS,
 } from '@netforge/engine';
+import type { CapwapState, ChannelMemberState, FsmMachine, HsrpRow, PortSecurityRow, StpState } from '@netforge/engine';
 import * as media from '../src/vocab/media.js';
 import * as drops from '../src/vocab/drops.js';
 import * as protocols from '../src/vocab/protocols.js';
 import * as traceKinds from '../src/vocab/trace-kinds.js';
 import * as fields from '../src/vocab/fields.js';
 import * as categories from '../src/vocab/categories.js';
+import * as lanes from '../src/vocab/lanes.js';
+import * as fsm from '../src/vocab/fsm.js';
 
 const THEME_TOKENS = ['text', 'textDim', 'accent', 'ok', 'warn', 'err', 'purple', 'yellow', 'blueDeep'];
 
@@ -344,5 +350,173 @@ describe('original wording (D13)', () => {
     for (const mod of [media, drops, protocols, traceKinds, fields, categories]) collect(mod, strings, seen);
     expect(strings.length).toBeGreaterThan(300);
     for (const s of strings) for (const re of BANNED) expect(s, s).not.toMatch(re);
+  });
+});
+
+// ── P2 vocabulary (ARCHITECTURE-P2 §6, §7 W1 web-inspector): real entries for the P2 unions, lanes [S1] and machines
+// [S14]. Added cases only; the P0/P1 cases above are unchanged.
+describe('P2 vocabulary', () => {
+  it('words the P2 protocols, with control frames as hexagons and the tag as framing glue', () => {
+    const p2 = ['dot1q', 'stp', 'lacp', 'dtp', 'dhcpv6', 'capwap', 'hsrp', 'pagp'] as const;
+    for (const p of p2) {
+      const v = protocols.PROTOCOL_VOCAB[p];
+      expect(v.since, p).toBe('P2');
+      expect(v.hint.length, p).toBeGreaterThan(0);
+    }
+    for (const p of ['stp', 'lacp', 'dtp', 'hsrp', 'pagp'] as const) expect(protocols.packetShapeFor(p), p).toBe('hexagon');
+    expect(protocols.PROTOCOL_VOCAB.dot1q.transparent).toBe(true);
+    expect(protocols.PROTOCOL_VOCAB.dot1q.layer).toBe('framing');
+    expect(protocols.protocolLabel('dot1q')).toBe('802.1Q VLAN tag');
+  });
+
+  it('words the P2 drop reasons, capabilities, panel and roles', () => {
+    for (const r of ['vlan-filtered', 'stp-discarding', 'port-security', 'nat-exhausted'] as const) {
+      const v = drops.DROP_VOCAB[r];
+      expect(v.tag.length, r).toBeLessThanOrEqual(32);
+      expect(v.hint.length, r).toBeGreaterThan(20);
+    }
+    expect(drops.dropTag('vlan-filtered', 'VLAN 10 does not exist')).toEqual({ title: 'VLAN not carried here', detail: 'VLAN 10 does not exist' });
+    expect(categories.CAPABILITY_VOCAB['managed-switch'].words).toContain('vlan');
+    expect(categories.CAPABILITY_VOCAB['wireless-controller'].label).toBe('Wireless controller');
+    expect(categories.GUI_PANEL_VOCAB['wlc.controller'].placement).toBe('inspector-tab');
+    expect(categories.portRoleLabel('channel', ['switching'])).toBe('Port channel');
+    expect(categories.portRoleLabel('subif', ['routing'])).toBe('Subinterface');
+    expect(categories.portRoleLabel('wlan-tunnel', ['switching'])).toBe('Controller tunnel');
+  });
+
+  it('words the P2 port-state reasons', () => {
+    const reasons = ['err-disabled', 'err-recovered', 'parent-down', 'no-encapsulation', 'vlan-missing', 'no-bundled-member', 'bundle-up', 'no-bridged-port-up'];
+    for (const r of reasons) {
+      const text = traceKinds.portStateReasonText(r);
+      expect(text, r).not.toBe(r);
+      expect(text.length, r).toBeGreaterThan(0);
+    }
+  });
+
+  it('names the numbers of the P2 fields', () => {
+    expect(fields.formatField('ethernet', 'type', 0x8100)).toBe('0x8100 (802.1Q VLAN tag)');
+    expect(fields.formatField('ethernet', 'type', 0x0800)).toBe('0x0800 (IPv4)');
+    expect(fields.formatField('ethernet', 'type', 39)).toBe('39 (802.3 length)');
+    expect(fields.formatField('ethernet', 'type', 0x05dc)).toBe('1500 (802.3 length)');
+    expect(fields.formatField('dot1q', 'type', 0x0806)).toBe('0x0806 (ARP)');
+    expect(fields.formatField('dot1q', 'type', 39)).toBe('39 (802.3 length)');
+    expect(fields.formatField('dot1q', 'pcp', 5)).toBe('5 (voice)');
+    expect(fields.formatField('dot1q', 'vid', 10)).toBe('10');
+    expect(fields.formatMutationValue('dot1q.vid', 10)).toBe('10');
+    expect(fields.formatField('llc', 'dsap', 0x42)).toBe('0x42 (Spanning tree)');
+    expect(fields.formatField('llc', 'dsap', 0xaa)).toBe('0xaa (SNAP)');
+    expect(fields.formatField('llc', 'type', 0x0800, { oui: 0 })).toBe('0x0800 (IPv4)');
+    expect(fields.formatField('llc', 'type', 1, { oui: NF_OUI })).toBe('0x0001 (Trunk negotiation)');
+    expect(fields.formatField('llc', 'type', 3, { oui: NF_OUI })).toBe('0x0003 (Port aggregation)');
+    expect(fields.formatField('llc', 'oui', NF_OUI)).toBe('0x024e46 (NetForge control protocols)');
+    expect(fields.formatField('stp', 'version', 2)).toBe('2 (rapid spanning tree)');
+    expect(fields.formatField('stp', 'bpduType', 0x80)).toBe('0x80 (topology change notice)');
+    expect(fields.formatField('stp', 'flags', 0x3c)).toBe('0x3c (role designated, learning, forwarding)');
+    expect(fields.formatField('stp', 'flags', 0x43)).toBe('0x43 (topology change, proposal, agreement)');
+    expect(fields.formatField('stp', 'flags', 0)).toBe('0x00');
+    expect(fields.formatField('stp', 'bridgePriority', 32778)).toBe('32778 (32768 + VLAN 10)');
+    expect(fields.formatField('stp', 'rootPriority', 4096)).toBe('4096');
+    expect(fields.formatField('stp', 'portId', 0x8001)).toBe('0x8001 (128.1)');
+    expect(fields.formatField('stp', 'portId', 0x8401)).toBe('0x8401 (128.1025)');
+    expect(fields.formatField('stp', 'forwardDelay', 3840)).toBe('3840 (15 s)');
+    expect(fields.formatField('stp', 'maxAge', 20 * 256)).toBe('5120 (20 s)');
+    expect(fields.formatField('lacp', 'actorState', 0x3d)).toBe('0x3d (active, long timeout, aggregatable, in sync, collecting, distributing)');
+    expect(fields.formatField('lacp', 'partnerState', 0x00)).toBe('0x00 (passive, long timeout, individual)');
+    expect(fields.formatField('dtp', 'adminMode', 3)).toBe('3 (dynamic desirable)');
+    expect(fields.formatField('dhcpv6', 'msgType', 11)).toBe('11 (information request)');
+    expect(fields.formatField('dhcpv6', 'elapsedTimeCs', 250)).toBe('250 (2.5 s)');
+    expect(fields.formatField('hsrp', 'state', 16)).toBe('16 (active)');
+    expect(fields.formatField('pagp', 'mode', 1)).toBe('1 (desirable)');
+    expect(fields.formatField('udp', 'dstPort', 547)).toBe('547 (DHCPv6)');
+    expect(fields.formatField('udp', 'dstPort', 5246)).toBe('5246 (CAPWAP)');
+    expect(fields.formatField('udp', 'dstPort', 1985)).toBe('1985 (HSRP)');
+    for (const [name, code] of Object.entries(CAPWAP_MSG)) {
+      expect(fields.formatField('capwap', 'messageType', code), name).toMatch(/^\d+ \(.+\)$/);
+    }
+    expect(fields.formatField('capwap', 'messageType', CAPWAP_MSG.wlanConfigReq)).toBe('3398913 (IEEE 802.11 WLAN Configuration Request)');
+  });
+});
+
+describe('timeline lane vocabulary [S1]', () => {
+  it('covers every engine lane, in the engine canonical order', () => {
+    expect(lanes.LANE_ORDER).toEqual([...LANE_IDS]);
+    for (const id of LANE_IDS) {
+      const v = lanes.LANE_VOCAB[id];
+      expect(v.lane).toBe(id);
+      expect(v.label.length).toBeGreaterThan(0);
+      expect(v.hint.length).toBeGreaterThan(0);
+      expect(THEME_TOKENS).toContain(v.color);
+    }
+  });
+
+  it('gives every lane a unique glyph and a unique label (the non-colour channel)', () => {
+    const glyphs = lanes.LANE_ORDER.map((l) => lanes.LANE_VOCAB[l].glyph);
+    expect(new Set(glyphs).size).toBe(glyphs.length);
+    for (const g of glyphs) expect(g.length).toBeLessThanOrEqual(2);
+    const labels = lanes.LANE_ORDER.map((l) => lanes.LANE_VOCAB[l].label);
+    expect(new Set(labels).size).toBe(labels.length);
+    expect(lanes.laneLabel('stp')).toBe('Spanning tree');
+    expect(lanes.laneLabel('ospf')).toBe('ospf');
+    expect(lanes.laneVocab('toString')).toBeUndefined();
+  });
+});
+
+describe('state-machine vocabulary [S14]', () => {
+  it('covers every machine with at least two unique states', () => {
+    const machines: readonly FsmMachine[] = [
+      'stp-port',
+      'stp-bridge',
+      'dtp',
+      'lacp',
+      'channel',
+      'port-security',
+      'err-disable',
+      'nat',
+      'dhcpv6',
+      'capwap-wtp',
+      'capwap-ac',
+      'hsrp',
+      'pagp',
+    ];
+    expect([...fsm.FSM_MACHINES].sort()).toEqual([...machines].sort());
+    for (const m of fsm.FSM_MACHINES) {
+      const v = fsm.FSM_VOCAB[m];
+      expect(v.machine).toBe(m);
+      expect(v.label.length).toBeGreaterThan(0);
+      expect(v.states.length, m).toBeGreaterThanOrEqual(2);
+      expect(new Set(v.states).size, m).toBe(v.states.length);
+    }
+  });
+
+  it('uses the contract state words the rows carry', () => {
+    const stpStates: readonly StpState[] = ['blocking', 'listening', 'learning', 'forwarding', 'discarding', 'disabled'];
+    expect([...fsm.FSM_VOCAB['stp-port'].states].sort()).toEqual([...stpStates].sort());
+    const member: readonly ChannelMemberState[] = ['bundled', 'waiting', 'suspended', 'individual', 'down'];
+    for (const m of ['lacp', 'channel', 'pagp'] as const) expect([...fsm.FSM_VOCAB[m].states].sort()).toEqual([...member].sort());
+    const capwap: readonly CapwapState[] = ['discovery', 'dtls', 'join', 'configure', 'data-check', 'run', 'idle'];
+    expect([...fsm.FSM_VOCAB['capwap-wtp'].states].sort()).toEqual([...capwap].sort());
+    expect(fsm.FSM_VOCAB.dtp.states).toEqual(['access', 'trunk']);
+    const psec: readonly PortSecurityRow['status'][] = ['secure-up', 'secure-down', 'secure-shutdown'];
+    expect([...fsm.FSM_VOCAB['port-security'].states].sort()).toEqual([...psec].sort());
+    const hsrp: readonly HsrpRow['state'][] = ['initial', 'learn', 'listen', 'speak', 'standby', 'active'];
+    expect(fsm.FSM_VOCAB.hsrp.states).toEqual(hsrp);
+    expect(fsm.fsmStateIndex('stp-port', 'forwarding')).toBe(5);
+    expect(fsm.fsmStateIndex('stp-port', 'mystery')).toBe(-1);
+    expect(fsm.fsmStateIndex('ospf', 'full')).toBe(-1);
+    expect(fsm.fsmLabel('dtp')).toBe('Trunk negotiation');
+    expect(fsm.fsmLabel('ospf')).toBe('ospf');
+  });
+});
+
+describe('original wording of the P2 tables (D22)', () => {
+  const BANNED =
+    /cisco|\bios\b|\bnx-?os\b|junos|juniper|arista|huawei|netgear|linksys|tp-?link|ubiquiti|meraki|\baruba\b|mikrotik|catalyst|packet\s*tracer|wireshark|tcpdump|\bwindows\b|\bmac\s?os\b|\blinux\b|\bandroid\b|\biphone\b/i;
+
+  it('names no vendor, operating system or analyser in the lane and machine tables', () => {
+    const strings: string[] = [];
+    for (const v of Object.values(lanes.LANE_VOCAB)) strings.push(v.label, v.hint, v.glyph);
+    for (const v of Object.values(fsm.FSM_VOCAB)) strings.push(v.label, ...v.states);
+    expect(strings.length).toBeGreaterThan(60);
+    for (const s of strings) expect(s, s).not.toMatch(BANNED);
   });
 });

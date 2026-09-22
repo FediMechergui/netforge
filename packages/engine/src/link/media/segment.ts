@@ -692,8 +692,8 @@ export function createSharedSegment(host: MediumHost, options: SharedSegmentOpti
     }
   };
 
-  const dropEvent = (pdu: PduSummary, st: Station, reason: DropReason, now: SimTime, detail?: string): TraceEvent => {
-    const ev: TraceEvent = { t: now, kind: 'drop', pdu, device: st.ref.device, port: st.ref.port, reason };
+  const dropEvent = (pdu: PduSummary, st: Station, reason: DropReason, now: SimTime, detail?: string): Extract<TraceEvent, { kind: 'drop' }> => {
+    const ev: Extract<TraceEvent, { kind: 'drop' }> = { t: now, kind: 'drop', pdu, device: st.ref.device, port: st.ref.port, reason };
     if (detail !== undefined) ev.detail = detail;
     const seg = domainByPort.get(st.key)?.id ?? st.segment;
     if (seg !== undefined) ev.medium = seg;
@@ -745,8 +745,9 @@ export function createSharedSegment(host: MediumHost, options: SharedSegmentOpti
       if (!pending && leg.arrive <= now) continue;
       if (rx && pending) {
         settleReceiver(rx);
-        const drop: TraceEvent = { t: now, kind: 'drop', pdu: rx.summary, link: leg.link, reason: 'link-down', medium: tx.segment };
+        const drop: Extract<TraceEvent, { kind: 'drop' }> = { t: now, kind: 'drop', pdu: rx.summary, link: leg.link, reason: 'link-down', medium: tx.segment };
         if (detail !== undefined) drop.detail = detail;
+        if (tx.pdu.meta.background === true) drop.background = true;
         host.emit(drop);
       } else {
         host.inflight.delete(leg.summary.id, leg.link, leg.to);
@@ -815,7 +816,10 @@ export function createSharedSegment(host: MediumHost, options: SharedSegmentOpti
     const head = st.queue.shift();
     syncQueue(st);
     if (!head) return;
-    host.emit(dropEvent(summarizePdu(head.pdu), st, reason, now, detail));
+    const ev = dropEvent(summarizePdu(head.pdu), st, reason, now, detail);
+    // P2 (§2.7): a dropped background PDU is marked so the trace filter and the canvas can hide it
+    if (head.pdu.meta.background === true) ev.background = true;
+    host.emit(ev);
     outcome(st.ref, { kind: 'dropped', pdu: head.pdu.id, reason }, now);
   };
 
@@ -933,7 +937,9 @@ export function createSharedSegment(host: MediumHost, options: SharedSegmentOpti
         receiverByKey.set(key, rx);
       }
     } else {
-      host.emit({ t: now, kind: 'drop', pdu: summary, link: cable, reason: 'link-loss', detail: `loss ${imp.lossPct}%`, medium: dom.id });
+      const drop: Extract<TraceEvent, { kind: 'drop' }> = { t: now, kind: 'drop', pdu: summary, link: cable, reason: 'link-loss', detail: `loss ${imp.lossPct}%`, medium: dom.id };
+      if (pdu.meta.background === true) drop.background = true;
+      host.emit(drop);
     }
 
     for (const rx of tx.receivers) scheduleArrival(tx, rx, a1 + rx.ns + tx.extraNs, { corrupted: rx.corrupted });
@@ -1344,9 +1350,10 @@ export function createSharedSegment(host: MediumHost, options: SharedSegmentOpti
       const cable = port?.link ?? options.linkOf?.(from);
       const state = cable === undefined ? undefined : host.link(cable);
       const refuse = (reason: 'link-down' | 'queue-full', detail: string | undefined, medium?: MediumId): TransmitResult => {
-        const ev: TraceEvent = { t: now, kind: 'drop', pdu: summarizePdu(pdu), device: from.device, port: from.port, reason };
+        const ev: Extract<TraceEvent, { kind: 'drop' }> = { t: now, kind: 'drop', pdu: summarizePdu(pdu), device: from.device, port: from.port, reason };
         if (detail !== undefined) ev.detail = detail;
         if (medium !== undefined) ev.medium = medium;
+        if (pdu.meta.background === true) ev.background = true;
         host.emit(ev);
         return { ok: false, reason };
       };

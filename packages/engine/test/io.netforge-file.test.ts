@@ -351,7 +351,7 @@ describe('plain JSON helpers', () => {
 
   it('topologyFromJson reports bad syntax and schema problems readably', () => {
     expect(() => topologyFromJson('{')).toThrow(/^topology\.json is not valid JSON: /);
-    expect(() => topologyFromJson('{"schema":"x"}')).toThrow(/^Invalid topology: \d+ issues\n  - schema: must be one of "netforge\.topology\/1\.0", "netforge\.topology\/1\.1"/);
+    expect(() => topologyFromJson('{"schema":"x"}')).toThrow(/^Invalid topology: \d+ issues\n  - schema: must be one of "netforge\.topology\/1\.0", "netforge\.topology\/1\.1", "netforge\.topology\/1\.2"/);
   });
 
   it('canonicalTopology drops undefined-valued optionals and copies arrays', () => {

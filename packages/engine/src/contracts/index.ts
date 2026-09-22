@@ -23,3 +23,6 @@ export * from './snapshot.js';
 export * from './topology.js';
 export * from './simulation.js';
 export * from './scenario.js';
+// P2 [SHOULD S1] time travel
+export * from './journal.js';
+export * from './timeline.js';

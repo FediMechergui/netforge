@@ -23,7 +23,13 @@
  * progress through gaps between events that are longer than the horizon.
  *
  * `traceQuery` pages the facade's ring. The facade never clears its ring, so the oldest retained cursor is
- * `max(0, head - capacity)`.
+ * `max(startHead, head - capacity)`, where `startHead` (@since P2 [S1], default 0) is the ring's first cursor: a replay
+ * facade starts its ring at the live world's trace head so the two worlds' cursors are aligned (ARCHITECTURE-P2 §3.13).
+ *
+ * P2 (ARCHITECTURE-P2 §2.13; W1 sim): the tracked scheduler also counts `dispatched`, the events popped by `next()`
+ * since the scheduler was built. It is the `JournalPosition.dispatched` of the world (a new world, a new count); the
+ * input journal records it, and a replay reaches a position exactly with `runUntil(now, {maxEvents})`. Counting never
+ * changes which event leaves the heap or when.
  *
  * Determinism: events leave the scheduler strictly by `(at, seq)`; the wrapper's bookkeeping Map is used for
  * membership and lookup only and is never iterated. The run loop draws no randomness and reads no clock.
@@ -38,10 +44,15 @@ import { matchesTraceFilter } from '../trace/filter.js';
 /** Default event cap of `stepToNext` when `opts.maxEvents` is omitted (contracts/simulation.ts). */
 export const DEFAULT_STEP_MAX_EVENTS = 100_000;
 
-/** A scheduler that also counts its live non-periodic events. */
+/** A scheduler that also counts its live non-periodic events and the events it has handed out. */
 export interface TrackedScheduler extends Scheduler {
   /** Pending events that are NOT periodic maintenance timers. */
   readonly nonPeriodic: number;
+  /**
+   * @since P2 Events popped by `next()` since this scheduler was built (cancelled events never count). The
+   * `JournalPosition.dispatched` of the world that owns it (ARCHITECTURE-P2 §2.13).
+   */
+  readonly dispatched: number;
 }
 
 /** True when `body` is a periodic maintenance timer (D10); every other event body is live work. */
@@ -55,6 +66,7 @@ export function createTrackedScheduler(): TrackedScheduler {
   /** seq → whether the event is periodic. Membership and lookup only; never iterated. */
   const live = new Map<number, boolean>();
   let nonPeriodic = 0;
+  let dispatched = 0;
   const forget = (seq: number): void => {
     const periodic = live.get(seq);
     if (periodic === undefined) return;
@@ -71,6 +83,9 @@ export function createTrackedScheduler(): TrackedScheduler {
     get nonPeriodic(): number {
       return nonPeriodic;
     },
+    get dispatched(): number {
+      return dispatched;
+    },
     schedule(at: SimTime, body: SimEventBody): number {
       const seq = inner.schedule(at, body);
       const periodic = isPeriodicEvent(body);
@@ -85,7 +100,10 @@ export function createTrackedScheduler(): TrackedScheduler {
     },
     next(): SimEvent | undefined {
       const ev = inner.next();
-      if (ev !== undefined) forget(ev.seq);
+      if (ev !== undefined) {
+        forget(ev.seq);
+        dispatched++;
+      }
       return ev;
     },
     peekTime(): SimTime | undefined {
@@ -101,6 +119,11 @@ export function createTrackedScheduler(): TrackedScheduler {
 export interface RunLoopTrace {
   /** Cursor of the next event to be emitted (monotonic). */
   readonly head: number;
+  /**
+   * @since P2 [S1] The ring's first cursor (trace/ring.ts `startHead`); absent = 0. No cursor below it was ever
+   * retained, so `traceQuery` never pages below it.
+   */
+  readonly startHead?: number;
   /** Ring capacity in events (0 = nothing retained). */
   readonly capacity: number;
   /** Retained events with cursor >= `cursor` (trace/ring.ts semantics). */
@@ -250,7 +273,7 @@ export function createRunControl(host: RunLoopHost): RunControl {
     }
     const ring = host.trace;
     const head = ring.head;
-    const oldest = Math.max(0, head - ring.capacity);
+    const oldest = Math.max(ring.startHead ?? 0, head - ring.capacity);
     const filter = q.filter;
     const out: { cursor: number; event: TraceEvent }[] = [];
     if (q.direction === 'backward') {

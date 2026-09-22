@@ -23,7 +23,7 @@ import { createTable, lpm } from '../src/core/table.js';
 import { defineModel } from '../src/device/catalog/define.js';
 import { createPduFactory } from '../src/pdu/factory.js';
 import { NF_2911_INPUT, NF_PC_INPUT } from './device.catalog.p0-inputs.js';
-import { NO_IPV6_CTX, testPortSpec, p0Tables } from './port.fixtures.js';
+import { NO_IPV6_CTX, P2_CTX, testPortSpec, p0Tables } from './port.fixtures.js';
 
 /** Port description for `makeFake`. */
 export interface FakePortSpec {
@@ -164,6 +164,7 @@ export function makeFake(opts: FakeOptions): Fake {
   };
 
   const ctx: ProcessCtx = {
+    ...P2_CTX,
     ...NO_IPV6_CTX,
     get now() {
       return now;

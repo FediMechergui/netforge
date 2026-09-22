@@ -11,7 +11,16 @@
  * Canonical port order (DeviceRuntime.ports):
  *   1. fixed ports in `model.ports` order;
  *   2. module ports by slot index, then by port ordinal (128 + slot×16 + i, D7);
- *   3. virtual ports by `model.virtualFamilies` order, then ascending instance number.
+ *   3. virtual ports by `model.virtualFamilies` order, then ascending instance number;
+ *   4. (P2) subinterfaces `<parent>.<n>`, after every other virtual port, by (parent position, n) (ARCHITECTURE-P2 §3.4).
+ *
+ * P2 (ARCHITECTURE-P2 §3.0 "Virtual oper state", D10, D11; W1 device):
+ *  - `evaluateVirtualOper` knows the new roles — `channel` (up while a bundled member is up), `subif` (up while its
+ *    parent is an up routed port and `encapsulation dot1Q` is set), `wlan-tunnel` (up while the device is up) — and,
+ *    when the runtime injects `VirtualOperLookups`, the VLAN-aware SVI rule (any VLAN; `vlan-missing`, otherwise the
+ *    P1 reason `no-bridged-port-up`). Without lookups every P1 rule applies unchanged;
+ *  - the subinterface factory (`planSubinterface`, `createSubinterfacePortState`): the parent's MAC, ordinal and MTU,
+ *    `PortSpec.parent`, administratively up.
  *
  * Determinism: every ordering is explicit (indexes and numbers); no Set or object-identity ordering is used.
  */
@@ -30,7 +39,7 @@ import {
   type VirtualFamilySpec,
 } from '../contracts/catalog.js';
 import type { ConfigAst } from '../contracts/config.js';
-import { virtualPortName } from './catalog/names.js';
+import { parseSubinterfaceName, subinterfacePortName, virtualPortName } from './catalog/names.js';
 
 // ── wording (original, §1.6) ─────────────────────────────────────────────────
 
@@ -50,6 +59,12 @@ export const VIRTUAL_PORT_MESSAGES = Object.freeze({
   needsSwitchModule: 'This interface needs a switch module in this router.',
   /** Log text for an SVI other than Vlan1 (VLANs arrive in a later release). */
   vlanUnsupported: 'Interface {name} stays down: only VLAN 1 is available in this release.',
+  /** @since P2 Log text for an SVI of a VLAN-aware device whose VLAN does not exist (ARCHITECTURE-P2 §9.2 W4 item 16). */
+  vlanMissing: 'Interface {name} stays down: VLAN {vlan} does not exist.',
+  /** @since P2 `interface <parent>.<n>` with n outside the model's subinterface range. */
+  subinterfaceOutOfRange: 'Subinterfaces on this device are numbered 1 to {max}.',
+  /** @since P2 `interface <parent>.<n>` on a port that is not a routed interface (a switched port, a serial line, …). */
+  subinterfaceNeedsRoutedParent: '{parent} is not a routed interface, so it cannot carry subinterfaces.',
 });
 
 /** Fill `{key}` placeholders of a message template. */
@@ -137,11 +152,12 @@ function familyIndex(model: Pick<DeviceModel, 'virtualFamilies'>, family: string
 }
 
 /**
- * Parse a CANONICAL virtual interface name (`Vlan10`, `Loopback0`) against the model's families. Undefined when
- * the letters match no family or the number part is not a plain decimal. The range is NOT checked here.
+ * Parse a CANONICAL virtual interface name (`Vlan10`, `Loopback0`, P2 `Port-channel1`: the family letters may be
+ * hyphenated, as names.ts accepts them) against the model's families. Undefined when the letters match no family or
+ * the number part is not a plain decimal. The range is NOT checked here.
  */
 export function parseVirtualPortName(model: Pick<DeviceModel, 'virtualFamilies'>, name: PortId): VirtualPortName | undefined {
-  const m = /^([A-Za-z]+)([0-9]+)$/.exec(name);
+  const m = /^([A-Za-z]+(?:-[A-Za-z]+)*)([0-9]+)$/.exec(name);
   if (!m) return undefined;
   const family = (model.virtualFamilies ?? []).find((f) => f.family === m[1]);
   if (family === undefined) return undefined;
@@ -157,7 +173,9 @@ export function isAutoInstance(family: Pick<VirtualFamilySpec, 'auto'>, n: numbe
 
 /**
  * Port spec of a virtual interface instance (§3.10): kind `virtual`, role from the family, encap `ethernet` for
- * SVIs and `none` for loopbacks, ordinal 0 (base MAC), connector `none`, the family's default admin state.
+ * SVIs and every bridged family (Port-channel, the controller tunnel: frames cross them and eth-switch / stp treat
+ * them as ports) and `none` for loopbacks (role `virtual`), ordinal 0 (base MAC), connector `none`, the family's
+ * default admin state.
  */
 export function virtualPortSpec(family: VirtualFamilySpec, n: number): PortSpec {
   const name = virtualPortName(family, n);
@@ -168,7 +186,7 @@ export function virtualPortSpec(family: VirtualFamilySpec, n: number): PortSpec 
     speedBps: SPEED_1G,
     role: family.role,
     allowedRoles: [family.role],
-    encap: family.role === 'svi' ? 'ethernet' : 'none',
+    encap: family.role === 'svi' || ROLE_TRAITS[family.role].bridged ? 'ethernet' : 'none',
     ordinal: 0,
     connector: 'none',
     defaultAdminUp: family.defaultAdminUp,
@@ -256,16 +274,114 @@ export function checkVirtualPortRemoval(
   return { ok: true };
 }
 
+// ── subinterfaces (P2, D11) ──────────────────────────────────────────────────
+
+/**
+ * @since P2 Port spec of subinterface `<parent>.<n>` (ARCHITECTURE-P2 §3.4 step 1): kind `virtual`, role `subif`,
+ * encap `ethernet`, the parent's speed and ordinal (so its MAC), connector `none`, administratively up, the parent's
+ * MTU, and `parent`. The short name is the parent's short name plus `.<n>`.
+ */
+export function subinterfacePortSpec(parent: Pick<PortState, 'id' | 'spec' | 'ordinal' | 'mtu'>, n: number): PortSpec {
+  return {
+    name: subinterfacePortName(parent.id, n),
+    short: `${parent.spec.short}.${n}`,
+    kind: 'virtual',
+    speedBps: parent.spec.speedBps,
+    role: 'subif',
+    allowedRoles: ['subif'],
+    encap: 'ethernet',
+    ordinal: parent.ordinal ?? parent.spec.ordinal ?? 0,
+    connector: 'none',
+    defaultAdminUp: true,
+    mtu: parent.mtu,
+    parent: parent.id,
+  };
+}
+
+/**
+ * @since P2 Live state of a new subinterface: the parent's MAC and ordinal, administratively up, the parent's MTU,
+ * operUp false (the runtime derives it: `subif` rule of `evaluateVirtualOper`), no `dot1q` until
+ * `encapsulation dot1Q` sets it.
+ */
+export function createSubinterfacePortState(parent: Pick<PortState, 'id' | 'spec' | 'ordinal' | 'mtu' | 'mac'>, n: number): PortState {
+  const spec = subinterfacePortSpec(parent, n);
+  return {
+    id: spec.name,
+    spec,
+    mac: parent.mac,
+    adminUp: true,
+    operUp: false,
+    mtu: parent.mtu,
+    counters: emptyCounters(),
+    l3: {},
+    tx: { busyUntil: 0, queue: 0 },
+    role: 'subif',
+    ordinal: spec.ordinal as number,
+    encap: 'ethernet',
+  };
+}
+
+/** @since P2 Outcome of `planSubinterface`. */
+export type SubinterfacePlan =
+  | { ok: true; created: false; port: PortId }
+  | { ok: true; created: true; port: PortId; parent: PortId; number: number }
+  | { ok: false; error: string };
+
+/**
+ * @since P2 Decide what creating subinterface `name` (canonical, `<parent>.<n>`) must do (D11): an existing port →
+ * found; otherwise the model must declare `subinterfaces`, the parent must be a live non-virtual port whose effective
+ * role is in `subinterfaces.roles`, and n must lie in [1, `subinterfaces.max`]. Errors are original wording.
+ */
+export function planSubinterface(
+  model: Pick<DeviceModel, 'subinterfaces'>,
+  ports: ReadonlyMap<PortId, Pick<PortState, 'role' | 'spec'>>,
+  name: PortId,
+  capabilities?: readonly Capability[],
+): SubinterfacePlan {
+  if (ports.has(name)) return { ok: true, created: false, port: name };
+  const parsed = parseSubinterfaceName(name);
+  const spec = model.subinterfaces;
+  if (parsed === undefined || spec === undefined) return { ok: false, error: fill(VIRTUAL_PORT_MESSAGES.notCreatable, { name }) };
+  const parent = ports.get(parsed.parent);
+  if (parent === undefined || parent.spec.kind === 'virtual') return { ok: false, error: fill(VIRTUAL_PORT_MESSAGES.notCreatable, { name }) };
+  if (parsed.number < 1 || parsed.number > spec.max) return { ok: false, error: fill(VIRTUAL_PORT_MESSAGES.subinterfaceOutOfRange, { max: spec.max }) };
+  const role = parent.role ?? specRole(parent.spec, capabilities);
+  if (!spec.roles.includes(role)) return { ok: false, error: fill(VIRTUAL_PORT_MESSAGES.subinterfaceNeedsRoutedParent, { parent: parsed.parent }) };
+  if (subinterfacePortName(parsed.parent, parsed.number) !== name) return { ok: false, error: fill(VIRTUAL_PORT_MESSAGES.notCreatable, { name }) };
+  return { ok: true, created: true, port: name, parent: parsed.parent, number: parsed.number };
+}
+
+/** @since P2 The subinterfaces of `parent` in Map order (ports whose `spec.parent` is `parent`). */
+export function subinterfacesOf<P extends Pick<PortState, 'spec'>>(ports: Iterable<P>, parent: PortId): P[] {
+  const out: P[] = [];
+  for (const p of ports) if (p.spec.parent === parent) out.push(p);
+  return out;
+}
+
 // ── canonical Map order ──────────────────────────────────────────────────────
 
-/** Sort key of a port: [class, primary, secondary]; compared lexicographically. */
-type OrderKey = readonly [number, number, number];
+/**
+ * Sort key of a port: [class, primary, secondary] (P2 subinterfaces: [3, …parent key, n]); compared
+ * lexicographically, a shorter key first when one is a prefix of the other.
+ */
+type OrderKey = readonly number[];
 
 /**
  * Canonical sort key of a port on `model` (see the file header). Fixed ports that are not in `model.ports` sort
  * after the model's fixed ports by ordinal; virtual ports of an unknown family sort last by name order of arrival.
+ * A subinterface (P2: `spec.parent` set) sorts after every other port, by its parent's key and then its number;
+ * `parentSpec` finds the parent's spec (the runtime passes the live Map; default: the model's fixed ports).
  */
-export function canonicalPortKey(model: Pick<DeviceModel, 'ports' | 'slots' | 'virtualFamilies'>, spec: PortSpec): OrderKey {
+export function canonicalPortKey(
+  model: Pick<DeviceModel, 'ports' | 'slots' | 'virtualFamilies'>,
+  spec: PortSpec,
+  parentSpec?: (id: PortId) => PortSpec | undefined,
+): OrderKey {
+  if (spec.kind === 'virtual' && spec.parent !== undefined) {
+    const parent = parentSpec?.(spec.parent) ?? model.ports.find((p) => p.name === spec.parent);
+    const parentKey = parent === undefined || parent.parent !== undefined ? [Number.MAX_SAFE_INTEGER, 0, 0] : canonicalPortKey(model, parent);
+    return [3, ...parentKey, parseSubinterfaceName(spec.name)?.number ?? Number.MAX_SAFE_INTEGER];
+  }
   if (spec.kind === 'virtual') {
     const parsed = parseVirtualPortName(model, spec.name);
     if (parsed === undefined) return [2, Number.MAX_SAFE_INTEGER, 0];
@@ -280,11 +396,12 @@ export function canonicalPortKey(model: Pick<DeviceModel, 'ports' | 'slots' | 'v
 }
 
 function compareKeys(a: OrderKey, b: OrderKey): number {
-  for (let i = 0; i < 3; i++) {
+  const n = Math.min(a.length, b.length);
+  for (let i = 0; i < n; i++) {
     const d = (a[i] as number) - (b[i] as number);
     if (d !== 0) return d;
   }
-  return 0;
+  return a.length - b.length;
 }
 
 /**
@@ -292,7 +409,8 @@ function compareKeys(a: OrderKey, b: OrderKey): number {
  * alias it). Ties keep their current relative order (stable sort).
  */
 export function refillPortMap(ports: Map<PortId, PortState>, model: Pick<DeviceModel, 'ports' | 'slots' | 'virtualFamilies'>): void {
-  const entries = [...ports.values()].map((state, i) => ({ state, i, key: canonicalPortKey(model, state.spec) }));
+  const parentSpec = (id: PortId): PortSpec | undefined => ports.get(id)?.spec;
+  const entries = [...ports.values()].map((state, i) => ({ state, i, key: canonicalPortKey(model, state.spec, parentSpec) }));
   entries.sort((a, b) => compareKeys(a.key, b.key) || a.i - b.i);
   ports.clear();
   for (const e of entries) ports.set(e.state.id, e.state);
@@ -349,6 +467,7 @@ export function resetPortForPowerOff(port: PortState, ctx: Pick<PortBuildContext
   port.l3 = {};
   port.counters = emptyCounters();
   delete port.errDisabled;
+  delete port.dot1q; // P2: runtime state from `encapsulation dot1Q`, replayed from the configuration at the next boot
   if (ROLE_TRAITS[role].virtual && port.operUp) {
     port.operUp = false;
     port.lastChange = now;
@@ -357,8 +476,22 @@ export function resetPortForPowerOff(port: PortState, ctx: Pick<PortBuildContext
 
 // ── virtual oper state ───────────────────────────────────────────────────────
 
-/** Why a virtual port is down (or undefined when up). */
-export type VirtualDownReason = 'power-off' | 'booting' | 'admin-down' | 'no-bridged-port-up' | 'vlan-unsupported';
+/**
+ * Why a virtual port is down (or undefined when up). P2 adds `vlan-missing` (VLAN-aware SVI), `no-bundled-member`
+ * (Port-channel), `parent-down` and `no-encapsulation` (subinterface) and `err-disabled` (a virtual port an
+ * `errDisable` action named).
+ */
+export type VirtualDownReason =
+  | 'power-off'
+  | 'booting'
+  | 'admin-down'
+  | 'no-bridged-port-up'
+  | 'vlan-unsupported'
+  | 'vlan-missing'
+  | 'no-bundled-member'
+  | 'parent-down'
+  | 'no-encapsulation'
+  | 'err-disabled';
 
 /** Device-level inputs of the virtual oper rule. */
 export interface VirtualOperContext {
@@ -366,29 +499,106 @@ export interface VirtualOperContext {
   readonly booted: boolean;
 }
 
+/**
+ * @since P2 Lookups the runtime injects into the virtual oper rule (ARCHITECTURE-P2 §3.0 "Virtual oper state"; W2
+ * device wires them from the `vlans`, `etherchannel`, `stp` and `stp-bridge` rows and `readSwitchport`). Each is
+ * optional; without them the P1 rules apply unchanged.
+ */
+export interface VirtualOperLookups {
+  /**
+   * VLAN-aware devices only (`isVlanAware(model)`): does VLAN `vlan` exist (1, or a `vlans` row)? Together with
+   * `sviCarrier` it switches the SVI rule to the VLAN-aware one for every `Vlan<V>`.
+   */
+  readonly vlanExists?: (vlan: number) => boolean;
+  /**
+   * VLAN-aware devices only: does bridged port `port` count for the SVI of `vlan` — not a bundle member other than an
+   * `individual` one, carries `vlan` (`carries(port, vlan) !== undefined`), and forwarding in `vlan` when spanning
+   * tree runs for it? (Oper up and the bridged role are checked by the rule itself.)
+   */
+  readonly sviCarrier?: (port: PortId, vlan: number) => boolean;
+  /** Member ports whose `etherchannel` row names `bundle` with state `bundled` (Port-channel rule). */
+  readonly bundledMembers?: (bundle: PortId) => readonly PortId[];
+}
+
 /** The only VLAN served by SVIs in P0.5 (VLANs arrive in P2). */
 export const SVI_SUPPORTED_VLAN = 1;
 
+/** @since P2 VLAN number of an SVI name (`Vlan10` → 10), or undefined when the name has no plain number part. */
+export function sviVlanOf(name: PortId): number | undefined {
+  const m = /^[A-Za-z]+([0-9]+)$/.exec(name);
+  if (m === null) return undefined;
+  const n = Number(m[1]);
+  return Number.isSafeInteger(n) ? n : undefined;
+}
+
 /**
- * Oper state of a virtual port (§3.10 "Virtual oper state"), from the port set it lives in:
- *  SVI (role svi)        : power && booted && adminUp && name is Vlan1 && some bridged-role port is operUp;
- *  loopback (role virtual): power && booted && adminUp.
+ * Oper state of a virtual port (§3.10 "Virtual oper state"; ARCHITECTURE-P2 §3.0), from the port set it lives in.
+ * Every rule first needs power and a finished boot; every role but `wlan-tunnel` then needs admin up and no
+ * err-disable cause (P2):
+ *  SVI (role svi)          : P1 — name is Vlan1 && some bridged-role port is operUp (else `vlan-unsupported` /
+ *                            `no-bridged-port-up`); VLAN-aware (lookups `vlanExists` and `sviCarrier` injected) — VLAN V
+ *                            of `Vlan<V>` exists (else `vlan-missing`) && some operUp bridged-role port E with
+ *                            `sviCarrier(E, V)` (else the P1 reason `no-bridged-port-up`, for every VLAN);
+ *  loopback (role virtual) : up;
+ *  Port-channel (channel)  : some port of `bundledMembers(this)` is operUp (else `no-bundled-member`; no lookup = none);
+ *  subinterface (subif)    : the parent (`spec.parent`) exists, is operUp and has the effective role `routed` (else
+ *                            `parent-down`), and `dot1q` is set (else `no-encapsulation`);
+ *  controller tunnel (wlan-tunnel): up (power and boot only).
  * Non-virtual ports are returned as `{ up: port.operUp }` (the link model owns them).
  */
 export function evaluateVirtualOper(
-  port: Pick<PortView, 'id' | 'adminUp' | 'operUp' | 'role' | 'spec'>,
+  port: Pick<PortView, 'id' | 'adminUp' | 'operUp' | 'role' | 'spec' | 'errDisabled' | 'dot1q'>,
   ports: Iterable<Pick<PortView, 'operUp' | 'role' | 'spec'>>,
   device: VirtualOperContext,
   capabilities: readonly Capability[] | undefined,
+  lookups?: VirtualOperLookups,
 ): { up: boolean; reason?: VirtualDownReason } {
   const role = port.role ?? specRole(port.spec, capabilities);
   if (!ROLE_TRAITS[role].virtual) return { up: port.operUp };
   if (!device.power) return { up: false, reason: 'power-off' };
   if (!device.booted) return { up: false, reason: 'booting' };
+  if (role === 'wlan-tunnel') return { up: true };
   if (!port.adminUp) return { up: false, reason: 'admin-down' };
-  if (role !== 'svi') return { up: true };
-  const m = /^[A-Za-z]+([0-9]+)$/.exec(port.id);
-  if (m === null || Number(m[1]) !== SVI_SUPPORTED_VLAN) return { up: false, reason: 'vlan-unsupported' };
+  if (port.errDisabled !== undefined) return { up: false, reason: 'err-disabled' };
+  switch (role) {
+    case 'svi':
+      return sviOper(port.id, ports, capabilities, lookups);
+    case 'channel': {
+      const members = lookups?.bundledMembers?.(port.id) ?? [];
+      for (const other of ports) if (members.includes(other.spec.name) && other.operUp) return { up: true };
+      return { up: false, reason: 'no-bundled-member' };
+    }
+    case 'subif': {
+      let parent: Pick<PortView, 'operUp' | 'role' | 'spec'> | undefined;
+      for (const other of ports) if (port.spec.parent !== undefined && other.spec.name === port.spec.parent) parent = other;
+      if (parent === undefined || !parent.operUp || (parent.role ?? specRole(parent.spec, capabilities)) !== 'routed') return { up: false, reason: 'parent-down' };
+      if (port.dot1q === undefined) return { up: false, reason: 'no-encapsulation' };
+      return { up: true };
+    }
+    default:
+      return { up: true };
+  }
+}
+
+/** The SVI branch of `evaluateVirtualOper` (P1 rule, or the VLAN-aware rule when its two lookups are injected). */
+function sviOper(
+  id: PortId,
+  ports: Iterable<Pick<PortView, 'operUp' | 'role' | 'spec'>>,
+  capabilities: readonly Capability[] | undefined,
+  lookups: VirtualOperLookups | undefined,
+): { up: boolean; reason?: VirtualDownReason } {
+  const vlan = sviVlanOf(id);
+  const exists = lookups?.vlanExists;
+  const carrier = lookups?.sviCarrier;
+  if (exists !== undefined && carrier !== undefined) {
+    if (vlan === undefined || !exists(vlan)) return { up: false, reason: 'vlan-missing' };
+    for (const other of ports) {
+      const r = other.role ?? specRole(other.spec, capabilities);
+      if (ROLE_TRAITS[r].bridged && other.operUp && carrier(other.spec.name, vlan)) return { up: true };
+    }
+    return { up: false, reason: 'no-bridged-port-up' };
+  }
+  if (vlan !== SVI_SUPPORTED_VLAN) return { up: false, reason: 'vlan-unsupported' };
   for (const other of ports) {
     const r = other.role ?? specRole(other.spec, capabilities);
     if (ROLE_TRAITS[r].bridged && other.operUp) return { up: true };
@@ -407,23 +617,42 @@ export interface VirtualOperChange {
 /**
  * Recompute every virtual port of the Map (Map order), write `operUp` and `lastChange = now` on those that changed
  * and return the changes. The caller emits `portState` per change and fans `onLinkChange` out in model order.
+ * `lookups` (@since P2) are passed to every `evaluateVirtualOper` call. Ports are evaluated in Map order against the
+ * states already written, so a subinterface sees its parent's current state (physical parents sort first); because a
+ * virtual port may depend on another virtual port that sorts after it (an SVI carried only by a Port-channel), the
+ * pass repeats until no port changes (at most one extra pass per virtual port) and only the NET changes against the
+ * states before the call are reported, in Map order (a port that settles back where it started is no change). In P1
+ * every virtual port depends only on physical ports, so a second pass never changes anything there.
  */
 export function recomputeVirtualOper(
   ports: ReadonlyMap<PortId, PortState>,
   device: VirtualOperContext,
   capabilities: readonly Capability[] | undefined,
   now: SimTime,
+  lookups?: VirtualOperLookups,
 ): VirtualOperChange[] {
-  const changes: VirtualOperChange[] = [];
   const all = [...ports.values()];
-  for (const port of all) {
-    const role = port.role ?? specRole(port.spec, capabilities);
-    if (!ROLE_TRAITS[role].virtual) continue;
-    const v = evaluateVirtualOper(port, all, device, capabilities);
-    if (v.up === port.operUp) continue;
-    port.operUp = v.up;
+  const virtual = all.filter((port) => ROLE_TRAITS[port.role ?? specRole(port.spec, capabilities)].virtual);
+  const before = new Map<PortId, boolean>();
+  const reasons = new Map<PortId, VirtualDownReason | undefined>();
+  for (const port of virtual) before.set(port.id, port.operUp);
+  for (let pass = 0; pass <= virtual.length; pass++) {
+    let changed = false;
+    for (const port of virtual) {
+      const v = evaluateVirtualOper(port, all, device, capabilities, lookups);
+      if (v.up === port.operUp) continue;
+      port.operUp = v.up;
+      reasons.set(port.id, v.reason);
+      changed = true;
+    }
+    if (!changed) break;
+  }
+  const changes: VirtualOperChange[] = [];
+  for (const port of virtual) {
+    if (port.operUp === before.get(port.id)) continue;
     port.lastChange = now;
-    changes.push(v.reason === undefined ? { port: port.id, operUp: v.up } : { port: port.id, operUp: v.up, reason: v.reason });
+    const reason = reasons.get(port.id);
+    changes.push(reason === undefined ? { port: port.id, operUp: port.operUp } : { port: port.id, operUp: port.operUp, reason });
   }
   return changes;
 }
@@ -431,4 +660,9 @@ export function recomputeVirtualOper(
 /** Log message for an SVI that stays down because its VLAN is not available (original wording). */
 export function vlanUnsupportedMessage(name: PortId): string {
   return fill(VIRTUAL_PORT_MESSAGES.vlanUnsupported, { name });
+}
+
+/** @since P2 Log message for an SVI of a VLAN-aware device whose VLAN does not exist (original wording). */
+export function vlanMissingMessage(name: PortId, vlan: number): string {
+  return fill(VIRTUAL_PORT_MESSAGES.vlanMissing, { name, vlan });
 }

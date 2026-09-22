@@ -303,7 +303,19 @@ export type DropReason =
   | 'out-of-range'
   | 'not-associated'
   | 'encapsulation-mismatch'
-  | 'out-of-band';
+  | 'out-of-band'
+  // ── P2 (ARCHITECTURE-P2 §2.7) ──
+  /** @since P2 The frame's VLAN is not carried here (not allowed, not the access/voice VLAN, or does not exist). */
+  | 'vlan-filtered'
+  /** @since P2 Spanning tree does not forward on this port in the frame's VLAN (blocking, listening, learning, discarding). */
+  | 'stp-discarding'
+  /** @since P2 A port-security violation (protect, restrict or shutdown mode). */
+  | 'port-security'
+  /** @since P2 NAT had no free address or port for a new translation. */
+  | 'nat-exhausted';
+
+/** @since P2 Frames queued on one P2P egress port before 'queue-full' (D23; memory bound, not an event-rate bound). */
+export const P2P_QUEUE_LIMIT = 256;
 
 /** `ok:false` reasons of `transmit`. */
 export type TransmitRefusal = 'link-down' | 'out-of-band' | 'not-associated' | 'queue-full' | 'encapsulation-mismatch';

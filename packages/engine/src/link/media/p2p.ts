@@ -20,6 +20,13 @@
  *   • no cable, link without carrier, sending end not operUp → `link-down`. A serial end down ONLY by its keepalive
  *     latch still sends HDLC keepalives (protocol 0x8035); `no-clock` / `encapsulation-mismatch` stay blocked.
  *   • out-of-band media (console, usb-console) → `out-of-band`: the carrier is shown but no data frame is carried.
+ *   • @since P2 (ARCHITECTURE-P2 D23) a full transmit queue → `queue-full`, detail `256 frames already queued`.
+ *     The queue of a port is the frames it accepted whose serialization has not ended before `now` (txEnd ≥ now):
+ *     waiting behind `busyUntil` plus the one on the wire. With `P2P_QUEUE_LIMIT` (256) of them, a new frame is
+ *     refused. The count is kept from the accepted frames' txEnd times, so it does not depend on the run loop
+ *     dispatching `txComplete`; in a dispatched simulation it bounds `tx.queue` too (every txComplete before `now`
+ *     has run), so `port.tx.queue ≤ P2P_QUEUE_LIMIT` at every instant. It bounds MEMORY in a loop that multiplies
+ *     frames, not the event rate (line rate does). A refused frame draws nothing from `link:<id>`.
  *
  * In-flight legs are keyed `(pdu, link, to)` in the facade registry (link/inflight.ts). Capture tap: tx is recorded
  * when the frame starts (before corruption), rx in `admit` (after corruption).
@@ -27,7 +34,8 @@
 import type { CaptureLinkType } from '../../contracts/capture.js';
 import type { LinkId, PortRef } from '../../contracts/ids.js';
 import type { ArrivalVerdict, LinkState, TransmitResult } from '../../contracts/link.js';
-import { MEDIA } from '../../contracts/link.js';
+import { MEDIA, P2P_QUEUE_LIMIT } from '../../contracts/link.js';
+import type { PortState } from '../../contracts/port.js';
 import type { MediumId, MediumKind } from '../../contracts/medium.js';
 import type { Pdu, ProtoName } from '../../contracts/pdu.js';
 import { DOT11_FCS, ETH_FCS, ETH_HEADER, HDLC_FCS } from '../../contracts/pdu.js';
@@ -56,6 +64,9 @@ export function summarizePdu(pdu: Pdu): PduSummary {
   if (meta.parent !== undefined) s.parent = meta.parent;
   if (meta.flow !== undefined) s.flow = meta.flow;
   if (meta.tag !== undefined) s.tag = meta.tag;
+  // P2 (§2.7): the outermost 802.1Q VID of a tagged frame; absent for every untagged frame (P0/P1 bytes unchanged)
+  const l1 = pdu.layers[1];
+  if (l1 !== undefined && l1.proto === 'dot1q' && typeof l1.fields.vid === 'number') s.vlan = l1.fields.vid;
   return s;
 }
 
@@ -114,13 +125,44 @@ function peerRef(state: LinkState, ref: PortRef): PortRef {
   return ref.device === state.a.device && ref.port === state.a.port ? state.b : state.a;
 }
 
+/**
+ * @since P2 (D23) The transmit queue of one port: txEnd times of its accepted frames, ascending (a port serializes in
+ * order), kept in a ring of at most `P2P_QUEUE_LIMIT` entries.
+ */
+interface TxBacklog {
+  readonly ends: number[];
+  head: number;
+  size: number;
+}
+
 /** Create the point-to-point medium strategy (cables, and PtP radio links through `options.tune`). */
 export function createCableP2P(host: MediumHost, options: CableP2POptions): MediumStrategy {
   const kind = options.kind ?? 'cable';
+  /** Per-port transmit queues, keyed by the port's `tx` object (a port rebuilt at power-on starts empty). */
+  const backlogs = new WeakMap<PortState['tx'], TxBacklog>();
 
-  const refuse = (pdu: Pdu, from: PortRef, now: SimTime, reason: 'link-down' | 'out-of-band', detail: string | undefined): TransmitResult => {
-    const drop: TraceEvent = { t: now, kind: 'drop', pdu: summarizePdu(pdu), device: from.device, port: from.port, reason };
+  /** The queue of `port` at `now`: frames whose serialization ends at or after `now` (D23). */
+  const backlogOf = (port: PortState, now: SimTime): TxBacklog => {
+    let q = backlogs.get(port.tx);
+    if (q === undefined) {
+      q = { ends: [], head: 0, size: 0 };
+      backlogs.set(port.tx, q);
+    }
+    const limit = P2P_QUEUE_LIMIT;
+    // A transmitter reset elsewhere (its busyUntil no longer ends our last frame) holds none of our frames.
+    if (q.size > 0 && q.ends[(q.head + q.size - 1) % limit] !== port.tx.busyUntil) q.size = 0;
+    while (q.size > 0 && q.ends[q.head]! < now) {
+      q.head = (q.head + 1) % limit;
+      q.size--;
+    }
+    return q;
+  };
+
+  const refuse = (pdu: Pdu, from: PortRef, now: SimTime, reason: 'link-down' | 'out-of-band' | 'queue-full', detail: string | undefined): TransmitResult => {
+    const drop: Extract<TraceEvent, { kind: 'drop' }> = { t: now, kind: 'drop', pdu: summarizePdu(pdu), device: from.device, port: from.port, reason };
     if (detail !== undefined) drop.detail = detail;
+    // P2 (§2.7): a dropped background PDU (keepalive) is marked so the trace filter and the canvas can hide it
+    if (pdu.meta.background === true) drop.background = true;
     host.emit(drop);
     return { ok: false, reason };
   };
@@ -143,6 +185,11 @@ export function createCableP2P(host: MediumHost, options: CableP2POptions): Medi
       }
       if (MEDIA[state.resolvedMedia].outOfBand === true) {
         return refuse(pdu, from, now, 'out-of-band', OUT_OF_BAND_DETAIL);
+      }
+      // D23: a full queue refuses before any draw, so the frames that follow keep their loss/jitter pattern.
+      const backlog = backlogOf(port, now);
+      if (backlog.size >= P2P_QUEUE_LIMIT) {
+        return refuse(pdu, from, now, 'queue-full', `${P2P_QUEUE_LIMIT} frames already queued`);
       }
 
       const linkId: LinkId = state.id;
@@ -169,6 +216,8 @@ export function createCableP2P(host: MediumHost, options: CableP2POptions): Medi
 
       port.tx.busyUntil = txEnd;
       port.tx.queue++;
+      backlog.ends[(backlog.head + backlog.size) % P2P_QUEUE_LIMIT] = txEnd;
+      backlog.size++;
       host.schedule(txEnd, { kind: 'txComplete', device: from.device, port: from.port });
 
       const summary = summarizePdu(pdu);
@@ -180,7 +229,9 @@ export function createCableP2P(host: MediumHost, options: CableP2POptions): Medi
 
       let arrivalSeq: number | undefined;
       if (lost) {
-        host.emit({ t: now, kind: 'drop', pdu: summary, link: linkId, reason: 'link-loss', detail: `loss ${imp.lossPct}%` });
+        const drop: Extract<TraceEvent, { kind: 'drop' }> = { t: now, kind: 'drop', pdu: summary, link: linkId, reason: 'link-loss', detail: `loss ${imp.lossPct}%` };
+        if (pdu.meta.background === true) drop.background = true;
+        host.emit(drop);
       } else if (corrupted) {
         pdu.corrupt({ now, device: from.device }, byteOffset, bitMask);
         arrivalSeq = host.schedule(arrive, { kind: 'frameArrival', device: peer.device, port: peer.port, pdu, corrupted: true });
@@ -234,8 +285,9 @@ export function createCableP2P(host: MediumHost, options: CableP2POptions): Medi
         // Lost legs have no arrival to cancel and are left to the normal pruning.
         if (leg.arrivalSeq === undefined) continue;
         host.cancel(leg.arrivalSeq);
-        const drop: TraceEvent = { t: now, kind: 'drop', pdu: leg.pdu, link: scope, reason: 'link-down' };
+        const drop: Extract<TraceEvent, { kind: 'drop' }> = { t: now, kind: 'drop', pdu: leg.pdu, link: scope, reason: 'link-down' };
         if (detail !== undefined) drop.detail = detail;
+        if (leg.background === true) drop.background = true;
         host.emit(drop);
         host.emit({
           t: now, kind: 'frameAbort', pdu: leg.pdu, link: scope, from: leg.from, to: leg.to, abortAt: now, arrive: leg.arrive, reason: 'link-down',

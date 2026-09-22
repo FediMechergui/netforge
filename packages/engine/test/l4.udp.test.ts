@@ -43,7 +43,7 @@ import {
   type UdpSocket,
 } from '../src/protocols/udp.js';
 import { NF_PC_INPUT } from './device.catalog.p0-inputs.js';
-import { testPortSpec } from './port.fixtures.js';
+import { P2_CTX, testPortSpec } from './port.fixtures.js';
 
 const SEED = 4242;
 const LL = 'fe80::1';
@@ -131,6 +131,7 @@ function makeHarness(): Harness {
   const rng: Rng = createRng(SEED).split('process:udp');
   const streams = new Map<string, Rng>();
   const ctx: ProcessCtx = {
+    ...P2_CTX,
     get now() {
       return now;
     },

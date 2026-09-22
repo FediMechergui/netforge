@@ -1,10 +1,23 @@
 /**
  * Bottom status bar: counts, pending events, dropped/left-out trace warnings, tool and selection summary,
  * canvas scale and camera zoom. Device names are looked up through the snapshot index.
+ *
+ * P2 (ARCHITECTURE-P2 D2; W2 web-shell): a world built with the classic ('P1') defaults — a saved file, a template, a
+ * CCNA 1 lab, a sandbox opened from a CCNA 1 lesson — shows the "Classic defaults" chip; File → "Use current
+ * defaults" moves it on. A world with the current defaults shows nothing, so the common case stays quiet.
  */
-import type { Selection } from '@netforge/engine';
+import type { Selection, SimSnapshot } from '@netforge/engine';
 import { selectDevice } from '../store/selectors';
 import { useStore } from '../store/store';
+
+/** @since P2 The chip of a classic-defaults world, or null for a world with the current defaults (or none yet). */
+export function classicDefaultsChip(snapshot: Pick<SimSnapshot, 'profile'> | null | undefined): { readonly label: string; readonly hint: string } | null {
+  if (snapshot === null || snapshot === undefined || snapshot.profile === 'P2') return null;
+  return {
+    label: 'Classic defaults',
+    hint: 'This world keeps the defaults of the first course: no spanning tree until you switch it on. File → "Use current defaults" brings in the newer ones.',
+  };
+}
 
 function selectionText(sel: Selection | null, deviceName: (id: string) => string): string {
   if (!sel) return 'nothing selected';
@@ -44,6 +57,7 @@ export function StatusBar() {
   const metresPerUnit = useStore((s) => s.snapshot?.media?.metresPerUnit);
   const snapshot = useStore((s) => s.snapshot);
   const snapshotIndex = useStore((s) => s.snapshotIndex);
+  const classic = classicDefaultsChip(snapshot);
 
   const deviceName = (id: string): string => selectDevice({ snapshot, snapshotIndex }, id)?.name ?? id;
 
@@ -76,6 +90,11 @@ export function StatusBar() {
       {seed !== undefined && (
         <span className="item" title="Simulation seed">
           seed <b>{seed}</b>
+        </span>
+      )}
+      {classic !== null && (
+        <span className="item" title={classic.hint} data-testid="classic-defaults">
+          {classic.label}
         </span>
       )}
       {dropped > 0 && (

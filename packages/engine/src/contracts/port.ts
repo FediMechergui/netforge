@@ -13,8 +13,11 @@
  * contracts/): the member is optional in the TYPE only so P0 code and hand-written test fixtures keep
  * compiling. The build-wave item that implements it (docs/ARCHITECTURE-P1.md §8) removes the `?` in
  * the same change and migrates fixtures; code written in later waves may rely on it being present.
+ *
+ * P2 (docs/ARCHITECTURE-P2.md §0 rule 2, §2.15): the same rule holds for every member tagged `@since P2`. Members
+ * tagged `@since P2 (optional by meaning)` keep their `?` for ever: absent means P1 behaviour and P1 bytes.
  */
-import type { LinkId, PortId } from './ids.js';
+import type { LinkId, PortId, ProcessName } from './ids.js';
 import type { Ipv4Address, Ipv6Address, MacAddress } from './addr.js';
 import type { SimTime } from './time.js';
 import type { Connector, ModuleInstall, ModuleType, PoeSpec, PortEncap, PortRole, SlotId, Wiring } from './catalog.js';
@@ -120,6 +123,8 @@ export interface PortSpec {
   autoneg?: boolean;
   /** @since P0.5 Serial port generates line clock itself (CSU/DSU, provider serial): satisfies the DCE clock rule without `clock rate`. */
   clockSource?: boolean;
+  /** @since P2 (optional by meaning) Subinterfaces only: the physical port that carries it (D11). */
+  parent?: PortId;
 }
 
 /** IPv4 address on a port. Written only by the ipv4 process via `setPortL3`. */
@@ -154,6 +159,17 @@ export interface PortL3 {
   ipv6Enabled?: boolean;
   /** @since P1 Joined IPv6 multicast groups (all-nodes, solicited-node per address, all-routers on routers). Canonical. */
   groups6?: readonly Ipv6Address[];
+  /**
+   * @since P2 (optional by meaning) Virtual IPv4 addresses answered on this port (nat pool / static inside-global
+   * addresses; hsrp virtual IPs), ordered by (owner, address). Written ONLY by ipv4 (setPortL3, per-member merge) on
+   * `ipv4.virtual` requests (D15).
+   */
+  virtual4?: readonly VirtualIpv4[];
+  /**
+   * @since P2 (optional by meaning) [SHOULD S2] Joined IPv4 multicast groups (hsrp). Written ONLY by ipv4 on
+   * `ipv4.group` requests (D15); read by the pipeline's multicast-group filter (step 10b) and `isLocalDestination`.
+   */
+  groups4?: readonly Ipv4Address[];
 }
 
 /** Live port state (snapshotable). */
@@ -171,6 +187,7 @@ export interface PortState {
   duplex?: Duplex;
   mtu: number;
   link?: LinkId;
+  /** Why the port is err-disabled. Keeps its type `string`; P2 writers store an `ErrDisableCause`. */
   errDisabled?: string;
   counters: PortCounters;
   l3: PortL3;
@@ -194,6 +211,11 @@ export interface PortState {
   module?: ModuleInstall;
   /** @since P0.5 SFP cage: installed transceiver module type. */
   transceiver?: ModuleType;
+  /**
+   * @since P2 (optional by meaning) Subinterfaces only; runtime-owned, from `encapsulation dot1Q <vid> [native]`
+   * (D11). Absent = no encapsulation yet (the subinterface stays down, reason `no-encapsulation`).
+   */
+  dot1q?: { vid: number; native: boolean };
 }
 
 /** Read-only view exposed to processes and snapshots. */
@@ -202,6 +224,56 @@ export type PortView = Readonly<Omit<PortState, 'counters' | 'l3' | 'tx'>> & {
   readonly l3: Readonly<PortL3>;
   readonly tx: Readonly<PortState['tx']>;
 };
+
+// ── P2: switchports, err-disable, virtual addresses (ARCHITECTURE-P2 §2.2) ──
+
+/** @since P2 Admin mode of a switched (or Port-channel) port. Default 'dynamic-auto' (D3). */
+export type SwitchportMode = 'access' | 'trunk' | 'dynamic-auto' | 'dynamic-desirable';
+
+/**
+ * @since P2 The switchport lines of one port, parsed. The ONLY reader is `readSwitchport(config, port)`
+ * (protocols/l2/switchport-config.ts); every consumer (eth-switch, dtp, stp, etherchannel, runtime SVI autostate,
+ * snapshot, show, lab checks) calls it on the running config. Never stored in PortState.
+ */
+export interface SwitchportConfig {
+  readonly mode: SwitchportMode;
+  /** false with `switchport nonegotiate` (accepted only in access or trunk mode). */
+  readonly negotiate: boolean;
+  readonly accessVlan: number;
+  /** `switchport voice vlan <v>`; absent = none. */
+  readonly voiceVlan?: number;
+  readonly nativeVlan: number;
+  /** Canonical VLAN list (core/vlan-list.ts format: ascending ranges, '1-4094' = all, '' = none). */
+  readonly allowed: string;
+}
+
+/** @since P2 What `readSwitchport` returns for a port with no switchport lines (D3). */
+export const DEFAULT_SWITCHPORT: SwitchportConfig = Object.freeze({
+  mode: 'dynamic-auto', negotiate: true, accessVlan: 1, nativeVlan: 1, allowed: '1-4094',
+});
+
+/**
+ * @since P2 The fixed L2 view of a wireless-controller distribution port (D17): readSwitchport returns it for every
+ * port of a `wireless-controller` model; the grammar accepts no switchport line there.
+ */
+export const CONTROLLER_PORT_SWITCHPORT: SwitchportConfig = Object.freeze({
+  mode: 'trunk', negotiate: false, accessVlan: 1, nativeVlan: 1, allowed: '1-4094',
+});
+
+/** @since P2 Why a port is err-disabled (PortState.errDisabled holds one of these). */
+export type ErrDisableCause = 'psecure-violation' | 'bpduguard' | 'channel-misconfig' | 'fault';
+/** @since P2 Every err-disable cause, in the order `show errdisable recovery` lists them. */
+export const ERR_DISABLE_CAUSES: readonly ErrDisableCause[] = Object.freeze(['psecure-violation', 'bpduguard', 'channel-misconfig', 'fault']);
+
+/** @since P2 A virtual IPv4 address answered on a port (HSRP virtual IP, NAT pool / static inside-global address). */
+export interface VirtualIpv4 {
+  readonly address: Ipv4Address;
+  /** MAC used in ARP replies (and as Ethernet source when the owner sends from it). */
+  readonly mac: MacAddress;
+  readonly owner: ProcessName;
+  /** true = a packet to `address` is for this device (HSRP active); false = ARP answers only (NAT pool). */
+  readonly local: boolean;
+}
 
 /** Well-known speeds. */
 export const SPEED_10M = 10_000_000;

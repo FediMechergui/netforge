@@ -20,9 +20,9 @@ import { createConfigAst } from '../src/cli/config-ast.js';
 import { exitTarget } from '../src/cli/modes.js';
 import { createCliRuntime } from '../src/cli/runtime.js';
 import { ALL_MODELS } from '../src/device/catalog/index.js';
-import { resolvePortName } from '../src/device/catalog/names.js';
+import { resolvePortName, SUBINTERFACE_FAMILY } from '../src/device/catalog/names.js';
 import { ArrayTrace, fakeCatalog, FakeTable, INERT_RF_VIEWS, type ActionCall, type ConfigCall } from './cli.runtime.fake.js';
-import { testPortSpec, p0Tables } from './port.fixtures.js';
+import { P2_DEVICE, testPortSpec, p0Tables } from './port.fixtures.js';
 
 /** A catalog model by type id (throws when the catalog lacks it). */
 export function catalogModel(type: string): DeviceModel {
@@ -62,6 +62,9 @@ export class P05Device implements DeviceRuntime {
   readonly processes = new Map<ProcessName, Process>();
   readonly capabilities: readonly Capability[];
   portsVersion = 0;
+  // P2 (ARCHITECTURE-P2 §9.2 W1 item 7): the required runtime members, copied from P2_DEVICE.
+  readonly profile = P2_DEVICE.profile;
+  errDisablePort = P2_DEVICE.errDisablePort;
   readonly configCalls: ConfigCall[] = [];
   readonly actionCalls: ActionCall[] = [];
   /** When set, `applyConfigLine` fails with the returned message for matching lines. */
@@ -102,7 +105,14 @@ export class P05Device implements DeviceRuntime {
     const r = this.resolvePortName(name);
     if (r.kind === 'existing') return { ok: true, port: r.port, created: false };
     if (r.kind !== 'virtual') return { ok: false, error: '% That interface cannot be created here.' };
-    const spec: PortSpec = testPortSpec({ name: r.port, short: r.port, kind: 'virtual', speedBps: 0, autoMdix: false }, this.capabilities, 0);
+    // P2 (ARCHITECTURE-P2 D11): a subinterface takes the `subif` role and names its parent (the W2 device item's
+    // `ensureVirtualPort` does the same on the real runtime); other virtual families keep the P0.5 shape.
+    const subif = r.family === SUBINTERFACE_FAMILY && r.parent !== undefined;
+    const spec: PortSpec = testPortSpec(
+      { name: r.port, short: r.port, kind: 'virtual', speedBps: 0, autoMdix: false, ...(subif ? { role: 'subif' as const, parent: r.parent } : {}) },
+      this.capabilities,
+      0,
+    );
     this.ports.set(r.port, portState(spec, 0, true));
     this.portsVersion++;
     this.running.set([], ['interface', r.port]);

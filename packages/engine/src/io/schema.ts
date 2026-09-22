@@ -14,8 +14,10 @@
  * Versions: every id in `TOPOLOGY_SCHEMA_IDS` is accepted. A document is read
  * with the field set of ITS version: the 1.1 sections (canvas, lab, device
  * modules/hardware/ui, link kind/dce_end/distance_m) are stripped from a 1.0
- * document exactly like any other unknown key, so `migrateTopology` can stay the
- * identity. Unknown keys are stripped at every level.
+ * document, and the 1.2 root key `profile` (ARCHITECTURE-P2 §2.9) from a 1.0 or
+ * 1.1 document, exactly like any other unknown key, so `migrateTopology` can stay
+ * the identity and a 1.1 document that carries `profile` loads as P1. Unknown
+ * keys are stripped at every level.
  *
  * Catalog-aware validation (`validateTopologyAgainstCatalog`) and the atomic
  * load gate (`prepareTopologyLoad`) run before a simulation replaces its world;
@@ -47,14 +49,16 @@ import { MEDIA, type MediaType } from '../contracts/link.js';
 import type { PortSpec } from '../contracts/port.js';
 import { TopologyLoadError, type TopologyLoadProblem } from '../contracts/simulation.js';
 import {
+  LATEST_TOPOLOGY_SCHEMA_ID,
   NETFORGE_FORMAT_VERSION,
   TOPOLOGY_SCHEMA_IDS,
   TOPOLOGY_SCHEMA_ID_1_0,
+  TOPOLOGY_SCHEMA_ID_1_1,
   type NetforgeManifest,
   type Topology,
   type TopologyDevice,
 } from '../contracts/topology.js';
-import { migrateTopology } from './migrate.js';
+import { migrateTopologyTo } from './migrate.js';
 
 // ── limits ────────────────────────────────────────────────────────────────
 
@@ -255,12 +259,22 @@ export const labSchema = z.object({
     .max(MAX_LAB_VERSION, `must be between 1 and ${MAX_LAB_VERSION}`),
 });
 
+/**
+ * @since P2 (1.2) The world's defaults profile (ARCHITECTURE-P2 D2). Only 'P2' is ever written: an absent key means
+ * 'P1', so the explicit value 'P1' (or anything else) is refused rather than silently dropped.
+ */
+export const profileSchema = z.literal('P2', {
+  errorMap: () => ({ message: 'must be "P2"; leave it out for the classic (P1) defaults' }),
+});
+
 // ── topology ──────────────────────────────────────────────────────────────
 
 /** Keys introduced by schema 1.1, per level. A 1.0 document never carries them. */
 const V11_ROOT_KEYS = ['canvas', 'lab'] as const;
 const V11_DEVICE_KEYS = ['modules', 'hardware', 'ui'] as const;
 const V11_LINK_KEYS = ['kind', 'dce_end', 'distance_m'] as const;
+/** @since P2 Keys introduced by schema 1.2 (root level only). A 1.0 or 1.1 document never carries them. */
+const V12_ROOT_KEYS = ['profile'] as const;
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -274,12 +288,15 @@ function withoutKeys(v: unknown, keys: readonly string[]): unknown {
 }
 
 /**
- * Read a 1.0 document with the 1.0 field set: copies (never mutates) the input without the 1.1 keys. Any other
- * input (1.1, unknown ids, non-objects) passes through untouched and is judged by the schema.
+ * Read a document with the field set of its own version: copies (never mutates) the input without the keys of every
+ * later version — a 1.0 document loses the 1.1 and 1.2 keys, a 1.1 document the 1.2 key `profile`. Any other input
+ * (1.2, unknown ids, non-objects) passes through untouched and is judged by the schema.
  */
 function stripNewerSections(input: unknown): unknown {
-  if (!isRecord(input) || input['schema'] !== TOPOLOGY_SCHEMA_ID_1_0) return input;
-  const out = withoutKeys(input, V11_ROOT_KEYS) as Record<string, unknown>;
+  if (!isRecord(input)) return input;
+  if (input['schema'] === TOPOLOGY_SCHEMA_ID_1_1) return withoutKeys(input, V12_ROOT_KEYS);
+  if (input['schema'] !== TOPOLOGY_SCHEMA_ID_1_0) return input;
+  const out = withoutKeys(input, [...V11_ROOT_KEYS, ...V12_ROOT_KEYS]) as Record<string, unknown>;
   if (Array.isArray(input['devices'])) out['devices'] = input['devices'].map((d: unknown) => withoutKeys(d, V11_DEVICE_KEYS));
   if (Array.isArray(input['links'])) out['links'] = input['links'].map((l: unknown) => withoutKeys(l, V11_LINK_KEYS));
   return out;
@@ -370,7 +387,7 @@ function refineTopology(t: RefinableTopology, ctx: z.RefinementCtx): void {
 
 const SCHEMA_ID_MESSAGE = `must be one of ${TOPOLOGY_SCHEMA_IDS.map((id) => `"${id}"`).join(', ')}`;
 
-/** The object schema behind `topologySchema` (1.1 field set, cross-field refinements applied). */
+/** The object schema behind `topologySchema` (1.2 field set, cross-field refinements applied). */
 const topologyObjectSchema = z
   .object({
     schema: z.enum(TOPOLOGY_SCHEMA_IDS, {
@@ -394,12 +411,14 @@ const topologyObjectSchema = z
     notes: z.string().max(MAX_NOTES_CHARS, `must be at most ${MAX_NOTES_CHARS} characters`).optional(),
     canvas: canvasSchema.optional(),
     lab: labSchema.optional(),
+    profile: profileSchema.optional(),
   })
   .superRefine(refineTopology);
 
 /**
  * Full topology document schema: `schema` (any id in TOPOLOGY_SCHEMA_IDS), `seed`, `devices`, `links`, optional
- * `objectives`/`notes`, and the 1.1 sections. A 1.0 document is read without its 1.1 keys.
+ * `objectives`/`notes`, the 1.1 sections and the 1.2 `profile`. A 1.0 document is read without its 1.1 and 1.2 keys,
+ * a 1.1 document without its 1.2 key.
  */
 export const topologySchema = z.preprocess(stripNewerSections, topologyObjectSchema);
 
@@ -698,15 +717,16 @@ export function topologyLoadError(problems: readonly TopologyLoadProblem[]): Top
 }
 
 /**
- * The atomic load gate (§3.14 steps 1–4): parse (any accepted schema id) → `migrateTopology` →
- * `validateTopologyAgainstCatalog`. Returns the migrated topology (schema = latest) when it can be loaded; otherwise
+ * The atomic load gate (§3.14 steps 1–4): parse (any accepted schema id; each id with its own field set) →
+ * `migrateTopologyTo(latest)` → `validateTopologyAgainstCatalog`. Returns the migrated topology (schema = latest, 1.2
+ * @since P2; `profile` present only when a 1.2 document carried it) when it can be loaded; otherwise
  * throws a `TopologyLoadError` whose `problems` carry every schema issue (with the device or link id when known) or
  * every catalog problem. Pure: never mutates `json`, never touches a simulation.
  */
 export function prepareTopologyLoad(json: unknown, catalog: DeviceCatalog): Topology {
   const parsed = topologySchema.safeParse(json);
   if (!parsed.success) throw topologyLoadError(parsed.error.issues.map((i) => problemFromIssue(i, json)));
-  const topology = migrateTopology(parsed.data);
+  const topology = migrateTopologyTo(parsed.data, LATEST_TOPOLOGY_SCHEMA_ID);
   const problems = validateTopologyAgainstCatalog(topology, catalog);
   if (problems.length > 0) throw topologyLoadError(problems);
   return topology;

@@ -47,6 +47,17 @@
  *     `MatchResult.secretSpans` so the runtime can mask them in history.
  *   • `quoted` → `"text with spaces"` (spanning tokens, read from the raw line, no escapes) or one token without
  *     quotation marks. An unclosed quote reports `MSG_UNCLOSED_QUOTE` at the opening mark.
+ *
+ * P2 arg types (ARCHITECTURE-P2 §2.11):
+ *   • `vlan-list` → `10,20,30-35`: VLAN ids and ascending ranges within `min`/`max` (default 1-4094), canonicalised
+ *     sorted and merged in the stored VLAN-list form of §2.2 (`30-35,10,20` → `10,20,30-35`; a run of two stays two
+ *     ids, `10-11` → `10,11`; a run of three or more is a range, `1,2,3` → `1-3`).
+ *   • `mac-any` → a MAC address in any common notation (`aabb.cc00.0100`, `aa:bb:cc:00:01:00`, `aa-bb-cc-00-01-00`,
+ *     `aabbcc000100`, any letter case), normalised to the canonical `aa:bb:cc:00:01:00`.
+ *   • `if-range` → `fa0/1 - 12, gi0/1`: the rest of the line, comma-separated items of an interface name or a name
+ *     with a range end for its last number. Every port must exist on the device (virtual interfaces are not created
+ *     by a range); the value is the canonical port ids in typed order without duplicates, joined by
+ *     `IF_RANGE_SEPARATOR` (`splitInterfaceRange` reads it back).
  */
 import type {
   ArgSpec,
@@ -178,6 +189,20 @@ export const MSG_BAD_HOSTNAME = '% Expected a host name made of letters, digits,
 export const MSG_BAD_URL = '% Expected a web address such as http://www.lab.nf/ at the marked position.';
 /** Message for a `secret` arg holding control characters. */
 export const MSG_BAD_SECRET = '% A secret may contain only printable characters.';
+/** @since P2 Message for a `mac-any` arg. */
+export const MSG_BAD_MAC_ANY = '% Expected a MAC address such as aabb.cc00.0100 or aa:bb:cc:00:01:00 at the marked position.';
+/** @since P2 Message for an `if-range` arg whose text is not a list of interfaces and ranges. */
+export const MSG_BAD_IF_RANGE = '% Expected interfaces or ranges such as fa0/1 - 12, gi0/1 at the marked position.';
+/** @since P2 Message for an `if-range` item whose range end is below its first port number. */
+export const MSG_IF_RANGE_REVERSED = '% A range must end at or above the number it starts from.';
+/** @since P2 Message for an `if-range` item naming a port the device does not have. */
+export const MSG_IF_RANGE_MISSING = (port: string): string => `% ${port} does not exist on this device.`;
+
+/** @since P2 Separator of the canonical port ids in an `if-range` value. */
+export const IF_RANGE_SEPARATOR = ',';
+/** @since P2 Default bounds of a `vlan-list` arg (802.1Q VLAN ids). */
+export const VLAN_LIST_ARG_MIN = 1;
+export const VLAN_LIST_ARG_MAX = 4094;
 
 const NO = 'no';
 const DO = 'do';
@@ -314,6 +339,13 @@ export function placeholderFor(arg: ArgSpec): string {
       return `<${arg.min ?? 0}-${arg.max ?? 4294967295}>[,-]`;
     case 'quoted':
       return '"TEXT"';
+    // P2 (§2.11)
+    case 'vlan-list':
+      return `<${arg.min ?? VLAN_LIST_ARG_MIN}-${arg.max ?? VLAN_LIST_ARG_MAX}>[,-]`;
+    case 'mac-any':
+      return 'H.H.H';
+    case 'if-range':
+      return 'INTERFACE-RANGE';
   }
 }
 
@@ -451,7 +483,115 @@ export function validateArg(arg: ArgSpec, text: string, ctx: MatchContext, opts:
       return isPrintable(text) ? { ok: true, value: text } : { ok: false, message: MSG_BAD_SECRET };
     case 'int-range':
       return validateIntRange(arg, text);
+    // P2 (§2.11)
+    case 'vlan-list':
+      return validateVlanList(arg, text);
+    case 'mac-any': {
+      const m = normalizeMacAny(text);
+      return m === null ? { ok: false, message: MSG_BAD_MAC_ANY } : { ok: true, value: m };
+    }
+    case 'if-range': {
+      const r = resolveInterfaceRange(text, ctx, arg);
+      return r.ok ? { ok: true, value: r.ports.join(IF_RANGE_SEPARATOR) } : r;
+    }
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// P2 value helpers (pure)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * @since P2 Canonical VLAN list text of merged ranges, in the stored form §2.2 names (core/vlan-list.ts): ascending,
+ * a run of three or more ids as `a-b`, a run of two as two ids (`10,11`), joined by ',' with no spaces.
+ */
+export function formatVlanListArg(ranges: readonly (readonly [number, number])[]): string {
+  const parts: string[] = [];
+  for (const [lo, hi] of ranges) {
+    if (hi - lo >= 2) parts.push(`${lo}-${hi}`);
+    else if (hi === lo) parts.push(String(lo));
+    else parts.push(String(lo), String(hi));
+  }
+  return parts.join(',');
+}
+
+function validateVlanList(arg: ArgSpec, text: string): ArgCheck {
+  const lo = arg.min ?? VLAN_LIST_ARG_MIN;
+  const hi = arg.max ?? VLAN_LIST_ARG_MAX;
+  const message = `% Expected VLAN numbers or ranges such as 10,20,30-35 between ${lo} and ${hi} at the marked position.`;
+  if (!/^\d{1,4}(?:-\d{1,4})?(?:,\d{1,4}(?:-\d{1,4})?)*$/.test(text)) return { ok: false, message };
+  const ranges = parseIntRange(text);
+  if (ranges === null) return { ok: false, message };
+  for (const [a, b] of ranges) if (a < lo || b > hi) return { ok: false, message };
+  return { ok: true, value: formatVlanListArg(ranges) };
+}
+
+/**
+ * @since P2 A MAC address in any common notation — dotted `aabb.cc00.0100`, colon or hyphen separated
+ * `aa:bb:cc:00:01:00`, or twelve bare hex digits — in canonical form (`aa:bb:cc:00:01:00`); null otherwise.
+ */
+export function normalizeMacAny(text: string): string | null {
+  const t = text.toLowerCase();
+  let hex: string | null = null;
+  if (/^[0-9a-f]{4}\.[0-9a-f]{4}\.[0-9a-f]{4}$/.test(t)) hex = t.replace(/\./g, '');
+  else if (/^[0-9a-f]{2}([:-])[0-9a-f]{2}(\1[0-9a-f]{2}){4}$/.test(t)) hex = t.replace(/[:-]/g, '');
+  else if (/^[0-9a-f]{12}$/.test(t)) hex = t;
+  if (hex === null) return null;
+  return (hex.match(/.{2}/g) as string[]).join(':');
+}
+
+/** @since P2 The canonical port ids of an `if-range` value (the inverse of the join in `validateArg`). */
+export function splitInterfaceRange(value: string): string[] {
+  return value.split(IF_RANGE_SEPARATOR).filter((p) => p.length > 0);
+}
+
+/** Resolve one typed port name of a range to an existing canonical id, or an error message. */
+function rangePort(name: string, ctx: MatchContext, arg: ArgSpec): { ok: true; port: PortId } | { ok: false; message: string } {
+  const r = resolveInterfaceArg(arg, name, ctx, { allowVirtual: false });
+  return r.ok ? { ok: true, port: r.value } : r;
+}
+
+/**
+ * @since P2 Resolve an interface range (`fa0/1 - 12, gi0/1`; spaces around `-` and `,` optional, `gi 0/1` accepted) to
+ * the canonical ids of existing ports, in typed order without duplicates. A range varies the last number of its first
+ * port's canonical id (`FastEthernet0/1 - 12` is `FastEthernet0/1` … `FastEthernet0/12`); every port it names must
+ * exist and pass the arg's `portFilter`.
+ */
+export function resolveInterfaceRange(
+  text: string,
+  ctx: MatchContext,
+  arg: ArgSpec = { type: 'if-range', help: '' },
+): { ok: true; ports: PortId[] } | { ok: false; message: string } {
+  const out: PortId[] = [];
+  const add = (p: PortId): void => {
+    if (!out.includes(p)) out.push(p);
+  };
+  const parts = text.split(',');
+  for (const raw of parts) {
+    const part = raw.trim();
+    if (part.length === 0) return { ok: false, message: MSG_BAD_IF_RANGE };
+    const m = /^(.*?\d)\s*-\s*(\d+)$/.exec(part);
+    const name = (m === null ? part : (m[1] as string)).replace(/\s+/g, '');
+    const first = rangePort(name, ctx, arg);
+    if (!first.ok) return first;
+    if (m === null) {
+      add(first.port);
+      continue;
+    }
+    const tail = /^(.*?)(\d+)$/.exec(first.port);
+    if (tail === null) return { ok: false, message: MSG_BAD_IF_RANGE };
+    const base = tail[1] as string;
+    const start = Number(tail[2]);
+    const end = Number(m[2]);
+    if (end < start) return { ok: false, message: MSG_IF_RANGE_REVERSED };
+    for (let n = start; n <= end; n++) {
+      const id = `${base}${n}`;
+      const p = rangePort(id, ctx, arg);
+      if (!p.ok) return { ok: false, message: p.message === MSG_UNKNOWN_INTERFACE || p.message === MSG_INTERFACE_NOT_CREATED ? MSG_IF_RANGE_MISSING(id) : p.message };
+      add(p.port);
+    }
+  }
+  return { ok: true, ports: out };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -771,6 +911,16 @@ function stepCand(c: Cand, tok: Token, lower: string, line: string, ctx: MatchCo
           return stepCand(c, tok, lower, line, ctx);
         }
         const arg = argSpecOf(c.spec, el);
+        if (arg.type === 'if-range') {
+          // P2: an interface range spans tokens (`fa0/1 - 12, gi0/1`), so it takes the rest of the line.
+          const value = line.slice(tok.column).trimEnd();
+          const r = validateArg(arg, value, ctx);
+          if (!r.ok) return { dead: true, kind: 'invalid-arg', message: r.message };
+          c.args[argName(el)] = r.value;
+          c.pos = c.spec.path.length;
+          c.stage = 'rest';
+          return { dead: false, exact: false };
+        }
         const secretTail = arg.type === 'secret' && c.pos === c.spec.path.length - 1;
         if (arg.type === 'rest' || secretTail) {
           const value = line.slice(tok.column).trimEnd();
@@ -1188,7 +1338,7 @@ function optionsFor(c: Cand, typed: string, ctx: MatchContext, acc: ItemAcc): { 
         for (const ch of arg.choices ?? []) if (matchesTyped(ch, typed)) addItem(acc, ch, arg.help, true, false);
         return { freeText: false, cr };
       }
-      if (arg.type === 'interface') {
+      if (arg.type === 'interface' || arg.type === 'if-range') {
         const names = interfaceNames(arg, ctx);
         if (names !== undefined) {
           for (const name of names) if (matchesTyped(name, typed)) addItem(acc, name, arg.help, true, false);

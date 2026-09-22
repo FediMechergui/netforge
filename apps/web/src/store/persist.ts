@@ -1,6 +1,8 @@
 /**
  * Persisted UI preferences (store/types.ts header): theme, palette collapse state and recent models, the cable
- * picker media, the wireless overlay toggles and the dock layout (tab, height, inspector width).
+ * picker media, the wireless overlay toggles, the dock layout (tab, height, inspector width) and, from P2 (W2
+ * web-shell), the switching overlay slice (`topoOverlays`) and the course of the last lesson opened
+ * (`learn.lastCourse`, the course context a new world takes its defaults profile from, D2).
  *
  * Everything goes through try/catch: storage may be missing (private mode, sandboxed frames, tests) and stored
  * values are untrusted, so every field is validated and unknown or malformed values fall back to the defaults.
@@ -10,7 +12,7 @@ import { MEDIA, type MediaType } from '@netforge/engine';
 import type { StoreApi } from 'zustand';
 import { MEDIA_PICKER_ORDER } from '../vocab/media';
 import { DOCK_OPEN_HEIGHT, INSPECTOR_OPEN_WIDTH, isDockTabAvailable } from '../dock/registry';
-import type { DockTab, Store, Theme, WirelessOverlayState } from './types';
+import type { DockTab, Store, Theme, TopoOverlayState, WirelessOverlayState } from './types';
 
 export const THEME_KEY = 'netforge.theme';
 export const UI_PREFS_KEY = 'netforge.ui.v1';
@@ -30,10 +32,28 @@ export const DEFAULT_OVERLAYS: Readonly<WirelessOverlayState> = Object.freeze({
   backgroundFrames: false,
 });
 
+/**
+ * @since P2 Every switching overlay off and no VLAN chosen (the same values as the canvas registry's
+ * `TOPO_OVERLAY_DEFAULTS`, kept here so the store reads nothing from the canvas at module scope).
+ */
+export const DEFAULT_TOPO_OVERLAYS: Readonly<TopoOverlayState> = Object.freeze({
+  vlan: false,
+  stp: false,
+  stpVlan: null,
+  vlanFocus: null,
+  capwap: false,
+});
+/** @since P2 Highest VLAN id a persisted selector may name (802.1Q VID range). */
+export const VLAN_ID_MAX = 4094;
+/** @since P2 Bound on a persisted course id. */
+const COURSE_ID_LIMIT = 64;
+
 export const DEFAULT_DOCK_TAB: DockTab = 'terminal';
 export const DEFAULT_DOCK_HEIGHT = DOCK_OPEN_HEIGHT;
 export const DEFAULT_INSPECTOR_WIDTH = INSPECTOR_OPEN_WIDTH;
 const OVERLAY_KEYS = Object.keys(DEFAULT_OVERLAYS) as (keyof WirelessOverlayState)[];
+const TOPO_TOGGLE_KEYS = ['vlan', 'stp', 'capwap'] as const;
+const TOPO_VLAN_KEYS = ['stpVlan', 'vlanFocus'] as const;
 
 export interface PersistedUi {
   theme: Theme;
@@ -41,6 +61,10 @@ export interface PersistedUi {
   cable: { media: MediaType };
   overlays: WirelessOverlayState;
   dock: { tab: DockTab; height: number; inspectorWidth: number };
+  /** @since P2 */
+  topoOverlays: TopoOverlayState;
+  /** @since P2 */
+  learn: { lastCourse: string | null };
 }
 
 export function defaultPersistedUi(): PersistedUi {
@@ -50,7 +74,14 @@ export function defaultPersistedUi(): PersistedUi {
     cable: { media: 'auto' },
     overlays: { ...DEFAULT_OVERLAYS },
     dock: { tab: DEFAULT_DOCK_TAB, height: DEFAULT_DOCK_HEIGHT, inspectorWidth: DEFAULT_INSPECTOR_WIDTH },
+    topoOverlays: { ...DEFAULT_TOPO_OVERLAYS },
+    learn: { lastCourse: null },
   };
+}
+
+/** @since P2 A VLAN selector value: null (no choice) or an integer VLAN id in 1…VLAN_ID_MAX. */
+export function isVlanChoice(v: unknown): v is number | null {
+  return v === null || (typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= VLAN_ID_MAX);
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -109,6 +140,24 @@ export function sanitizePersistedUi(raw: unknown, theme: unknown = undefined): P
     out.dock.height = size(raw.dock.height, DEFAULT_DOCK_HEIGHT, 10_000);
     out.dock.inspectorWidth = size(raw.dock.inspectorWidth, DEFAULT_INSPECTOR_WIDTH, 10_000);
   }
+
+  // P2: the switching overlays — booleans for the toggles, a VLAN id or null for the two selectors.
+  if (isRecord(raw.topoOverlays)) {
+    for (const k of TOPO_TOGGLE_KEYS) {
+      const v = raw.topoOverlays[k];
+      if (typeof v === 'boolean') out.topoOverlays[k] = v;
+    }
+    for (const k of TOPO_VLAN_KEYS) {
+      const v = raw.topoOverlays[k];
+      if (isVlanChoice(v)) out.topoOverlays[k] = v;
+    }
+  }
+
+  // P2: the course context (a course id the catalogue may or may not still know; the consumer treats it as a name).
+  if (isRecord(raw.learn)) {
+    const v = raw.learn.lastCourse;
+    if (typeof v === 'string' && v.length > 0 && v.length <= COURSE_ID_LIMIT) out.learn.lastCourse = v;
+  }
   return out;
 }
 
@@ -141,13 +190,17 @@ export function loadPersistedUi(): PersistedUi {
 }
 
 /** The persisted slice of a store state. */
-export function persistedSliceOf(s: Pick<Store, 'theme' | 'palette' | 'cable' | 'overlays' | 'dockTab' | 'dockHeight' | 'inspectorWidth'>): PersistedUi {
+export function persistedSliceOf(
+  s: Pick<Store, 'theme' | 'palette' | 'cable' | 'overlays' | 'dockTab' | 'dockHeight' | 'inspectorWidth' | 'topoOverlays' | 'learn'>,
+): PersistedUi {
   return {
     theme: s.theme,
     palette: { collapsed: s.palette.collapsed, recent: s.palette.recent },
     cable: { media: s.cable.media },
     overlays: s.overlays,
     dock: { tab: s.dockTab, height: s.dockHeight, inspectorWidth: s.inspectorWidth },
+    topoOverlays: s.topoOverlays,
+    learn: { lastCourse: s.learn.lastCourse },
   };
 }
 
@@ -175,7 +228,9 @@ export function persistedChanged(a: Store, b: Store): boolean {
     a.overlays !== b.overlays ||
     a.dockTab !== b.dockTab ||
     a.dockHeight !== b.dockHeight ||
-    a.inspectorWidth !== b.inspectorWidth
+    a.inspectorWidth !== b.inspectorWidth ||
+    a.topoOverlays !== b.topoOverlays ||
+    a.learn.lastCourse !== b.learn.lastCourse
   );
 }
 

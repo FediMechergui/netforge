@@ -63,6 +63,8 @@ const EXPECTED_IDS = [
   'config.enable-password', 'config.service-password-encryption', 'config.username', 'config.line', 'line.password',
   'line.login', 'line.exec-timeout',
   'host.ip-address-dhcp', 'host.ip-dns', 'host.ipv6-address', 'host.ipv6-autoconfig', 'host.ipv6config',
+  // ARCHITECTURE-P2 §5.5 host-shell expansions: `ipv6 address dhcp [<adapter>]` and [S4] `voice vlan <v>`
+  'host.ipv6-address-dhcp', 'host.voice-vlan',
 ];
 
 /** Test label of a context (the device kind is no longer part of MatchContext: scope is grammar and capabilities). */

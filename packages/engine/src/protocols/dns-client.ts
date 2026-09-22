@@ -9,7 +9,11 @@
  * answers NXDOMAIN without touching the wire. Without an explicit server the 'dns-cache' table answers next: live rows only,
  * CNAME rows are followed, a 'negative' row answers NXDOMAIN (`fromCache`). Otherwise the wire:
  *  • servers = `req.server`, else every `ip name-server` address in config order, then the DHCP-learned ones
- *    (`dhcp.lease` events: bound/renewed set the iface's list, lost removes it); none → NO-SERVER;
+ *    (`dhcp.lease` events: bound/renewed set the iface's list, lost removes it); none → NO-SERVER.
+ *    P2 (ARCHITECTURE-P2 §2.5 consumer rule): learned servers are keyed by (iface, family) — a lease without
+ *    `family` is the DHCPv4 list of the interface, `family: 6` (dhcpv6-client) its DHCPv6 list; a lease replaces
+ *    only its own family's list and 'lost' removes only that family's list; the order is every IPv4 list, then every
+ *    IPv6 list. A v4-only world never sets `family`, so its server list and debug text are unchanged;
  *  • query n: socket 'dns-client#q<n>' (ephemeral port, the server's family), txid = one draw from
  *    `ctx.stream('dns-id')` for the whole query, `dns-query` to server:53 with rd, timer `q:<n>` (one-shot);
  *    replies match (socket, txid);
@@ -199,7 +203,10 @@ function lookupText(name: string, qtype: string, r: Result): string {
 
 export function createDnsClient(): Process {
   const queries = new Map<number, Query>();
+  /** DHCPv4-learned servers per interface (leases without `family`). */
   const dhcpServers = new Map<PortId, IpAddress[]>();
+  /** @since P2 DHCPv6-learned servers per interface (leases with `family: 6`), listed after every IPv4 list. */
+  const dhcpServers6 = new Map<PortId, IpAddress[]>();
   const ring: DebugEvent[] = [];
   let configured: IpAddress[] = [];
   let count = 0;
@@ -220,7 +227,7 @@ export function createDnsClient(): Process {
 
   const table = (ctx: ProcessCtx): Table<DnsCacheRow> | undefined => ctx.tables.get<DnsCacheRow>('dns-cache');
   const socketOf = (q: Query): string => `${NAME}#q${q.n}`;
-  const servers = (): IpAddress[] => [...new Set([...configured, ...[...dhcpServers.values()].flat()])];
+  const servers = (): IpAddress[] => [...new Set([...configured, ...[...dhcpServers.values()].flat(), ...[...dhcpServers6.values()].flat()])];
 
   function armSweep(): Action[] {
     if (sweepArmed) return [];
@@ -373,9 +380,12 @@ export function createDnsClient(): Process {
 
     onEvent(ctx, ev: ProcessEvent): Action[] {
       if (ev.kind === 'dhcp.lease') {
-        if (ev.op === 'lost') dhcpServers.delete(ev.iface);
-        else dhcpServers.set(ev.iface, ev.dnsServers.map((a) => normalizeIp(a)).filter((a): a is IpAddress => a !== null));
-        debug(ctx, `${ev.iface}: DHCP ${ev.op}, DNS servers ${dhcpServers.get(ev.iface)?.join(', ') || 'none'}`, { iface: ev.iface, op: ev.op });
+        // (iface, family) keyed: a lease touches only its own family's list (ARCHITECTURE-P2 §2.5)
+        const learned = ev.family === 6 ? dhcpServers6 : dhcpServers;
+        if (ev.op === 'lost') learned.delete(ev.iface);
+        else learned.set(ev.iface, ev.dnsServers.map((a) => normalizeIp(a)).filter((a): a is IpAddress => a !== null));
+        const what = ev.family === 6 ? 'DHCPv6' : 'DHCP';
+        debug(ctx, `${ev.iface}: ${what} ${ev.op}, DNS servers ${learned.get(ev.iface)?.join(', ') || 'none'}`, { iface: ev.iface, op: ev.op, ...(ev.family === 6 ? { family: 6 } : {}) });
         return [];
       }
       if (ev.kind !== 'sock.datagram' && ev.kind !== 'sock.error') return [];

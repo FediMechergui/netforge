@@ -5,11 +5,13 @@
  * only through `EngineBatch`es: `applyBatch` is the single write path for
  * `snapshot`, `now`, `inflight` and `events`.
  *
- * P0.5/P1 members are optional in the type until the web wave that implements them removes the `?`
- * (engine contracts/port.ts TRANSITION RULE). Epoch change additionally clears: simMode.stoppedAt,
+ * P0.5/P1 members, and P2 members tagged `@since P2` (ARCHITECTURE-P2 §0 rule 2), are optional in the type until the
+ * web wave that implements them removes the `?` (engine contracts/port.ts TRANSITION RULE). Course-layer members are
+ * tagged `@since course`: they are delivered and required, and the P2 transition sweep never touches them. Epoch change additionally clears: simMode.stoppedAt,
  * netscope live captures (keeps i_*), lab.status, desktopWindows, a11y.canvasFocus, eventsTruncated.
  * Persisted to localStorage (try/catch): theme, palette.collapsed/recent, cable.media, overlays, dock layout,
- * and (P2, store/store.ts `rememberEntryView`) whether the last surface was the sandbox or the course layer.
+ * (P2 W2 web-shell) `topoOverlays` and `learn.lastCourse`, and (P2, store/store.ts `rememberEntryView`) whether the
+ * last surface was the sandbox or the course layer.
  */
 import type {
   CaptureId,
@@ -19,7 +21,9 @@ import type {
   DeviceModel,
   GuiPanelId,
   InflightFrame,
+  JournalPosition,
   LabStatus,
+  LaneId,
   LinkId,
   MediaSpec,
   MediaType,
@@ -35,7 +39,7 @@ import type {
   TraceEvent,
   TraceFilter,
 } from '@netforge/engine';
-import type { EngineBatch, InitResult, PlaybackMode, StopInfo } from '../bridge/protocol';
+import type { EngineBatch, InitResult, PlaybackMode, ReviewInfo, StopInfo } from '../bridge/protocol';
 
 export type Tool = 'select' | 'cable' | 'add-device' | 'pan';
 /** Dock tabs; `netscope`, `sim-events` and `labs` @since P1 (one registry: apps/web/src/dock/registry.ts). */
@@ -43,14 +47,14 @@ export type DockTab = 'terminal' | 'packets' | 'events' | 'tables' | 'provenance
 export type Theme = 'dark' | 'light';
 
 /**
- * @since P2 Course layer surfaces (apps/web/src/learn/**): the level chooser, one course, one lesson. They cover
+ * @since course Course layer surfaces (apps/web/src/learn/**): the level chooser, one course, one lesson. They cover
  * the whole window, so the shell hides the sandbox grid behind them instead of unmounting it.
  */
 export type LearnSurface = 'landing' | 'course' | 'lesson';
 
 /**
  * @since P1 Workspace view: the topology canvas or a full-screen concept tool (Canvas stays mounted, hidden).
- * @since P2 …or a learn surface, which covers the whole window (`isLearnView`).
+ * @since course …or a learn surface, which covers the whole window (`isLearnView`).
  */
 export type WorkspaceView = 'topology' | 'concept' | LearnSurface;
 export type ConceptTool = 'subnetting' | 'ipv6';
@@ -58,7 +62,7 @@ export type ConceptTool = 'subnetting' | 'ipv6';
 /** The learn surfaces, in the order you meet them. */
 export const LEARN_SURFACES: readonly LearnSurface[] = Object.freeze(['landing', 'course', 'lesson']);
 
-/** @since P2 True for the views the course layer owns; the two sandbox views ('topology', 'concept') are false. */
+/** @since course True for the views the course layer owns; the two sandbox views ('topology', 'concept') are false. */
 export function isLearnView(v: WorkspaceView | undefined): v is LearnSurface {
   return v === 'landing' || v === 'course' || v === 'lesson';
 }
@@ -134,6 +138,31 @@ export interface WirelessOverlayState {
 }
 
 /**
+ * @since P2 Switching (and controller) overlay toggles (ARCHITECTURE-P2 §2.14, D20): a NEW persisted slice, so the
+ * WirelessOverlayState keys stay exactly as canvas.overlays.test.ts pins them. `stpVlan` / `vlanFocus` choose the VLAN
+ * the STP overlay draws and the VLAN the VLAN overlay focuses (null = the lowest / none).
+ */
+export interface TopoOverlayState {
+  vlan: boolean;
+  stp: boolean;
+  stpVlan: number | null;
+  vlanFocus: number | null;
+  capwap: boolean;
+}
+
+/**
+ * @since P2 [SHOULD S1] Timeline and review state. `review` and `head` mirror the worker (batches are the only write
+ * path); `reviewEvents` holds at most 2000 events of the reviewed instant and never mixes with `events`.
+ */
+export interface TimelineUiState {
+  review: ReviewInfo | null;
+  head: { t: SimTime; at: JournalPosition } | null;
+  lanes: LaneId[];
+  seeking: boolean;
+  reviewEvents: TraceEvent[];
+}
+
+/**
  * @since P1 Simulation mode as the UI knows it (§4.11). `mode`, `stoppedAt` and `traceHead` mirror the worker
  * (batches are the only write path for them); `list` and `breakOn` are what the filter chips and the breakpoint
  * editor hold, and reach the worker through `engine.setSimFilters`.
@@ -163,12 +192,17 @@ export interface NetScopeUiState {
 }
 
 /**
- * @since P2 Course layer state: which course the learner opened and which lesson inside it. Ids only — the
+ * @since course Course layer state: which course the learner opened and which lesson inside it. Ids only — the
  * course catalogue itself is plain data in the engine (`COURSES`), so nothing of it is copied into the store.
  */
 export interface LearnUiState {
   courseId: string | null;
   lessonId: string | null;
+  /**
+   * @since P2 The course of the last lesson opened (persisted; W2 web-shell). It is the course context a new world
+   * takes its defaults profile from (`learn/course-profile.ts`, D2): null until a lesson has been opened.
+   */
+  lastCourse: string | null;
 }
 
 /** @since P1 Lab state (§4.13): the loaded lab's metadata, its last grading, and whether the catalogue is open. */
@@ -262,11 +296,17 @@ export interface UiState {
   simMode: SimModeUiState;
   netscope: NetScopeUiState;
   lab: LabUiState;
-  /** @since P2 */
+  /** @since course */
   learn: LearnUiState;
   inspectorTab: InspectorTab;
   desktopWindows: DesktopWindow[];
   a11y: A11yState;
+
+  // ── P2 (optional in the type until the web wave that implements each removes the `?`) ──
+  /** @since P2 Switching overlay toggles and VLAN selectors (persisted). Required since W2 web-shell. */
+  topoOverlays: TopoOverlayState;
+  /** @since P2 [SHOULD S1] Timeline and review (W4 web-shell). */
+  timeline?: TimelineUiState;
 }
 
 export interface UiActions {
@@ -309,7 +349,7 @@ export interface UiActions {
   setNetscope(p: Partial<NetScopeUiState>): void;
   setLab(p: Partial<LabUiState>): void;
   /**
-   * @since P2 Show a learn surface and, with it, what that surface shows. Ids left out keep their value, so
+   * @since course Show a learn surface and, with it, what that surface shows. Ids left out keep their value, so
    * going back from a lesson to its course never loses which course it was.
    */
   showLearn(surface: LearnSurface, ids?: Partial<LearnUiState>): void;
@@ -321,6 +361,12 @@ export interface UiActions {
   moveDesktopWindow(id: number, rect: { x: number; y: number; w: number; h: number }): void;
   setCanvasFocus(id: DeviceId | null): void;
   announce(text: string): void;
+
+  // ── P2 ──
+  /** @since P2 Set one switching overlay toggle or selector (the slice object is replaced, so persistence sees it). */
+  setTopoOverlay<K extends keyof TopoOverlayState>(k: K, v: TopoOverlayState[K]): void;
+  /** @since P2 Record the course of the lesson just opened (`learn.lastCourse`, persisted; W2 web-shell). */
+  setLastCourse(courseId: string | null): void;
 }
 
 export type Store = UiState & UiActions;

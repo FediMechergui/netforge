@@ -19,10 +19,26 @@
  *    `ipv6Enabled` and `groups6` (ff02::1, ff02::2 on routing devices, the solicited-node group of every
  *    non-duplicate address — tentative ones included so DAD probes from other nodes are heard).
  *  • rib6 (through a RIB arbiter, lowest AD installed per key): C (prefix of every preferred or deprecated
- *    non-link-local address, AD 0), L (/128 of each, AD 0), S (`ipv6 route P/len NH | IF [NH]`, AD 1) and ND
- *    (the default router learned from an RA on a non-forwarding device, `::/0` AD 2 via the router link-local,
- *    expiring with the router lifetime). C/L/ND routes of a port are withdrawn with reason 'link-down' when it goes
- *    down; addresses return to `tentative` and run DAD again when it comes back (RFC 4862 §5.4).
+ *    non-link-local address, AD 0), L (/128 of each, AD 0), S (`ipv6 route P/len NH | IF [NH] [AD]`, AD 1 by
+ *    default) and ND (the default router learned from an RA on a non-forwarding device, `::/0` AD 2 via the router
+ *    link-local, expiring with the router lifetime). C/L/ND routes of a port are withdrawn with reason 'link-down'
+ *    when it goes down; addresses return to `tentative` and run DAD again when it comes back (RFC 4862 §5.4).
+ *  • Static routes (P2, ARCHITECTURE-P2 D13): ONE candidate per `ipv6 route` line (arbiter owner `static|<line>`),
+ *    so two lines for one prefix are two candidates and the lowest distance wins (floating statics). A line is
+ *    offered only while USABLE: with an exit interface, that interface is up with IPv6 enabled (a global next hop
+ *    must then be on-link there; a link-local next hop always is); with a next hop only, `connectedPortFor6` answers
+ *    a port, else the next hop's longest match in rib6 — ignoring the line's own candidate — is an installed route,
+ *    followed through static lines recursively up to `STATIC6_RECURSION_MAX` deep. Re-evaluated after every route
+ *    change, so a static is installed when its next hop becomes reachable (after DAD, at link-up), not at
+ *    configuration time. [S6] Equal-cost lines for one prefix install one row with `paths`; forwarding picks the
+ *    path with `ecmpIndex6` (the §4.1 hash over the folded addresses).
+ *  • DHCPv6 leases (P2 D16): `ipv6.lease bind|unbind` from dhcpv6-client adds or removes an address of origin
+ *    'dhcpv6' (prefix length 128 by default) with its lifetimes; it starts tentative and runs DAD like any other.
+ *    `ipv6 address dhcp` enables IPv6 on the interface (link-local only until a lease binds).
+ *  • DHCPv6 server interfaces: with `ipv6 dhcp server <pool>` under the interface, the port joins `ff02::1:2`
+ *    (`DHCPV6_ALL_AGENTS`) through `groups6`. RA flags: the M/O flags learned from a router are forwarded to
+ *    dhcpv6-client as the ProcessEvent `ipv6.ra` whenever they change on an `ipv6 address autoconfig` interface
+ *    (only when the model runs dhcpv6-client, so P1 worlds see no event).
  *  • SLAAC (`ipv6.raLearned` from nd, RFC 4862 §5.5.3): a /64 prefix on a port with `autoconfig` creates
  *    `eui64Address(prefix, 64, mac)` with lifetimes; the two-hour rule protects the valid lifetime of an existing
  *    address; `preferredUntil` → `deprecated`, `validUntil` → removed. Lifetimes (and the ND default route) are
@@ -52,6 +68,8 @@
  */
 import type { Ipv6Address } from '../contracts/addr.js';
 import { IPV6_ALL_NODES, IPV6_ALL_ROUTERS } from '../contracts/addr.js';
+import { DHCPV6_ALL_AGENTS } from '../contracts/pdu.js';
+import type { RaFlagsEvent } from '../contracts/transport.js';
 import { L3_ROLES, ROLE_TRAITS, KIND_ENCAP, defaultRoleFor, ipDefaultsFor } from '../contracts/catalog.js';
 import type { PortEncap, PortRole } from '../contracts/catalog.js';
 import type { ConfigDelta, ConfigNode } from '../contracts/config.js';
@@ -108,6 +126,34 @@ const TRANSPORT_PROCESSES: Readonly<Record<number, ProcessName>> = Object.freeze
 const FIXED_NEXT_HEADER_POINTER = 6;
 /** Offset of the routing type inside a routing header. */
 const ROUTING_TYPE_OFFSET = 2;
+/** @since P2 Arbiter owner prefix of a static route line (D13). */
+export const STATIC6_OWNER_PREFIX = 'static|';
+/** @since P2 How many static routes a next hop may be resolved through (D13). */
+export const STATIC6_RECURSION_MAX = 8;
+/** @since P2 [S6] Most equal-cost static paths installed for one IPv6 prefix. */
+export const IPV6_MAX_PATHS = 4;
+/** @since P2 The daemon that receives `ipv6.ra` flag events (D16). */
+const DHCPV6_CLIENT: ProcessName = 'dhcpv6-client';
+
+/** Fold an IPv6 address into one u32 (XOR of its four 32-bit words). Invalid text folds to 0. */
+function fold6(a: string): number {
+  const b = parseIpv6(a);
+  if (b === null) return 0;
+  let h = 0;
+  for (let i = 0; i < 16; i += 4) h ^= (((b[i] as number) << 24) | ((b[i + 1] as number) << 16) | ((b[i + 2] as number) << 8) | (b[i + 3] as number)) >>> 0;
+  return h >>> 0;
+}
+
+/**
+ * @since P2 [S6] The equal-cost path index of an IPv6 flow: the §4.1 hash (`h = u32(src) ^ u32(dst); h ^= h >>> 16;
+ * i = h % n`) over the addresses folded to 32 bits with `fold6`.
+ */
+export function ecmpIndex6(src: Ipv6Address, dst: Ipv6Address, n: number): number {
+  if (n <= 1) return 0;
+  let h = (fold6(src) ^ fold6(dst)) >>> 0;
+  h = (h ^ (h >>> 16)) >>> 0;
+  return h % n;
+}
 
 /** Wire selectors: Ethernet type 0x86dd on every L3 role, HDLC protocol 0x86dd on serial WAN ports (§3.9). */
 export const IPV6_HANDLES: readonly DemuxSelector[] = Object.freeze([
@@ -287,6 +333,10 @@ export interface Iface6Config {
   enabled: boolean;
   /** `ipv6 address autoconfig`. */
   autoconfig: boolean;
+  /** @since P2 `ipv6 address dhcp` (the lease arrives by `ipv6.lease`). */
+  dhcp: boolean;
+  /** @since P2 `ipv6 dhcp server <pool>`: the interface joins ff02::1:2. */
+  dhcpServer: boolean;
   /** `ipv6 nd suppress-ra`. */
   suppressRa: boolean;
   /** Manual link-local address (replaces the automatic one). */
@@ -309,7 +359,7 @@ function parseAddressWithLength(text: string): { address: Ipv6Address; prefixLen
 
 /** Read the IPv6 configuration of `port` (see `Iface6Config`). The port MAC feeds `eui-64` addresses. */
 export function readIface6Config(ctx: ProcessCtx, port: PortId, mac: string): Iface6Config {
-  const cfg: Iface6Config = { enabled: false, autoconfig: false, suppressRa: false, addresses: [], rejected: [] };
+  const cfg: Iface6Config = { enabled: false, autoconfig: false, dhcp: false, dhcpServer: false, suppressRa: false, addresses: [], rejected: [] };
   for (const line of interfaceIpv6Lines(ctx, port)) {
     const what = line[1];
     if (what === 'enable') {
@@ -320,12 +370,23 @@ export function readIface6Config(ctx: ProcessCtx, port: PortId, mac: string): If
       if (line[2] === 'suppress-ra') cfg.suppressRa = true;
       continue;
     }
+    if (what === 'dhcp') {
+      if (line[2] === 'server' && line[3] !== undefined) {
+        cfg.dhcpServer = true;
+        cfg.enabled = true;
+      }
+      continue;
+    }
     if (what !== 'address') continue;
     cfg.enabled = true;
     const arg = line[2];
     const kind = line[3];
     if (arg === 'autoconfig') {
       cfg.autoconfig = true;
+      continue;
+    }
+    if (arg === 'dhcp') {
+      cfg.dhcp = true;
       continue;
     }
     if (arg === undefined) continue;
@@ -368,13 +429,14 @@ export function readIface6Config(ctx: ProcessCtx, port: PortId, mac: string): If
 
 /**
  * Render a rib6 row as the configuration or event responsible for it — the `cause` of the hop-limit decrement and
- * of the neighbour send. Static: `ipv6 route P/len [IF] [NH]`; ND: `router advertisement from R on IF`; connected /
- * local: `connected via IF`.
+ * of the neighbour send. Static: `ipv6 route P/len [IF] [NH] [AD]` (the distance only when it is not the default 1,
+ * so a P1 row's text is unchanged); ND: `router advertisement from R on IF`; connected / local: `connected via IF`.
  */
 export function route6Cause(route: Route6Row): string {
   if (route.source === 'S') {
     const via = [route.iface, route.nextHop].filter((x): x is string => x !== undefined).join(' ');
-    return `ipv6 route ${route.network}/${route.prefixLen} ${via === '' ? '?' : via}`;
+    const ad = route.ad !== AD_STATIC ? ` ${route.ad}` : '';
+    return `ipv6 route ${route.network}/${route.prefixLen} ${via === '' ? '?' : via}${ad}`;
   }
   if (route.source === 'ND') return `router advertisement from ${route.nextHop ?? '?'} on ${route.iface ?? '?'}`;
   return `connected via ${route.iface ?? '?'}`;
@@ -391,6 +453,8 @@ function describe(ip: LayerView): string {
 interface Port6 {
   port: PortId;
   autoconfig: boolean;
+  /** @since P2 `ipv6 dhcp server <pool>` is configured on the port (joins ff02::1:2). */
+  dhcpServer: boolean;
   /** Live address list, as last written with setPortL3. */
   addrs: Ipv6PortAddress[];
   /** DAD requests outstanding (addresses). */
@@ -405,12 +469,88 @@ interface Port6 {
   lifeAt?: SimTime;
   /** What the last setPortL3 carried (to skip redundant writes). */
   writtenKey: string;
+  /** @since P2 DHCPv6 leases bound on the port (address → lifetimes), kept across re-derivations like SLAAC. */
+  leases: Map<Ipv6Address, Lease6>;
+  /** @since P2 The last `ipv6.ra` flags sent to dhcpv6-client (`router|managed|other`), if any. */
+  raFlags?: string;
 }
 
-/** A static route as configured. */
-interface Static6 {
-  row: Route6Row;
-  line: string;
+/** @since P2 One DHCPv6 lease (D16). */
+interface Lease6 {
+  prefixLen: number;
+  preferredUntil?: SimTime;
+  validUntil?: SimTime;
+  server?: Ipv6Address;
+}
+
+/** @since P2 One `ipv6 route` line (D13): a candidate offered while usable. */
+export interface Static6Line {
+  /** Canonical line text (`ipv6 route P/len [IF] [NH] [AD]`): the arbiter owner suffix and the cause. */
+  readonly line: string;
+  readonly key: string;
+  readonly network: Ipv6Address;
+  readonly prefixLen: number;
+  readonly nextHop?: Ipv6Address;
+  readonly iface?: PortId;
+  readonly ad: number;
+  readonly isDefault: boolean;
+}
+
+/** A static line with its offer state. */
+interface Static6Entry {
+  readonly def: Static6Line;
+  offered: boolean;
+}
+
+/**
+ * @since P2 Parse the tokens after `ipv6 route` (D13, §5.2): `P/len <NH | IF [NH]> [AD]`. A link-local next hop needs an
+ * interface. Returns the canonical line, or the reason it is refused.
+ */
+export function parseStaticRoute6(ctx: Pick<ProcessCtx, 'ports'>, args: readonly string[]): { ok: true; def: Static6Line } | { ok: false; reason: string } {
+  const prefix = args[0] === undefined ? null : parseAddressWithLength(args[0]);
+  if (prefix === null) return { ok: false, reason: 'invalid prefix' };
+  const network = ipv6NetworkOf(prefix.address, prefix.prefixLen);
+  let iface: PortId | undefined;
+  let nextHop: Ipv6Address | undefined;
+  let ad = AD_STATIC;
+  let i = 1;
+  for (; i < args.length; i++) {
+    const tok = args[i] as string;
+    const asAddr = normalizeIpv6(tok);
+    if (asAddr !== null) {
+      if (nextHop !== undefined) return { ok: false, reason: `unexpected token ${tok}` };
+      nextHop = asAddr;
+      continue;
+    }
+    if (/^\d{1,3}$/.test(tok)) {
+      if (iface === undefined && nextHop === undefined) return { ok: false, reason: 'missing next hop or interface' };
+      ad = Number(tok);
+      if (ad < 1 || ad > 255) return { ok: false, reason: `distance ${tok} is out of range (1-255)` };
+      i++;
+      break;
+    }
+    if (iface !== undefined || nextHop !== undefined) return { ok: false, reason: 'unknown next hop or interface' };
+    iface = findPort6(ctx, tok);
+    if (iface === undefined) return { ok: false, reason: 'unknown next hop or interface' };
+  }
+  if (i < args.length) return { ok: false, reason: `unexpected token ${args[i] ?? ''}` };
+  if (nextHop === undefined && iface === undefined) return { ok: false, reason: 'unknown next hop or interface' };
+  if (nextHop !== undefined && isLinkLocal6(nextHop) && iface === undefined) return { ok: false, reason: 'a link-local next hop needs an interface' };
+  const parts = ['ipv6', 'route', `${network}/${prefix.prefixLen}`];
+  if (iface !== undefined) parts.push(iface);
+  if (nextHop !== undefined) parts.push(nextHop);
+  if (ad !== AD_STATIC) parts.push(String(ad));
+  const def: Static6Line = {
+    line: parts.join(' '),
+    key: route6Key(network, prefix.prefixLen),
+    network,
+    prefixLen: prefix.prefixLen,
+    ad,
+    isDefault: prefix.prefixLen === 0,
+    ...(nextHop !== undefined ? { nextHop } : {}),
+    ...(iface !== undefined ? { iface } : {}),
+  };
+  return { ok: true, def };
 }
 
 /** Egress of a routed packet. */
@@ -425,7 +565,8 @@ interface Egress6 {
  */
 export function createIpv6(): Process {
   const ports = new Map<PortId, Port6>();
-  const statics = new Map<string, Static6>();
+  /** Static route lines by canonical text, in configuration order (D13). */
+  const statics = new Map<string, Static6Entry>();
   const ring: DebugEvent[] = [];
   let arbiter: RibArbiter<Route6Row> | undefined;
   let routing = false;
@@ -460,7 +601,14 @@ export function createIpv6(): Process {
   function rib(ctx: ProcessCtx): RibArbiter<Route6Row> {
     if (arbiter === undefined) {
       const table = ctx.tables.get<Route6Row>('rib6') as Table<Route6Row> | undefined;
-      arbiter = createRibArbiter<Route6Row>(table === undefined ? { stampOwner: false } : { table, stampOwner: false });
+      const opts = {
+        stampOwner: false,
+        maxPaths: IPV6_MAX_PATHS,
+        // [S6] only `ipv6 route` lines share a prefix; C, L and ND rows install alone
+        multipathEligible: (row: Route6Row) => row.source === 'S',
+        pathCause: (row: Route6Row) => route6Cause(row),
+      };
+      arbiter = createRibArbiter<Route6Row>(table === undefined ? opts : { table, ...opts });
     }
     return arbiter;
   }
@@ -524,66 +672,137 @@ export function createIpv6(): Process {
       r.offer(want.row, want.owner);
       debug(ctx, CAT_ROUTING, `add ${want.row.source} ${want.row.key} via ${p.port}`, { key: want.row.key, source: want.row.source, iface: p.port });
     }
+    settleStatics(ctx);
   }
 
   /** Withdraw every ND default route learned on `p`. */
   function dropRouters(ctx: ProcessCtx, p: Port6, reason: RibRemoveReason): void {
+    let changed = false;
     for (const router of Array.from(p.routers.keys())) {
       p.routers.delete(router);
       rib(ctx).withdraw(route6Key('::', 0), `nd:${p.port}|${router}`, ctx.now, reason);
       debug(ctx, CAT_ROUTING, `remove ND ::/0 via ${router} on ${p.port} (${reason})`, { router, iface: p.port, reason });
+      changed = true;
+    }
+    if (changed) settleStatics(ctx);
+  }
+
+  // ── static routes (D13) ─────────────────────────────────────────────────
+
+  const static6Owner = (line: string): string => `${STATIC6_OWNER_PREFIX}${line}`;
+
+  /** The static line that installed the row of `key` (its first path), if the installed row is one of ours. */
+  function staticInstalledAt(ctx: ProcessCtx, key: string): Static6Entry | undefined {
+    const owner = rib(ctx).installedOwner(key);
+    if (owner === undefined || !owner.startsWith(STATIC6_OWNER_PREFIX)) return undefined;
+    return statics.get(owner.slice(STATIC6_OWNER_PREFIX.length));
+  }
+
+  /** D13 "usable" for IPv6 (see the module header). */
+  function usable(ctx: ProcessCtx, entry: Static6Entry, depth: number, visiting: Set<string>): boolean {
+    const s = entry.def;
+    const h = ipv6Helpers(ctx);
+    if (s.iface !== undefined) {
+      const view = ctx.ports.get(s.iface);
+      if (view === undefined || !view.operUp || view.l3.ipv6Enabled !== true || preferredLinkLocal(view) === undefined) return false;
+      if (s.nextHop === undefined || isLinkLocal6(s.nextHop)) return true;
+      return h.connectedPortFor6(s.nextHop, s.iface) === s.iface;
+    }
+    const nextHop = s.nextHop as Ipv6Address;
+    if (h.connectedPortFor6(nextHop) !== undefined) return true;
+    if (depth >= STATIC6_RECURSION_MAX) return false;
+    visiting.add(s.line);
+    try {
+      for (const inner of h.lpm6(nextHop).candidates) {
+        if (inner.source === 'L') return false;
+        const via = staticInstalledAt(ctx, inner.key);
+        if (via === undefined) return true; // connected or ND default
+        if (visiting.has(via.def.line)) continue; // the line's own candidate (or a loop): ignored
+        return usable(ctx, via, depth + 1, visiting);
+      }
+      return false;
+    } finally {
+      visiting.delete(s.line);
     }
   }
 
-  /** Re-derive the static routes from the global config: offer new or changed ones, withdraw removed ones. */
+  function static6Row(ctx: ProcessCtx, s: Static6Line): Route6Row {
+    const row: Route6Row = { key: s.key, network: s.network, prefixLen: s.prefixLen, source: 'S', ad: s.ad, metric: 0, updatedAt: ctx.now };
+    if (s.nextHop !== undefined) row.nextHop = s.nextHop;
+    if (s.iface !== undefined) row.iface = s.iface;
+    if (s.isDefault) row.isDefault = true;
+    return row;
+  }
+
+  function offerStatic(ctx: ProcessCtx, entry: Static6Entry): void {
+    const s = entry.def;
+    const owner = static6Owner(s.line);
+    entry.offered = true;
+    const d = rib(ctx).offer(static6Row(ctx, s), owner);
+    const via = [s.iface, s.nextHop].filter((x): x is string => x !== undefined).join(' ');
+    // the P1 data shape, byte for byte; the distance only when it is not the default
+    const data: Record<string, unknown> = { key: s.key, source: 'S' };
+    if (s.ad !== AD_STATIC) data.ad = s.ad;
+    if (rib(ctx).installedOwners(s.key).includes(owner)) {
+      const paths = d.after?.paths;
+      const extra = paths !== undefined && paths.length > 1 ? ` (equal-cost path ${paths.length} of ${paths.length})` : '';
+      debug(ctx, CAT_ROUTING, `add S ${s.key} via ${via}${s.ad !== AD_STATIC ? ` (distance ${s.ad})` : ''}${extra}`, data);
+    } else {
+      debug(ctx, CAT_ROUTING, `S ${s.key} via ${via} kept as a candidate: ${d.after ? route6Cause(d.after) : 'another route'} is installed`, data);
+    }
+  }
+
+  /** Withdraw a line's candidate. `why` is its line when the line was removed (the P1 wording), else the reason it stopped being usable. */
+  function withdrawStatic(ctx: ProcessCtx, entry: Static6Entry, why: string): void {
+    const s = entry.def;
+    entry.offered = false;
+    const arb = rib(ctx);
+    const wasInstalled = arb.installedOwners(s.key).includes(static6Owner(s.line));
+    arb.withdraw(s.key, static6Owner(s.line), ctx.now, 'cleared');
+    if (wasInstalled) debug(ctx, CAT_ROUTING, `remove S ${s.key} (${why})`, { key: s.key, source: 'S' });
+  }
+
+  /** Offer every usable static line and withdraw every unusable one, to a fixed point. */
+  function settleStatics(ctx: ProcessCtx): void {
+    if (statics.size === 0) return;
+    let changed = true;
+    for (let round = 0; changed && round <= statics.size; round++) {
+      changed = false;
+      for (const entry of statics.values()) {
+        const ok = usable(ctx, entry, 0, new Set());
+        if (ok && !entry.offered) {
+          offerStatic(ctx, entry);
+          changed = true;
+        } else if (!ok && entry.offered) {
+          withdrawStatic(ctx, entry, entry.def.iface !== undefined ? `${entry.def.iface} is not usable` : `next hop ${entry.def.nextHop ?? '?'} is not reachable`);
+          changed = true;
+        }
+      }
+    }
+  }
+
+  /** Re-derive the static route LINES from the global config; each line is a candidate installed while usable. */
   function syncStatics(ctx: ProcessCtx): void {
-    const desired = new Map<string, Static6>();
+    const desired = new Map<string, Static6Line>();
     for (const line of globalIpv6Lines(ctx)) {
       if (line[1] !== 'route') continue;
-      const text = line.join(' ');
-      const prefix = line[2] === undefined ? null : parseAddressWithLength(line[2]);
-      if (prefix === null) {
-        debug(ctx, CAT_ROUTING, `ignored ${text}: invalid prefix`, { line: text });
+      const parsed = parseStaticRoute6(ctx, line.slice(2));
+      if (!parsed.ok) {
+        debug(ctx, CAT_ROUTING, `ignored ${line.join(' ')}: ${parsed.reason}`, { line: line.join(' '), reason: parsed.reason });
         continue;
       }
-      const network = ipv6NetworkOf(prefix.address, prefix.prefixLen);
-      let iface: PortId | undefined;
-      let nextHop: Ipv6Address | undefined;
-      for (const tok of line.slice(3)) {
-        const asAddr = normalizeIpv6(tok);
-        if (asAddr !== null && nextHop === undefined) nextHop = asAddr;
-        else if (iface === undefined) iface = findPort6(ctx, tok);
-      }
-      if (nextHop === undefined && iface === undefined) {
-        debug(ctx, CAT_ROUTING, `ignored ${text}: unknown next hop or interface`, { line: text });
-        continue;
-      }
-      if (nextHop !== undefined && isLinkLocal6(nextHop) && iface === undefined) {
-        debug(ctx, CAT_ROUTING, `ignored ${text}: a link-local next hop needs an interface`, { line: text });
-        continue;
-      }
-      const key = route6Key(network, prefix.prefixLen);
-      const row: Route6Row = { key, network, prefixLen: prefix.prefixLen, source: 'S', ad: AD_STATIC, metric: 0, updatedAt: ctx.now };
-      if (nextHop !== undefined) row.nextHop = nextHop;
-      if (iface !== undefined) row.iface = iface;
-      if (prefix.prefixLen === 0) row.isDefault = true;
-      // one static per prefix (the last line wins, as a later `ipv6 route` for the same prefix replaces it)
-      desired.set(key, { row, line: text });
+      if (!desired.has(parsed.def.line)) desired.set(parsed.def.line, parsed.def);
     }
-    const r = rib(ctx);
-    for (const [key, cur] of Array.from(statics)) {
-      const want = desired.get(key);
-      if (want !== undefined && want.line === cur.line) continue;
-      statics.delete(key);
-      r.withdraw(key, 'static', ctx.now, 'cleared');
-      debug(ctx, CAT_ROUTING, `remove S ${key} (${cur.line})`, { key, source: 'S' });
+    for (const [line, cur] of Array.from(statics)) {
+      if (desired.has(line)) continue;
+      statics.delete(line);
+      if (cur.offered) withdrawStatic(ctx, cur, line);
     }
-    for (const [key, want] of desired) {
-      if (statics.has(key)) continue;
-      statics.set(key, want);
-      r.offer(want.row, 'static');
-      debug(ctx, CAT_ROUTING, `add S ${key} via ${[want.row.iface, want.row.nextHop].filter((x) => x !== undefined).join(' ')}`, { key, source: 'S' });
+    for (const [line, def] of desired) {
+      if (statics.has(line)) continue;
+      statics.set(line, { def, offered: false });
     }
+    settleStatics(ctx);
   }
 
   // ── addresses ───────────────────────────────────────────────────────────
@@ -591,6 +810,8 @@ export function createIpv6(): Process {
   function groupsOf(ctx: ProcessCtx, p: Port6): Ipv6Address[] {
     const out: Ipv6Address[] = [IPV6_ALL_NODES];
     if (isForwarding(ctx)) out.push(IPV6_ALL_ROUTERS);
+    // P2 (D16): a DHCPv6 server interface listens on the All_DHCP_Relay_Agents_and_Servers group
+    if (p.dhcpServer) out.push(DHCPV6_ALL_AGENTS);
     for (const a of p.addrs) {
       if (a.state === 'duplicate') continue;
       const g = solicitedNodeMulticast(a.address);
@@ -617,7 +838,7 @@ export function createIpv6(): Process {
       if (t !== undefined && (next === undefined || t < next)) next = t;
     };
     for (const a of p.addrs) {
-      if (a.origin !== 'slaac') continue;
+      if (a.origin !== 'slaac' && a.origin !== 'dhcpv6') continue;
       if (a.state === 'preferred') consider(a.preferredUntil);
       consider(a.validUntil);
     }
@@ -688,35 +909,48 @@ export function createIpv6(): Process {
     const p: Port6 = existing ?? {
       port,
       autoconfig: false,
+      dhcpServer: false,
       addrs: [],
       dadPending: new Set(),
       llDuplicate: false,
       routes: new Map(),
       routers: new Map(),
       writtenKey: '',
+      leases: new Map(),
     };
     if (existing === undefined) {
       ports.set(port, p);
       debug(ctx, CAT_ROUTING, `IPv6 is on for ${port}`, { port });
     }
     p.autoconfig = cfg.autoconfig;
+    if (!cfg.autoconfig) delete p.raFlags;
+    p.dhcpServer = cfg.dhcpServer;
     const old = p.addrs;
     const find = (address: Ipv6Address): Ipv6PortAddress | undefined => old.find((a) => a.address === address);
     const next: Ipv6PortAddress[] = [];
-    const add = (address: Ipv6Address, prefixLen: number, origin: Ipv6PortAddress['origin'], keep?: Ipv6PortAddress): void => {
+    const add = (address: Ipv6Address, prefixLen: number, origin: Ipv6PortAddress['origin'], keep?: Ipv6PortAddress, lease?: Lease6): void => {
       if (next.some((a) => a.address === address)) return;
       const prev = keep ?? find(address);
       if (prev !== undefined) {
         // configuration wins over learning: a configured address that SLAAC also produced becomes configured
         const kept: Ipv6PortAddress = { ...prev, prefixLen, origin };
-        if (origin !== 'slaac') {
+        if (origin !== 'slaac' && origin !== 'dhcpv6') {
           delete kept.preferredUntil;
           delete kept.validUntil;
+        }
+        if (lease !== undefined) {
+          if (lease.preferredUntil !== undefined) kept.preferredUntil = lease.preferredUntil;
+          else delete kept.preferredUntil;
+          if (lease.validUntil !== undefined) kept.validUntil = lease.validUntil;
+          else delete kept.validUntil;
         }
         next.push(kept);
         return;
       }
-      next.push({ address, prefixLen, scope: portScope6(address), origin, state: 'tentative' });
+      const fresh: Ipv6PortAddress = { address, prefixLen, scope: portScope6(address), origin, state: 'tentative' };
+      if (lease?.preferredUntil !== undefined) fresh.preferredUntil = lease.preferredUntil;
+      if (lease?.validUntil !== undefined) fresh.validUntil = lease.validUntil;
+      next.push(fresh);
       debug(ctx, CAT_ROUTING, `address ${address}/${prefixLen} (${origin}) on ${port} is tentative`, { port, address, prefixLen, origin });
     };
     const ll = cfg.linkLocal ?? linkLocalFromMac(view.mac);
@@ -725,6 +959,8 @@ export function createIpv6(): Process {
     if (cfg.autoconfig) {
       for (const a of old) if (a.origin === 'slaac') add(a.address, a.prefixLen, 'slaac', a);
     }
+    // P2 (D16): bound DHCPv6 leases stay across re-derivations, like autoconfigured addresses
+    for (const [address, lease] of p.leases) add(address, lease.prefixLen, 'dhcpv6', undefined, lease);
     for (const a of old) {
       if (next.some((n) => n.address === a.address)) continue;
       p.dadPending.delete(a.address);
@@ -739,6 +975,7 @@ export function createIpv6(): Process {
     if (!up) {
       for (const a of p.addrs) if (a.state === 'preferred' || a.state === 'deprecated') a.state = 'tentative';
       p.dadPending.clear();
+      delete p.raFlags;
       syncPortRoutes(ctx, p, false, 'link-down');
       dropRouters(ctx, p, 'link-down');
     } else {
@@ -802,6 +1039,17 @@ export function createIpv6(): Process {
     const router = normalizeIpv6(req.router);
     if (p === undefined || router === null || p.llDuplicate) return [];
     const out: Action[] = [];
+    // P2 (D16): the M/O flags go to dhcpv6-client when they change on an autoconfig interface
+    if (p.autoconfig && hasProcess(ctx, DHCPV6_CLIENT)) {
+      const flags = `${router}|${req.managed ? 1 : 0}|${req.other ? 1 : 0}`;
+      if (p.raFlags !== flags) {
+        p.raFlags = flags;
+        const ev: RaFlagsEvent = { kind: 'ipv6.ra', iface: p.port, router, managed: req.managed, other: req.other };
+        // an M=O=0 advertisement (every P1 world) leaves the trace untouched (§4.3): only a set flag earns a line
+        if (req.managed || req.other) debug(ctx, CAT_ROUTING, `router ${router} on ${p.port} advertises managed ${req.managed ? 'on' : 'off'}, other ${req.other ? 'on' : 'off'}`, { iface: p.port, router, managed: req.managed, other: req.other });
+        out.push({ type: 'event', to: DHCPV6_CLIENT, ev });
+      }
+    }
     // default router (a forwarding device never takes one from an RA)
     if (!isForwarding(ctx) && p.autoconfig) {
       const lifetimeS = req.routerLifetimeS;
@@ -871,6 +1119,47 @@ export function createIpv6(): Process {
     return out;
   }
 
+  /** P2 (D16): `ipv6.lease` from dhcpv6-client — bind or unbind a leased address of origin 'dhcpv6'. */
+  function onLease(ctx: ProcessCtx, req: Extract<ProcessRequest, { kind: 'ipv6.lease' }>): Action[] {
+    const p = ports.get(req.iface);
+    const address = req.address === undefined ? null : normalizeIpv6(req.address);
+    if (p === undefined) {
+      debug(ctx, CAT_ROUTING, `ignored lease on ${req.iface}: IPv6 is off on the interface`, { port: req.iface, address: req.address });
+      return [];
+    }
+    if (req.op === 'unbind') {
+      const gone = address === null ? Array.from(p.leases.keys()) : p.leases.has(address) ? [address] : [];
+      if (gone.length === 0) {
+        debug(ctx, CAT_ROUTING, `ignored lease release on ${req.iface}: no matching leased address`, { port: req.iface, address: req.address });
+        return [];
+      }
+      for (const a of gone) {
+        p.leases.delete(a);
+        debug(ctx, CAT_ROUTING, `leased address ${a} released on ${req.iface}`, { port: req.iface, address: a });
+      }
+      return reconcile(ctx, p.port, portUp(ctx, p.port));
+    }
+    if (address === null || isMulticast6(address) || isLinkLocal6(address) || isUnspecified6(address)) {
+      debug(ctx, CAT_ROUTING, `ignored lease on ${req.iface}: ${req.address ?? '(none)'} is not a usable address`, { port: req.iface, address: req.address });
+      return [];
+    }
+    const prefixLen = req.prefixLen ?? 128;
+    if (!Number.isInteger(prefixLen) || prefixLen < 1 || prefixLen > 128) {
+      debug(ctx, CAT_ROUTING, `ignored lease ${address} on ${req.iface}: invalid prefix length`, { port: req.iface, address, prefixLen });
+      return [];
+    }
+    const lease: Lease6 = { prefixLen };
+    if (req.preferredUntil !== undefined) lease.preferredUntil = req.preferredUntil;
+    if (req.validUntil !== undefined) lease.validUntil = req.validUntil;
+    if (req.server !== undefined) lease.server = req.server;
+    const renewal = p.leases.has(address);
+    p.leases.set(address, lease);
+    debug(ctx, CAT_ROUTING, `leased address ${address}/${prefixLen} on ${req.iface}${renewal ? ' renewed' : ''}${req.server !== undefined ? ` from ${req.server}` : ''}`, {
+      port: req.iface, address, prefixLen, preferredUntil: lease.preferredUntil, validUntil: lease.validUntil, server: lease.server,
+    });
+    return reconcile(ctx, p.port, portUp(ctx, p.port));
+  }
+
   /** `life:<iface>` fired: deprecate / expire autoconfigured addresses and default routers. */
   function onLife(ctx: ProcessCtx, port: PortId): Action[] {
     const p = ports.get(port);
@@ -878,14 +1167,17 @@ export function createIpv6(): Process {
     delete p.lifeAt;
     const kept: Ipv6PortAddress[] = [];
     for (const a of p.addrs) {
-      if (a.origin === 'slaac' && a.validUntil !== undefined && a.validUntil <= ctx.now) {
+      const learned = a.origin === 'slaac' || a.origin === 'dhcpv6';
+      const what = a.origin === 'dhcpv6' ? 'leased' : 'autoconfigured';
+      if (learned && a.validUntil !== undefined && a.validUntil <= ctx.now) {
         p.dadPending.delete(a.address);
-        debug(ctx, CAT_ROUTING, `autoconfigured ${a.address} on ${port} expired`, { port, address: a.address });
+        p.leases.delete(a.address);
+        debug(ctx, CAT_ROUTING, `${what} ${a.address} on ${port} expired`, { port, address: a.address });
         continue;
       }
-      if (a.origin === 'slaac' && a.state === 'preferred' && a.preferredUntil !== undefined && a.preferredUntil <= ctx.now) {
+      if (learned && a.state === 'preferred' && a.preferredUntil !== undefined && a.preferredUntil <= ctx.now) {
         a.state = 'deprecated';
-        debug(ctx, CAT_ROUTING, `autoconfigured ${a.address} on ${port} is deprecated`, { port, address: a.address });
+        debug(ctx, CAT_ROUTING, `${what} ${a.address} on ${port} is deprecated`, { port, address: a.address });
       }
       kept.push(a);
     }
@@ -967,22 +1259,39 @@ export function createIpv6(): Process {
   }
 
   /**
-   * Egress for a matched route: next hop = `route.nextHop` or the destination (connected); interface =
-   * `route.iface`, else the port on whose prefix the next hop lies, else one level of recursion.
+   * Egress for a next hop / interface pair: interface = `iface`, else the port on whose prefix the next hop lies,
+   * else the egress of the next hop's own longest match, recursively (depth ≤ `STATIC6_RECURSION_MAX`).
    */
-  function resolveEgress(ctx: ProcessCtx, route: Route6Row, dst: Ipv6Address): Egress6 | undefined {
+  function resolveVia(ctx: ProcessCtx, key: string, nextHop: Ipv6Address, iface: PortId | undefined, depth: number, visiting: Set<string> = new Set()): Egress6 | undefined {
     const h = ipv6Helpers(ctx);
-    const nextHop = route.nextHop ?? dst;
-    if (route.iface !== undefined) return { nextHop, iface: route.iface };
+    if (iface !== undefined) return { nextHop, iface };
     const direct = h.connectedPortFor6(nextHop);
     if (direct !== undefined) return { nextHop, iface: direct };
-    const inner = h.lpm6(nextHop).winner;
-    if (inner === undefined || inner.key === route.key || inner.source === 'L') return undefined;
-    if (inner.nextHop !== undefined) {
-      const via = inner.iface ?? h.connectedPortFor6(inner.nextHop);
-      return via === undefined ? undefined : { nextHop: inner.nextHop, iface: via };
+    if (depth >= STATIC6_RECURSION_MAX) return undefined;
+    // The candidates are walked the way D13 `usable` does: the route's own candidate (and any route already on the
+    // recursion path) is skipped, so a static whose next hop lies inside its own prefix forwards through the
+    // covering route that installed it; an `L` row stops the walk.
+    visiting.add(key);
+    for (const inner of h.lpm6(nextHop).candidates) {
+      if (inner.source === 'L') return undefined;
+      if (visiting.has(inner.key)) continue; // the route's own candidate (or a loop): ignored
+      if (inner.nextHop !== undefined) return resolveVia(ctx, inner.key, inner.nextHop, inner.iface, depth + 1, visiting);
+      return inner.iface === undefined ? undefined : { nextHop, iface: inner.iface };
     }
-    return inner.iface === undefined ? undefined : { nextHop, iface: inner.iface };
+    return undefined;
+  }
+
+  /**
+   * Egress for a matched route: next hop = `route.nextHop` or the destination (connected); with several equal-cost
+   * paths [S6] the flow hash picks one. Returns the egress and the cause (the path's line or the route's).
+   */
+  function resolveEgress(ctx: ProcessCtx, route: Route6Row, src: Ipv6Address, dst: Ipv6Address): { egress: Egress6 | undefined; cause: string } {
+    const paths = route.paths;
+    if (paths !== undefined && paths.length > 1) {
+      const path = paths[ecmpIndex6(src, dst, paths.length)]!;
+      return { egress: resolveVia(ctx, route.key, path.nextHop ?? dst, path.iface, 0), cause: path.cause ?? route6Cause(route) };
+    }
+    return { egress: resolveVia(ctx, route.key, route.nextHop ?? dst, route.iface, 0), cause: route6Cause(route) };
   }
 
   /** Transit forwarding of a packet received on `port`. */
@@ -1001,9 +1310,10 @@ export function createIpv6(): Process {
     if (route === undefined) {
       return [drop(ctx, pdu, 'no-route', `no IPv6 route to ${dst}`, port), icmpError(pdu, ICMPV6_DEST_UNREACHABLE, ICMPV6_UNREACH_NO_ROUTE, port)];
     }
-    const cause = route6Cause(route);
     if (route.source === 'L') return [drop(ctx, pdu, 'not-for-me', `${dst} is an own address that is not ready yet`, port)];
-    const egress = resolveEgress(ctx, route, dst);
+    const resolved = resolveEgress(ctx, route, src, dst);
+    const cause = resolved.cause;
+    const egress = resolved.egress;
     if (egress === undefined) {
       return [
         drop(ctx, pdu, 'no-route', `next hop ${route.nextHop ?? dst} of ${cause} is not on a connected prefix`, port),
@@ -1065,9 +1375,10 @@ export function createIpv6(): Process {
       if (isLinkScoped6(dst)) return [drop(ctx, pdu, 'no-route', 'link-local and multicast destinations need an egress interface')];
       const route = h.lpm6(dst).winner;
       if (route === undefined) return [drop(ctx, pdu, 'no-route', `no IPv6 route to ${dst}`)];
-      egress = resolveEgress(ctx, route, dst);
-      cause ??= route6Cause(route);
-      if (egress === undefined) return [drop(ctx, pdu, 'no-route', `next hop ${route.nextHop ?? dst} of ${route6Cause(route)} is not on a connected prefix`)];
+      const resolved = resolveEgress(ctx, route, String(ip.fields.src), dst);
+      egress = resolved.egress;
+      cause ??= resolved.cause;
+      if (egress === undefined) return [drop(ctx, pdu, 'no-route', `next hop ${route.nextHop ?? dst} of ${resolved.cause} is not on a connected prefix`)];
     }
     sent++;
     debug(ctx, CAT_PACKET, `send ${describe(ip)} via ${egress.iface} next hop ${egress.nextHop}`, { pdu: pdu.id, nextHop: egress.nextHop, iface: egress.iface });
@@ -1167,6 +1478,8 @@ export function createIpv6(): Process {
           return onDadResult(ctx, req);
         case 'ipv6.raLearned':
           return onRaLearned(ctx, req);
+        case 'ipv6.lease':
+          return onLease(ctx, req);
         default:
           return [];
       }
@@ -1175,14 +1488,17 @@ export function createIpv6(): Process {
     stateSnapshot(): StateView {
       const interfaces: Record<string, unknown>[] = [];
       for (const p of ports.values()) {
-        interfaces.push({
+        const view: Record<string, unknown> = {
           port: p.port,
           enabled: !p.llDuplicate,
           autoconfig: p.autoconfig,
           linkLocalDuplicate: p.llDuplicate,
           addresses: p.addrs.map((a) => ({ address: a.address, prefixLen: a.prefixLen, origin: a.origin, state: a.state })),
           defaultRouters: Array.from(p.routers.keys()),
-        });
+        };
+        if (p.dhcpServer) view.dhcpServer = true;
+        if (p.leases.size > 0) view.leases = Array.from(p.leases.keys());
+        interfaces.push(view);
       }
       return {
         process: NAME,

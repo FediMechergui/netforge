@@ -33,16 +33,27 @@
  *    narrower) resolve only through `hint`;
  *  - `sourceFor6(dst, iface?)`: RFC 6724-lite source selection (§4.8, `selectSource6`).
  * Every IPv6 input is parsed, never compared as raw text, so non-canonical spellings behave like canonical ones.
+ *
+ * P2 (ARCHITECTURE-P2 D15; W2 device): `isLocalDestination` also accepts a local virtual address (`PortL3.virtual4`
+ * with `local: true`) on an oper-up port and [S2] a joined IPv4 group (`PortL3.groups4`, on `inPort` when given).
+ * No P1 port carries either member, so every P1 answer is unchanged.
+ *
+ * P2 members (ARCHITECTURE-P2 §2.4, D2, D19; W1 device):
+ *  - `profile`: the world's defaults profile, read ONLY for invisible defaults (P2: proxy ARP). It comes from the
+ *    host (`DeviceSpec.profile`); a hand-built host that names none is a P1 world;
+ *  - `transition(category, message, fsm, data?)`: exactly ONE debug event, emitted and recorded like `ctx.debug`,
+ *    whose `DebugEvent.fsm` is a copy of the transition. `category` is the daemon's §5.4 debug category, so the CLI
+ *    prints the line under `debug <category>`. P0/P1 daemons never call it, so their debug bytes are unchanged.
  */
 import { broadcastOf, inSubnet, isIpv4Broadcast, type Ipv4Address, type Ipv6Address, type MacAddress } from '../contracts/addr.js';
-import type { Capability } from '../contracts/catalog.js';
+import type { Capability, DefaultsProfile } from '../contracts/catalog.js';
 import type { ConfigAst } from '../contracts/config.js';
 import type { DeviceModel } from '../contracts/device.js';
 import type { DeviceId, PortId, ProcessName } from '../contracts/ids.js';
 import type { AirView } from '../contracts/medium.js';
 import type { FieldValue, LayerSpec, MutationReason, Pdu, PduFactory, PduMeta, RewrapOp } from '../contracts/pdu.js';
 import type { Ipv6PortAddress, PortState, PortView } from '../contracts/port.js';
-import type { DebugEvent, ProcessCtx } from '../contracts/process.js';
+import type { DebugEvent, FsmTransition, ProcessCtx } from '../contracts/process.js';
 import type { Rng } from '../contracts/rng.js';
 import type { DeviceTables, Lpm6Result, LpmResult, Route6Row } from '../contracts/tables.js';
 import type { SimTime } from '../contracts/time.js';
@@ -68,7 +79,19 @@ export interface ProcessHost {
   readonly air: AirView | undefined;
   /** Store a DebugEvent in the per-process ring (the ctx emits the trace event itself). */
   recordDebug(ev: DebugEvent): void;
+  /**
+   * @since P2 The world's defaults profile (ARCHITECTURE-P2 D2). Optional here so hand-built hosts (test harnesses)
+   * keep compiling: an absent value is the P1 profile. The device runtime always provides it.
+   */
+  readonly profile?: DefaultsProfile;
 }
+
+/**
+ * @since P2 How many longest matches `sourceFor`/`sourceFor6` follow for a next hop that is not directly connected
+ * (the D13 recursion depth of protocols/ipv4.ts `STATIC_RECURSION_MAX`, kept local so the device layer does not
+ * import a protocol module).
+ */
+export const SOURCE_RECURSION_MAX = 8;
 
 /** Compact trace description of a PDU (optional keys omitted when unset). */
 export function pduSummary(pdu: Pdu): PduSummary {
@@ -76,6 +99,9 @@ export function pduSummary(pdu: Pdu): PduSummary {
   if (pdu.meta.parent !== undefined) s.parent = pdu.meta.parent;
   if (pdu.meta.flow !== undefined) s.flow = pdu.meta.flow;
   if (pdu.meta.tag !== undefined) s.tag = pdu.meta.tag;
+  // P2 (§2.7): the outermost 802.1Q VID of a tagged frame; absent for every untagged frame (P1 bytes unchanged)
+  const l1 = pdu.layers[1];
+  if (l1 !== undefined && l1.proto === 'dot1q' && typeof l1.fields.vid === 'number') s.vlan = l1.fields.vid;
   return s;
 }
 
@@ -257,9 +283,51 @@ export function createProcessCtx(host: ProcessHost, name: ProcessName, rng: Rng)
     return undefined;
   };
 
+  /**
+   * P2 (D13): the egress port of the longest match for `dst`, following a next hop that is not directly connected
+   * through its own longest match — the way protocols/ipv4.ts `resolveVia` forwards transit traffic — at most
+   * `SOURCE_RECURSION_MAX` deep, stopping at an `L` row or a route already on the path. With equal-cost paths [S6]
+   * the first path is taken (deterministic; the source address is the same for every path out of one port only when
+   * they share it, as a real router picks the egress once). Undefined when nothing resolves.
+   */
+  const egressOf4 = (dst: Ipv4Address): PortId | undefined => {
+    let route = lpm(host.tables.rib, dst).winner;
+    const visiting = new Set<string>();
+    for (let depth = 0; route !== undefined && depth <= SOURCE_RECURSION_MAX; depth++) {
+      visiting.add(route.key);
+      const path = route.paths !== undefined && route.paths.length > 1 ? route.paths[0]! : route;
+      if (path.iface !== undefined) return path.iface;
+      if (path.nextHop === undefined) return undefined;
+      const direct = connectedPortFor(path.nextHop);
+      if (direct !== undefined) return direct;
+      const inner = lpm(host.tables.rib, path.nextHop).candidates.find((r) => !visiting.has(r.key));
+      if (inner === undefined || inner.source === 'L') return undefined;
+      route = inner;
+    }
+    return undefined;
+  };
+
   // ── IPv6 (P1) ──
 
   const lpm6 = (dst: Ipv6Address): Lpm6Result => lpm6Over(rib6Rows(host.tables), dst);
+
+  /** The IPv6 twin of `egressOf4` over rib6 (`lpm6`, `connectedPortFor6`). */
+  const egressOf6 = (dst: Ipv6Address): PortId | undefined => {
+    let route = lpm6(dst).winner;
+    const visiting = new Set<string>();
+    for (let depth = 0; route !== undefined && depth <= SOURCE_RECURSION_MAX; depth++) {
+      visiting.add(route.key);
+      const path = route.paths !== undefined && route.paths.length > 1 ? route.paths[0]! : route;
+      if (path.iface !== undefined) return path.iface;
+      if (path.nextHop === undefined) return undefined;
+      const direct = connectedPortFor6(path.nextHop);
+      if (direct !== undefined) return direct;
+      const inner = lpm6(path.nextHop).candidates.find((r) => !visiting.has(r.key));
+      if (inner === undefined || inner.source === 'L') return undefined;
+      route = inner;
+    }
+    return undefined;
+  };
 
   const ownAddress6 = (ip: Ipv6Address): PortId | undefined => {
     const canon = normalizeIpv6(ip);
@@ -332,6 +400,19 @@ export function createProcessCtx(host: ProcessHost, name: ProcessName, rng: Rng)
       host.recordDebug(ev);
       host.trace.emit({ t: host.now, kind: 'debug', event: ev });
     },
+    get profile(): DefaultsProfile {
+      return host.profile ?? 'P1';
+    },
+    transition(category: string, message: string, fsm: FsmTransition, data?: Record<string, unknown>): void {
+      // Exactly ONE debug event, emitted and recorded like ctx.debug, carrying the transition (D19). The transition is
+      // copied so a daemon that reuses its object cannot change an event already in the trace.
+      const copy: FsmTransition = { ...fsm };
+      const ev: DebugEvent = data === undefined
+        ? { at: host.now, device: host.id, process: name, category, message, fsm: copy }
+        : { at: host.now, device: host.id, process: name, category, message, data, fsm: copy };
+      host.recordDebug(ev);
+      host.trace.emit({ t: host.now, kind: 'debug', event: ev });
+    },
     newPdu(layers: readonly LayerSpec[], meta?: Partial<PduMeta>): Pdu {
       const full: PduMeta = { born: host.now, origin: host.id, ...(meta ?? {}) };
       const pdu = host.pdus.build(layers, full);
@@ -363,22 +444,28 @@ export function createProcessCtx(host: ProcessHost, name: ProcessName, rng: Rng)
     isLocalDestination(ip: Ipv4Address, inPort?: PortId): boolean {
       // Only addresses on oper-up ports are local: while a port is down its C/L routes
       // are withdrawn, so the address must not answer (ownAddress stays config-level).
-      for (const p of host.ports.values()) if (p.operUp && p.l3.ipv4?.address === ip) return true;
+      // P2 (D15): a LOCAL virtual address (`virtual4` with `local: true`, HSRP active) counts like an own address;
+      // an ARP-only one (NAT pool) does not.
+      for (const p of host.ports.values()) {
+        if (!p.operUp) continue;
+        if (p.l3.ipv4?.address === ip) return true;
+        if (p.l3.virtual4 !== undefined && p.l3.virtual4.some((v) => v.local && v.address === ip)) return true;
+      }
       if (isIpv4Broadcast(ip)) return true;
       if (inPort !== undefined) {
         const p = host.ports.get(inPort);
         const l3 = p?.operUp ? p.l3.ipv4 : undefined;
         if (l3 !== undefined && broadcastOf(l3.address, l3.prefixLen) === ip) return true;
       }
+      // [S2] a joined IPv4 group (`groups4`, written by ipv4 on `ipv4.group`): on `inPort` when given, else any port
+      if (inPort !== undefined) return host.ports.get(inPort)?.l3.groups4?.includes(ip) === true;
+      for (const p of host.ports.values()) if (p.l3.groups4?.includes(ip) === true) return true;
+      // [/S2]
       return false;
     },
     connectedPortFor,
     sourceFor(dst: Ipv4Address): { address: Ipv4Address; iface: PortId } | undefined {
-      const r = lpm(host.tables.rib, dst);
-      const route = r.winner;
-      if (route === undefined) return undefined;
-      let iface: PortId | undefined = route.iface;
-      if (iface === undefined && route.nextHop !== undefined) iface = connectedPortFor(route.nextHop);
+      const iface = egressOf4(dst);
       if (iface === undefined) return undefined;
       const l3 = host.ports.get(iface)?.l3.ipv4;
       if (l3 === undefined) return undefined;
@@ -417,13 +504,7 @@ export function createProcessCtx(host: ProcessHost, name: ProcessName, rng: Rng)
     connectedPortFor6,
     sourceFor6(dst: Ipv6Address, iface?: PortId): { address: Ipv6Address; iface: PortId } | undefined {
       if (parseIpv6(dst) === null) return undefined;
-      let egress = iface;
-      if (egress === undefined) {
-        const route = lpm6(dst).winner;
-        if (route === undefined) return undefined;
-        egress = route.iface;
-        if (egress === undefined && route.nextHop !== undefined) egress = connectedPortFor6(route.nextHop);
-      }
+      const egress = iface ?? egressOf6(dst);
       if (egress === undefined) return undefined;
       const port = host.ports.get(egress);
       if (port === undefined) return undefined;

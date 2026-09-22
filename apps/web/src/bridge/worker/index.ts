@@ -21,10 +21,14 @@
  * belong to the Simulation, imported ones to its library) and reports the heads that advanced. `labs.ts` keeps the
  * active `ScenarioInfo` and grades it — automatically at most every 2 s after a relevant event, or on demand.
  * `annotate` is where those three decorate each outgoing batch.
+ *
+ * P2 (ARCHITECTURE-P2 D2, §2.14; W2 web-shell): a world has a defaults profile. `init` and `reset` build the empty
+ * simulation with the profile the CALLER chose from the course context (default 'P1'). `useCurrentDefaults` moves a
+ * classic world to the current defaults: export, `withCurrentDefaults` (below), load, epoch++.
  */
 import * as Comlink from 'comlink';
 import '../errors';
-import { MEDIA, SCENARIOS, createSimulation, hasRadioPort, scenarioMeta } from '@netforge/engine';
+import { MEDIA, SCENARIOS, createSimulation, hasRadioPort, scenarioMeta, schemaIdFor } from '@netforge/engine';
 import type {
   AddDeviceSpec,
   AddLinkSpec,
@@ -33,7 +37,9 @@ import type {
   CaptureQuery,
   CaptureSpec,
   ConfigureOptions,
+  DefaultsProfile,
   DeviceId,
+  DeviceModel,
   HostAppRequest,
   Impairments,
   LabStatus,
@@ -143,12 +149,52 @@ function attach(s: Simulation): void {
   unsubscribeTrace = s.onTrace((ev) => clock.observe(ev));
 }
 
-function buildSim(seed: number): Simulation {
-  const s = createSimulation({ seed });
+function buildSim(seed: number, profile: DefaultsProfile | undefined): Simulation {
+  // D2: the caller's course-context profile; absent means the classic ('P1') defaults, as for every saved P1 file.
+  const s = profile === undefined ? createSimulation({ seed }) : createSimulation({ seed, profile });
   attach(s);
   labs.activate(undefined);
   pendingLab = null;
   return s;
+}
+
+/** The line a routing device must show for IPv4 forwarding to be on, and the P2 default that switches it off. */
+const IP_ROUTING_LINE = 'ip routing';
+const NO_IP_ROUTING_LINE = 'no ip routing';
+
+/**
+ * True when a config text already decides the `ip routing` slot with a line of its own — `ip routing` (it routes)
+ * or `no ip routing` (the learner switched routing off in the classic world; it must not route after the move).
+ */
+function decidesIpRouting(text: string | undefined): boolean {
+  if (text === undefined) return false;
+  return text.split(/\r?\n/).some((line) => {
+    const l = line.trim();
+    return l === IP_ROUTING_LINE || l === NO_IP_ROUTING_LINE;
+  });
+}
+
+/**
+ * @since P2 The exported world moved to the current defaults (D2 "Use current defaults"), pure:
+ *  - every device whose P2 `profileConfig` replays `no ip routing` (a multilayer switch) and whose running
+ *    configuration has no `ip routing` line (and no `no ip routing` line either) gets that line appended — it
+ *    routed in its classic world and keeps routing once the P2 default is replayed under it (the `ip routing`
+ *    slot stores both forms, §5);
+ *  - `profile` becomes 'P2' and `schema` the id that can express it (`schemaIdFor`, 1.2), in the same step.
+ * `modelOf` resolves a device type to its catalog model (undefined for a type this build lacks: left alone).
+ */
+export function withCurrentDefaults(t: Topology, modelOf: (type: string) => Pick<DeviceModel, 'profileConfig'> | undefined): Topology {
+  const devices = t.devices.map((d) => {
+    const replayed = modelOf(d.type)?.profileConfig?.P2 ?? [];
+    if (!replayed.some((line) => line.trim() === NO_IP_ROUTING_LINE)) return d;
+    const running = d.runningConfig ?? d.config;
+    if (decidesIpRouting(running)) return d;
+    const base = running === undefined || running === '' ? '' : running.endsWith('\n') ? running : `${running}\n`;
+    return { ...d, runningConfig: `${base}${IP_ROUTING_LINE}\n` };
+  });
+  const next: Topology = { ...t, devices, profile: 'P2' };
+  next.schema = schemaIdFor(next);
+  return next;
 }
 
 /** Frames on media after anything that resets time or cancels legs (load, removals, power). */
@@ -256,8 +302,8 @@ function linkEnds(s: Simulation, id: LinkId): DeviceId[] {
 // ── api ──────────────────────────────────────────────────────────────────────
 
 const api: EngineApi = {
-  async init({ seed }) {
-    const s = buildSim(seed);
+  async init({ seed, profile }) {
+    const s = buildSim(seed, profile);
     ensureTimer();
     return {
       catalog: [...s.catalog.list()],
@@ -528,10 +574,19 @@ const api: EngineApi = {
   async subscribe(cb: BatchListener, opts?: SubscribeOptions) {
     batcher.setListener(cb, opts);
   },
-  async reset(seed: number) {
+  async reset(seed: number, profile?: DefaultsProfile) {
     pauseInternal();
-    buildSim(seed);
+    buildSim(seed, profile);
     ensureTimer();
+    return postFull();
+  },
+  async useCurrentDefaults() {
+    const s = requireSim();
+    pauseInternal();
+    const t = withCurrentDefaults(s.exportTopology(), (type) => s.catalog.get(type));
+    loadInto(s, t);
+    // The world keeps its lab, exactly as reopening the saved document would (§4.13).
+    activateLab(s, t.lab === undefined ? undefined : SCENARIOS.find((x) => x.name === t.lab?.name));
     return postFull();
   },
   async setWatchedDevices(ids: DeviceId[]) {

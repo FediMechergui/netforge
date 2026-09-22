@@ -94,10 +94,12 @@ describe('ProcessCtx addressing helpers', () => {
     expect(ctx.sourceFor('172.16.5.7')).toEqual({ address: '10.0.0.1', iface: 'GigabitEthernet0/0' }); // via 10.0.0.9
     expect(ctx.sourceFor('172.16.9.9')).toEqual({ address: '192.168.1.1', iface: 'GigabitEthernet0/1' }); // via 192.168.1.2
     expect(ctx.sourceFor('8.8.8.8')).toEqual({ address: '10.0.0.1', iface: 'GigabitEthernet0/0' }); // default via 10.0.0.254
-    expect(ctx.sourceFor('10.99.1.1')).toBeUndefined(); // next hop not on any connected port
+    // P2 (D13): a next hop on no connected port resolves through its own longest match — here the default
+    expect(ctx.sourceFor('10.99.1.1')).toEqual({ address: '10.0.0.1', iface: 'GigabitEthernet0/0' }); // via 203.0.113.1, via the default
     expect(ctx.sourceFor('10.98.1.1')).toBeUndefined(); // egress port has no address
     h.device.tables.rib.delete('0.0.0.0/0');
     expect(ctx.sourceFor('8.8.8.8')).toBeUndefined(); // no route
+    expect(ctx.sourceFor('10.99.1.1')).toBeUndefined(); // next hop on no connected port and nothing to resolve it through
   });
 });
 

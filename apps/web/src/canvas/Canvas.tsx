@@ -7,10 +7,17 @@
  * Everything drawn on the canvas is driven by `runCanvas`, a requestAnimationFrame loop that reads
  * `store.getState()` directly — React never re-renders per frame.
  *
- * Paint order: range rings → cables → association lines and radio beams → packets → drop markers and collision
- * bursts → devices → signal/phase/channel labels → cable preview. Layers cull against the visible world rectangle
- * (re-culled only when the coarse view key changes) and draw at a level of detail chosen from the zoom, so
- * topologies with hundreds of devices stay responsive.
+ * Paint order: range rings → topology overlay underlays (VLAN tints and trunk rails, the active spanning tree;
+ * ARCHITECTURE-P2 §6) → cables → association lines and radio beams → packets → drop markers and collision bursts →
+ * devices → signal/phase/channel labels, VLAN chips, spanning-tree letters and crowns → cable preview. Layers cull
+ * against the visible world rectangle (re-culled only when the coarse view key changes) and draw at a level of
+ * detail chosen from the zoom, so topologies with hundreds of devices stay responsive.
+ *
+ * @since P2 (W3 web-canvas) The VLAN and spanning-tree overlays are driven by the persisted `topoOverlays` slice
+ * through the overlay registry (`overlays/registry.ts`): the style pass asks each module for its render model
+ * (memoised per device object) and hands it to its layer (`l2.ts`, `stp.ts`). A spanning-tree model with a port in
+ * a timed phase is rebuilt every frame so its draining bars run; mismatch pulses and topology-change waves animate
+ * on wall time. Packets take their VLAN colour and `Q` badge from the same models (`packets.ts`).
  *
  * Keyboard bridge: `registerCanvasA11y(api)` is the pinned hook the a11y layer calls to hand the canvas its
  * `focusDevice` / `screenPoint` / `beginCable` functions; it returns the unregister function.
@@ -28,18 +35,23 @@ import { buildCableLookup, portCompatibility, serialDceHint, type CableLookup, t
 import { openDeviceSurface, type DeviceSurface } from '../shared/openDeviceSurface';
 import { extrapolatedNow, selectDevice, useDevice } from '../store/selectors';
 import { store, useStore } from '../store/store';
-import type { WirelessOverlayState } from '../store/types';
+import type { TopoOverlayState, WirelessOverlayState } from '../store/types';
 import { GUI_PANEL_VOCAB } from '../vocab/categories';
 import { MEDIA_VOCAB } from '../vocab/media';
 import { AirLayer, CANVAS_OVERLAY_DEFAULTS, legGeometry } from './air';
 import { CableLayer } from './cables';
 import { DeviceLayer } from './devices';
 import { attachInteraction, deleteDevice, setDevicePower, type ContextMenuRequest, type InteractionA11y } from './interaction';
+import { L2Layer, untaggedVlanOf } from './l2';
 import { MarkerLayer } from './markers';
+import type { DeviceL2, L2OverlayModel } from './overlays/l2-model';
+import { STP_OVERLAY, TOPO_OVERLAY_DEFAULTS, VLAN_OVERLAY } from './overlays/registry';
+import type { StpOverlayModel } from './overlays/stp-model';
 import { PacketLayer } from './packets';
 import { computeLayout, deviceBounds, emptyLayout, snapshotReplaced, type Layout, type Position } from './ports';
 import { DEFAULT_METRES_PER_UNIT, RfLayer } from './rf';
 import { Scene, lodFor, textResolutionFor, viewKey } from './scene';
+import { StpLayer, modelNeedsClock } from './stp';
 import { CanvasOutline } from './a11y/CanvasOutline';
 import './canvas.css';
 
@@ -296,6 +308,9 @@ function runCanvas(scene: Scene, tip: HTMLElement, openMenu: (m: ContextMenuRequ
   const packets = new PacketLayer(scene.layers.packets);
   const markers = new MarkerLayer(scene.layers.markers);
   const devices = new DeviceLayer(scene.layers.devices);
+  // P2 topology overlays: underlays in their own containers (below the cables), chips and letters among the labels.
+  const l2 = new L2Layer(scene.topoLayer(VLAN_OVERLAY.id), scene.layers.labels);
+  const stp = new StpLayer(scene.topoLayer(STP_OVERLAY.id), scene.layers.labels);
 
   let layout: Layout = emptyLayout();
   let layoutDirty = true;
@@ -349,6 +364,11 @@ function runCanvas(scene: Scene, tip: HTMLElement, openMenu: (m: ContextMenuRequ
   let lastZoom = scene.camera.zoom;
   let lastViewKey = '';
   let lastOverlays: WirelessOverlayState | undefined = initial.overlays;
+  let lastTopo: TopoOverlayState | undefined = initial.topoOverlays;
+  let l2Model: L2OverlayModel | null = null;
+  let stpModel: StpOverlayModel | null = null;
+  // the VLAN overlay's per-device ends of the current snapshot (untagged-leg colouring), rebuilt per snapshot
+  let l2Ends: { snap: SimSnapshot; ends: ReadonlyMap<DeviceId, DeviceL2> } | null = null;
   let lastFocus = initial.a11y.canvasFocus;
   let lastGrid = false;
   let compatKey: { snap: SimSnapshot | null; from: string; media: string; lookup: CableLookup } | null = null;
@@ -489,7 +509,11 @@ function runCanvas(scene: Scene, tip: HTMLElement, openMenu: (m: ContextMenuRequ
     }
     const res = textResolutionFor(zoom);
     const overlays = st.overlays ?? CANVAS_OVERLAY_DEFAULTS;
+    const topo = st.topoOverlays ?? TOPO_OVERLAY_DEFAULTS;
     const target = interaction.target;
+    const sampleWall = scene.reducedMotion ? Math.floor(wall / REDUCED_MOTION_SAMPLE_MS) * REDUCED_MOTION_SAMPLE_MS : wall;
+    const now = extrapolatedNow(st, Math.max(st.nowWall, sampleWall));
+    const cableGeometry = (id: Parameters<typeof cables.geometry>[0]) => cables.geometry(id);
     if (
       styleDirty ||
       st.selection !== lastSelection ||
@@ -499,7 +523,8 @@ function runCanvas(scene: Scene, tip: HTMLElement, openMenu: (m: ContextMenuRequ
       target !== lastTarget ||
       res !== lastRes ||
       lod !== lastLod ||
-      overlays !== lastOverlays
+      overlays !== lastOverlays ||
+      topo !== lastTopo
     ) {
       styleDirty = false;
       lastSelection = st.selection;
@@ -510,6 +535,7 @@ function runCanvas(scene: Scene, tip: HTMLElement, openMenu: (m: ContextMenuRequ
       lastRes = res;
       lastLod = lod;
       lastOverlays = overlays;
+      lastTopo = topo;
       const theme = scene.theme;
       const metresPerUnit = snap?.media?.metresPerUnit ?? DEFAULT_METRES_PER_UNIT;
       rf.sync({
@@ -552,15 +578,26 @@ function runCanvas(scene: Scene, tip: HTMLElement, openMenu: (m: ContextMenuRequ
         lod,
         view,
       });
+      // the topology overlays: models from the registry (null when off), drawn after the cables have their geometry
+      l2Model = VLAN_OVERLAY.sync({ state: topo, snapshot: snap, now });
+      stpModel = STP_OVERLAY.sync({ state: topo, snapshot: snap, now });
+      l2.sync({ model: l2Model, layout, theme, zoom, lod, view, textResolution: res, cableGeometry });
+      stp.sync({ model: stpModel, layout, theme, zoom, lod, view, textResolution: res, wall, cableGeometry });
       interaction.refresh();
+      scene.dirty = true;
+    } else if (stpModel !== null && modelNeedsClock(stpModel)) {
+      // a forward-delay phase is running somewhere: the draining bars follow the sim clock
+      stpModel = STP_OVERLAY.sync({ state: topo, snapshot: snap, now });
+      stp.sync({ model: stpModel, layout, theme: scene.theme, zoom, lod, view, textResolution: res, wall, cableGeometry });
       scene.dirty = true;
     }
 
     const animating = devices.animate(wall, scene.reducedMotion);
-    const sampleWall = scene.reducedMotion ? Math.floor(wall / REDUCED_MOTION_SAMPLE_MS) * REDUCED_MOTION_SAMPLE_MS : wall;
-    const now = extrapolatedNow(st, Math.max(st.nowWall, sampleWall));
+    const overlayAnimating = l2.animate(wall, scene.reducedMotion, scene.theme) || stp.animate(wall, scene.reducedMotion, scene.theme);
     const selectedPdu = st.selection?.kind === 'pdu' ? st.selection.id : null;
 
+    if (topo.vlan && snap !== null && (l2Ends === null || l2Ends.snap !== snap)) l2Ends = { snap, ends: VLAN_OVERLAY.select(snap) };
+    const ends = topo.vlan && l2Ends !== null && l2Ends.snap === snap ? l2Ends.ends : null;
     const onWire = packets.update({
       inflight: st.inflight,
       now,
@@ -575,6 +612,8 @@ function runCanvas(scene: Scene, tip: HTMLElement, openMenu: (m: ContextMenuRequ
       selectedPdu,
       trails: !scene.reducedMotion,
       showBackground: overlays.backgroundFrames,
+      vlanColours: topo.vlan,
+      untaggedVlan: ends === null ? undefined : (from) => untaggedVlanOf(ends, from),
       zoom,
       view,
       textResolution: res,
@@ -594,7 +633,7 @@ function runCanvas(scene: Scene, tip: HTMLElement, openMenu: (m: ContextMenuRequ
       textResolution: res,
     });
 
-    if (scene.dirty || animating || onWire > 0 || lastPackets > 0 || floating > 0 || lastMarkers > 0) {
+    if (scene.dirty || animating || overlayAnimating || onWire > 0 || lastPackets > 0 || floating > 0 || lastMarkers > 0) {
       scene.render();
     }
     lastPackets = onWire;
@@ -610,6 +649,8 @@ function runCanvas(scene: Scene, tip: HTMLElement, openMenu: (m: ContextMenuRequ
     interaction.detach();
     packets.destroy();
     markers.destroy();
+    l2.destroy();
+    stp.destroy();
     air.destroy();
     rf.destroy();
     cables.destroy();

@@ -22,7 +22,9 @@ import type { Topology, TopologyDeviceUi } from './topology.js';
 import type { TraceEvent, TraceKind } from './trace.js';
 import type { SimEvent, FaultSpec } from './events.js';
 import type { TableName } from './tables.js';
-import type { HardwareResult, ModuleInstall, ModuleType, SlotId } from './catalog.js';
+import type { DefaultsProfile, HardwareResult, ModuleInstall, ModuleType, SlotId } from './catalog.js';
+import type { FsmMachine } from './process.js';
+import type { FacadeCounters, JournalPosition, SimJournal } from './journal.js';
 import type {
   CaptureExportOptions,
   CaptureId,
@@ -42,6 +44,19 @@ export interface SimulationOptions {
   /** Trace ring capacity in events (default 200k). Turbo mode may set 0. */
   traceCapacity?: number;
   mode?: FidelityMode;
+  /** @since P2 (optional by meaning) Defaults profile of the initial (empty) world; default 'P1' (D2). */
+  profile?: DefaultsProfile;
+  /**
+   * @since P2 (optional by meaning) TESTS AND TOOLING ONLY (ARCHITECTURE-P2 §0 rule 13): the catalog to build devices
+   * from instead of createCatalog(PROCESS_FACTORIES). Never passed by apps/web.
+   */
+  catalog?: DeviceCatalog;
+  /** @since P2 (optional by meaning) [SHOULD S1] Journal every outermost mutating facade call (default true). */
+  journal?: boolean;
+  /** @since P2 (optional by meaning) [SHOULD S1] Cap of the id → PDU registry (replayers run with a small one). */
+  pduRegistryLimit?: number;
+  /** @since P2 (optional by meaning) [SHOULD S1] Facade counters a replay starts from (`JournalOrigin.counters`). */
+  resume?: FacadeCounters;
 }
 
 export interface AddDeviceSpec {
@@ -105,6 +120,11 @@ export interface TraceFilter {
   tags?: readonly string[];
   /** Include frames flagged background (keepalives, beacons). Default false. */
   includeBackground?: boolean;
+  /**
+   * @since P2 (optional by meaning) [SHOULD S1] Matches debug events whose `event.fsm.machine` is listed (the timeline
+   * lanes and the state-machine history strip).
+   */
+  machines?: readonly FsmMachine[];
 }
 
 export interface RunOptions {
@@ -175,6 +195,16 @@ export interface Simulation {
   readonly mode: FidelityMode;
   readonly cli: CliRuntime;
   readonly catalog: DeviceCatalog;
+  /**
+   * @since P2 The world's defaults profile (D2): `SimulationOptions.profile ?? 'P1'` for the initial world, and every
+   * device the world builds gets it as `DeviceSpec.profile` (W1 sim). loadTopology sets it from `t.profile ?? 'P1'`;
+   * exportTopology writes `profile` only when 'P2' (and then schema 1.2) — both W2 sim. Required since W1 sim.
+   */
+  readonly profile: DefaultsProfile;
+  /** @since P2 [SHOULD S1] Position of the world: scheduler events popped since it was built, and the sim time. Required since W2 sim [S1] (§0 rule 2). */
+  position(): JournalPosition;
+  /** @since P2 [SHOULD S1] The input journal (a structured-clone copy). Required since W2 sim [S1] (§0 rule 2). */
+  journal(): SimJournal;
   /** Live device access (tests, grader). */
   device(id: DeviceId): DeviceRuntime | undefined;
   devices(): DeviceRuntime[];

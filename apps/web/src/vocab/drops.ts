@@ -42,7 +42,7 @@ export const DROP_VOCAB: Readonly<Record<DropReason, DropVocab>> = Object.freeze
   'port-admin-down': drop('port-admin-down', 'port not accepting', 'Arrived on an interface that is administratively shut down', 'device',
     'Bring the interface up with "no shutdown" or from the port panel.'),
   'port-err-disabled': drop('port-err-disabled', 'port error-disabled', 'Arrived on an interface disabled by a protection feature', 'device',
-    'Reset the interface to clear its error state.'),
+    'Remove the cause, then enter "shutdown" and "no shutdown" on the interface, or wait for automatic recovery if it is configured.'),
   'queue-full': drop('queue-full', 'queue overflow', 'The transmit queue was full, so the frame was discarded', 'link',
     'Send less traffic or use a faster link.'),
   'no-route': drop('no-route', 'no route', 'No routing table entry matched the destination', 'network',
@@ -79,6 +79,17 @@ export const DROP_VOCAB: Readonly<Record<DropReason, DropVocab>> = Object.freeze
     'Set the same encapsulation on both ends.'),
   'out-of-band': drop('out-of-band', 'console cables carry no data', 'Console cables carry terminal sessions only, never network frames', 'link',
     'Use an Ethernet cable for network traffic.'),
+  // ── P2 (ARCHITECTURE-P2 §2.7, §3.0; real wording, W1 web-inspector) ──
+  'vlan-filtered': drop('vlan-filtered', 'VLAN not carried here',
+    'The frame belongs to a VLAN this port does not carry, or to a VLAN that does not exist on the switch', 'link',
+    'Compare the access VLAN, the trunk allowed list and the native VLAN at both ends, and check that the VLAN exists ("show vlan brief").'),
+  'stp-discarding': drop('stp-discarding', 'held by spanning tree',
+    "Spanning tree is not letting this port forward in the frame's VLAN: it is still starting up, or it is blocked to break a loop", 'link',
+    "A new port listens and learns before it forwards (30 s in classic mode); a blocked port is the spare path of a loop. The spanning-tree overlay shows each port's role."),
+  'port-security': drop('port-security', 'port security violation', 'The source address is not one this secured port allows', 'policy',
+    'Check the secure addresses and the maximum on the port. A port shut down by a violation comes back with "shutdown" then "no shutdown".'),
+  'nat-exhausted': drop('nat-exhausted', 'no free translation', 'Address translation had no free address or port left for a new connection', 'network',
+    'Enlarge the pool, or let every inside host share one address with overload.'),
 });
 
 /** Every drop reason in table order. */

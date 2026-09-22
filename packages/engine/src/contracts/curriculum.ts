@@ -1,5 +1,5 @@
 /**
- * contracts/curriculum.ts — the course layer that wraps the labs (P2 course layer).
+ * contracts/curriculum.ts — the course layer that wraps the labs (course layer).
  *
  * A `Course` is a level (CCNA 1) split into modules, each a short run of lessons. A `Lesson` carries the plain
  * language explanation (`theory`, in the markdown subset the labs already use), an optional verified video and,

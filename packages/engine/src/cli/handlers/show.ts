@@ -35,7 +35,7 @@ import { radioModeOf, type RadioMode, type RadioPortView } from '../../contracts
 import { MODULE_MODELS } from '../../device/catalog/modules.js';
 import { maskSecretTokens } from '../config-rules.js';
 import { walkConfigText } from '../config-text.js';
-import { HANDLERS } from '../grammar/index.js';
+import { HANDLERS, MAC_COUNT_ARG, MAC_IFACE_ARG, MAC_KIND_ARG, MAC_VLAN_ARG, ROUTE_SOURCE_ARG, STATUS_FILTER_ARG } from '../grammar/index.js';
 import { fmtBps, fmtSince, fmtUptime, minutesBetween, padRight, table } from '../format.js';
 import { stationState, type StationStateEntry } from './host.js';
 import { encapOf, interfaceLine, interfaceSection, isConfigurablePort, roleOf, sectionArgs, sectionHasNegation } from './common.js';
@@ -216,7 +216,30 @@ function portStatusWord(p: PortView): string {
   return 'not connected';
 }
 
-const showInterfacesStatus: CommandHandler = (ctx) => {
+/** @since P2 Readable text of an err-disable cause (`PortState.errDisabled`), original wording. */
+export const ERR_DISABLE_REASON_TEXT: Readonly<Record<string, string>> = Object.freeze({
+  'psecure-violation': 'port security violation',
+  bpduguard: 'BPDU guard',
+  'channel-misconfig': 'EtherChannel misconfiguration',
+  fault: 'injected fault',
+});
+
+/** @since P2 `show interfaces status err-disabled` when no port is error-disabled. */
+export const MSG_NO_ERR_DISABLED = 'No port is error-disabled.';
+
+/** @since P2 `show interfaces status err-disabled`: only the error-disabled ports, with the reason. */
+function showErrDisabled(ctx: CommandCtx): string {
+  const rows: string[][] = [['Port', 'Description', 'Status', 'Reason']];
+  for (const p of networkPorts(ctx)) {
+    if (p.spec.kind === 'virtual' || !p.errDisabled) continue;
+    const desc = interfaceLine(ctx, p.id, ['description'])?.join(' ') ?? '';
+    rows.push([p.id, desc.length > 18 ? `${desc.slice(0, 17)}~` : desc, 'err-disabled', ERR_DISABLE_REASON_TEXT[p.errDisabled] ?? p.errDisabled]);
+  }
+  return rows.length === 1 ? MSG_NO_ERR_DISABLED : table(rows);
+}
+
+const showInterfacesStatus: CommandHandler = (ctx, args) => {
+  if (args[STATUS_FILTER_ARG] === 'err-disabled') return { output: showErrDisabled(ctx) };
   const rows: string[][] = [['Port', 'Description', 'Status', 'Role', 'Duplex', 'Speed', 'Type']];
   for (const p of networkPorts(ctx)) {
     if (p.spec.kind === 'virtual') continue;
@@ -261,10 +284,33 @@ export function sortedCamRows(ctx: CommandCtx): CamRow[] {
   return ctx.tables.cam.rows().sort((a, b) => (a.vlan - b.vlan) || (a.mac < b.mac ? -1 : a.mac > b.mac ? 1 : 0));
 }
 
-const showMac: CommandHandler = (ctx) => {
-  const rows = sortedCamRows(ctx);
+/** @since P2 Kind column of a CAM row: a port-security row names how it was secured (`static (sticky)`). */
+function camKindText(r: CamRow): string {
+  return r.secure === undefined ? r.type : `${r.type} (${r.secure === 'sticky' ? 'sticky' : 'secure'})`;
+}
+
+/**
+ * `show mac address-table [dynamic | static | vlan <v> | interface <if> | count]` (the filters since P2, ARCHITECTURE-P2
+ * §5.4). The unfiltered table keeps its P0 layout byte for byte.
+ */
+const showMac: CommandHandler = (ctx, args) => {
+  let rows = sortedCamRows(ctx);
+  const kind = args[MAC_KIND_ARG];
+  if (kind === 'dynamic' || kind === 'static') rows = rows.filter((r) => r.type === kind);
+  const vlan = args[MAC_VLAN_ARG];
+  if (vlan !== undefined) rows = rows.filter((r) => r.vlan === Number(vlan));
+  const iface = args[MAC_IFACE_ARG];
+  if (iface !== undefined) {
+    const p = portArg(ctx, iface);
+    if (p === undefined) return { error: `% No interface named "${iface}" exists on this device.` };
+    rows = rows.filter((r) => r.port === p.id);
+  }
+  if (args[MAC_COUNT_ARG] !== undefined) {
+    const dynamic = rows.filter((r) => r.type === 'dynamic').length;
+    return { output: [`Dynamic entries: ${dynamic}`, `Static entries: ${rows.length - dynamic}`, `Total entries: ${rows.length}`].join('\n') };
+  }
   const out: string[][] = [['VLAN', 'MAC address', 'Kind', 'Port']];
-  for (const r of rows) out.push([String(r.vlan), macToDotted(r.mac), r.type, r.port]);
+  for (const r of rows) out.push([String(r.vlan), macToDotted(r.mac), camKindText(r), r.port]);
   return { output: `${table(out, { gap: 4, align: ['right'] })}\nTotal entries: ${rows.length}` };
 };
 
@@ -298,10 +344,32 @@ export function renderRoute(r: RouteRow): string {
   return `${code}${prefix}  connected  ${r.iface ?? 'unknown interface'}`;
 }
 
-const showIpRoute: CommandHandler = (ctx) => {
-  const rows = sortedRouteRows(ctx);
+// [S6] ── equal-cost paths ────────────────────────────────────────────────────────────────────────────────────────
+/**
+ * [S6] Continuation lines of a route with two or more equal-cost paths (`RouteRow.paths`, ARCHITECTURE-P2 §2.6): the
+ * main line shows the first path (the row's own next hop and interface); every further path is one indented line
+ * aligned under it, `via <nh> [ad/metric] <iface>` or `[ad/metric] out <iface>`. A row without `paths` (or with one)
+ * has no continuation, so every P1 table renders exactly as before.
+ */
+export function renderRoutePaths(r: RouteRow): string[] {
+  const paths = r.paths;
+  if (paths === undefined || paths.length < 2) return [];
+  const indent = ' '.repeat(5 + `${r.network}/${r.prefixLen}`.length + 2);
+  const ad = `[${r.ad}/${r.metric}]`;
+  return paths.slice(1).map((p) => {
+    if (p.nextHop !== undefined) return `${indent}via ${p.nextHop} ${ad}${p.iface ? ` ${p.iface}` : ''}`;
+    return `${indent}${ad} out ${p.iface ?? 'unknown interface'}`;
+  });
+}
+// [S6] ── end ──────────────────────────────────────────────────────────────────────────────────────────────────
+
+/** `show ip route [static]` (the `static` filter since P2, ARCHITECTURE-P2 §5.4, keeps the legend and default line). */
+const showIpRoute: CommandHandler = (ctx, args) => {
+  const all = sortedRouteRows(ctx);
+  const source = args[ROUTE_SOURCE_ARG];
+  const rows = source === undefined ? all : all.filter((r) => r.source === source);
   const lines: string[] = [ROUTE_CODES_LEGEND, ''];
-  const def = rows.find((r) => r.isDefault || (r.prefixLen === 0 && r.network === '0.0.0.0'));
+  const def = all.find((r) => r.isDefault || (r.prefixLen === 0 && r.network === '0.0.0.0'));
   if (def) {
     const via = def.nextHop !== undefined ? `via ${def.nextHop}` : `out ${def.iface ?? 'unknown interface'}`;
     lines.push(`Default route: ${via} (${def.source}*)`);
@@ -310,9 +378,9 @@ const showIpRoute: CommandHandler = (ctx) => {
   }
   lines.push('');
   if (rows.length === 0) {
-    lines.push('The routing table is empty.');
+    lines.push(source === undefined ? 'The routing table is empty.' : 'The routing table holds no static route.');
   } else {
-    for (const r of rows) lines.push(renderRoute(r));
+    for (const r of rows) lines.push(renderRoute(r), ...renderRoutePaths(r));
   }
   return { output: lines.join('\n') };
 };

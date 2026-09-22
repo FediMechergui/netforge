@@ -10,13 +10,14 @@
 import type { FaultSpec } from './events.js';
 import type { ProcessName } from './ids.js';
 import type { MediaType } from './link.js';
-import type { PortCounters } from './port.js';
+import type { PortCounters, SwitchportMode } from './port.js';
 import type { Simulation, TraceFilter } from './simulation.js';
-import type { TableName } from './tables.js';
+import type { HsrpRow, PortSecurityRow, StpRole, StpState, TableName } from './tables.js';
 import type { SimTime } from './time.js';
 import type { Topology } from './topology.js';
 
-export type ScenarioCategory = 'template' | 'ccna1-lab' | (string & {});
+/** 'ccna2-lab' @since P2 (profile P2 labs, ARCHITECTURE-P2 §11.2). */
+export type ScenarioCategory = 'template' | 'ccna1-lab' | 'ccna2-lab' | (string & {});
 /** §12.1 subset shipped in P1. */
 export type LabType = 'guided' | 'build' | 'troubleshoot' | 'concept';
 
@@ -59,10 +60,20 @@ export interface LabTaskMeta {
   dependsOn?: readonly string[];
 }
 
+/**
+ * @since P2 A fault the grader applies inside its clone (`connectivity.after`). Devices and ports by NAME; port names
+ * resolve like the 'port' kind.
+ */
+export type LabFault =
+  | { cut: { a: string; b: string } }
+  | { powerOff: string }
+  | { shutdown: { device: string; port: string } };
+
 /** Devices are referenced by topology NAME (stable in lab builds). */
 export type LabAssertion =
   | { kind: 'config'; device: string; path: string; equals?: string | readonly string[]; exists?: boolean; contains?: string }
-  | { kind: 'port'; device: string; port: string; field: 'operUp' | 'adminUp' | 'ipv4' | 'ipv6' | 'duplex' | 'speedBps' | 'role'; equals: string | number | boolean }
+  /** `field` 'errDisabled' @since P2 (the cause string, e.g. 'psecure-violation'). */
+  | { kind: 'port'; device: string; port: string; field: 'operUp' | 'adminUp' | 'ipv4' | 'ipv6' | 'duplex' | 'speedBps' | 'role' | 'errDisabled'; equals: string | number | boolean }
   | { kind: 'table'; device: string; table: TableName; where: Readonly<Record<string, string | number | boolean>>; exists: boolean }
   /**
    * A dotted path into `Process.stateSnapshot().state`. An array step is an index (`pages.0.path`) or a
@@ -72,10 +83,95 @@ export type LabAssertion =
   | { kind: 'process'; device: string; process: ProcessName; path: string; equals: string | number | boolean }
   | { kind: 'link'; a: string; b: string; media?: MediaType; up?: boolean }
   | { kind: 'counter'; device: string; port: string; counter: keyof PortCounters; op: 'gt' | 'eq' | 'lt'; value: number }
-  /** Evaluated in a disposable clone with the lab seed; reads the icmpv4/icmpv6 job StateView counts. */
-  | { kind: 'connectivity'; from: string; to: string; family?: 4 | 6; byName?: boolean; expect: 'success' | 'fail'; timeoutMs?: number }
+  /**
+   * Evaluated in a disposable clone with the lab seed; reads the icmpv4/icmpv6 job StateView counts.
+   * @since P2 (all three optional by meaning) `after`: faults applied in the clone once it has settled, then the clone
+   * runs `settleMs` (default 60 000) before the ping; `then`: static assertions evaluated in the same clone after the
+   * ping (for example the NAT rows the ping created). One clone per distinct `after` set.
+   */
+  | {
+      kind: 'connectivity';
+      from: string;
+      to: string;
+      family?: 4 | 6;
+      byName?: boolean;
+      expect: 'success' | 'fail';
+      timeoutMs?: number;
+      after?: readonly LabFault[];
+      settleMs?: number;
+      then?: readonly LabAssertion[];
+    }
   /** Something was observed in the retained trace. */
-  | { kind: 'traceSeen'; filter: TraceFilter; min?: number };
+  | { kind: 'traceSeen'; filter: TraceFilter; min?: number }
+  // ── P2 (ARCHITECTURE-P2 §2.10; devices and ports by NAME; port names resolve like the 'port' kind) ──
+  /** @since P2 A VLAN exists (or not), with a name and access ports. */
+  | { kind: 'vlan'; device: string; vlan: number; exists?: boolean; name?: string; accessPorts?: readonly string[]; match?: 'includes' | 'exactly' }
+  /** @since P2 A switchport's operation and configuration; `allowedVlans` is set equality with the ACTIVE list. */
+  | {
+      kind: 'switchport';
+      device: string;
+      port: string;
+      oper?: 'access' | 'trunk' | 'down';
+      mode?: SwitchportMode;
+      accessVlan?: number;
+      voiceVlan?: number;
+      nativeVlan?: number;
+      allowedVlans?: readonly number[];
+    }
+  /** @since P2 Spanning tree of one VLAN: the root (by device name), and optionally one port's role, state and edge flag. */
+  | {
+      kind: 'stp';
+      device: string;
+      vlan: number;
+      root?: boolean;
+      rootBridge?: string;
+      port?: string;
+      role?: StpRole;
+      state?: StpState;
+      edge?: boolean;
+      mode?: 'pvst' | 'rapid-pvst';
+    }
+  /** @since P2 A channel group: protocol, whether the bundle is up, and its bundled members. */
+  | { kind: 'etherchannel'; device: string; group: number; protocol?: 'lacp' | 'pagp' | 'static'; up?: boolean; bundled?: readonly string[]; minBundled?: number }
+  /** @since P2 Port security of one port. */
+  | {
+      kind: 'portSecurity';
+      device: string;
+      port: string;
+      enabled?: boolean;
+      status?: PortSecurityRow['status'];
+      violation?: 'protect' | 'restrict' | 'shutdown';
+      max?: number;
+      stickyMac?: string;
+      minViolations?: number;
+    }
+  /** @since P2 The longest-prefix winner for `destination` (an address), or `none`. */
+  | {
+      kind: 'route';
+      device: string;
+      family?: 4 | 6;
+      destination: string;
+      source?: string;
+      network?: string;
+      nextHop?: string;
+      iface?: string;
+      ad?: number;
+      none?: boolean;
+    }
+  /** @since P2 A NAT translation row (or the count of matching rows). */
+  | {
+      kind: 'nat';
+      device: string;
+      insideLocal?: string;
+      insideGlobal?: string;
+      outsideGlobal?: string;
+      proto?: 'icmp' | 'tcp' | 'udp';
+      kindOf?: 'static' | 'dynamic' | 'overload';
+      exists?: boolean;
+      minCount?: number;
+    }
+  /** @since P2 [SHOULD S2] A standby group. */
+  | { kind: 'fhrp'; device: string; iface: string; group: number; state?: HsrpRow['state']; virtualIp?: string; priority?: number; preempt?: boolean };
 
 export interface LabTask extends LabTaskMeta {
   assertions: readonly LabAssertion[];

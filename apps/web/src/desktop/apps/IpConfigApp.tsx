@@ -6,12 +6,31 @@
  * back next to the field that produced them. The adapter can also be enabled or disabled (`portAdminCommands`).
  *
  * While the user has not edited anything, the form follows the live snapshot. Wording is original (§1.6).
+ *
+ * P2 (ARCHITECTURE-P2 §5.5 "IP configuration app", §5.2; W3 web-inspector): an IPv6 choice — nothing, automatic
+ * from router advertisements, or automatic with DHCPv6 — writes `ipv6 address dhcp` / `ipv6 address autoconfig`
+ * (host shell: `ipv6 address dhcp [<adapter>]` / `ipv6 autoconfig [<adapter>]`) through gui/commands
+ * `ipv6ModeCommands`; the choice is read back from the adapter's config lines. [S4] On a telephone (a host with a
+ * built-in bridge: capabilities `host` and `switching`, no routing) a Voice VLAN field writes `voice vlan <v>`
+ * (`voiceVlanCommands`). The form model of this panel (`IpConfigPanelForm`) extends gui/forms' `IpConfigForm` with
+ * these two values; the P1 form and its builders are unchanged.
  */
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
-import { ROLE_TRAITS } from '@netforge/engine';
+import { ROLE_TRAITS, isVlanId } from '@netforge/engine';
 import type { CliGrammar, DeviceSnapshot, PortId, PortSnapshot } from '@netforge/engine';
-import { ipConfigCommands, portAdminCommands } from '../../gui/commands.js';
-import { defaultAdapter, deviceGrammar, hasErrors, ipConfigFormFrom, validateIpConfigForm } from '../../gui/forms.js';
+import { IPV6_ADDRESS_MODES, ipConfigCommands, ipv6ModeCommands, mergePlans, portAdminCommands, voiceVlanCommands } from '../../gui/commands.js';
+import type { CommandPlan, Ipv6AddressMode } from '../../gui/commands.js';
+import {
+  configValue,
+  defaultAdapter,
+  deviceGrammar,
+  globalConfigLines,
+  hasConfigLine,
+  hasErrors,
+  interfaceConfigLines,
+  ipConfigFormFrom,
+  validateIpConfigForm,
+} from '../../gui/forms.js';
 import type { FormErrors, IpConfigForm } from '../../gui/forms.js';
 import { portKindLabel } from '../../vocab/categories.js';
 import {
@@ -58,6 +77,92 @@ export function sameIpForm(a: IpConfigForm, b: IpConfigForm): boolean {
   return a.adapter === b.adapter && a.address.trim() === b.address.trim() && a.mask.trim() === b.mask.trim() && a.gateway.trim() === b.gateway.trim();
 }
 
+// ── P2: IPv6 choice and the phone's Voice VLAN ───────────────────────────────
+
+/** The panel's form: the P1 address form plus the IPv6 choice and (phones) the Voice VLAN. */
+export interface IpConfigPanelForm extends IpConfigForm {
+  ipv6: Ipv6AddressMode;
+  /** Empty = no voice VLAN configured (ignored on devices without the field). */
+  voiceVlan: string;
+}
+
+/** Display names of the IPv6 choices. */
+export const IPV6_MODE_LABELS: Readonly<Record<Ipv6AddressMode, string>> = Object.freeze({
+  none: 'Not set automatically',
+  autoconfig: 'Automatic from router advertisements',
+  dhcp: 'Automatic with DHCPv6',
+});
+
+/** The IPv6 choice of an adapter from its config lines (`ipv6 address dhcp` wins over `ipv6 address autoconfig`). */
+export function ipv6AddressModeFrom(device: Pick<DeviceSnapshot, 'runningConfig'>, adapter: PortId): Ipv6AddressMode {
+  const lines = interfaceConfigLines(device.runningConfig, adapter);
+  if (hasConfigLine(lines, ['ipv6', 'address', 'dhcp'])) return 'dhcp';
+  if (hasConfigLine(lines, ['ipv6', 'address', 'autoconfig'])) return 'autoconfig';
+  return 'none';
+}
+
+/** The configured `voice vlan <v>` of a device ('' when none). */
+export function voiceVlanFrom(device: Pick<DeviceSnapshot, 'runningConfig'>): string {
+  return configValue(globalConfigLines(device.runningConfig), ['voice', 'vlan']) ?? '';
+}
+
+/**
+ * [S4] Whether the device takes a Voice VLAN: a host with a built-in bridge and no routing (the telephone's
+ * capability set), decided from capabilities, never from the icon family.
+ */
+export function voiceVlanCapable(device: Pick<DeviceSnapshot, 'capabilities'>): boolean {
+  const caps = device.capabilities ?? [];
+  return caps.includes('host') && caps.includes('switching') && !caps.includes('routing');
+}
+
+/** Panel form of an adapter: the P1 form plus the IPv6 choice and the voice VLAN. */
+export function ipConfigPanelFormFrom(device: DeviceSnapshot, adapter?: PortId): IpConfigPanelForm {
+  const base = ipConfigFormFrom(device, adapter);
+  return { ...base, ipv6: ipv6AddressModeFrom(device, base.adapter), voiceVlan: voiceVlanFrom(device) };
+}
+
+/** Same values, the P2 fields included. */
+export function sameIpPanelForm(a: IpConfigPanelForm, b: IpConfigPanelForm): boolean {
+  return sameIpForm(a, b) && a.ipv6 === b.ipv6 && a.voiceVlan.trim() === b.voiceVlan.trim();
+}
+
+/** Error for the Voice VLAN input; empty is allowed (no voice VLAN). */
+export function checkVoiceVlan(text: string): string | undefined {
+  const t = text.trim();
+  if (t === '') return undefined;
+  if (!/^\d+$/.test(t) || !isVlanId(Number(t))) return 'Enter a VLAN number from 1 to 4094, or leave the field empty.';
+  return undefined;
+}
+
+/** Validation context of the panel form. */
+export interface IpConfigPanelContext {
+  grammar: CliGrammar;
+  defaultAdapter?: PortId;
+  /** The Voice VLAN field is shown (validated) on this device. */
+  voiceVlan: boolean;
+}
+
+/** Validate the panel form: the P1 checks plus the voice VLAN when the device takes one. */
+export function validateIpConfigPanelForm(form: IpConfigPanelForm, ctx: IpConfigPanelContext): FormErrors {
+  const errors = validateIpConfigForm(form, { grammar: ctx.grammar, ...(ctx.defaultAdapter !== undefined ? { defaultAdapter: ctx.defaultAdapter } : {}) });
+  if (ctx.voiceVlan) {
+    const bad = checkVoiceVlan(form.voiceVlan);
+    if (bad !== undefined && errors['voiceVlan'] === undefined) errors['voiceVlan'] = bad;
+  }
+  return errors;
+}
+
+/**
+ * The panel's plan: the P1 address lines, then the IPv6 choice, then (phones) the voice VLAN, in one atomic
+ * `configure` call. Throws like `ipConfigCommands` when the host grammar is asked for a non-default adapter.
+ */
+export function ipConfigPanelPlan(grammar: CliGrammar, next: IpConfigPanelForm, previous: IpConfigPanelForm | undefined, ctx: { defaultAdapter?: PortId; voiceVlan: boolean }): CommandPlan {
+  const plans: CommandPlan[] = [ipConfigCommands(grammar, next, previous, ctx.defaultAdapter)];
+  plans.push(ipv6ModeCommands(grammar, next.adapter, next.ipv6, previous?.ipv6, ctx.defaultAdapter));
+  if (ctx.voiceVlan) plans.push(voiceVlanCommands(grammar, next.voiceVlan, previous?.voiceVlan));
+  return mergePlans(grammar, plans);
+}
+
 /** One-line state of an adapter: glyph + words (never colour alone). */
 export function adapterStateText(p: Pick<PortSnapshot, 'adminUp' | 'operUp'>): { glyph: string; text: string } {
   if (!p.adminUp) return { glyph: '⊘', text: 'disabled' };
@@ -68,6 +173,22 @@ export function adapterStateText(p: Pick<PortSnapshot, 'adminUp' | 'operUp'>): {
 function addressText(p: PortSnapshot): string {
   const v4 = p.l3.ipv4;
   return v4 === undefined ? 'no address' : `${v4.address}/${v4.prefixLen}`;
+}
+
+/** Origin wording of an IPv6 address (how the adapter got it). */
+const IPV6_ORIGIN_TEXT: Readonly<Record<string, string>> = Object.freeze({
+  manual: 'set by hand',
+  eui64: 'built from the MAC address',
+  'auto-link-local': 'link-local',
+  slaac: 'from a router advertisement',
+  dhcpv6: 'from DHCPv6',
+});
+
+/** Global and unique-local IPv6 addresses of an adapter with how each was obtained. */
+export function ipv6AddressLines(p: Pick<PortSnapshot, 'l3'>): readonly string[] {
+  return (p.l3.ipv6 ?? [])
+    .filter((a) => a.scope !== 'link-local')
+    .map((a) => `${a.address}/${a.prefixLen} (${IPV6_ORIGIN_TEXT[a.origin] ?? a.origin}${a.state === 'preferred' ? '' : `, ${a.state}`})`);
 }
 
 /** Wall time the form keeps the applied values while the confirming snapshot is on its way. */
@@ -85,20 +206,21 @@ function IpConfigPanel({ device }: { device: DeviceSnapshot }) {
   const def = defaultAdapter(device);
   const adapters = editableAdapters(device, grammar);
   const [adapter, setAdapter] = useState<PortId>(def ?? adapters[0] ?? '');
-  const fresh = useMemo(() => ipConfigFormFrom(device, adapter), [device, adapter]);
-  const [baseline, setBaseline] = useState<IpConfigForm>(fresh);
-  const [form, setForm] = useState<IpConfigForm>(fresh);
+  const voice = voiceVlanCapable(device);
+  const fresh = useMemo(() => ipConfigPanelFormFrom(device, adapter), [device, adapter]);
+  const [baseline, setBaseline] = useState<IpConfigPanelForm>(fresh);
+  const [form, setForm] = useState<IpConfigPanelForm>(fresh);
   const [errors, setErrors] = useState<FormErrors>({});
   const [messages, setMessages] = useState<readonly string[]>([]);
   const [ok, setOk] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const dirty = !sameIpForm(form, baseline);
+  const dirty = !sameIpPanelForm(form, baseline);
   // After a successful apply the snapshot lags by one batch; do not snap the form back to the old values meanwhile.
   const settleUntil = useRef(0);
   useEffect(() => {
     if (dirty || busy) return;
-    if (!sameIpForm(fresh, baseline)) {
+    if (!sameIpPanelForm(fresh, baseline)) {
       if (performance.now() < settleUntil.current) return;
       setBaseline(fresh);
       setForm(fresh);
@@ -108,14 +230,14 @@ function IpConfigPanel({ device }: { device: DeviceSnapshot }) {
   const port = device.ports.find((p) => p.id === adapter);
   const blocked = deviceBusyReason(device);
 
-  const edit = (patch: Partial<IpConfigForm>): void => {
+  const edit = (patch: Partial<IpConfigPanelForm>): void => {
     setForm((f) => ({ ...f, ...patch }));
     setOk(null);
     setMessages([]);
   };
 
   const chooseAdapter = (id: PortId): void => {
-    const next = ipConfigFormFrom(device, id);
+    const next = ipConfigPanelFormFrom(device, id);
     setAdapter(id);
     setBaseline(next);
     setForm(next);
@@ -125,7 +247,7 @@ function IpConfigPanel({ device }: { device: DeviceSnapshot }) {
   };
 
   const apply = async (): Promise<void> => {
-    const found = validateIpConfigForm(form, { grammar, ...(def !== undefined ? { defaultAdapter: def } : {}) });
+    const found = validateIpConfigPanelForm(form, { grammar, ...(def !== undefined ? { defaultAdapter: def } : {}), voiceVlan: voice });
     setErrors(found);
     if (hasErrors(found)) {
       setOk(false);
@@ -134,7 +256,7 @@ function IpConfigPanel({ device }: { device: DeviceSnapshot }) {
     }
     let plan;
     try {
-      plan = ipConfigCommands(grammar, form, baseline, def);
+      plan = ipConfigPanelPlan(grammar, form, baseline, { ...(def !== undefined ? { defaultAdapter: def } : {}), voiceVlan: voice });
     } catch (err) {
       setOk(false);
       setMessages([errorText(err)]);
@@ -271,6 +393,43 @@ function IpConfigPanel({ device }: { device: DeviceSnapshot }) {
           hint="Leave empty for no gateway. Clear every field to remove the address."
           onChange={(v) => edit({ gateway: v })}
         />
+        <div className={`desk-field ${errors['ipv6'] !== undefined ? 'has-error' : ''}`}>
+          <label htmlFor={`${uid}-ipv6`}>IPv6 address</label>
+          <select
+            id={`${uid}-ipv6`}
+            className="select"
+            value={form.ipv6}
+            aria-invalid={errors['ipv6'] !== undefined}
+            aria-describedby={`${uid}-ipv6-hint${errors['ipv6'] !== undefined ? ` ${uid}-ipv6-err` : ''}`}
+            onChange={(e) => edit({ ipv6: e.target.value as Ipv6AddressMode })}
+          >
+            {IPV6_ADDRESS_MODES.map((m) => (
+              <option key={m} value={m}>
+                {IPV6_MODE_LABELS[m]}
+              </option>
+            ))}
+          </select>
+          <span id={`${uid}-ipv6-hint`} className="desk-hint">
+            DHCPv6 asks a server for an address and name servers; router advertisements let the adapter build its own address.
+          </span>
+          {errors['ipv6'] !== undefined && (
+            <span id={`${uid}-ipv6-err`} className="desk-error">
+              <span aria-hidden="true">⚠ </span>
+              {errors['ipv6']}
+            </span>
+          )}
+        </div>
+        {voice && (
+          <TextField
+            id={`${uid}-voice-vlan`}
+            label="Voice VLAN"
+            value={form.voiceVlan}
+            error={errors['voiceVlan']}
+            placeholder="150"
+            hint="The VLAN this telephone tags its calls with. Leave empty to send them untagged."
+            onChange={(v) => edit({ voiceVlan: v })}
+          />
+        )}
         {blocked !== undefined && <p className="desk-note">{blocked}</p>}
         <div className="desk-actions">
           <button type="submit" className="btn btn-primary" disabled={busy || adapter === '' || blocked !== undefined}>
@@ -300,6 +459,15 @@ function IpConfigPanel({ device }: { device: DeviceSnapshot }) {
             <InfoRow label="Address">
               <span className="desk-mono">{addressText(port)}</span>
             </InfoRow>
+            {ipv6AddressLines(port).length > 0 && (
+              <InfoRow label="IPv6 addresses">
+                {ipv6AddressLines(port).map((line) => (
+                  <div key={line} className="desk-mono">
+                    {line}
+                  </div>
+                ))}
+              </InfoRow>
+            )}
             <InfoRow label="State">{adapterStateText(port).text}</InfoRow>
           </dl>
         </section>

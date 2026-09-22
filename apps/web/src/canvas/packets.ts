@@ -19,6 +19,12 @@
  * is identifiable without colour. Colour follows the protocol, or a hash of the flow when "colour by flow" is on.
  * Size is log-scaled by frame size and clamped; when zoomed far out capsules keep a readable screen size.
  * Background frames (keepalives, beacons) are hidden unless the `backgroundFrames` overlay is on.
+ *
+ * @since P2 (W3 web-canvas, ARCHITECTURE-P2 §6) While the VLAN overlay is on, a leg is coloured by its VLAN
+ * (`vlanColours`): the outer 802.1Q tag of a tagged frame (`PduSummary.vlan`), else the VLAN the from-port sends
+ * untagged (its access VLAN or its trunk's native VLAN, `untaggedVlan`). A tagged leg also carries a `Q` badge beside
+ * its protocol letter, so a tagged frame is told from an untagged one without colour. "Colour by flow" keeps
+ * precedence: an explicit choice of the learner beats the overlay's tint.
  */
 import { Container, Graphics, type Text } from 'pixi.js';
 import {
@@ -29,11 +35,13 @@ import {
   type LinkSnapshot,
   type PduId,
   type PduSummary,
+  type PortRef,
   type ProtoName,
   type SimTime,
 } from '@netforge/engine';
 import { protocolVocab, type PacketShape } from '../vocab/protocols';
 import { bezierAt, bezierTangent, geomBounds, type CableGeom, type Pt } from './cables';
+import { vlanColor } from './l2';
 import { isRadioLink } from './ports';
 import { inflateRect, makeText, rectsIntersect, setText, type Rect, type ThemeColors } from './scene';
 
@@ -89,6 +97,48 @@ export function flowColor(pdu: PduSummary, theme: ThemeColors): number {
   const palette = [theme.accent, theme.warn, theme.ok, theme.purple, theme.yellow, theme.blueDeep, theme.err];
   const key = pdu.flow ?? `pdu:${pdu.parent ?? pdu.id}`;
   return palette[fnv1a(key) % palette.length] ?? theme.accent;
+}
+
+/** The badge a tagged leg carries beside its protocol letter (the 802.1Q letter of the vocabulary). */
+export const TAG_BADGE = 'Q';
+
+/** True when the leg's frame carries an 802.1Q tag on the wire (`PduSummary.vlan` is the outermost VID). */
+export function isTaggedLeg(pdu: Pick<PduSummary, 'vlan'>): boolean {
+  return pdu.vlan !== undefined;
+}
+
+/**
+ * The VLAN a leg belongs to: the outer tag of a tagged frame, else the VLAN the from-port sends untagged (the
+ * caller's `untaggedVlan`, from the VLAN overlay's per-device ends), else undefined (a P1 world, a routed port).
+ */
+export function legVlan(pdu: Pick<PduSummary, 'vlan'>, from: PortRef, untaggedVlan?: (from: PortRef) => number | undefined): number | undefined {
+  if (pdu.vlan !== undefined) return pdu.vlan;
+  return untaggedVlan?.(from);
+}
+
+/** Capsule colour of a VLAN (the overlay's tint of that VLAN, so capsule and access chip agree). */
+export function vlanPacketColor(vlan: number, theme: Pick<ThemeColors, 'bg'>): number {
+  return vlanColor(vlan, theme);
+}
+
+/**
+ * Colour of a leg: the flow hash when "colour by flow" is on, else the VLAN tint while the VLAN overlay is on and
+ * the leg has a VLAN, else the protocol colour.
+ */
+export function legColor(
+  pdu: PduSummary,
+  proto: ProtoName,
+  theme: ThemeColors,
+  opts: { colourByFlow: boolean; vlan: number | undefined; vlanColours: boolean },
+): number {
+  if (opts.colourByFlow) return flowColor(pdu, theme);
+  if (opts.vlanColours && opts.vlan !== undefined) return vlanPacketColor(opts.vlan, theme);
+  return protoColor(proto, theme);
+}
+
+/** Where the `Q` badge sits relative to the capsule centre (top-right, just outside the body). */
+export function tagBadgeOffset(r: number, scale: number): Pt {
+  return { x: r * 1.7, y: -r * 1.35 - 1.5 * scale };
 }
 
 /** Capsule radius from frame size: 64 B → 4.5, doubling adds 1.6, clamped at 11. */
@@ -221,6 +271,11 @@ class PacketView {
   letter: Text | null = null;
   letterText = '';
   letterColor = 0;
+  /** The `Q` badge of a tagged leg (created on first use). */
+  tag: Text | null = null;
+  tagged = false;
+  tagColor = 0;
+  scale = 1;
   bodySig = '';
   x = 0;
   y = 0;
@@ -244,6 +299,10 @@ export interface PacketUpdateInput {
   trails: boolean;
   /** Show background frames (keepalives, beacons). */
   showBackground: boolean;
+  /** @since P2 Colour legs by VLAN (the VLAN overlay is on). */
+  vlanColours?: boolean;
+  /** @since P2 The VLAN a port sends untagged (access VLAN or native VLAN), for untagged legs. */
+  untaggedVlan?: (from: PortRef) => number | undefined;
   zoom: number;
   /** Visible world rectangle (capsules outside it are hidden). */
   view: Rect;
@@ -296,7 +355,9 @@ export class PacketLayer {
       const proto = displayProto(f.pdu);
       const shape = shapeFor(proto);
       const r = packetRadius(f.pdu.size) * scale;
-      const color = input.colourByFlow ? flowColor(f.pdu, theme) : protoColor(proto, theme);
+      const vlanColours = input.vlanColours === true;
+      const vlan = vlanColours ? legVlan(f.pdu, f.from, input.untaggedVlan) : undefined;
+      const color = legColor(f.pdu, proto, theme, { colourByFlow: input.colourByFlow, vlan, vlanColours });
       const selected = input.selectedPdu === f.pdu.id;
       const bodySig = `${shape}|${r}|${color}|${selected}|${place.aborted}|${theme.stamp}`;
       if (bodySig !== pv.bodySig) {
@@ -328,25 +389,44 @@ export class PacketLayer {
       }
 
       if (pv.letter) pv.letter.visible = false;
+      if (pv.tag) pv.tag.visible = false;
       pv.letterText = letterFor(proto);
       pv.letterColor = place.aborted ? color : theme.bg;
+      pv.tagged = isTaggedLeg(f.pdu);
+      pv.tagColor = color;
+      pv.scale = scale;
     }
 
-    // protocol letters: only when zoomed in and the screen is not crowded
+    // protocol letters (and the Q badge of tagged legs): only when zoomed in and the screen is not crowded
     const letters = input.zoom >= PACKET_LETTER_MIN_ZOOM && placed.length <= PACKET_LETTER_MAX;
     for (const pv of placed) {
       const text = pv.letterText;
-      if (!letters || text === '') continue;
-      if (!pv.letter) {
-        pv.letter = makeText('', 7, theme.bg, theme.sans, 'bold');
-        pv.letter.anchor.set(0.5);
-        pv.root.addChild(pv.letter);
+      if (!letters) continue;
+      if (text !== '') {
+        if (!pv.letter) {
+          pv.letter = makeText('', 7, theme.bg, theme.sans, 'bold');
+          pv.letter.anchor.set(0.5);
+          pv.root.addChild(pv.letter);
+        }
+        setText(pv.letter, text, pv.letterColor, theme.sans, input.textResolution);
+        const size = (text.length > 1 ? 6 : 7.5) * scale;
+        if (pv.letter.style.fontSize !== size) pv.letter.style.fontSize = size;
+        pv.letter.position.set(pv.x, pv.y);
+        pv.letter.visible = true;
       }
-      setText(pv.letter, text, pv.letterColor, theme.sans, input.textResolution);
-      const size = (text.length > 1 ? 6 : 7.5) * scale;
-      if (pv.letter.style.fontSize !== size) pv.letter.style.fontSize = size;
-      pv.letter.position.set(pv.x, pv.y);
-      pv.letter.visible = true;
+      if (pv.tagged) {
+        if (!pv.tag) {
+          pv.tag = makeText('', 6, theme.text, theme.mono, 'bold');
+          pv.tag.anchor.set(0.5);
+          pv.root.addChild(pv.tag);
+        }
+        setText(pv.tag, TAG_BADGE, pv.tagColor, theme.mono, input.textResolution);
+        const size = 6 * pv.scale;
+        if (pv.tag.style.fontSize !== size) pv.tag.style.fontSize = size;
+        const off = tagBadgeOffset(pv.r, pv.scale);
+        pv.tag.position.set(pv.x + off.x, pv.y + off.y);
+        pv.tag.visible = true;
+      }
     }
 
     for (const [key, pv] of this.views) {

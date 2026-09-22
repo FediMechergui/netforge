@@ -121,7 +121,9 @@ describe('udp codec', () => {
   it('over IPv6 the checksum is mandatory: golden bytes, and 0 is invalid', () => {
     const bytes = encodeLayers(udp6(hex('01020304')));
     const layers = decodeLayers(bytes);
-    expect(protos(layers)).toEqual(['ethernet', 'ipv6', 'udp', 'payload']);
+    // §9.2 W1: the udp6 fixture's ports 547/546 are the DHCPv6 ports in P2, so the inner layer is `dhcpv6`.
+    // Only the dispatch changed, not the bytes: the golden hex and both checksum assertions are byte-identical.
+    expect(protos(layers)).toEqual(['ethernet', 'ipv6', 'udp', 'dhcpv6']);
     const u = layers[2]!;
     expect(toHex(layerBytes(bytes, u))).toBe('02230222000c9c1601020304');
     expect(u.fields.checksumValid).toBe(true);

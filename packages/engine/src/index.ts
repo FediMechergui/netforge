@@ -7,11 +7,18 @@
  * Name clashes between modules are resolved here with explicit re-exports, which take precedence over the
  * `export *` lines: the canvas default scale is the contract constant, and the medium-specific helpers that share
  * a name with another module are published under a medium-qualified alias.
+ *
+ * P2 (docs/ARCHITECTURE-P2.md §0 rule 1): this file is architect-owned and append-only. A wave item adds only its own
+ * `export * from './<its files>.js'` lines, in the change that creates those files; the architect reconciles the list
+ * at the exit gate (W8). The P2 contracts (including contracts/journal.ts and contracts/timeline.ts, [S1]) are
+ * exported through contracts/index.js. A module must not redeclare a name a contract exports (`DefaultSlots`,
+ * `schemaIdFor`, …): two `export *` lines that export different declarations under one name do not compile.
  */
 export * from './contracts/index.js';
 export { DEFAULT_METRES_PER_UNIT } from './contracts/topology.js';
 
 // core
+export * from './core/acl.js';
 export * from './core/addr6.js';
 export * from './core/lpm.js';
 export * from './core/lpm6.js';
@@ -19,6 +26,7 @@ export * from './core/prng.js';
 export * from './core/rib-arbiter.js';
 export * from './core/scheduler.js';
 export * from './core/table.js';
+export * from './core/vlan-list.js';
 
 // pdu
 export * from './pdu/pdu.js';
@@ -44,6 +52,15 @@ export * from './pdu/codecs/tcp.js';
 export * from './pdu/codecs/dhcp.js';
 export * from './pdu/codecs/dns.js';
 export * from './pdu/codecs/http.js';
+export * from './pdu/codecs/dot1q.js';
+export * from './pdu/codecs/stp.js';
+export * from './pdu/codecs/lacp.js';
+export * from './pdu/codecs/dtp.js';
+export * from './pdu/codecs/dhcpv6.js';
+export * from './pdu/codecs/capwap.js';
+export * from './pdu/codecs/hsrp.js';
+export * from './pdu/codecs/pagp.js';
+export * from './pdu/vlan.js';
 
 // device + link
 export * from './device/catalog.js';
@@ -96,6 +113,9 @@ export * from './protocols/arp.js';
 export * from './protocols/cell-client.js';
 export * from './protocols/dhcp-client.js';
 export * from './protocols/dhcp-server.js';
+export * from './protocols/dhcpv6-client.js';
+export * from './protocols/dhcpv6-server.js';
+export * from './protocols/hsrp.js';
 export * from './protocols/dns-client.js';
 export * from './protocols/dns-server.js';
 export * from './protocols/eth-switch.js';
@@ -112,6 +132,27 @@ export * from './protocols/wlan-client.js';
 export * from './protocols/udp.js';
 export * from './protocols/tcp.js';
 export * from './protocols/traceroute.js';
+export * from './protocols/vlan.js';
+export * from './protocols/etherchannel.js';
+export * from './protocols/etherchannel/compat.js';
+export * from './protocols/etherchannel/lacp.js';
+export * from './protocols/etherchannel/pagp.js';
+export * from './protocols/etherchannel/static.js';
+export * from './protocols/nat.js';
+export * from './protocols/dtp.js';
+export * from './protocols/l2/control.js';
+export * from './protocols/l2/lag-hash.js';
+export * from './protocols/l2/membership.js';
+export * from './protocols/l2/port-security.js';
+export * from './protocols/l2/switchport-config.js';
+export * from './protocols/stp/cost.js';
+export * from './protocols/stp/ids.js';
+export * from './protocols/stp/vector.js';
+export * from './protocols/stp.js';
+export * from './protocols/stp/guards.js';
+export * from './protocols/stp/mixed.js';
+export * from './protocols/stp/pvst.js';
+export * from './protocols/stp/rstp.js';
 
 // cli
 export * from './cli/runtime.js';
@@ -156,7 +197,13 @@ export * from './sim/lab-checks.js';
 export * from './sim/simulation.js';
 export * from './sim/scenarios.js';
 export * from './sim/snapshot-cache.js';
+// sim — P2 [SHOULD S1] (W2 sim [S1])
+export * from './sim/journal.js';
+export * from './sim/replay.js';
 
 // curriculum
 export * from './contracts/curriculum.js';
 export * from './curriculum/index.js';
+
+// timeline — P2 [SHOULD S1] (W1 timeline)
+export * from './timeline/lanes.js';

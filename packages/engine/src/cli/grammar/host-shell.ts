@@ -2,7 +2,9 @@
  * cli/grammar/host-shell.ts — the end-device host shell (ARCHITECTURE "P0 CLI surface", ARCHITECTURE-P1 §3.13, §6):
  * a single `user-exec` mode at privilege 15 with `ip address A M [GW]`, `ipconfig [/all|/release|/renew]`, `arp -a`,
  * the Wi-Fi commands `wifi list|connect|disconnect` (devices with a Wi-Fi adapter) and `adapter <if> up|down`, plus
- * the P1 additions of §6: `ip address dhcp`, `ip dns`, `ipv6 address`, `ipv6 autoconfig` and `ipv6config`.
+ * the P1 additions of §6: `ip address dhcp`, `ip dns`, `ipv6 address`, `ipv6 autoconfig` and `ipv6config`, and the
+ * P2 expansions of ARCHITECTURE-P2 §5.5: `ipv6 address dhcp [<adapter>]` (the IP configuration app's "automatic
+ * with DHCPv6" choice) and [S4] `voice vlan <v>` (the IP phone's Voice VLAN field, hosts with a built-in bridge).
  *
  * The shared `ping`, `exit`, `nslookup`, `netstat`, `tracert` and `show …` subset come from core-exec.ts, show.ts and
  * the feature fragments. Every host command expands into the canonical config lines of §6 (the same lines a network
@@ -15,6 +17,7 @@ import {
   CONFIGURABLE_ROLES,
   HOST_ONLY,
   ifaceArg,
+  intArg,
   IPV6_CAPABILITIES,
   ipArg,
   ipv4Arg,
@@ -39,6 +42,10 @@ export const HOST_SHELL_HANDLERS = {
   hostIpv6Address: 'host.ipv6-address',
   hostIpv6Autoconfig: 'host.ipv6-autoconfig',
   hostIpv6config: 'host.ipv6config',
+  /** @since P2 `ipv6 address dhcp [<adapter>]` (§5.5 host-shell expansion: the IP configuration app's DHCPv6 choice). */
+  hostIpv6AddressDhcp: 'host.ipv6-address-dhcp',
+  /** @since P2 [S4] `voice vlan <v>` (the IP phone's Voice VLAN field, §5.5). */
+  hostVoiceVlan: 'host.voice-vlan',
 } as const;
 
 /** Arg name of the `ipconfig` option, and the options it takes (`fixedArgs`-free: one spec, one handler). */
@@ -118,6 +125,33 @@ export const HOST_SHELL_GRAMMAR: readonly CommandSpec[] = Object.freeze<CommandS
     since: 'P1',
     objectives: ['CCNA1.11.1'],
   },
+  // P2 (§5.5): the literal `dhcp` forms come before the `<prefix>` forms so the keyword wins the match.
+  {
+    path: ['ipv6', 'address', 'dhcp'],
+    mode: 'user-exec',
+    privilege: 15,
+    help: 'Ask a DHCPv6 server for this host\'s IPv6 address',
+    handler: H.hostIpv6AddressDhcp,
+    allowNo: true,
+    noArgsOptional: true,
+    grammars: HOST_ONLY,
+    requiresAny: IPV6_CAPABILITIES,
+    since: 'P2',
+    objectives: ['CCNA2.10.2'],
+  },
+  {
+    path: ['ipv6', 'address', 'dhcp', '<adapter>'],
+    mode: 'user-exec',
+    privilege: 15,
+    help: 'Ask a DHCPv6 server for the IPv6 address of one adapter',
+    args: { adapter: adapterArg(false) },
+    handler: H.hostIpv6AddressDhcp,
+    allowNo: true,
+    grammars: HOST_ONLY,
+    requiresAny: IPV6_CAPABILITIES,
+    since: 'P2',
+    objectives: ['CCNA2.10.2'],
+  },
   {
     path: ['ipv6', 'address', '<prefix>'],
     mode: 'user-exec',
@@ -157,6 +191,21 @@ export const HOST_SHELL_GRAMMAR: readonly CommandSpec[] = Object.freeze<CommandS
     requiresAny: IPV6_CAPABILITIES,
     since: 'P1',
     objectives: ['CCNA1.12.4'],
+  },
+  // [S4] the IP phone's voice VLAN (§5.5): a host with a built-in bridge tags its own frames with it
+  {
+    path: ['voice', 'vlan', '<vlan>'],
+    mode: 'user-exec',
+    privilege: 15,
+    help: 'VLAN this phone tags its own traffic with on its network port',
+    args: { vlan: intArg('VLAN number', 1, 4094) },
+    handler: H.hostVoiceVlan,
+    allowNo: true,
+    noArgsOptional: true,
+    grammars: HOST_ONLY,
+    requiresAny: ['switching'],
+    since: 'P2',
+    objectives: ['CCNA2.2.1'],
   },
   {
     path: ['ipv6config'],

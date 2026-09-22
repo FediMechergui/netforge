@@ -16,6 +16,14 @@
  *     be a plain decimal inside [min, max]; the canonical name is `${family}${n}` (leading zeros dropped). If
  *     that canonical name already exists in the source it resolves as existing; otherwise as virtual.
  *
+ * P2 (ARCHITECTURE-P2 §3.4, D10, D11; W1 catalog):
+ *  - family letters may be hyphenated (`Port-channel1`, `port-channel 1`; the short form `po1` as before);
+ *  - a subinterface `<parent>.<n>` (`g0/0.10`) resolves, when no live port matches, by resolving `<parent>` against
+ *    the live non-virtual ports (step 2) on a model that declares `subinterfaces`, with n a plain decimal in
+ *    [1, `subinterfaces.max`]: `{kind:'virtual', port:'GigabitEthernet0/0.10', family:'subinterface', parent}` (or
+ *    existing when that canonical name is live). Whether the parent may carry subinterfaces (its role) is decided at
+ *    creation (device/ports.ts `planSubinterface`).
+ *
  * Pure and deterministic: iteration follows the source map and the model arrays.
  */
 import type { PortNameSource, PortResolution, DeviceModel } from '../../contracts/device.js';
@@ -23,11 +31,20 @@ import type { PortId } from '../../contracts/ids.js';
 import type { PortSpec } from '../../contracts/port.js';
 import { PORT_FAMILIES, type PortFamily, type SlotSpec, type VirtualFamilySpec } from '../../contracts/catalog.js';
 
-/** Shape of every accepted typed port name: letters, optional whitespace, optional number part (lowercase input). */
-const TYPED_NAME_RE = /^([a-z]+)\s*([0-9][0-9/.]*)?$/;
+/**
+ * Shape of every accepted typed port name: letters (P2: hyphenated words, `port-channel`), optional whitespace,
+ * optional number part (lowercase input).
+ */
+const TYPED_NAME_RE = /^([a-z]+(?:-[a-z]+)*)\s*([0-9][0-9/.]*)?$/;
 
-/** Shape of a canonical port name: letters then an optional number part (case preserved). */
-const CANONICAL_NAME_RE = /^([A-Za-z]+)([0-9][0-9/.]*)?$/;
+/** Shape of a canonical port name: letters (P2: hyphenated words) then an optional number part (case preserved). */
+const CANONICAL_NAME_RE = /^([A-Za-z]+(?:-[A-Za-z]+)*)([0-9][0-9/.]*)?$/;
+
+/** @since P2 `PortResolution.family` of a subinterface (D11). */
+export const SUBINTERFACE_FAMILY = 'subinterface';
+
+/** Shape of a canonical subinterface name: a parent without a dot, a dot, a plain decimal (`GigabitEthernet0/0.10`). */
+const SUBINTERFACE_NAME_RE = /^([^.]+)\.([0-9]+)$/;
 
 /** A plain decimal without sign or fraction. */
 const DECIMAL_RE = /^[0-9]+$/;
@@ -86,9 +103,27 @@ export function modulePortName(family: string, slot: Pick<SlotSpec, 'numbering'>
   return `${family}${slot.numbering}/${index}`;
 }
 
-/** Canonical name of instance `n` of a virtual interface family (`Vlan1`, `Loopback0`). */
+/** Canonical name of instance `n` of a virtual interface family (`Vlan1`, `Loopback0`, P2 `Port-channel1`). */
 export function virtualPortName(family: Pick<VirtualFamilySpec, 'family'>, n: number): PortId {
   return `${family.family}${n}`;
+}
+
+/** @since P2 Canonical name of subinterface `n` of `parent` (`GigabitEthernet0/0.10`). */
+export function subinterfacePortName(parent: PortId, n: number): PortId {
+  return `${parent}.${n}`;
+}
+
+/**
+ * @since P2 Split a canonical subinterface name into its parent and number (`GigabitEthernet0/0.10` →
+ * {parent 'GigabitEthernet0/0', number 10}). Undefined when the name has no single `.<decimal>` suffix after a
+ * dot-free parent, or the number is not a safe integer.
+ */
+export function parseSubinterfaceName(name: PortId): { parent: PortId; number: number } | undefined {
+  const m = SUBINTERFACE_NAME_RE.exec(name);
+  if (!m) return undefined;
+  const number = Number(m[2]);
+  if (!Number.isSafeInteger(number)) return undefined;
+  return { parent: m[1] as PortId, number };
 }
 
 /**
@@ -147,6 +182,7 @@ export function resolvePortName(source: PortNameSource, text: string): PortResol
   const specs = sourceSpecs(source);
   const existing = matchTyped(specs, typed);
   if (existing.kind !== 'unknown') return existing;
+  if (typed.number.includes('.')) return resolveSubinterface(source, specs, typed);
   const families = source.model.virtualFamilies ?? [];
   if (families.length === 0 || !DECIMAL_RE.test(typed.number)) return { kind: 'unknown' };
   const n = Number(typed.number);
@@ -166,6 +202,33 @@ export function resolvePortName(source: PortNameSource, text: string): PortResol
   const name = virtualPortName(fam, n);
   if (source.ports.has(name)) return { kind: 'existing', port: name };
   return { kind: 'virtual', port: name, family: fam.family };
+}
+
+/**
+ * @since P2 Step 4 of `resolvePortName` (file header): a typed `<parent>.<n>` that names no live port. The number part
+ * is split at its FIRST dot, so `<parent>` never contains one (no subinterface of a subinterface).
+ */
+function resolveSubinterface(source: PortNameSource, specs: readonly Pick<PortSpec, 'name' | 'short'>[], typed: TypedPortName): PortResolution {
+  const spec = source.model.subinterfaces;
+  if (spec === undefined) return { kind: 'unknown' };
+  const dot = typed.number.indexOf('.');
+  const parentNumber = typed.number.slice(0, dot);
+  const sub = typed.number.slice(dot + 1);
+  if (parentNumber === '' || !DECIMAL_RE.test(sub)) return { kind: 'unknown' };
+  const n = Number(sub);
+  if (!Number.isSafeInteger(n) || n < 1 || n > spec.max) return { kind: 'unknown' };
+  // The parent is a live port that is not a virtual interface of the model (Vlan, Loopback, Port-channel, …).
+  const virtualFamilies = (source.model.virtualFamilies ?? []).map((f) => f.family);
+  const physical = specs.filter((s) => {
+    const parts = splitPortName(s.name);
+    return parts !== undefined && !virtualFamilies.includes(parts.family) && !s.name.includes('.');
+  });
+  const parent = matchTyped(physical, { family: typed.family, number: parentNumber });
+  if (parent.kind === 'ambiguous') return { kind: 'ambiguous', candidates: parent.candidates.map((c) => subinterfacePortName(c, n)) };
+  if (parent.kind !== 'existing') return { kind: 'unknown' };
+  const port = subinterfacePortName(parent.port, n);
+  if (source.ports.has(port)) return { kind: 'existing', port };
+  return { kind: 'virtual', port, family: SUBINTERFACE_FAMILY, parent: parent.port };
 }
 
 /**

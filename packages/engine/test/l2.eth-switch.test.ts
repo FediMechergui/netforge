@@ -28,7 +28,7 @@ import { CAM_AGEING_NS, camKey } from '../src/contracts/tables.js';
 import type { ArpRow, CamRow, RouteRow } from '../src/contracts/tables.js';
 import { SEC } from '../src/contracts/time.js';
 import type { TraceEvent } from '../src/contracts/trace.js';
-import { NO_IPV6_CTX, p0Tables, testPortSpec } from './port.fixtures.js';
+import { NO_IPV6_CTX, P2_CTX, p0Tables, testPortSpec } from './port.fixtures.js';
 
 const DEVICE = 'd_sw1';
 const P1 = 'FastEthernet0/1';
@@ -92,6 +92,7 @@ function harness(portIds: readonly PortId[] = [P1, P2, P3, P4]): Harness {
   const streams = new Map<string, Rng>();
 
   const ctx: ProcessCtx = {
+    ...P2_CTX,
     ...NO_IPV6_CTX,
     get now() { return now; },
     deviceId: DEVICE,

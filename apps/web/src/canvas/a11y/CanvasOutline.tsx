@@ -23,14 +23,25 @@
  *    C connects a cable from this port;
  *  - groups, cables and associations: Up/Down move; Right/Left open/close (or go to the group); Enter selects;
  *  - everywhere: Ctrl+Up/Down jump between groups.
+ *
+ * @since P2 (W3 web-canvas, ARCHITECTURE-P2 §6) The topology overlays are mirrored in text: while the VLAN overlay
+ * is on, a port row says its VLAN facts ("access port in VLAN 10", a trunk's list and native VLAN, a mismatch) and a
+ * cable row its shared chip or the disagreement; while the spanning-tree overlay is on, a port row says its role and
+ * state ("alternate port, blocking (crossed)"), a device row whether it is the root and its topology changes, and a
+ * cable row its place in the tree. `decorateOutline` (pure) folds the facts of `l2.ts` / `stp.ts` into the outline
+ * model, so what the canvas draws is what the tree says (every overlay fact has a text form).
  */
 import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { FocusEvent as ReactFocusEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react';
-import type { DeviceId, PortRef, Selection } from '@netforge/engine';
+import type { DeviceId, LinkId, PortRef, Selection, SimSnapshot } from '@netforge/engine';
 import { selectionKey } from '@netforge/engine';
 import * as canvasModule from '../Canvas';
 import { store, useStore } from '../../store/store';
+import type { TopoOverlayState } from '../../store/types';
 import { isPickablePort } from '../../app/cable/cable-compat.js';
+import { l2LinkFacts, l2PortFacts, type OverlayFact } from '../l2';
+import { STP_OVERLAY, TOPO_OVERLAY_DEFAULTS, VLAN_OVERLAY } from '../overlays/registry';
+import { stpDeviceFacts, stpLinkFacts, stpPortFacts } from '../stp';
 import { announceWith, attachCanvasAnnouncer, subscribeFallbackAnnouncements } from './announcer';
 import {
   associationKey,
@@ -52,6 +63,7 @@ import {
   stepInOrder,
   visibleItems,
   type CanvasA11yApi,
+  type CanvasOutlineModel,
   type OutlineAssociation,
   type OutlineDevice,
   type OutlineGroup,
@@ -71,6 +83,71 @@ const canvasHooks = (): typeof canvasModule & { registerCanvasA11y?: RegisterCan
   canvasModule as typeof canvasModule & { registerCanvasA11y?: RegisterCanvasA11y };
 
 const DIRECTION_WORDS = Object.freeze({ up: 'above', down: 'below', left: 'to the left', right: 'to the right' });
+
+// ── overlay facts in text (P2) ───────────────────────────────────────────────
+
+/** The text facts of the topology overlays that are on, keyed like the outline items. */
+export interface OutlineFacts {
+  /** By `portKey` (`device/port`). */
+  readonly ports: ReadonlyMap<string, readonly OverlayFact[]>;
+  readonly devices: ReadonlyMap<DeviceId, readonly OverlayFact[]>;
+  readonly links: ReadonlyMap<LinkId, readonly OverlayFact[]>;
+}
+
+const NO_FACTS: OutlineFacts = Object.freeze({ ports: new Map(), devices: new Map(), links: new Map() });
+
+function merge<K>(into: Map<K, OverlayFact[]>, from: ReadonlyMap<K, OverlayFact>): void {
+  for (const [k, fact] of from) into.set(k, [...(into.get(k) ?? []), fact]);
+}
+
+/** Facts of the overlays the slice switches on, from the same registry models the canvas draws (pure). */
+export function outlineFacts(snapshot: SimSnapshot | null, topo: TopoOverlayState | undefined): OutlineFacts {
+  const state = topo ?? TOPO_OVERLAY_DEFAULTS;
+  if (snapshot === null || (!state.vlan && !state.stp)) return NO_FACTS;
+  const now = snapshot.now;
+  const ports = new Map<string, OverlayFact[]>();
+  const devices = new Map<DeviceId, OverlayFact[]>();
+  const links = new Map<LinkId, OverlayFact[]>();
+  const l2 = VLAN_OVERLAY.sync({ state, snapshot, now });
+  merge(ports, l2PortFacts(l2));
+  merge(links, l2LinkFacts(l2));
+  const stp = STP_OVERLAY.sync({ state, snapshot, now });
+  merge(ports, stpPortFacts(stp));
+  merge(devices, stpDeviceFacts(stp));
+  merge(links, stpLinkFacts(stp));
+  return { ports, devices, links };
+}
+
+function withFacts(description: string, facts: readonly OverlayFact[] | undefined): string {
+  if (facts === undefined || facts.length === 0) return description;
+  return `${description.replace(/\.$/, '')}; ${facts.map((f) => f.text).join('; ')}.`;
+}
+
+function withShort(label: string, facts: readonly OverlayFact[] | undefined): string {
+  if (facts === undefined || facts.length === 0) return label;
+  return `${label} · ${facts.map((f) => f.short).join(' · ')}`;
+}
+
+/** The outline model with the overlay facts folded into its labels and descriptions (the same model when there are none). */
+export function decorateOutline(model: CanvasOutlineModel, facts: OutlineFacts): CanvasOutlineModel {
+  if (facts.ports.size === 0 && facts.devices.size === 0 && facts.links.size === 0) return model;
+  const devices = model.devices.map((d) => {
+    const own = facts.devices.get(d.id);
+    const ports = d.ports.map((p) => {
+      const pf = facts.ports.get(p.key);
+      if (pf === undefined) return p;
+      return Object.freeze({ ...p, label: withShort(p.label, pf), description: withFacts(p.description, pf) });
+    });
+    const changed = own !== undefined || ports.some((p, i) => p !== d.ports[i]);
+    if (!changed) return d;
+    return Object.freeze({ ...d, label: withShort(d.label, own), description: withFacts(d.description, own), ports: Object.freeze(ports) });
+  });
+  const links = model.links.map((l) => {
+    const lf = facts.links.get(l.id);
+    return lf === undefined ? l : Object.freeze({ ...l, label: withShort(l.label, lf), description: withFacts(l.description, lf) });
+  });
+  return Object.freeze({ devices: Object.freeze(devices), links: Object.freeze(links), associations: model.associations });
+}
 
 /** Screen-reader item id of an outline key (keys contain `/` and `:`, which ids tolerate). */
 const itemDomId = (base: string, key: string): string => `${base}-${key}`;
@@ -280,9 +357,12 @@ export function CanvasOutline() {
   const helpId = `${base}-help`;
   const snapshot = useStore((s) => s.snapshot);
   const selection = useStore((s) => s.selection);
+  const topo = useStore((s) => s.topoOverlays);
   const selectedKey = selection === null ? null : selectionKey(selection);
 
-  const model = useMemo(() => buildOutline(snapshot), [snapshot]);
+  const bare = useMemo(() => buildOutline(snapshot), [snapshot]);
+  const facts = useMemo(() => outlineFacts(snapshot, topo), [snapshot, topo]);
+  const model = useMemo(() => decorateOutline(bare, facts), [bare, facts]);
   const [groups, setGroups] = useState<ReadonlySet<OutlineGroup>>(() => new Set<OutlineGroup>(['devices']));
   const [devices, setDevices] = useState<ReadonlySet<DeviceId>>(() => new Set<DeviceId>());
   const [activeKey, setActiveKey] = useState<string>(groupKey('devices'));

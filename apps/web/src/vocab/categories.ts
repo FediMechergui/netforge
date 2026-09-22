@@ -116,6 +116,18 @@ export const CAPABILITY_VOCAB: Readonly<Record<Capability, CapabilityVocab>> = O
   'poe-source': cap('poe-source', 'Power over Ethernet source', ['poe', 'power over ethernet', 'powered switch']),
   'poe-powered': cap('poe-powered', 'Powered over Ethernet', ['poe', 'power over ethernet', 'powered device']),
   modular: cap('modular', 'Modular chassis', ['modular', 'slots', 'modules', 'expansion']),
+  // ── P2 (W1 web-inspector; no model carries these before the W4/W6 catalog flips) ──
+  'managed-switch': cap('managed-switch', 'Managed switching', [
+    'managed switch',
+    'vlan',
+    'trunk',
+    'spanning tree',
+    'etherchannel',
+    'port channel',
+    'port security',
+  ]),
+  'lightweight-ap': cap('lightweight-ap', 'Controller-managed access point', ['lightweight', 'controller', 'capwap', 'access point']),
+  'wireless-controller': cap('wireless-controller', 'Wireless controller', ['wireless controller', 'wlc', 'capwap', 'wlan', 'controller']),
 });
 
 /** Capabilities in canonical order (engine `CAPABILITIES`). */
@@ -162,6 +174,8 @@ export const GUI_PANEL_VOCAB: Readonly<Record<GuiPanelId, GuiPanelVocab>> = Obje
   'radio.link': panel('radio.link', 'Radio link', 'inspector-tab', 'Band, channel and pairing key of a point-to-point radio.'),
   'cell.tower': panel('cell.tower', 'Tower', 'inspector-tab', 'Coverage and attached phones of a mobile network tower.'),
   'modem.status': panel('modem.status', 'Modem', 'inspector-tab', 'Line and local network status of a modem.'),
+  // P2 (the panel itself arrives with the W6 web-inspector item, inspector/WlcPanel.tsx)
+  'wlc.controller': panel('wlc.controller', 'Controller', 'inspector-tab', 'Access points, interfaces, WLANs and clients of a wireless controller.'),
 });
 
 /** GUI panels in engine display order. */

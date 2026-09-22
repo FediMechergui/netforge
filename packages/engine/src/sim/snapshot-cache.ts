@@ -31,10 +31,21 @@
  * `secretToken` (passphrase, peer-key, enable/username/line passwords) is replaced by CONFIG_SECRET_MASK in the
  * rendered running- and startup-config text. The device itself keeps the real value.
  *
+ * P2 (ARCHITECTURE-P2 §2.8, D6; W2 sim). Three port members, all optional by meaning so P1 snapshots keep their
+ * bytes: `parent` (PortSpec.parent, subinterfaces), `dot1q` (PortState.dot1q, subinterfaces), and `l2`, the
+ * `PortL2View` of a BRIDGED port of a VLAN-aware device (`isVlanAware(model)`), derived here at snapshot time from the
+ * running config and the tables — never stored: `config` is `readSwitchport(running, port, model)`; `oper` is
+ * `operOf(config, dtp row)` (a Port-channel: `channelOperOf` over its bundled members' dtp rows); `active` (trunks)
+ * the VLANs allowed AND existing (VLAN 1, the `vlans` rows and the implicit 1002–1005 of `vlanExistsIn`), canonical;
+ * `forwarding` the VLANs whose `stp` row for this port is `forwarding` (canonical; absent when the port has no stp
+ * row at all); `channel` from the port's `etherchannel` row; `security` from its `port-security` row. The view is
+ * written only when it differs from the default (config ≠ DEFAULT_SWITCHPORT, oper 'trunk', channel or security
+ * present). `SimSnapshot.profile` is 'P2' for a P2 world and absent for a P1 one.
+ *
  * Determinism: ports in canonical Map order, devices in creation order, tables in declared order.
  */
 import { portMac } from '../contracts/addr.js';
-import { ROLE_TRAITS, SLOT_ACCEPTS } from '../contracts/catalog.js';
+import { ROLE_TRAITS, SLOT_ACCEPTS, isVlanAware, type DefaultsProfile } from '../contracts/catalog.js';
 import type { DeviceRuntime } from '../contracts/device.js';
 import type { DeviceId } from '../contracts/ids.js';
 import type { PortPhy, PortPhySettings } from '../contracts/link.js';
@@ -42,13 +53,24 @@ import type { MediaSnapshot } from '../contracts/medium.js';
 import type { PortL3, PortState } from '../contracts/port.js';
 import type { CliSessionView } from '../contracts/cli.js';
 import type { ConfigAst } from '../contracts/config.js';
-import type { DeviceSnapshot, PortSnapshot, SimSnapshot, SlotSnapshot, TableSnapshot } from '../contracts/snapshot.js';
-import { TABLE_DESCRIPTORS, type TableName } from '../contracts/tables.js';
+import type { DeviceSnapshot, PortL2View, PortSnapshot, SimSnapshot, SlotSnapshot, TableSnapshot } from '../contracts/snapshot.js';
+import {
+  TABLE_DESCRIPTORS,
+  type DtpRow,
+  type EtherchannelRow,
+  type PortSecurityRow,
+  type StpPortRow,
+  type TableName,
+  type VlanRow,
+} from '../contracts/tables.js';
 import type { SimTime } from '../contracts/time.js';
 import { DEFAULT_METRES_PER_UNIT } from '../contracts/topology.js';
 import type { TraceEvent } from '../contracts/trace.js';
 import { maskConfigSecrets } from '../cli/handlers/show.js';
+import { formatVlanList, vlanListIntersect } from '../core/vlan-list.js';
 import type { LinkModelImpl } from '../link/link.js';
+import { channelOperOf, isImplicitVlan, operOf } from '../protocols/l2/membership.js';
+import { isDefaultSwitchport, readSwitchport } from '../protocols/l2/switchport-config.js';
 
 /** Tables every device snapshot carries in `tables.cam/arp/rib`; any other declared table goes to `tables.extra`. */
 const BASE_TABLE_NAMES: readonly TableName[] = Object.freeze(['cam', 'arp', 'rib']);
@@ -229,7 +251,63 @@ export function buildPortSnapshot(dev: DeviceRuntime, p: PortState, sources: Pic
     const radio = sources.links.radioPortView({ device: dev.id, port: p.id });
     if (radio !== undefined) s.radio = radio.peer !== undefined ? { ...radio, peer: { ...radio.peer } } : { ...radio };
   }
+  // P2 (§2.8, optional by meaning): absent on every P1 port, so P1 snapshots keep their bytes
+  if (traits.bridged) {
+    const l2 = buildPortL2View(dev, p);
+    if (l2 !== undefined) s.l2 = l2;
+  }
+  if (spec.parent !== undefined) s.parent = spec.parent;
+  if (p.dot1q !== undefined) s.dot1q = { vid: p.dot1q.vid, native: p.dot1q.native };
   return s;
+}
+
+// ── P2: the L2 view of a bridged port (§2.8, D6) ────────────────────────────
+
+/**
+ * Canonical list of the VLANs that exist on `dev`: the implicit ones (`isImplicitVlan`: 1 and 1002–1005, read at call
+ * time — rule 12) plus its `vlans` rows.
+ */
+function existingVlanList(dev: Pick<DeviceRuntime, 'tables'>): string {
+  const ids = [1, 1002, 1003, 1004, 1005].filter(isImplicitVlan);
+  const vlans = dev.tables.get<VlanRow>('vlans');
+  if (vlans !== undefined) for (const r of vlans.rows()) if (!ids.includes(r.vlan)) ids.push(r.vlan);
+  return formatVlanList(ids);
+}
+
+/**
+ * @since P2 The `PortL2View` of port `p` of `dev` (file header for the derivation), or undefined when the device is
+ * not VLAN-aware or the view is the default one (config = DEFAULT_SWITCHPORT, oper 'access', no channel, no security).
+ */
+export function buildPortL2View(dev: Pick<DeviceRuntime, 'model' | 'running' | 'tables'>, p: Pick<PortState, 'id' | 'role'>): PortL2View | undefined {
+  if (!isVlanAware(dev.model)) return undefined;
+  const config = readSwitchport(dev.running, p.id, dev.model);
+  const dtp = dev.tables.get<DtpRow>('dtp');
+  const channels = dev.tables.get<EtherchannelRow>('etherchannel');
+  let oper: PortL2View['oper'];
+  if (p.role === 'channel') {
+    const members = channels === undefined ? [] : channels.find((r) => r.bundle === p.id && r.state === 'bundled');
+    oper = channelOperOf(
+      config,
+      members.map((m) => dtp?.get(m.port)),
+    );
+  } else {
+    oper = operOf(config, dtp?.get(p.id));
+  }
+  const channel = channels?.get(p.id);
+  const security = dev.tables.get<PortSecurityRow>('port-security')?.get(p.id);
+  if (isDefaultSwitchport(config) && oper !== 'trunk' && channel === undefined && security === undefined) return undefined;
+
+  const view: PortL2View = { config: { ...config }, oper };
+  if (oper === 'trunk') view.active = vlanListIntersect(config.allowed, existingVlanList(dev));
+  const stpRows = dev.tables.get<StpPortRow>('stp')?.find((r) => r.port === p.id);
+  if (stpRows !== undefined && stpRows.length > 0) {
+    view.forwarding = formatVlanList(stpRows.filter((r) => r.state === 'forwarding').map((r) => r.vlan));
+  }
+  if (channel !== undefined) view.channel = { group: channel.group, bundle: channel.bundle, state: channel.state };
+  if (security !== undefined) {
+    view.security = { status: security.status, count: security.count, max: security.max, violations: security.violations };
+  }
+  return view;
 }
 
 // ── devices ──────────────────────────────────────────────────────────────────
@@ -346,6 +424,8 @@ export interface SimSnapshotInput extends SnapshotSources {
   readonly sessions: CliSessionView[];
   readonly pduCount: number;
   readonly pendingEvents: number;
+  /** @since P2 The world's defaults profile (D2); absent = 'P1'. Written to the snapshot only when 'P2'. */
+  readonly profile?: DefaultsProfile;
 }
 
 /** Assemble a `SimSnapshot`. */
@@ -369,5 +449,7 @@ export function buildSimSnapshot(input: SimSnapshotInput): SimSnapshot {
   };
   const media = input.links.media(input.now);
   if (mediaHasContent(media)) snap.media = media;
+  // P2 (§2.8, optional by meaning): only a P2 world carries it, so P1 snapshots keep their bytes
+  if (input.profile === 'P2') snap.profile = 'P2';
   return snap;
 }

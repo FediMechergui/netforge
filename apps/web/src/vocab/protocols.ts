@@ -86,6 +86,21 @@ export const PROTOCOL_VOCAB: Readonly<Record<KnownProto, ProtocolVocab>> = Objec
   dhcp: entry('dhcp', 'DHCP', 'DH', 'capsule', 'yellow', 'application', 'P1', 'Hands out addresses, gateways and name servers to hosts that ask.'),
   dns: entry('dns', 'DNS', 'N', 'capsule', 'warn', 'application', 'P1', 'Turns host names into addresses.'),
   http: entry('http', 'HTTP', 'HT', 'pentagon', 'accent', 'application', 'P1', 'Requests and responses of web pages.'),
+  // ── P2 (ARCHITECTURE-P2 §2.3, §6; W1 web-inspector). Control frames (spanning tree, LACP, trunk negotiation, port
+  // aggregation, standby hellos) use the hexagon shape of spec §9.1; the dot1q label matches the P1 ethertype name,
+  // so the 0x8100 rendering is unchanged, and dot1q is framing glue like LLC (transparent, §2.3). ──
+  dot1q: entry('dot1q', '802.1Q VLAN tag', 'Q', 'hexagon', 'textDim', 'framing', 'P2',
+    'The four bytes a trunk adds to say which VLAN a frame belongs to; they come off again before an access port.', true),
+  stp: entry('stp', 'Spanning tree', 'ST', 'hexagon', 'warn', 'control', 'P2',
+    'Bridge messages switches exchange to elect a root and block the spare paths of a loop.'),
+  lacp: entry('lacp', 'LACP', 'LA', 'hexagon', 'purple', 'control', 'P2', 'Link aggregation messages that decide which parallel links join one bundle.'),
+  dtp: entry('dtp', 'Trunk negotiation', 'DT', 'hexagon', 'yellow', 'control', 'P2', 'Lets two switch ports agree whether the link between them becomes a trunk.'),
+  dhcpv6: entry('dhcpv6', 'DHCPv6', 'D6', 'capsule', 'yellow', 'application', 'P2', 'Hands out IPv6 addresses and name servers to hosts that ask.'),
+  capwap: entry('capwap', 'CAPWAP', 'CW', 'pentagon', 'blueDeep', 'application', 'P2',
+    'Carries control messages and client traffic between access points and their controller.'),
+  hsrp: entry('hsrp', 'HSRP', 'HS', 'hexagon', 'ok', 'control', 'P2',
+    'Hello messages of routers that share one virtual gateway address, so one can stand in for the other.'),
+  pagp: entry('pagp', 'Port aggregation', 'PG', 'hexagon', 'accent', 'control', 'P2', 'A second way for two switches to agree on a bundle of parallel links.'),
 });
 
 /** Known protocol names in table order. */

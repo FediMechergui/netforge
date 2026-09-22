@@ -263,6 +263,8 @@ export const useStore = create<Store>()(
     },
     cable: { media: persisted.cable.media, open: false },
     overlays: persisted.overlays,
+    // P2 (W2 web-shell): the switching overlays, restored like the wireless ones.
+    topoOverlays: persisted.topoOverlays,
     inspectorTab: 'overview',
     desktopWindows: [],
     a11y: { canvasFocus: null, announcement: null },
@@ -274,7 +276,8 @@ export const useStore = create<Store>()(
     simMode: { mode: 'realtime', list: { ...DEFAULT_SIM_FILTERS.list }, breakOn: null, stoppedAt: null, traceHead: 0 },
     netscope: { captures: [], active: null, filterText: '', applied: '', selected: null, pane: 'packets', streamKey: null, heads: {} },
     lab: { active: null, status: null, browserOpen: true },
-    learn: { courseId: null, lessonId: null },
+    // `lastCourse` (P2) is the persisted course context a new world takes its defaults profile from (D2).
+    learn: { courseId: null, lessonId: null, lastCourse: persisted.learn.lastCourse },
 
     // ── actions ──────────────────────────────────────────────────────────
     applyBatch(batch: EngineBatch) {
@@ -549,6 +552,22 @@ export const useStore = create<Store>()(
       });
     },
 
+    // ── P2 ───────────────────────────────────────────────────────────────
+    setTopoOverlay(k, v) {
+      if (get().topoOverlays[k] === v) return;
+      set((s) => {
+        // A fresh object, so persistence (and the canvas sync) sees the change by reference.
+        s.topoOverlays = { ...s.topoOverlays, [k]: v };
+      });
+    },
+
+    setLastCourse(courseId) {
+      if (get().learn.lastCourse === courseId) return;
+      set((s) => {
+        s.learn.lastCourse = courseId;
+      });
+    },
+
     setInspectorTab(t) {
       if (get().inspectorTab === t) return;
       set((s) => {
@@ -742,7 +761,8 @@ function applyP1Fields(s: Draft<Store>, batch: EngineBatch): void {
 function recordMarkersAndFlashes(s: Draft<Store>, events: readonly TraceEvent[], wall: number): void {
   let flashIndex: Map<string, number> | undefined;
   for (const ev of events) {
-    if (ev.kind === 'drop') {
+    // P2: a background drop (a BPDU discarded by a host, a keepalive) spawns no marker unless background frames are shown.
+    if (ev.kind === 'drop' && (ev.background !== true || s.overlays.backgroundFrames)) {
       const at: DropMarker['at'] = {};
       if (ev.device !== undefined) at.device = ev.device;
       if (ev.link !== undefined) at.link = ev.link;

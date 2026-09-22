@@ -5,12 +5,18 @@
  * channel on the canvas), the canvas scale used for radio distances (`engine.setCanvasScale`), the dock tabs from
  * the one registry and the pane toggles. The Help list is the `HOTKEYS` table the key handler implements.
  *
- * @since P2 `CoursesButton` is the door back to the course layer (learn/LearnShell): the lesson that was open,
+ * @since P2 (W2 web-shell) The "Switching overlays" section of the View menu edits the persisted `topoOverlays`
+ * slice: one toggle per registered topology overlay (`TOPO_OVERLAY_MENU`, from the canvas registry) and, while the
+ * matching overlay is on, a VLAN selector (`VLAN_SELECTOR_MENU`) listing the VLAN ids the world knows. Web-canvas
+ * (W3) draws from the same slice.
+ *
+ * @since course `CoursesButton` is the door back to the course layer (learn/LearnShell): the lesson that was open,
  * or the landing page.
  */
-import { DEFAULT_METRES_PER_UNIT } from '@netforge/engine';
+import { DEFAULT_METRES_PER_UNIT, type SimSnapshot } from '@netforge/engine';
 import { engine, defaultSeed } from '../bridge/client';
 import type { PlaybackMode } from '../bridge/protocol';
+import { OVERLAY_MODULES, VLAN_OVERLAY, type OverlayId } from '../canvas/overlays/registry';
 import { DOCK_MIN_HEIGHT, DOCK_OPEN_HEIGHT, DOCK_TABS, INSPECTOR_HIDDEN_BELOW, INSPECTOR_OPEN_WIDTH } from '../dock/registry';
 import { showDockTab } from '../shared/openDeviceSurface';
 import { store, useStore } from '../store/store';
@@ -35,6 +41,74 @@ export const OVERLAY_MENU: readonly OverlayMenuEntry[] = Object.freeze([
   { key: 'channelLabels', label: 'Channel labels', hint: 'Band and channel under each radio.' },
   { key: 'backgroundFrames', label: 'Background frames', hint: 'Animate keepalives and beacons as well.' },
 ]);
+
+// ── P2 (W2 web-shell): the "Switching overlays" menu over the persisted `topoOverlays` slice ─────────────────────
+// The toggles come from the canvas overlay registry (one entry per overlay, in paint order; web-canvas W3 draws them
+// from the same slice), the two VLAN selectors are this menu's own. Every item carries a stable `data-menu-id`.
+
+/** A toggle of the `topoOverlays` slice as the View menu lists it. */
+export interface TopoOverlayMenuEntry {
+  /** Stable id (`data-menu-id`): `topo-overlay-<overlay id>`. */
+  readonly id: `topo-overlay-${OverlayId}`;
+  readonly key: 'vlan' | 'stp' | 'capwap';
+  readonly label: string;
+  readonly hint: string;
+}
+
+/** Switching overlay toggles, in menu order (one per registered overlay; exhaustive over the slice's booleans). */
+export const TOPO_OVERLAY_MENU: readonly TopoOverlayMenuEntry[] = Object.freeze(
+  OVERLAY_MODULES.map((m) => Object.freeze({ id: `topo-overlay-${m.id}` as const, key: m.toggle, label: m.label, hint: m.hint })),
+);
+
+/** A VLAN selector of the slice: which VLAN an overlay draws (null = the `none` choice). Shown while `shows` is on. */
+export interface VlanSelectorMenuEntry {
+  /** Stable id (`data-menu-id` of its heading; each choice is `<id>-<vlan>` or `<id>-none`). */
+  readonly id: 'stp-vlan' | 'vlan-focus';
+  readonly key: 'stpVlan' | 'vlanFocus';
+  readonly shows: 'stp' | 'vlan';
+  readonly label: string;
+  /** The label of the null choice. */
+  readonly none: string;
+  readonly hint: string;
+}
+
+/** The two VLAN selectors, in menu order (exhaustive over the slice's VLAN keys). */
+export const VLAN_SELECTOR_MENU: readonly VlanSelectorMenuEntry[] = Object.freeze([
+  {
+    id: 'stp-vlan',
+    key: 'stpVlan',
+    shows: 'stp',
+    label: 'Spanning tree of VLAN',
+    none: 'Lowest VLAN',
+    hint: 'Each VLAN elects its own tree; pick the one the overlay draws.',
+  },
+  {
+    id: 'vlan-focus',
+    key: 'vlanFocus',
+    shows: 'vlan',
+    label: 'Focus on VLAN',
+    none: 'Every VLAN',
+    hint: 'Dim the ports and trunks that do not carry this VLAN.',
+  },
+]);
+
+/** How many VLAN ids a selector lists at most (the current choice is always among them). */
+export const VLAN_MENU_MAX = 16;
+
+/**
+ * The VLAN ids a selector offers: every VLAN a device of the world knows (VLAN 1, its VLAN rows, the VLANs its
+ * ports use), ascending, at most `VLAN_MENU_MAX` of them — plus `current` when it is set, so a persisted choice
+ * from another world can always be seen and cleared. No snapshot: only `current`.
+ */
+export function vlanChoices(snapshot: Pick<SimSnapshot, 'devices'> | null | undefined, current: number | null): number[] {
+  const ids = new Set<number>();
+  if (snapshot != null) {
+    for (const l2 of VLAN_OVERLAY.select(snapshot as SimSnapshot).values()) for (const v of l2.vlans) ids.add(v);
+  }
+  const out = [...ids].sort((a, b) => a - b).slice(0, VLAN_MENU_MAX);
+  if (current !== null && !out.includes(current)) out.push(current);
+  return out.sort((a, b) => a - b);
+}
 
 /** Canvas scale presets (metres per canvas unit). */
 export const CANVAS_SCALE_PRESETS: readonly number[] = Object.freeze([0.1, 0.25, 0.5, 1, 2]);
@@ -73,7 +147,7 @@ function Brand() {
 }
 
 /**
- * @since P2 The way back into the course layer from the sandbox: the lesson you were reading if there is one,
+ * @since course The way back into the course layer from the sandbox: the lesson you were reading if there is one,
  * the landing page otherwise. Absent in a shell whose store has no learn slice yet (transition rule).
  */
 function CoursesButton() {
@@ -152,17 +226,62 @@ interface CheckItemProps {
   label: string;
   hint: string;
   onToggle: () => void;
+  /** @since P2 A stable `data-menu-id` (the switching overlay items). */
+  id?: string;
 }
 
 /** A menu entry that toggles in place (the menu stays open); state is shown by a glyph and by text. */
-function CheckItem({ checked, label, hint, onToggle }: CheckItemProps) {
+function CheckItem({ checked, label, hint, onToggle, id }: CheckItemProps) {
   return (
-    <button type="button" role="menuitemcheckbox" aria-checked={checked} className="menu-item" title={hint} onClick={onToggle}>
+    <button type="button" role="menuitemcheckbox" aria-checked={checked} className="menu-item" title={hint} onClick={onToggle} data-menu-id={id}>
       <span>
         <span aria-hidden="true">{checked ? '☑' : '☐'}</span> {label}
       </span>
       <span className="hint">{checked ? 'on' : 'off'}</span>
     </button>
+  );
+}
+
+interface RadioItemProps {
+  checked: boolean;
+  label: string;
+  onPick: () => void;
+  id: string;
+}
+
+/** @since P2 One choice of a selector group (the menu stays open); the chosen one is marked by a glyph and by text. */
+function RadioItem({ checked, label, onPick, id }: RadioItemProps) {
+  return (
+    <button type="button" role="menuitemradio" aria-checked={checked} className="menu-item" onClick={onPick} data-menu-id={id}>
+      <span>
+        <span aria-hidden="true">{checked ? '●' : '○'}</span> {label}
+      </span>
+      <span className="hint">{checked ? 'chosen' : ''}</span>
+    </button>
+  );
+}
+
+interface VlanSelectorProps {
+  entry: VlanSelectorMenuEntry;
+  value: number | null;
+  choices: readonly number[];
+  onPick: (v: number | null) => void;
+}
+
+/** @since P2 A VLAN selector of the "Switching overlays" menu: the null choice first, then the world's VLAN ids. */
+function VlanSelector({ entry, value, choices, onPick }: VlanSelectorProps) {
+  return (
+    <>
+      <MenuHeading>
+        <span title={entry.hint} data-menu-id={entry.id}>
+          {entry.label}
+        </span>
+      </MenuHeading>
+      <RadioItem id={`${entry.id}-none`} checked={value === null} label={entry.none} onPick={() => onPick(null)} />
+      {choices.map((v) => (
+        <RadioItem key={v} id={`${entry.id}-${v}`} checked={value === v} label={`VLAN ${v}`} onPick={() => onPick(v)} />
+      ))}
+    </>
   );
 }
 
@@ -177,6 +296,9 @@ function ViewMenu() {
   const setInspectorWidth = useStore((s) => s.setInspectorWidth);
   const overlays = useStore((s) => s.overlays);
   const setOverlay = useStore((s) => s.setOverlay);
+  const topo = useStore((s) => s.topoOverlays);
+  const setTopoOverlay = useStore((s) => s.setTopoOverlay);
+  const snapshot = useStore((s) => s.snapshot);
   const ready = useStore((s) => s.ready);
   const scale = useStore((s) => s.snapshot?.media?.metresPerUnit ?? DEFAULT_METRES_PER_UNIT);
   const view = useStore((s) => s.view);
@@ -208,6 +330,15 @@ function ViewMenu() {
           {OVERLAY_MENU.map((o) => (
             <CheckItem key={o.key} checked={overlays[o.key]} label={o.label} hint={o.hint} onToggle={() => setOverlay(o.key, !overlays[o.key])} />
           ))}
+          <MenuSeparator />
+          <MenuHeading>Switching overlays</MenuHeading>
+          {TOPO_OVERLAY_MENU.map((o) => (
+            <CheckItem key={o.id} id={o.id} checked={topo[o.key]} label={o.label} hint={o.hint} onToggle={() => setTopoOverlay(o.key, !topo[o.key])} />
+          ))}
+          {VLAN_SELECTOR_MENU.filter((sel) => topo[sel.shows]).map((sel) => (
+            <VlanSelector key={sel.id} entry={sel} value={topo[sel.key]} choices={vlanChoices(snapshot, topo[sel.key])} onPick={(v) => setTopoOverlay(sel.key, v)} />
+          ))}
+          <MenuSeparator />
           <MenuHeading>Canvas scale</MenuHeading>
           {CANVAS_SCALE_PRESETS.map((m) => (
             <MenuItem

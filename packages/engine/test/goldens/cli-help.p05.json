@@ -3355,7 +3355,8 @@
       "nslookup",
       "ping",
       "show",
-      "tracert"
+      "tracert",
+      "voice"
     ],
     "user-exec show": [
       "arp",

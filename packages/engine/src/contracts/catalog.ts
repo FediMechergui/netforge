@@ -10,6 +10,7 @@
  * All labels and messages are ORIGINAL wording (§1.6).
  */
 import type { ProcessName } from './ids.js';
+import type { DeviceModel } from './device.js';
 import type { PortKind, PortSpec } from './port.js';
 import type { PrivilegeLevel } from './cli.js';
 import type { SimTime } from './time.js';
@@ -17,15 +18,30 @@ import { HOUR, MIN, SEC } from './time.js';
 
 // ── build stages ─────────────────────────────────────────────────────────────
 
-/** Delivery stage of a feature (D1). `since` tags in contracts and catalog derivations use it. */
-export type BuildStage = 'P0' | 'P0.5' | 'P1';
+/** Delivery stage of a feature (D1). `since` tags in contracts and catalog derivations use it. 'P2' @since P2. */
+export type BuildStage = 'P0' | 'P0.5' | 'P1' | 'P2';
 
 /** Stages in delivery order. */
-export const BUILD_STAGES: readonly BuildStage[] = ['P0', 'P0.5', 'P1'];
+export const BUILD_STAGES: readonly BuildStage[] = ['P0', 'P0.5', 'P1', 'P2'];
 
 /** True when something delivered in stage `since` exists in a build of stage `current`. */
 export function stageIncluded(since: BuildStage, current: BuildStage): boolean {
   return BUILD_STAGES.indexOf(since) <= BUILD_STAGES.indexOf(current);
+}
+
+// ── defaults profiles (ARCHITECTURE-P2 D2) ───────────────────────────────────
+
+/**
+ * @since P2 Which stage's DEFAULT behaviours a world uses (D2). Absent in a topology = 'P1'. Never gates a feature:
+ * every P2 command works in a P1 world when typed. Visible defaults are config lines replayed at every boot
+ * (`DeviceModel.profileConfig`); invisible defaults are read from `ProcessCtx.profile` (P2: proxy ARP only).
+ */
+export type DefaultsProfile = 'P1' | 'P2';
+/** @since P2 Profiles in delivery order. */
+export const DEFAULTS_PROFILES: readonly DefaultsProfile[] = ['P1', 'P2'];
+/** @since P2 True when the defaults introduced by `since` apply in a world whose profile is `profile`. */
+export function profileIncludes(profile: DefaultsProfile, since: DefaultsProfile): boolean {
+  return DEFAULTS_PROFILES.indexOf(since) <= DEFAULTS_PROFILES.indexOf(profile);
 }
 
 // ── capabilities ─────────────────────────────────────────────────────────────
@@ -51,15 +67,29 @@ export const CAPABILITIES = [
   'poe-source',
   'poe-powered',
   'modular',
+  // ── P2 (appended: tuple order = storage order, so every existing list is unchanged) ──
+  /** @since P2 VLAN-aware bridge with VLAN database, DTP, spanning tree, EtherChannel, port security (D5). */
+  'managed-switch',
+  /** @since P2 Access point managed by a controller over CAPWAP (D17). */
+  'lightweight-ap',
+  /** @since P2 Controller appliance: CAPWAP controller + VLAN-aware bridge, no spanning tree (D17). */
+  'wireless-controller',
 ] as const;
 export type Capability = (typeof CAPABILITIES)[number];
 
-/** Implications applied transitively by `expandCapabilities`. */
+/**
+ * Implications applied transitively by `expandCapabilities`. P2 adds the rows of its own three capabilities; no
+ * existing implication changes (D5: `layer3-switch` does NOT imply `managed-switch`, because `expandCapabilities`
+ * has no stage — the multilayer and data-centre models list `managed-switch` explicitly in their W4 data).
+ */
 export const CAPABILITY_IMPLIES: Readonly<Partial<Record<Capability, readonly Capability[]>>> = {
   server: ['host'],
   'layer3-switch': ['switching', 'routing'],
   firewall: ['routing'],
   'nat-gateway': ['routing'],
+  'managed-switch': ['switching'],
+  'lightweight-ap': ['wifi-ap'],
+  'wireless-controller': ['switching'],
 };
 
 /** Pairs that may not coexist on one model (catalog validation error). */
@@ -184,6 +214,13 @@ export const PORT_ROLES = [
   'console',
   'svi',
   'virtual',
+  // ── P2 (appended) ──
+  /** @since P2 `interface Port-channelN`: bridged, virtual, egress owned by `etherchannel` (D10). */
+  'channel',
+  /** @since P2 Router subinterface `<parent>.<n>`: l3, virtual, egress through `PortSpec.parent` (D11). */
+  'subif',
+  /** @since P2 The controller's CAPWAP tunnel port (`Capwap0`): bridged, hairpin, egress owned by `capwap-ac` (D17). */
+  'wlan-tunnel',
 ] as const;
 export type PortRole = (typeof PORT_ROLES)[number];
 
@@ -237,9 +274,11 @@ export interface PortRoleTraits {
    *  'link'  → DeviceRuntimeDeps.transmit (cable, segment, PtP radio, air or cell medium; the link model routes);
    *  'owner' → `model.portOwners[role]`'s `Process.onEgress` when another process sends; the owner's own send on a
    *            virtual port is dropped 'other' detail 'virtual-transmit';
-   *  'loop'  → counted, then immediately re-enters the frame pipeline on the same port (Action 'ingress').
+   *  'loop'  → counted, then immediately re-enters the frame pipeline on the same port (Action 'ingress');
+   *  'parent' (@since P2) → count out on the subinterface, push its 802.1Q tag unless native, then transmit on
+   *            `PortSpec.parent` exactly like a 'link' send on that port (ARCHITECTURE-P2 §3.4).
    */
-  readonly egress: 'link' | 'owner' | 'loop';
+  readonly egress: 'link' | 'owner' | 'loop' | 'parent';
   /** Default copper wiring for non-auto-MDIX ethernet ports whose DEFAULT role is this one (never changed by a role flip); null = not applicable. */
   readonly wiring: Wiring | null;
   /** Original UI label. The UI labels a `routed` port 'Network adapter' when the device has `host` but not `routing`. */
@@ -260,9 +299,17 @@ export const ROLE_TRAITS: Readonly<Record<PortRole, PortRoleTraits>> = Object.fr
   console: { frames: false, bridged: false, hairpin: false, l3: false, linkable: true, configurable: false, virtual: false, egress: 'link', wiring: null, label: 'Console port' },
   svi: { frames: true, bridged: false, hairpin: false, l3: true, linkable: false, configurable: true, virtual: true, egress: 'owner', wiring: null, label: 'Switch virtual interface' },
   virtual: { frames: true, bridged: false, hairpin: false, l3: true, linkable: false, configurable: true, virtual: true, egress: 'loop', wiring: null, label: 'Virtual interface' },
+  // ── P2 ──
+  channel: { frames: true, bridged: true, hairpin: false, l3: false, linkable: false, configurable: true, virtual: true, egress: 'owner', wiring: null, label: 'Port channel' },
+  subif: { frames: true, bridged: false, hairpin: false, l3: true, linkable: false, configurable: true, virtual: true, egress: 'parent', wiring: null, label: 'Subinterface' },
+  'wlan-tunnel': { frames: true, bridged: true, hairpin: true, l3: false, linkable: false, configurable: false, virtual: true, egress: 'owner', wiring: null, label: 'Controller tunnel' },
 });
 
-/** Roles whose ports are bridge members (eth-switch selectors declare `roles: BRIDGED_ROLES`). */
+/**
+ * Roles whose ports are bridge members (eth-switch selectors declare `roles: BRIDGED_ROLES`). BRIDGED_ROLES, L3_ROLES
+ * and FRAME_ROLES are derived, so the P2 roles join them with no selector edit (no port carries a P2 role before the
+ * wave items that create them).
+ */
 export const BRIDGED_ROLES: readonly PortRole[] = PORT_ROLES.filter((r) => ROLE_TRAITS[r].bridged);
 /** Roles that may hold L3 addresses (arp/ipv4/ipv6/nd selectors declare `roles: L3_ROLES`). */
 export const L3_ROLES: readonly PortRole[] = PORT_ROLES.filter((r) => ROLE_TRAITS[r].l3);
@@ -284,6 +331,10 @@ export const ROLE_KINDS: Readonly<Record<PortRole, readonly PortKind[]>> = Objec
   console: ['console', 'usb'],
   svi: ['virtual'],
   virtual: ['virtual'],
+  // ── P2 ──
+  channel: ['virtual'],
+  subif: ['virtual'],
+  'wlan-tunnel': ['virtual'],
 });
 
 /**
@@ -500,16 +551,28 @@ export interface ModuleInstall {
 
 /** A family of creatable virtual interfaces (`interface Vlan10`, `interface Loopback0`). */
 export interface VirtualFamilySpec {
-  /** Long family: 'Vlan' | 'Loopback'. */
+  /** Long family: 'Vlan' | 'Loopback' (P2 adds 'Port-channel' and the controller's tunnel family). */
   readonly family: string;
   readonly short: string;
-  readonly role: 'svi' | 'virtual';
+  /** 'channel' and 'wlan-tunnel' @since P2. */
+  readonly role: 'svi' | 'virtual' | 'channel' | 'wlan-tunnel';
   readonly min: number;
   readonly max: number;
   /** Admin state of a new instance. L2/L3 switch SVIs start down (IOS default, including auto management Vlan1); home-router Vlan1 and loopbacks start up. */
   readonly defaultAdminUp: boolean;
   /** Instances created at construction; they cannot be removed (`no interface Vlan1` → error). */
   readonly auto?: readonly number[];
+}
+
+/**
+ * @since P2 Subinterface support of a model (routers, multilayer switches): `<parent>.<n>` on ports whose effective
+ * role is in `roles` (D11). `defineModel` derives it (W1 catalog).
+ */
+export interface SubinterfaceSpec {
+  /** Derived: ['routed'] when the model has 'routing'. */
+  readonly roles: readonly PortRole[];
+  /** Highest n (65535). */
+  readonly max: number;
 }
 
 // ── CLI and GUI descriptors ──────────────────────────────────────────────────
@@ -531,7 +594,7 @@ export interface CliSpec {
 /**
  * Device GUI panels in display order (the web renders them; ids are data). `desktop.*` panels are
  * Desktop apps of end devices; the others are inspector settings panels. `desktop.web-browser` and
- * `services` arrive in P1.
+ * `services` arrive in P1; `wlc.controller` (the wireless controller appliance, ARCHITECTURE-P2 D17) @since P2.
  */
 export const GUI_PANELS = [
   'physical',
@@ -546,6 +609,8 @@ export const GUI_PANELS = [
   'radio.link',
   'cell.tower',
   'modem.status',
+  // ── P2 (appended) ──
+  'wlc.controller',
 ] as const;
 export type GuiPanelId = (typeof GUI_PANELS)[number];
 
@@ -647,10 +712,42 @@ export const CAPABILITY_PROCESSES: Readonly<Record<Capability, readonly Capabili
   'poe-source': [],
   'poe-powered': [],
   modular: [],
+  // ── P2 ── These rows start EMPTY: a daemon name enters PROCESS_ORDER, CAPABILITY_PROCESSES and the registry only in
+  // the change that registers its factory (ARCHITECTURE-P2 §0 rule 3; §2.1 table: the W4 catalog item adds vlan, dtp,
+  // etherchannel, stp to managed-switch; the W6 catalog item adds capwap-wtp, udp, dhcp-client to lightweight-ap and
+  // vlan, udp, capwap-ac to wireless-controller; every P2 row is `since: 'P2'`). They exist only because the record
+  // is exhaustive over Capability.
+  'managed-switch': [],
+  'lightweight-ap': [],
+  'wireless-controller': [],
 });
 
-/** @since P0.5 Capabilities that run eth-switch and own a CAM (scope of `show mac address-table` / `clear mac address-table`). */
-export const BRIDGING_CAPABILITIES: readonly Capability[] = Object.freeze(['switching', 'wifi-ap', 'radio-bridge', 'cellular-cell', 'modem', 'cloud']);
+/**
+ * @since P0.5 Capabilities that run eth-switch and own a CAM (scope of `show mac address-table` / `clear mac address-table`).
+ * `wireless-controller` @since P2 (no model carries it before the W6 catalog item).
+ */
+export const BRIDGING_CAPABILITIES: readonly Capability[] = Object.freeze(['switching', 'wifi-ap', 'radio-bridge', 'cellular-cell', 'modem', 'cloud', 'wireless-controller']);
+
+// ── P2 L2 control plane (ARCHITECTURE-P2 D5, D6) ─────────────────────────────
+
+/** @since P2 The daemon whose presence makes eth-switch VLAN-aware (D5). */
+export const VLAN_AWARE_PROCESS: ProcessName = 'vlan';
+
+/**
+ * @since P2 eth-switch classifies VLANs, tags trunks and keys the CAM per VLAN only when this is true (D5). Keyed on
+ * the STAGE-DERIVED daemon list, so P0.5/P1-stage models and fixtures are never VLAN-aware.
+ */
+export function isVlanAware(model: Pick<DeviceModel, 'processes'>): boolean {
+  return model.processes.includes(VLAN_AWARE_PROCESS);
+}
+
+/**
+ * @since P2 Daemons that take part in the L2 change signal (D6), in their final PROCESS_ORDER order. The runtime fans
+ * an `l2Changed` action out to `L2_PROCESSES ∩ model.processes` (minus the issuer) in THIS order, so the fan-out never
+ * depends on when a name enters PROCESS_ORDER; a name whose factory is not registered yet is on no model and is
+ * skipped. 'vtp' is appended in its place only by the C1 item, in the change that registers the vtp factory (§0 rule 3).
+ */
+export const L2_PROCESSES: readonly ProcessName[] = Object.freeze(['eth-switch', 'vlan', 'dtp', 'etherchannel', 'stp']);
 
 // ── hardware operations (D7) ─────────────────────────────────────────────────
 

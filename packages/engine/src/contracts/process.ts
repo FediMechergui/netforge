@@ -40,12 +40,13 @@ import type { ConfigAst, ConfigDelta } from './config.js';
 import type { DeviceModel } from './device.js';
 import type { DropReason } from './link.js';
 import type { LayerSpec, Pdu, PduMeta, FieldValue, MutationReason, RewrapOp } from './pdu.js';
-import type { Ipv6PortAddress, PortIpv4Address, PortView } from './port.js';
+import type { ErrDisableCause, Ipv6PortAddress, PortIpv4Address, PortView, VirtualIpv4 } from './port.js';
 import type { Rng } from './rng.js';
 import type { DeviceTables, Lpm6Result, LpmResult, RouteRow } from './tables.js';
 import type { SimTime } from './time.js';
-import type { Capability, PortRole } from './catalog.js';
+import type { Capability, DefaultsProfile, PortRole } from './catalog.js';
 import type { AirView, MediumEvent, MediumOp } from './medium.js';
+import type { BssSettings, RadioSettings } from './rf.js';
 import type { AppPayload, ProcessEvent, SocketId } from './transport.js';
 
 /**
@@ -69,9 +70,54 @@ export interface DemuxSelector {
   ethertype?: number;
   /** @since P0.5 */
   roles: readonly PortRole[];
+  /**
+   * @since P2 (optional by meaning; wireless) dot11 only: matches 802.11 data frames (+1 score). EAPOL still reaches
+   * wlan-ap via the PROCESS_ORDER tie (both score 2).
+   */
+  frame?: 'data';
 }
 
 export type Severity = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7; // syslog: 0 emerg … 7 debug
+
+/** @since P2 State machines that report transitions through `ctx.transition` (ARCHITECTURE-P2 D19). 'hsrp' [S2], 'pagp' [S3]. */
+export type FsmMachine =
+  | 'stp-port'
+  | 'stp-bridge'
+  | 'dtp'
+  | 'lacp'
+  | 'channel'
+  | 'port-security'
+  | 'err-disable'
+  | 'nat'
+  | 'dhcpv6'
+  | 'capwap-wtp'
+  | 'capwap-ac'
+  // [SHOULD S2]
+  | 'hsrp'
+  // [SHOULD S3]
+  | 'pagp';
+
+/**
+ * @since P2 One state-machine transition. `subject` is stable and canonical-PortId based — never an abbreviation:
+ * 'VLAN0010 GigabitEthernet0/1', 'Port-channel1 GigabitEthernet0/2', 'GigabitEthernet0/1' (dtp), 'controller
+ * 192.168.99.5' (capwap-wtp). The history strip and the timeline lanes key on it.
+ */
+export interface FsmTransition {
+  readonly machine: FsmMachine;
+  readonly subject: string;
+  readonly port?: PortId;
+  /** VLAN, channel group, HSRP group or MST instance. */
+  readonly instance?: number;
+  readonly from: string;
+  readonly to: string;
+  /** Original-wording reason ('superior BPDU received', 'forward delay expired'). */
+  readonly cause?: string;
+  /** The PDU that triggered the transition, when one did. */
+  readonly pdu?: PduId;
+}
+
+/** @since P2 What changed in an L2 change signal (D6). */
+export type L2ChangeKind = 'vlans' | 'trunk' | 'channel' | 'stp' | 'security';
 
 export interface DebugEvent {
   readonly at: SimTime;
@@ -81,6 +127,11 @@ export interface DebugEvent {
   readonly category: string;
   readonly message: string;
   readonly data?: Record<string, unknown>;
+  /**
+   * @since P2 (optional by meaning) Set only through `ctx.transition` (D19); P0/P1 daemons never set it, so their
+   * debug bytes are unchanged.
+   */
+  readonly fsm?: FsmTransition;
 }
 
 /** JSON-serializable state for the UI (state-machine diagrams, tables, inspector "Processes" tab). */
@@ -105,8 +156,12 @@ export type ProcessRequest =
    * The PduId never changes across L3→L2.
    */
   | { kind: 'arp.sendVia'; pdu: Pdu; nextHop: Ipv4Address; iface: PortId; cause?: string }
-  /** anyone → arp: send a gratuitous ARP for an interface address (after `ip address` on an up port). */
-  | { kind: 'arp.gratuitous'; iface: PortId }
+  /**
+   * anyone → arp: send a gratuitous ARP for an interface address (after `ip address` on an up port).
+   * @since P2 (optional by meaning) `address`/`mac` announce another address with another MAC (a virtual4 entry:
+   * ipv4 on an `ipv4.virtual` add with local true); absent = today's behaviour (the interface address and MAC).
+   */
+  | { kind: 'arp.gratuitous'; iface: PortId; address?: Ipv4Address; mac?: MacAddress }
   /**
    * @since P1 dhcp-client → arp. Send `count` (default APIPA_PROBES) ARP requests out `iface`, `intervalNs`
    * (default APIPA_PROBE_INTERVAL_NS) apart: spa 0.0.0.0, sha = macOf(iface), tha 0, tpa = address, broadcast.
@@ -165,7 +220,13 @@ export type ProcessRequest =
   | { kind: 'icmp6.probe'; owner: ProcessName; token: string; target: Ipv6Address; hopLimit: number; timeoutNs: SimTime; sizeBytes?: number }
 
   // ── P1: sockets (udp) — ids chosen by the owner ('<owner>#<n>') ──
-  | { kind: 'udp.open'; owner: ProcessName; socket: SocketId; family: IpFamily; localAddr?: IpAddress; localPort?: number; iface?: PortId }
+  /**
+   * `tunnel` @since P2 (optional by meaning; wireless): a datagram matching a tunnel socket is delivered as
+   * `sock.datagram` WITHOUT udp's `consume` action — the owner takes over the PDU's lifecycle (it rewraps and forwards
+   * the same PduId, or consumes/drops it itself). Used only by capwap-ac and capwap-wtp for the data channel (5247),
+   * so a tunnelled frame shows one PduId end to end and no `pduConsumed` before the station or the gateway (§3.12).
+   */
+  | { kind: 'udp.open'; owner: ProcessName; socket: SocketId; family: IpFamily; localAddr?: IpAddress; localPort?: number; iface?: PortId; tunnel?: true }
   | ({ kind: 'udp.send'; socket: SocketId; dst: IpAddress; dstPort: number; src?: IpAddress; iface?: PortId; ttl?: number; cause?: string; tag?: string; triggeredBy?: PduId } & AppPayload)
   | { kind: 'udp.close'; socket: SocketId }
 
@@ -194,6 +255,43 @@ export type ProcessRequest =
   | { kind: 'job.abort'; session: SessionId }
   /** @since P0.5 GUI → wlan-client: refresh the scan list in its StateView. */
   | { kind: 'wlan.scan'; port: PortId }
+
+  // ── P2: NAT hooks, virtual addresses, DHCPv6 leases (ARCHITECTURE-P2 §2.4, D14, D15, D16) ──
+  /**
+   * @since P2 ipv4 → nat: a packet arrived on an `ip nat outside` port, BEFORE the for-me test. nat answers with
+   * exactly one of: request ipv4 'ipv4.resume' (translated or not), or a drop.
+   */
+  | { kind: 'nat.inbound'; pdu: Pdu; inPort: PortId }
+  /**
+   * @since P2 ipv4 → nat: routed, TTL already decremented, inPort inside, iface outside. nat answers with exactly one
+   * of: request arp 'arp.sendVia' {pdu, nextHop, iface, cause}, or a drop ('nat-exhausted' | other).
+   */
+  | { kind: 'nat.outbound'; pdu: Pdu; inPort: PortId; iface: PortId; nextHop: Ipv4Address; cause?: string }
+  /** @since P2 nat → ipv4: continue receive processing at the for-me test; never handed to nat again. */
+  | { kind: 'ipv4.resume'; pdu: Pdu; inPort: PortId }
+  /** @since P2 cli → nat: `clear ip nat translation *` (dynamic rows only). */
+  | { kind: 'nat.clear'; session?: SessionId }
+  /**
+   * @since P2 nat (and hsrp with S2) → ipv4: ipv4 merges by (owner, address), writes setPortL3 virtual4, and for an
+   * add with `local` true sends arp.gratuitous {iface, address, mac}.
+   */
+  | { kind: 'ipv4.virtual'; op: 'add' | 'remove'; iface: PortId; address: Ipv4Address; mac: MacAddress; local: boolean; owner: ProcessName }
+  /** @since P2 [SHOULD S2] hsrp → ipv4: merges by (owner, group) and writes setPortL3 groups4. */
+  | { kind: 'ipv4.group'; op: 'join' | 'leave'; iface: PortId; group: Ipv4Address; owner: ProcessName }
+  /**
+   * @since P2 dhcpv6-client → ipv6: add/remove an Ipv6PortAddress with origin 'dhcpv6' (prefixLen 128), tentative →
+   * DAD.
+   */
+  | {
+      kind: 'ipv6.lease';
+      op: 'bind' | 'unbind';
+      iface: PortId;
+      address?: Ipv6Address;
+      prefixLen?: number;
+      preferredUntil?: SimTime;
+      validUntil?: SimTime;
+      server?: Ipv6Address;
+    }
   /** Extension slot: non-built-in requests must be namespaced `ext.<name>` so built-in kinds still narrow. */
   | { kind: `ext.${string}`; [k: string]: unknown };
 
@@ -222,7 +320,18 @@ export type Action =
    * gate. P1 W2 device adds merge and keeps this fallback. P1 W3 ipv4 switches to `ipv4: null` and updates
    * ip.ipv4.test. W8 deletes the fallback.
    */
-  | { type: 'setPortL3'; port: PortId; ipv4?: PortIpv4Address | null; ipv6?: readonly Ipv6PortAddress[] | null; ipv6Enabled?: boolean | null; groups6?: readonly Ipv6Address[] | null }
+  | {
+      type: 'setPortL3';
+      port: PortId;
+      ipv4?: PortIpv4Address | null;
+      ipv6?: readonly Ipv6PortAddress[] | null;
+      ipv6Enabled?: boolean | null;
+      groups6?: readonly Ipv6Address[] | null;
+      /** @since P2 Same merge rules; written only by ipv4 (D15). */
+      virtual4?: readonly VirtualIpv4[] | null;
+      /** @since P2 [SHOULD S2] Same merge rules; written only by ipv4 (D15). */
+      groups4?: readonly Ipv4Address[] | null;
+    }
   /** Syslog line (original wording). */
   | { type: 'log'; severity: Severity; facility: string; message: string }
   /** @since P1 Deliver a ProcessEvent to `to`'s `onEvent` (sockets, resolver, probes, leases). Depth-first like request; missing target → runtime debug only. */
@@ -234,7 +343,36 @@ export type Action =
    */
   | { type: 'ingress'; port: PortId; pdu: Pdu; layer?: DemuxLayer }
   /** @since P0.5 Daemon → medium request (wlan-client/wlan-ap association authority, hdlc line protocol, cell attach). */
-  | { type: 'medium'; port: PortId; op: MediumOp };
+  | { type: 'medium'; port: PortId; op: MediumOp }
+
+  // ── P2 (ARCHITECTURE-P2 §2.4; runtime semantics W1 device, `radio-profile` W4 device) ──
+  /**
+   * @since P2 Runtime: no-op if already err-disabled; else errDisabled = cause, portState reason 'err-disabled', log
+   * severity 4 (original wording, includes `detail`), deps.onPortAdmin → link recompute (down).
+   */
+  | { type: 'errDisable'; port: PortId; cause: ErrDisableCause; detail?: string }
+  /**
+   * @since P2 Runtime: no-op unless errDisabled === cause; else clear it, portState reason 'err-recovered', log
+   * severity 5, deps.onPortAdmin → link recompute (up if admin up and cabled).
+   */
+  | { type: 'errRecover'; port: PortId; cause: ErrDisableCause }
+  /**
+   * @since P2 Runtime: (1) for each p in L2_PROCESSES ∩ model.processes, p ≠ issuer, in L2_PROCESSES order:
+   * applyActions(p, p.onEvent(ctx, {kind:'l2.changed', what, port, vlan, from: issuer})) depth-first;
+   * (2) recomputeVirtual(now).
+   */
+  | { type: 'l2Changed'; what: L2ChangeKind; port?: PortId; vlan?: number }
+  /**
+   * @since P2 Runtime: applyConfigLine(context, line, negate) — configChange trace and onConfig fan-out as for a typed
+   * line (the issuer receives its own onConfig too; eth-switch's handling of the sticky line is idempotent, §3.8).
+   * Used by eth-switch for sticky secure MACs. Counts against ACTION_BUDGET like any action.
+   */
+  | { type: 'configLine'; context: readonly (readonly string[])[]; line: readonly string[]; negate: boolean }
+  /**
+   * @since P2 (wireless; W4 device) capwap-wtp → runtime: store (null = clear) the controller profile of radio `port`,
+   * then onPortPhyConfig(port).
+   */
+  | { type: 'radio-profile'; port: PortId; bss: readonly BssSettings[] | null };
 
 /** Everything a process may read/do synchronously. Passed fresh into every handler. */
 export interface ProcessCtx {
@@ -309,6 +447,24 @@ export interface ProcessCtx {
   connectedPortFor6(ip: Ipv6Address, hint?: PortId): PortId | undefined;
   /** @since P1 RFC 6724-lite source selection (ARCHITECTURE-P1 §4.8); `iface` forces egress (link-local / multicast destinations). */
   sourceFor6(dst: Ipv6Address, iface?: PortId): { address: Ipv6Address; iface: PortId } | undefined;
+
+  // ── P2 (ARCHITECTURE-P2 §2.4) ──
+  /**
+   * @since P2 The world's defaults profile (D2). Read ONLY for invisible defaults (P2: proxy ARP). Required since W1
+   * device (transition rule; hand-built typed fakes spread `P2_CTX` from test/port.fixtures.ts).
+   */
+  readonly profile: DefaultsProfile;
+  /**
+   * @since P2 Emits exactly ONE debug event (as ctx.debug) whose DebugEvent.fsm = fsm (D19). `category` is the
+   * daemon's §5.4 debug category, character for character, so `debug <category>` prints it. Required since W1 device.
+   */
+  transition(category: string, message: string, fsm: FsmTransition, data?: Record<string, unknown>): void;
+  /**
+   * @since P2 (optional by meaning; wireless; W4 device, device/process-ctx.ts) The ONE radio settings renderer:
+   * local interface lines overlaid by a controller profile (`radio-profile` action). wlan-ap switches from its private
+   * renderer to this; for a radio with no controller profile the result is byte-identical to today's renderer.
+   */
+  radioSettings?(port: PortId): RadioSettings | undefined;
 }
 
 export interface Process {

@@ -44,6 +44,23 @@ export type ProtoName =
   | 'dhcp'
   | 'dns'
   | 'http'
+  // ── P2 (ARCHITECTURE-P2 §2.3; field tables in contracts/fields.ts) ──
+  /** @since P2 802.1Q tag (D4): transparent framing, pushed and popped by structural rewrap. */
+  | 'dot1q'
+  /** @since P2 STP/RSTP BPDU (IEEE format, per VLAN, D8/D9). */
+  | 'stp'
+  /** @since P2 LACPDU (slow protocols, subtype 1). */
+  | 'lacp'
+  /** @since P2 Trunk negotiation (original NF format under the NF OUI, D8). */
+  | 'dtp'
+  /** @since P2 DHCPv6 (UDP 546/547). */
+  | 'dhcpv6'
+  /** @since P2 CAPWAP control and data (UDP 5246/5247, RFC 5415 message types). */
+  | 'capwap'
+  /** @since P2 [SHOULD S2] HSRP v1/v2 (UDP 1985). */
+  | 'hsrp'
+  /** @since P2 [SHOULD S3] Port aggregation negotiation (original NF format under the NF OUI, D8). */
+  | 'pagp'
   | (string & {});
 
 export type FieldValue = number | string | boolean | Uint8Array | null;
@@ -121,6 +138,12 @@ export interface PduMeta {
   readonly tag?: string;
   /** @since P0.5 Maintenance traffic (HDLC keepalives, beacons, periodic RAs): frameTx.background; ignored by the clock clamp and sim-mode lists by default. */
   readonly background?: boolean;
+  /**
+   * @since P2 (optional by meaning) CAPWAP control messages after the simulated DTLS step (ARCHITECTURE-P2 §3.12): the
+   * inspector labels the payload "protected (DTLS, simulated)" while still decoding it ("headers real, crypto
+   * simulated", spec §4.9).
+   */
+  readonly protected?: true;
 }
 
 /** Read-only view handed to the UI, tables and assertions. */
@@ -173,6 +196,15 @@ export interface RewrapOp {
   strip: number;
   /** Header-only specs, OUTERMOST FIRST, encoded innermost-first around what remains. */
   push: readonly LayerSpec[];
+  /**
+   * @since P2 (optional by meaning) Dedicated 802.1Q provenance (D4). Without `as`, rewrap is unchanged.
+   *  'vlan-push': op must be {strip:1, push:[ethernet, dot1q]}; records VlanTagPush {field:'dot1q.vid', before:null,
+   *               after:vid} then FcsRecompute {field:'ethernet.fcs'} (no Decapsulate/Encapsulate triples).
+   *  'vlan-pop':  op must be {strip:2, push:[ethernet]} on a frame whose layers[1] is dot1q; records VlanTagPop
+   *               {field:'dot1q.vid', before:vid, after:null} then FcsRecompute.
+   * Any other shape throws. Push then pop of a codec-built frame returns the original bytes; the PduId never changes.
+   */
+  as?: 'vlan-push' | 'vlan-pop';
 }
 
 /**
@@ -196,6 +228,18 @@ export interface Pdu extends PduView {
    * P1: when the mutated path is in an INNER layer's `Codec.outerInputs` (pseudo-header: ipv4.src/dst,
    * ipv6.src/dst), that inner layer is re-encoded first (recording its ChecksumRecompute). TTL/hopLimit are
    * not pseudo-header inputs, so `mutate('ipv4.ttl')` still records exactly ttl + ipv4.checksum + ethernet.fcs.
+   *
+   * @since P2 [SHOULD S9] Field path `'<proto>[<i>].<field>'` addresses the layer at index i (`layerAt(i)`); the plain
+   * `'<proto>.<field>'` form keeps meaning "first layer of that proto". A layer inside an ICMP-error quote (any layer
+   * after an icmpv4/icmpv6 layer whose codec `stopsMeaning`) is PATCHED IN PLACE, not re-encoded (the quote is the IP
+   * header plus ICMP_QUOTE_PAYLOAD_BYTES):
+   *  - the rewritten field's bytes are replaced; the quoted ipv4 header checksum is recomputed over its own header;
+   *  - a rewritten quoted ICMP id adjusts the quoted ICMP checksum incrementally (RFC 1624);
+   *  - a rewritten quoted udp port, OR a rewritten quoted ipv4 address (pseudo-header), adjusts a present non-zero
+   *    quoted udp checksum incrementally;
+   *  - a quoted tcp checksum (offset 16) is never inside the 8-byte quote and is never touched;
+   *  - the enclosing layers re-encode as usual (icmp checksum, outer ipv4, FCS).
+   * Each derived change is recorded as today (ChecksumRecompute / FcsRecompute).
    */
   mutate(ctx: MutationCtx, field: string, after: FieldValue, reason: MutationReason, cause?: string): void;
   /**
@@ -259,8 +303,9 @@ export interface CodecContext {
  * contracts/fields.ts DISPATCH_TABLE): 'ethertype' (ethernet.type, llc.type, hdlc.protocol), 'ipproto'
  * (ipv4.protocol, ipv6.nextHeader, extension nextHeader), 'udp.port' / 'tcp.port' (destination port first,
  * then source port, only when the transport payload is ≥ 1 byte).
+ * @since P2 'llc.sap' (llc.dsap of a non-SNAP LLC header) and 'nf.pid' (llc.type when llc.oui is NF_OUI).
  */
-export type DispatchSpace = 'ethertype' | 'ipproto' | 'udp.port' | 'tcp.port' | (string & {});
+export type DispatchSpace = 'ethertype' | 'ipproto' | 'udp.port' | 'tcp.port' | 'llc.sap' | 'nf.pid' | (string & {});
 
 /** A protocol codec. Registered in `pdu/codecs/registry.ts`. Pure functions — no engine state. */
 export interface Codec {
@@ -459,3 +504,65 @@ export const TRACEROUTE_BASE_PORT = 33434;
 
 /** Number of bytes of the original datagram's payload quoted in ICMP error messages (RFC 792). */
 export const ICMP_QUOTE_PAYLOAD_BYTES = 8;
+
+// ── P2 wire constants (ARCHITECTURE-P2 §2.3, D8) ─────────────────────────────
+
+/** @since P2 Slow protocols ethertype (LACP subtype 1). */
+export const ETHERTYPE_SLOW_PROTOCOLS = 0x8809;
+/** @since P2 Size of an 802.1Q tag. */
+export const DOT1Q_HEADER = 4;
+/** @since P2 Largest tagged Ethernet frame incl. FCS at MTU 1500. */
+export const ETH_MAX_FRAME_TAGGED = 1522;
+/** @since P2 ethernet.type (and dot1q.type) values up to this are an 802.3 LENGTH, not an ethertype. */
+export const ETH_LENGTH_MAX = 0x05dc;
+/** @since P2 LLC SAP of spanning-tree BPDUs. */
+export const LLC_SAP_STP = 0x42;
+/** @since P2 Spanning-tree group address. */
+export const STP_GROUP_MAC = '01:80:c2:00:00:00';
+/** @since P2 Slow protocols group address (LACP). */
+export const SLOW_PROTOCOLS_MAC = '01:80:c2:00:00:02';
+/** @since P2 Locally administered NF OUI (D8), also used by the dot11 simulation element 221. */
+export const NF_OUI = 0x024e46;
+/** @since P2 NF L2 control group (DTP, VTP, PAgP in their NF formats). */
+export const NF_L2_CONTROL_MAC = '03:4e:46:00:00:01';
+/** @since P2 NF SNAP PID of trunk negotiation. */
+export const NF_PID_DTP = 0x0001;
+/** @since P2 [SHOULD S3] NF SNAP PID of port aggregation negotiation. */
+export const NF_PID_PAGP = 0x0003;
+/** @since P2 [SHOULD S2] HSRP UDP port (IANA). */
+export const UDP_PORT_HSRP = 1985;
+/** @since P2 [SHOULD S2] HSRP version 1 group (IANA all-routers). */
+export const HSRP_V1_GROUP = '224.0.0.2';
+/** @since P2 [SHOULD S2] HSRP version 2 group (IANA). */
+export const HSRP_V2_GROUP = '224.0.0.102';
+/** @since P2 [SHOULD S2] HSRP v1 virtual MAC prefix; v1 MAC = prefix + group as 2 hex digits (a protocol fact, D8). */
+export const HSRP_V1_MAC_PREFIX = '00:00:0c:07:ac:';
+/** @since P2 [SHOULD S2] HSRP v2 virtual MAC prefix; v2 MAC = prefix + group as 3 hex digits, 0-4095 (a protocol fact, D8). */
+export const HSRP_V2_MAC_PREFIX = '00:00:0c:9f:f';
+/** @since P2 DHCPv6 client port. */
+export const UDP_PORT_DHCPV6_CLIENT = 546;
+/** @since P2 DHCPv6 server/relay port. */
+export const UDP_PORT_DHCPV6_SERVER = 547;
+/** @since P2 All DHCPv6 relay agents and servers (link scope). */
+export const DHCPV6_ALL_AGENTS = 'ff02::1:2';
+/** @since P2 CAPWAP control channel. */
+export const UDP_PORT_CAPWAP_CONTROL = 5246;
+/** @since P2 CAPWAP data channel. */
+export const UDP_PORT_CAPWAP_DATA = 5247;
+/** @since P2 RFC 5415 §4.5.1 / RFC 5416 message types used (D8). */
+export const CAPWAP_MSG = Object.freeze({
+  discoveryReq: 1,
+  discoveryResp: 2,
+  joinReq: 3,
+  joinResp: 4,
+  configStatusReq: 5,
+  configStatusResp: 6,
+  wtpEventReq: 9,
+  wtpEventResp: 10,
+  changeStateReq: 11,
+  changeStateResp: 12,
+  echoReq: 13,
+  echoResp: 14,
+  wlanConfigReq: 3398913,
+  wlanConfigResp: 3398914,
+});

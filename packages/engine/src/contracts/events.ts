@@ -28,6 +28,11 @@ export type SimEventBody =
       collided?: boolean;
       /** @since P0.5 Air data frame: `LinkModel.admit` rewraps dot11 → ethernet before delivery. */
       rewrap?: 'dot11-to-ethernet';
+      /**
+       * @since P2 (optional by meaning; wireless) The air hands an 802.11 data frame of a centrally switched BSS to the
+       * AP unchanged; admit still re-checks authorization.
+       */
+      central?: true;
     }
   /** Serialization of the head-of-line frame on `port` finished; the port may start the next. */
   | { kind: 'txComplete'; device: DeviceId; port: PortId }
@@ -71,7 +76,13 @@ export type FaultKind =
   /** Config fault: `no clock rate` on the DCE end; target link or device+port. */
   | 'clock-missing'
   /** params {burstsPerSec, durationNs}; target device+port on a segment; jam bursts from rng 'fault:<id>'. */
-  | 'collision-storm';
+  | 'collision-storm'
+  // ── P2 ──
+  /**
+   * @since P2 target {device, port}; params {cause?: ErrDisableCause} (default 'fault'). Applied through
+   * DeviceRuntime.errDisablePort. Used by troubleshooting labs and by the lab-check clone (ARCHITECTURE-P2 §3.8).
+   */
+  | 'err-disable';
 
 export interface FaultSpec {
   id: string;

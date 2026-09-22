@@ -54,7 +54,25 @@ export interface ConfigAst {
   toJSON(): ConfigNode;
   /** @since P0.5 Changes (with contexts) that turn `this` into `other`; applying them in order reproduces `other` exactly (atomic configure revert, Config diff view). */
   diffTree(other: ConfigAst): ConfigTreeChange[];
+  /**
+   * @since P2 (ARCHITECTURE-P2 §5 "Completeness rule, as code"; W1 cli, cli/config-ast.ts) Apply one typed line: `set`
+   * when `negate` is false, the `no` form otherwise. With `opts.defaults` (the device's default slots, passed by the
+   * runtime to every apply, boot replay included):
+   *   (1) a line that would leave a default slot empty (identity-only form of a storeNegation rule, or a `no` form of an
+   *       ordinary rule) is stored explicitly instead;
+   *   (2) the `no` form of a rule with `negationRestoresDefault` (only `spanning-tree mode`) stores the default line of
+   *       that slot, or clears the slot when the slot is not a default slot.
+   * Without `defaults` the behaviour is exactly `set`/`unset` today. Implemented by W1 cli (required since then).
+   */
+  apply(context: readonly (readonly string[])[], line: readonly string[], negate: boolean, opts?: { defaults?: DefaultSlots }): ConfigDelta | undefined;
 }
+
+/**
+ * @since P2 The default slots of a device (§5, D2): slot key (`slotKeyOf(context, line)`, cli/config-ast.ts) → the
+ * default line, from its default lines D (defaultConfig + profileConfig), computed once per boot by the runtime.
+ * Declared here because `ConfigAst.apply` takes it; cli/config-ast.ts re-exports this type, never redeclares it.
+ */
+export type DefaultSlots = ReadonlyMap<string, readonly string[]>;
 
 export interface ConfigDelta {
   op: 'set' | 'unset';
@@ -139,6 +157,16 @@ export interface ConfigLineRule {
   section?: { mode: CliMode; separator: boolean; childOrder?: readonly string[] };
   /** `no <line>` that removes nothing persists as a `no …` node in its context (`no switchport`, `no keepalive`, `no ip domain-lookup`). */
   storeNegation?: boolean;
+  /**
+   * @since P2 (ARCHITECTURE-P2 §5, D2) The line and its `no` form share one slot and each is stored as typed, replacing
+   * the other (`ip routing` / `no ip routing`). A P1 world that typed `ip routing` stores exactly what it stores today.
+   */
+  bothForms?: boolean;
+  /**
+   * @since P2 (ARCHITECTURE-P2 §5, D2) With default slots, the `no` form stores the slot's default line (or clears the
+   * slot when it is not a default slot). Only `spanning-tree mode`.
+   */
+  negationRestoresDefault?: boolean;
   /** Section rules only: child implied when absent (interface: `shutdown` absent ⇒ `no shutdown`; SVIs on multilayer switches: shutdown implied). */
   impliedDefault?: { line: readonly string[]; negated: boolean };
   /** Token index from which the remainder is one free-text arg (description, banner, ssid, passphrase, ip http page). */

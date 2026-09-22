@@ -82,6 +82,26 @@ export interface RadioSettings {
   peerKey?: string;
   emitBeacons?: boolean;
   beaconIntervalMs?: number;
+  /**
+   * @since P2 (optional by meaning; wireless) The BSSs this radio serves (a controller profile or local lines); absent =
+   * today's single BSS from ssid/security/passphrase, with today's ids and bytes.
+   */
+  bss?: readonly BssSettings[];
+  /** @since P2 (optional by meaning; wireless) Display: the controller that pushed the profile. */
+  controller?: string;
+}
+
+/** @since P2 (wireless) One BSS a radio serves (controller profile or local lines). passphrase and keyTag are never exported. */
+export interface BssSettings {
+  /** 0 = today's single BSS (ids and bytes unchanged); 1..15 only with several WLANs per radio (not in the first cut). */
+  index: number;
+  ssid: string;
+  security: WifiSecurity;
+  passphrase?: string;
+  keyTag?: number;
+  vlan?: number;
+  switching: 'local' | 'central';
+  wlanId?: number;
 }
 
 export interface McsEntry {
@@ -198,6 +218,8 @@ export interface RadioPortView {
    * (range ring radius = rangeM / metresPerUnit).
    */
   rangeM: number;
+  /** @since P2 (optional by meaning; wireless) AP radios serving a controller profile: one entry per BSS. */
+  bss?: { index: number; ssid: string; bssid: MacAddress; security: WifiSecurity; clients: number }[];
 }
 
 /** RF detail of a PtP radio link (`LinkState.radio`). */

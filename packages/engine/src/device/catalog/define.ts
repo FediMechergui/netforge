@@ -18,6 +18,18 @@
  *   per port        : short, role, allowedRoles, encap, ordinal, connector, wiring, group
  * Input values win over derivations where the input type allows them. `defineModel` never throws: the output is
  * checked by `validateCatalog` (validate.ts). Output objects are deeply frozen and structured-clone safe.
+ *
+ * P2 derivations (ARCHITECTURE-P2 D2, D10, D11, §7 W1 catalog), made ONLY at build stage P2 so that a model or fixture
+ * defined at stage P0.5 or P1 is byte-for-byte what it was (no new key, no changed family):
+ *   subinterfaces   = {roles: ['routed'], max: 65535} for a model with `routing` (`deriveSubinterfaces`);
+ *   virtualFamilies = with `managed-switch`: the Vlan family widened to VLANs 1–4094 (added when absent) and the
+ *                     Port-channel family (1–48) after it (`withManagedSwitchFamilies`);
+ *   stpDefaultMode  = input, else 'pvst', for a model with `managed-switch`;
+ *   profileConfig   = input, else `deriveProfileConfig`: P2 lines `spanning-tree mode <stpDefaultMode>` and
+ *                     `spanning-tree extend system-id` for `managed-switch` (plus `no ip routing` with
+ *                     `layer3-switch`), `capwap enable` and `interface Vlan1` / ` ip address dhcp` / ` no shutdown`
+ *                     for `lightweight-ap`;
+ *   portOwners      : ROLE_EGRESS_OWNER also names `etherchannel` for `channel` and `capwap-ac` for `wlan-tunnel`.
  */
 import type { DeviceKind, DeviceModel } from '../../contracts/device.js';
 import type { PortId, ProcessName } from '../../contracts/ids.js';
@@ -26,6 +38,7 @@ import { PROCESS_TABLES, type TableName } from '../../contracts/tables.js';
 import { SEC, type SimTime } from '../../contracts/time.js';
 import {
   CAPABILITY_PROCESSES,
+  DEFAULTS_PROFILES,
   GUI_PANELS,
   KIND_CONNECTOR,
   KIND_ENCAP,
@@ -41,6 +54,7 @@ import {
   type BuildStage,
   type Capability,
   type CliSpec,
+  type DefaultsProfile,
   type DeviceCategory,
   type DeviceIconId,
   type GuiPanelId,
@@ -48,6 +62,7 @@ import {
   type ModulePortTemplate,
   type PortRole,
   type SlotSpec,
+  type SubinterfaceSpec,
   type VirtualFamilySpec,
   type PortSpecDerived,
 } from '../../contracts/catalog.js';
@@ -129,6 +144,8 @@ export const GUI_PANEL_SINCE: Readonly<Record<GuiPanelId, BuildStage>> = Object.
   'radio.link': 'P0.5',
   'cell.tower': 'P0.5',
   'modem.status': 'P0.5',
+  // P2 (ARCHITECTURE-P2 §2.1, D17): the wireless controller appliance's panel.
+  'wlc.controller': 'P2',
 });
 
 /** Loopback family derived for routing devices (except home routers). */
@@ -192,8 +209,48 @@ export const MODULE_SWITCH_VLAN_FAMILY: VirtualFamilySpec = Object.freeze({
   defaultAdminUp: false,
 });
 
-/** Process that owns egress of each role whose trait egress is 'owner' (P0.5: SVIs belong to the bridge). */
-export const ROLE_EGRESS_OWNER: Readonly<Partial<Record<PortRole, ProcessName>>> = Object.freeze({ svi: 'eth-switch' });
+/**
+ * Process that owns egress of each role whose trait egress is 'owner' (P0.5: SVIs belong to the bridge; P2: a
+ * Port-channel belongs to `etherchannel` (D10), the controller tunnel `Capwap0` to `capwap-ac` (D17)).
+ */
+export const ROLE_EGRESS_OWNER: Readonly<Partial<Record<PortRole, ProcessName>>> = Object.freeze({
+  svi: 'eth-switch',
+  channel: 'etherchannel',
+  'wlan-tunnel': 'capwap-ac',
+});
+
+/**
+ * @since P2 SVI family of a managed (VLAN-aware) switch (§9.2 W4 item 15): VLANs 1–4094, auto management Vlan1,
+ * administratively down. `withManagedSwitchFamilies` widens a narrower Vlan family to this range.
+ */
+export const MANAGED_SWITCH_VLAN_FAMILY: VirtualFamilySpec = Object.freeze({
+  family: 'Vlan',
+  short: 'Vl',
+  role: 'svi',
+  min: 1,
+  max: 4094,
+  defaultAdminUp: false,
+  auto: Object.freeze([1]),
+});
+
+/**
+ * @since P2 EtherChannel bundles of a managed switch (D10): `interface Port-channelN`, short `Po`, 1–48, role
+ * `channel`, created up (a bundle is up while one of its bundled members is).
+ */
+export const PORT_CHANNEL_FAMILY: VirtualFamilySpec = Object.freeze({
+  family: 'Port-channel',
+  short: 'Po',
+  role: 'channel',
+  min: 1,
+  max: 48,
+  defaultAdminUp: true,
+});
+
+/** @since P2 Highest subinterface number (`<parent>.<n>`, D11). */
+export const SUBINTERFACE_MAX = 65535;
+
+/** @since P2 Default spanning-tree mode of a managed switch when its data names none (D3). */
+export const DEFAULT_STP_MODE: NonNullable<DeviceModel['stpDefaultMode']> = 'pvst';
 
 // ── input types ──────────────────────────────────────────────────────────────
 
@@ -240,6 +297,12 @@ export interface ModelInput {
   /** Replaces the derived host adapter list when present. */
   readonly hostPorts?: readonly PortId[];
   readonly poeBudgetW?: number;
+  /** @since P2 Replaces the derived profile lines when present (used at stage P2 only). */
+  readonly profileConfig?: Readonly<Partial<Record<DefaultsProfile, readonly string[]>>>;
+  /** @since P2 Spanning-tree mode of a managed switch (NF-C9300: 'rapid-pvst'); default 'pvst' (stage P2 only). */
+  readonly stpDefaultMode?: 'pvst' | 'rapid-pvst';
+  /** @since P2 Replaces the derived subinterface support when present (stage P2 only). */
+  readonly subinterfaces?: SubinterfaceSpec;
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -292,7 +355,7 @@ export function deriveCliSpec(caps: readonly Capability[]): CliSpec {
  *  physical always; desktop.ip-config and desktop.web-browser for host; desktop.wifi for wifi-client;
  *  desktop.cellular for cellular-client; desktop.command-prompt for a host shell; services for server;
  *  wireless.ap for wifi-ap without nat-gateway; home-router.setup for nat-gateway; radio.link for radio-bridge;
- *  cell.tower for cellular-cell; modem.status for modem.
+ *  cell.tower for cellular-cell; modem.status for modem; wlc.controller (P2) for wireless-controller.
  */
 export function deriveGui(caps: readonly Capability[], cli: CliSpec, stage: BuildStage): readonly GuiPanelId[] {
   const has = (c: Capability): boolean => caps.includes(c);
@@ -309,6 +372,7 @@ export function deriveGui(caps: readonly Capability[], cli: CliSpec, stage: Buil
     'radio.link': has('radio-bridge'),
     'cell.tower': has('cellular-cell'),
     'modem.status': has('modem'),
+    'wlc.controller': has('wireless-controller'),
   };
   return GUI_PANELS.filter((id) => want[id] && stageIncluded(GUI_PANEL_SINCE[id], stage));
 }
@@ -329,6 +393,64 @@ export function deriveVirtualFamilies(caps: readonly Capability[]): readonly Vir
   else if (has('wifi-ap')) out.push(MANAGEMENT_VLAN_FAMILY);
   if (has('routing') && !has('nat-gateway')) out.push(LOOPBACK_FAMILY);
   return out;
+}
+
+// ── P2 derivations (stage P2 only; ARCHITECTURE-P2 D2, D10, D11) ────────────
+
+/** @since P2 Subinterface support from EXPANDED capabilities: `{roles: ['routed'], max: 65535}` with `routing`. */
+export function deriveSubinterfaces(caps: readonly Capability[]): SubinterfaceSpec | undefined {
+  return caps.includes('routing') ? { roles: ['routed'], max: SUBINTERFACE_MAX } : undefined;
+}
+
+/**
+ * @since P2 Virtual families of a `managed-switch` model (other models: `families` unchanged): the Vlan family widened
+ * to MANAGED_SWITCH_VLAN_FAMILY's range (its other members kept; MANAGED_SWITCH_VLAN_FAMILY first when there is
+ * none), then PORT_CHANNEL_FAMILY right after the Vlan family unless the list already has a Port-channel family.
+ */
+export function withManagedSwitchFamilies(caps: readonly Capability[], families: readonly VirtualFamilySpec[]): readonly VirtualFamilySpec[] {
+  if (!caps.includes('managed-switch')) return families;
+  const out: VirtualFamilySpec[] = [];
+  let vlanAt = -1;
+  for (const f of families) {
+    if (f.family === 'Vlan' && vlanAt < 0) {
+      vlanAt = out.length;
+      out.push(f.max >= MANAGED_SWITCH_VLAN_FAMILY.max ? f : { ...f, max: MANAGED_SWITCH_VLAN_FAMILY.max });
+    } else {
+      out.push(f);
+    }
+  }
+  if (vlanAt < 0) {
+    out.unshift(MANAGED_SWITCH_VLAN_FAMILY);
+    vlanAt = 0;
+  }
+  if (!out.some((f) => f.family === PORT_CHANNEL_FAMILY.family)) out.splice(vlanAt + 1, 0, PORT_CHANNEL_FAMILY);
+  return out;
+}
+
+/** @since P2 Spanning-tree mode a `managed-switch` model boots with in a P2 world (`input` wins); undefined otherwise. */
+export function deriveStpDefaultMode(caps: readonly Capability[], input?: 'pvst' | 'rapid-pvst'): 'pvst' | 'rapid-pvst' | undefined {
+  return caps.includes('managed-switch') ? (input ?? DEFAULT_STP_MODE) : undefined;
+}
+
+/**
+ * @since P2 Visible defaults replayed at boot in a P2 world (D2, §4.4), as config text lines (indented lines belong to
+ * the section above them, like `defaultConfig`). Key 'P2':
+ *  - `managed-switch`: `spanning-tree mode <mode>`, `spanning-tree extend system-id`, plus `no ip routing` with
+ *    `layer3-switch` (routing is off on a multilayer switch until `ip routing`, §3.5);
+ *  - `lightweight-ap`: `capwap enable`, then `interface Vlan1` / ` ip address dhcp` / ` no shutdown`.
+ * Undefined when a model has none.
+ */
+export function deriveProfileConfig(
+  caps: readonly Capability[],
+  stpDefaultMode: 'pvst' | 'rapid-pvst' | undefined,
+): Readonly<Partial<Record<DefaultsProfile, readonly string[]>>> | undefined {
+  const p2: string[] = [];
+  if (caps.includes('managed-switch')) {
+    p2.push(`spanning-tree mode ${stpDefaultMode ?? DEFAULT_STP_MODE}`, 'spanning-tree extend system-id');
+    if (caps.includes('layer3-switch')) p2.push('no ip routing');
+  }
+  if (caps.includes('lightweight-ap')) p2.push('capwap enable', 'interface Vlan1', ' ip address dhcp', ' no shutdown');
+  return p2.length === 0 ? undefined : { P2: p2 };
 }
 
 /**
@@ -483,7 +605,9 @@ export function defineModel(input: ModelInput, stage: BuildStage, modules: reado
   const processes = deriveProcesses(capabilities, stage);
   const ports = input.ports.map((p, i) => resolvePortSpec(p, i + 1, capabilities));
   const slots: SlotSpec[] = (input.slots ?? []).map((s, i) => ({ ...s, slotIndex: s.slotIndex ?? i }));
-  const virtualFamilies = input.virtualFamilies ?? withModuleSwitchFamilies(capabilities, slots, deriveVirtualFamilies(capabilities), modules);
+  const p2 = stageIncluded('P2', stage);
+  const baseFamilies = input.virtualFamilies ?? withModuleSwitchFamilies(capabilities, slots, deriveVirtualFamilies(capabilities), modules);
+  const virtualFamilies = p2 ? withManagedSwitchFamilies(capabilities, baseFamilies) : baseFamilies;
   const moduleProcesses = moduleReachableProcesses(capabilities, slots, processes, stage, modules);
   const cli = input.cli ?? deriveCliSpec(capabilities);
   const tags: string[] = [];
@@ -520,6 +644,22 @@ export function defineModel(input: ModelInput, stage: BuildStage, modules: reado
   };
   if (input.defaultConfig !== undefined) model.defaultConfig = [...input.defaultConfig];
   if (input.poeBudgetW !== undefined) model.poeBudgetW = input.poeBudgetW;
+  if (p2) {
+    // P2 members are added only when they apply, so a model they do not concern keeps exactly its P1 keys.
+    const subinterfaces = input.subinterfaces ?? deriveSubinterfaces(capabilities);
+    if (subinterfaces !== undefined) model.subinterfaces = { roles: [...subinterfaces.roles], max: subinterfaces.max };
+    const stpDefaultMode = deriveStpDefaultMode(capabilities, input.stpDefaultMode);
+    if (stpDefaultMode !== undefined) model.stpDefaultMode = stpDefaultMode;
+    const profileConfig = input.profileConfig ?? deriveProfileConfig(capabilities, stpDefaultMode);
+    if (profileConfig !== undefined) {
+      const copy: Partial<Record<DefaultsProfile, readonly string[]>> = {};
+      for (const k of DEFAULTS_PROFILES) {
+        const lines = profileConfig[k];
+        if (lines !== undefined) copy[k] = [...lines];
+      }
+      model.profileConfig = copy;
+    }
+  }
   return deepFreeze(model);
 }
 

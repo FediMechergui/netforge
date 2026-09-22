@@ -385,9 +385,11 @@ export function createCellularCell(host: MediumHost, options: CellularCellOption
       host.inflight.delete(leg.pdu.id, leg.link, leg.to);
       if (leg.arrivalSeq === undefined) continue;
       host.cancel(leg.arrivalSeq);
-      host.emit({
+      const drop: Extract<TraceEvent, { kind: 'drop' }> = {
         t: now, kind: 'drop', pdu: leg.pdu, link: medium, reason, detail: rec.reason ?? reason, medium, association: cellAssociationId(medium, rec.ref),
-      });
+      };
+      if (leg.background === true) drop.background = true;
+      host.emit(drop);
       host.emit({ t: now, kind: 'frameAbort', pdu: leg.pdu, link: medium, from: leg.from, to: leg.to, abortAt: now, arrive: leg.arrive, reason });
     }
   };
@@ -535,6 +537,8 @@ export function createCellularCell(host: MediumHost, options: CellularCellOption
     const drop: Extract<TraceEvent, { kind: 'drop' }> = { t: now, kind: 'drop', pdu: summarizePdu(pdu), device: from.device, port: from.port, reason, detail };
     if (medium !== undefined) drop.medium = medium;
     if (association !== undefined) drop.association = association;
+    // P2 (§2.7): a dropped background PDU is marked so the trace filter and the canvas can hide it
+    if (pdu.meta.background === true) drop.background = true;
     host.emit(drop);
     return { ok: false, reason };
   };
@@ -567,7 +571,9 @@ export function createCellularCell(host: MediumHost, options: CellularCellOption
       const summary = summarizePdu(leg);
       let arrivalSeq: number | undefined;
       if (lost) {
-        host.emit({ t: now, kind: 'drop', pdu: summary, link: medium, reason: 'link-loss', detail: `packet error rate ${per} per mille`, medium, association });
+        const drop: Extract<TraceEvent, { kind: 'drop' }> = { t: now, kind: 'drop', pdu: summary, link: medium, reason: 'link-loss', detail: `packet error rate ${per} per mille`, medium, association };
+        if (leg.meta.background === true) drop.background = true;
+        host.emit(drop);
       } else {
         lostAll = false;
         arrivalSeq = host.schedule(arrive, { kind: 'frameArrival', device: plan.to.device, port: plan.to.port, pdu: leg, medium });
@@ -670,6 +676,7 @@ export function createCellularCell(host: MediumHost, options: CellularCellOption
             drop.medium = medium;
             if (ueRef !== undefined) drop.association = cellAssociationId(medium, ueRef);
           }
+          if (ev.pdu.meta.background === true) drop.background = true;
           host.emit(drop);
           return { deliver: false };
         }
@@ -764,6 +771,7 @@ export function createCellularCell(host: MediumHost, options: CellularCellOption
         host.cancel(leg.arrivalSeq);
         const drop: Extract<TraceEvent, { kind: 'drop' }> = { t: now, kind: 'drop', pdu: leg.pdu, link: scope, reason: 'link-down', medium: scope };
         if (detail !== undefined) drop.detail = detail;
+        if (leg.background === true) drop.background = true;
         host.emit(drop);
         host.emit({ t: now, kind: 'frameAbort', pdu: leg.pdu, link: scope, from: leg.from, to: leg.to, abortAt: now, arrive: leg.arrive, reason: 'link-down' });
       }

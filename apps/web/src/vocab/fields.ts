@@ -8,7 +8,7 @@
  * `DISPATCH_TABLE`; this file adds the human rendering. Every formatter is pure and total: unknown protocols,
  * fields and values fall back to a plain rendering instead of throwing. All wording is original (§1.6).
  */
-import { DISPATCH_TABLE, PROTO_FIELDS, formatSimTime } from '@netforge/engine';
+import { DISPATCH_TABLE, ETH_LENGTH_MAX, NF_OUI, PROTO_FIELDS, formatSimTime } from '@netforge/engine';
 import type { FieldSpec, FieldValue, MutationReason, SimTime, TableColumn } from '@netforge/engine';
 import { protocolLabel } from './protocols.js';
 import { CELL_ATTACH_STATE_VOCAB, WIFI_ASSOC_STATE_VOCAB } from './trace-kinds.js';
@@ -214,9 +214,144 @@ const ipv4Flags: NumberFormatter = (v) => {
 const ethertype = namedHex(4, ETHERTYPE_NAMES);
 const ipProto = namedDec(IP_PROTOCOL_NAMES);
 
+// ── P2 fields (ARCHITECTURE-P2 §2.3; W1 web-inspector) ───────────────────────
+// Engine constants (ETH_LENGTH_MAX, NF_OUI) and the dispatch spaces added in P2 are read at call time, never at
+// module scope (§0 rule 12); the two dispatch-derived maps are built lazily on first use.
+
+let llcSapNames: ReadonlyMap<number, string> | undefined;
+let nfPidNames: ReadonlyMap<number, string> | undefined;
+
+/** Names of LLC service access points (non-SNAP `llc.dsap` / `llc.ssap`). */
+function llcSapName(v: number): string | undefined {
+  llcSapNames ??= dispatchNames('llc.sap', [[0xaa, 'SNAP']]);
+  return llcSapNames.get(v);
+}
+
+/** Names of NF control protocol ids (`llc.type` when `llc.oui` is the NF OUI). */
+function nfPidName(v: number): string | undefined {
+  nfPidNames ??= dispatchNames('nf.pid');
+  return nfPidNames.get(v);
+}
+
+/** `ethernet.type` / `dot1q.type`: up to ETH_LENGTH_MAX the value is an 802.3 length (the payload is LLC). */
+const typeOrLength: NumberFormatter = (v, layer) => (v <= ETH_LENGTH_MAX ? `${v} (802.3 length)` : ethertype(v, layer));
+
+const llcSap: NumberFormatter = (v) => named(hex(v, 2), llcSapName(v));
+
+const llcOui: NumberFormatter = (v) => named(hex(v, 6), v === 0 ? 'an ethertype follows' : v === NF_OUI ? 'NetForge control protocols' : undefined);
+
+/** SNAP `llc.type`: an ethertype when the OUI is 0, an NF protocol id when the OUI is the NF OUI. */
+const llcType: NumberFormatter = (v, layer) => (layer?.oui === NF_OUI ? named(hex(v, 4), nfPidName(v)) : ethertype(v, layer));
+
+/** 802.1p priority classes of `dot1q.pcp`. */
+const PCP_NAMES: ReadonlyMap<number, string> = new Map([
+  [0, 'best effort'],
+  [1, 'background'],
+  [2, 'excellent effort'],
+  [3, 'critical applications'],
+  [4, 'video'],
+  [5, 'voice'],
+  [6, 'internetwork control'],
+  [7, 'network control'],
+]);
+const VID_NAMES: ReadonlyMap<number, string> = new Map([[0, 'priority tag, no VLAN'], [4095, 'reserved']]);
+
+const STP_VERSION_NAMES: ReadonlyMap<number, string> = new Map([[0, 'classic spanning tree'], [2, 'rapid spanning tree'], [3, 'multiple spanning tree']]);
+const BPDU_TYPE_NAMES: ReadonlyMap<number, string> = new Map([[0x00, 'configuration'], [0x80, 'topology change notice'], [0x02, 'rapid or multiple']]);
+const STP_ROLE_BITS: readonly (string | undefined)[] = [undefined, 'role alternate or backup', 'role root', 'role designated'];
+
+/** `stp.flags`: TC, proposal, role, learning, forwarding, agreement, TC acknowledgement. */
+const stpFlags: NumberFormatter = (v) => {
+  const parts: string[] = [];
+  if ((v & 0x01) !== 0) parts.push('topology change');
+  if ((v & 0x02) !== 0) parts.push('proposal');
+  const role = STP_ROLE_BITS[(v >> 2) & 0x03];
+  if (role !== undefined) parts.push(role);
+  if ((v & 0x10) !== 0) parts.push('learning');
+  if ((v & 0x20) !== 0) parts.push('forwarding');
+  if ((v & 0x40) !== 0) parts.push('agreement');
+  if ((v & 0x80) !== 0) parts.push('topology change acknowledged');
+  return named(hex(v, 2), parts.length > 0 ? parts.join(', ') : undefined);
+};
+
+/** Bridge priority with the extended system id: 32778 → "32778 (32768 + VLAN 10)". */
+const bridgePriority: NumberFormatter = (v) => {
+  const ext = v % 4096;
+  return ext === 0 ? String(v) : `${v} (${v - ext} + VLAN ${ext})`;
+};
+
+/** 802.1t port id: priority in the top four bits (× 16), port number in the low twelve: 0x8001 → "0x8001 (128.1)". */
+const stpPortId: NumberFormatter = (v) => `${hex(v, 4)} (${((v >>> 12) & 0x0f) * 16}.${v & 0x0fff})`;
+
+/** BPDU times travel in 1/256 s: 3840 → "3840 (15 s)". */
+const stpTime: NumberFormatter = (v) => `${v} (${trimNumber(v / 256)} s)`;
+
+/** `lacp.actorState` / `lacp.partnerState` bits, in wire order. */
+const lacpState: NumberFormatter = (v) => {
+  const parts = [
+    (v & 0x01) !== 0 ? 'active' : 'passive',
+    (v & 0x02) !== 0 ? 'short timeout' : 'long timeout',
+    (v & 0x04) !== 0 ? 'aggregatable' : 'individual',
+  ];
+  if ((v & 0x08) !== 0) parts.push('in sync');
+  if ((v & 0x10) !== 0) parts.push('collecting');
+  if ((v & 0x20) !== 0) parts.push('distributing');
+  if ((v & 0x40) !== 0) parts.push('defaulted');
+  if ((v & 0x80) !== 0) parts.push('expired');
+  return `${hex(v, 2)} (${parts.join(', ')})`;
+};
+
+const DTP_MODE_NAMES: ReadonlyMap<number, string> = new Map([[1, 'access'], [2, 'trunk'], [3, 'dynamic desirable'], [4, 'dynamic auto']]);
+
+const DHCPV6_MESSAGE_NAMES: ReadonlyMap<number, string> = new Map([
+  [1, 'solicit'],
+  [2, 'advertise'],
+  [3, 'request'],
+  [4, 'confirm'],
+  [5, 'renew'],
+  [6, 'rebind'],
+  [7, 'reply'],
+  [8, 'release'],
+  [9, 'decline'],
+  [10, 'reconfigure'],
+  [11, 'information request'],
+  [12, 'relay forward'],
+  [13, 'relay reply'],
+]);
+const DHCPV6_STATUS_NAMES: ReadonlyMap<number, string> = new Map([
+  [0, 'success'],
+  [1, 'unspecified failure'],
+  [2, 'no addresses available'],
+  [3, 'no binding'],
+  [4, 'not on link'],
+  [5, 'use multicast'],
+]);
+
+/** RFC 5415 / RFC 5416 message names, as the inspector shows them (§2.3). */
+const CAPWAP_MESSAGE_NAMES: ReadonlyMap<number, string> = new Map([
+  [1, 'Discovery Request'],
+  [2, 'Discovery Response'],
+  [3, 'Join Request'],
+  [4, 'Join Response'],
+  [5, 'Configuration Status Request'],
+  [6, 'Configuration Status Response'],
+  [9, 'WTP Event Request'],
+  [10, 'WTP Event Response'],
+  [11, 'Change State Event Request'],
+  [12, 'Change State Event Response'],
+  [13, 'Echo Request'],
+  [14, 'Echo Response'],
+  [3398913, 'IEEE 802.11 WLAN Configuration Request'],
+  [3398914, 'IEEE 802.11 WLAN Configuration Response'],
+]);
+
+const HSRP_STATE_NAMES: ReadonlyMap<number, string> = new Map([[0, 'initial'], [1, 'learn'], [2, 'listen'], [4, 'speak'], [8, 'standby'], [16, 'active']]);
+const HSRP_OP_NAMES: ReadonlyMap<number, string> = new Map([[0, 'hello'], [1, 'coup'], [2, 'resign']]);
+const PAGP_MODE_NAMES: ReadonlyMap<number, string> = new Map([[1, 'desirable'], [2, 'auto']]);
+
 /** Number formatters keyed by `proto.field`; fields not listed use the generic rules of `formatField`. */
 const NUMBER_FORMATTERS: Readonly<Record<string, NumberFormatter>> = Object.freeze({
-  'ethernet.type': ethertype,
+  'ethernet.type': typeOrLength,
   'ethernet.fcs': hexOf(8),
   'ethernet.padding': unit('B'),
   'arp.htype': namedHex(4, ARP_HTYPE_NAMES),
@@ -239,11 +374,11 @@ const NUMBER_FORMATTERS: Readonly<Record<string, NumberFormatter>> = Object.free
   'dot11-mgmt.statusCode': namedDec(DOT11_STATUS_NAMES),
   'dot11-mgmt.reasonCode': namedDec(DOT11_REASON_NAMES),
   'dot11-mgmt.rssiDbm': unit('dBm'),
-  'llc.dsap': hexOf(2),
-  'llc.ssap': hexOf(2),
+  'llc.dsap': llcSap,
+  'llc.ssap': llcSap,
   'llc.control': hexOf(2),
-  'llc.oui': hexOf(6),
-  'llc.type': ethertype,
+  'llc.oui': llcOui,
+  'llc.type': llcType,
   'eapol.packetType': namedDec(EAPOL_PACKET_NAMES),
   'eapol.handshakeStep': (v) => `${v} of 4`,
   'ipv6.nextHeader': ipProto,
@@ -275,6 +410,43 @@ const NUMBER_FORMATTERS: Readonly<Record<string, NumberFormatter>> = Object.free
   'dns.opcode': namedDec(DNS_OPCODE_NAMES),
   'dns.rcode': namedDec(DNS_RCODE_NAMES),
   'dns.tcpLength': unit('B'),
+  // ── P2 ──
+  'dot1q.pcp': namedDec(PCP_NAMES),
+  'dot1q.vid': namedDec(VID_NAMES),
+  'dot1q.type': typeOrLength,
+  'stp.protocolId': hexOf(4),
+  'stp.version': namedDec(STP_VERSION_NAMES),
+  'stp.bpduType': namedHex(2, BPDU_TYPE_NAMES),
+  'stp.flags': stpFlags,
+  'stp.rootPriority': bridgePriority,
+  'stp.bridgePriority': bridgePriority,
+  'stp.portId': stpPortId,
+  'stp.messageAge': stpTime,
+  'stp.maxAge': stpTime,
+  'stp.helloTime': stpTime,
+  'stp.forwardDelay': stpTime,
+  'stp.pvid': (v) => `${v} (native VLAN of the sender)`,
+  'lacp.subtype': namedDec(new Map([[1, 'LACP']])),
+  'lacp.actorState': lacpState,
+  'lacp.partnerState': lacpState,
+  'dtp.adminMode': namedDec(DTP_MODE_NAMES),
+  'dtp.trunkType': namedDec(new Map([[1, '802.1Q']])),
+  'dhcpv6.msgType': namedDec(DHCPV6_MESSAGE_NAMES),
+  'dhcpv6.transactionId': hexOf(6),
+  'dhcpv6.preferredLifetimeS': seconds,
+  'dhcpv6.validLifetimeS': seconds,
+  'dhcpv6.t1S': seconds,
+  'dhcpv6.t2S': seconds,
+  'dhcpv6.statusCode': namedDec(DHCPV6_STATUS_NAMES),
+  'dhcpv6.elapsedTimeCs': (v) => `${v} (${trimNumber(v / 100)} s)`,
+  'capwap.messageType': namedDec(CAPWAP_MESSAGE_NAMES),
+  'capwap.wbid': namedDec(new Map([[1, 'IEEE 802.11']])),
+  'capwap.resultCode': namedDec(new Map([[0, 'success']])),
+  'hsrp.state': namedDec(HSRP_STATE_NAMES),
+  'hsrp.opCode': namedDec(HSRP_OP_NAMES),
+  'hsrp.helloMs': unit('ms'),
+  'hsrp.holdMs': unit('ms'),
+  'pagp.mode': namedDec(PAGP_MODE_NAMES),
   /** Corruption mutations record the flipped byte. */
   'raw.bytes': hexOf(2),
 });

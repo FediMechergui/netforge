@@ -230,6 +230,25 @@ describe('air medium: management frames', () => {
     expect(w.ofKind('frameTx')).toHaveLength(0);
   });
 
+  it('a background frame nobody hears is dropped out-of-range with background: true; a background data leg aborted by a withdrawn grant carries it too (P2 §2.7)', () => {
+    const w = pair();
+    const mac = w.port(LAP, 'Wlan0').mac;
+    const beacon = w.pdus.build(mgmtFrame('auth', { addr1: '02:99:99:99:99:99', addr2: mac, addr3: '02:99:99:99:99:99' }, { authAlgorithm: 0, authSeq: 1 }), { ...meta, background: true });
+    expect(w.send(LAP, 'Wlan0', beacon)).toMatchObject({ ok: true });
+    expect(w.ofKind('drop').at(-1)).toMatchObject({ reason: 'out-of-range', device: LAP, medium: 'air', pdu: { id: beacon.id }, background: true });
+    // the same drop without the flag for an ordinary frame
+    const plain = w.pdus.build(mgmtFrame('auth', { addr1: '02:99:99:99:99:99', addr2: mac, addr3: '02:99:99:99:99:99' }, { authAlgorithm: 0, authSeq: 1 }), meta);
+    w.send(LAP, 'Wlan0', plain);
+    expect('background' in w.ofKind('drop').at(-1)!).toBe(false);
+
+    grant(w, AP, LAP);
+    const data = w.pdus.build(echoLayers(w.port(AP, 'GigabitEthernet1').mac, mac), { ...meta, background: true });
+    expect(w.send(LAP, 'Wlan0', data)).toMatchObject({ ok: true });
+    w.op(AP, 'Wlan0', { op: 'assoc', station: mac, state: 'none' });
+    expect(w.ofKind('drop').at(-1)).toMatchObject({ reason: 'not-associated', pdu: { id: data.id }, background: true });
+    expect(w.ofKind('frameAbort').at(-1)).toMatchObject({ reason: 'not-associated', pdu: { id: data.id } });
+  });
+
   it('annotates the received signal on probe responses delivered to a station', () => {
     const w = pair();
     const ap = w.port(AP, 'Wlan0');

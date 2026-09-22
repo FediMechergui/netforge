@@ -6,7 +6,8 @@
  */
 import * as Comlink from 'comlink';
 import './errors';
-import type { DeviceId, SimTime } from '@netforge/engine';
+import type { DefaultsProfile, DeviceId, SimTime } from '@netforge/engine';
+import { profileForCourse } from '../learn/course-profile';
 import { setResyncHandler, store } from '../store/store';
 import type { EngineApi, EngineBatch } from './protocol';
 
@@ -71,10 +72,18 @@ async function resync(api: EngineApi): Promise<void> {
 let initPromise: Promise<void> | undefined;
 
 /**
- * Create the worker, initialise the simulation with `seed` and subscribe the store's `applyBatch` to the batch
- * stream. Loads no topology. Idempotent.
+ * The profile the app-start world takes (ARCHITECTURE-P2 D2, §2.14): the course context the store restored — the
+ * classic defaults after a CCNA 1 lesson, the current ones after any other lesson or none.
  */
-export function initEngine(seed = defaultSeed()): Promise<void> {
+export function startupProfile(): DefaultsProfile {
+  return profileForCourse(store.getState().learn.lastCourse);
+}
+
+/**
+ * Create the worker, initialise the simulation with `seed` (and, since P2, the `profile` of the course context) and
+ * subscribe the store's `applyBatch` to the batch stream. Loads no topology. Idempotent.
+ */
+export function initEngine(seed = defaultSeed(), profile: DefaultsProfile = startupProfile()): Promise<void> {
   if (!initPromise) {
     initPromise = (async () => {
       const api = connect();
@@ -83,7 +92,7 @@ export function initEngine(seed = defaultSeed()): Promise<void> {
       };
       setResyncHandler(() => void resync(api));
       await api.subscribe(Comlink.proxy(onBatch), { watchDevices: watchedDevicesOf(store.getState()) });
-      const init = await api.init({ seed });
+      const init = await api.init({ seed, profile });
       store.getState().setReady(init);
 
       // Background frames only clamp the clock (and so stay on screen long enough to draw) when the overlay is on.
