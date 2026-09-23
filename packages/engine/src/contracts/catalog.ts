@@ -644,6 +644,12 @@ export function ipDefaultsFor(caps: readonly Capability[]): IpDefaults {
  * `DeviceModel.processes` list is an order-preserving subsequence (P0 lists already are).
  * Constraints relied upon: arp before ipv4 (gratuitous ARP timer idiom), ipv4 before dhcp-client,
  * udp/tcp before application daemons.
+ *
+ * P2 (ARCHITECTURE-P2 §2.1, §0 rule 3): a name enters this list only in the change that registers its factory. The
+ * W4 catalog flip inserted `vlan`, `dtp`, `etherchannel`, `stp` (after eth-switch: the link-change fan-out flushes
+ * the CAM first), `nat` (after ipv4), `hsrp` [S2] and `dhcpv6-client`, `dhcpv6-server` (after udp, which they use).
+ * The W6 catalog item inserts `capwap-wtp` (after wlan-client) and `capwap-ac` (last). The relative order of every
+ * earlier name is unchanged.
  */
 export const PROCESS_ORDER: readonly ProcessName[] = Object.freeze([
   'wlan-ap',
@@ -651,8 +657,13 @@ export const PROCESS_ORDER: readonly ProcessName[] = Object.freeze([
   'cell-client',
   'hdlc',
   'eth-switch',
+  'vlan',
+  'dtp',
+  'etherchannel',
+  'stp',
   'arp',
   'ipv4',
+  'nat',
   'icmpv4',
   'host',
   'ipv6',
@@ -660,8 +671,11 @@ export const PROCESS_ORDER: readonly ProcessName[] = Object.freeze([
   'icmpv6',
   'udp',
   'tcp',
+  'hsrp',
   'dhcp-client',
   'dhcp-server',
+  'dhcpv6-client',
+  'dhcpv6-server',
   'dns-client',
   'dns-server',
   'http-client',
@@ -688,6 +702,7 @@ export const CAPABILITY_PROCESSES: Readonly<Record<Capability, readonly Capabili
     cp('arp', 'P0'), cp('ipv4', 'P0'), cp('icmpv4', 'P0'), cp('host', 'P0'),
     cp('ipv6', 'P1'), cp('nd', 'P1'), cp('icmpv6', 'P1'), cp('udp', 'P1'), cp('tcp', 'P1'),
     cp('dhcp-client', 'P1'), cp('dns-client', 'P1'), cp('http-client', 'P1'), cp('traceroute', 'P1'),
+    cp('dhcpv6-client', 'P2'),
   ],
   server: [cp('dhcp-server', 'P1'), cp('dns-server', 'P1'), cp('http-server', 'P1')],
   switching: [cp('eth-switch', 'P0'), cp('arp', 'P1'), cp('ipv4', 'P1'), cp('icmpv4', 'P1'), cp('host', 'P1')],
@@ -696,6 +711,7 @@ export const CAPABILITY_PROCESSES: Readonly<Record<Capability, readonly Capabili
     cp('ipv6', 'P1'), cp('nd', 'P1'), cp('icmpv6', 'P1'), cp('udp', 'P1'), cp('tcp', 'P1'),
     cp('dhcp-client', 'P1'), cp('dhcp-server', 'P1'), cp('dns-client', 'P1'), cp('dns-server', 'P1'),
     cp('http-server', 'P1'), cp('traceroute', 'P1'),
+    cp('nat', 'P2'), cp('dhcpv6-client', 'P2'), cp('dhcpv6-server', 'P2'), cp('hsrp', 'P2'),
   ],
   'layer3-switch': [],
   repeater: [],
@@ -707,17 +723,18 @@ export const CAPABILITY_PROCESSES: Readonly<Record<Capability, readonly Capabili
   modem: [cp('eth-switch', 'P0.5')],
   cloud: [cp('eth-switch', 'P0.5')],
   firewall: [],
-  'nat-gateway': [],
+  // P2: NAT on the home routers stays off until their panel writes the lines (S13); the daemon is silent without them.
+  'nat-gateway': [cp('nat', 'P2')],
   'dhcp-server': [cp('udp', 'P1'), cp('dhcp-server', 'P1')],
   'poe-source': [],
   'poe-powered': [],
   modular: [],
-  // ── P2 ── These rows start EMPTY: a daemon name enters PROCESS_ORDER, CAPABILITY_PROCESSES and the registry only in
-  // the change that registers its factory (ARCHITECTURE-P2 §0 rule 3; §2.1 table: the W4 catalog item adds vlan, dtp,
-  // etherchannel, stp to managed-switch; the W6 catalog item adds capwap-wtp, udp, dhcp-client to lightweight-ap and
-  // vlan, udp, capwap-ac to wireless-controller; every P2 row is `since: 'P2'`). They exist only because the record
-  // is exhaustive over Capability.
-  'managed-switch': [],
+  // ── P2 ── A daemon name enters PROCESS_ORDER, CAPABILITY_PROCESSES and the registry only in the change that
+  // registers its factory (ARCHITECTURE-P2 §0 rule 3; §2.1 table). The W4 catalog flip added vlan, dtp, etherchannel,
+  // stp to managed-switch (and nat, dhcpv6-client, dhcpv6-server, hsrp to routing; dhcpv6-client to host; nat to
+  // nat-gateway, above). The W6 catalog item adds capwap-wtp, udp, dhcp-client to lightweight-ap and vlan, udp,
+  // capwap-ac to wireless-controller; every P2 row is `since: 'P2'`, so a P0.5/P1-stage model never derives them.
+  'managed-switch': [cp('vlan', 'P2'), cp('dtp', 'P2'), cp('etherchannel', 'P2'), cp('stp', 'P2')],
   'lightweight-ap': [],
   'wireless-controller': [],
 });

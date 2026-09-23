@@ -18,6 +18,9 @@ import { stpKey, vlanKey } from '../src/contracts/tables.js';
 import { SEC } from '../src/contracts/time.js';
 import { pcRouterPc, twoPcsAndSwitch } from '../src/sim/scenarios.js';
 import { createSimulation } from '../src/sim/simulation.js';
+import { ALL_MODEL_INPUTS, createCatalog } from '../src/device/catalog.js';
+import { defineModel } from '../src/device/catalog/define.js';
+import { PROCESS_FACTORIES } from '../src/protocols/index.js';
 import { buildPortL2View, buildPortSnapshot } from '../src/sim/snapshot-cache.js';
 import { createP2Simulation } from './p2.world.js';
 
@@ -78,7 +81,9 @@ describe('P1 worlds carry none of the P2 snapshot members', () => {
   });
 
   it('a P1-stage switch in a P2-profile world is not VLAN-aware: no l2 view, but the profile is in the snapshot', () => {
-    const sim = createSimulation({ seed: 1, profile: 'P2' });
+    // a P1-STAGE catalog: since the W4 flip the live NF-C2960 is VLAN-aware (§9.2 W4 fixture pins)
+    const catalog = createCatalog(PROCESS_FACTORIES, { models: ALL_MODEL_INPUTS.map((i) => defineModel(i, 'P1')), stage: 'P1' });
+    const sim = createSimulation({ seed: 1, profile: 'P2', catalog });
     sim.addDevice({ id: 'sw1', type: 'switch.nfc2960', startupConfig: SW_CONFIG });
     sim.runFor(30 * SEC);
     expect(l2Keys(sim)).toEqual([]);

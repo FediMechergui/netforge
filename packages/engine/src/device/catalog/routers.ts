@@ -8,7 +8,8 @@
  * needs a transceiver module installed while the router is powered off.
  *
  * NF-2911 is the P0 model: its input is field-for-field the P0 literal of device/catalog.ts (§9.2: only the
- * derived daemon list gains `hdlc` at P0.5).
+ * derived daemon list gains `hdlc` at P0.5, the P1 stack at P1 and, at P2, `nat`, `hsrp`, `dhcpv6-client` and
+ * `dhcpv6-server` with routed subinterfaces — ARCHITECTURE-P2 §7 W4 catalog, §9.2 W4 item 13; no data edit).
  *
  * All names, descriptions, labels and tags are original wording (§1.6, D13).
  */
@@ -18,7 +19,7 @@ import type { BuildStage } from '../../contracts/catalog.js';
 import { defineModel, type ModelInput, type PortInput, type SlotInput } from './define.js';
 
 /** Build stage the exported `ROUTER_MODELS` are defined for (device/catalog/index.ts re-defines ROUTER_INPUTS for its own stage when it differs). */
-export const ROUTER_DATA_STAGE: BuildStage = 'P1';
+export const ROUTER_DATA_STAGE: BuildStage = 'P2';
 
 /** Serial WAN port speed (2 Mbit/s, as on the P0 NF-2911). */
 const SERIAL_BPS = 2_000_000;

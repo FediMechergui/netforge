@@ -22,7 +22,7 @@ import { defineModel, type ModelInput, type PortInput, type SlotInput } from './
  * Build stage the end-device data files define their models for. Equal to `CATALOG_STAGE` (device/catalog/index.ts);
  * kept here so the data files do not import the catalog index, which imports them.
  */
-export const END_DEVICE_STAGE: BuildStage = 'P1';
+export const END_DEVICE_STAGE: BuildStage = 'P2';
 
 /** Supported autonegotiation speeds of a copper host adapter whose top speed is `speedBps` (fastest first). */
 export function hostSpeeds(speedBps: number): number[] {

@@ -295,6 +295,25 @@ describe('access ports answer only (§3.3 rule 1, §13 #22)', () => {
     expect(d.stateSnapshot().state).toEqual({ speaking: [], sent: 2, received: 2 });
   });
 
+  it('a message from an access neighbour is consumed and recorded but never answered (two access ports would answer each other forever)', () => {
+    const h = p2SwitchHarness();
+    const d = createDtp();
+    h.lines(d, GI1, ['switchport mode access']);
+    const rx = d.onPdu(h.ctx, message(h, 'access'), GI1);
+    expect(consumesOf(rx)).toBe(1);
+    expect(sendsOf(rx)).toEqual([]);
+    expect(rowOf(h, GI1)).toEqual({ key: GI1, port: GI1, admin: 'access', oper: 'access', status: 'static', neighbor: NEIGHBOUR_MAC, neighborMode: 'access', updatedAt: 0 });
+    expect(timersOf(rx).map((t) => t.key)).toEqual([dtpAgeTimer(GI1)]);
+    expect(l2ChangedOf(rx)).toEqual([]);
+    expect(transitions(d)).toEqual([]);
+    expect(d.stateSnapshot().state).toEqual({ speaking: [], sent: 0, received: 1 });
+    // a neighbour that can still change its mind is answered as before
+    const auto = d.onPdu(h.ctx, message(h, 'dynamic-auto'), GI1);
+    expect(sendsOf(auto)).toHaveLength(1);
+    expect(dtpOf(sendsOf(auto)[0]!.pdu)).toMatchObject({ adminMode: DTP_MODE_ACCESS, operTrunk: false });
+    expect(d.stateSnapshot().state).toEqual({ speaking: [], sent: 1, received: 2 });
+  });
+
   it('a negotiated trunk whose port becomes access sends one message at once, cancels its timer and drops back', () => {
     const h = p2SwitchHarness();
     const d = createDtp();
@@ -643,6 +662,29 @@ describe('real worlds: reconfiguration and ageing', () => {
     w.sim.runFor(120 * SEC);
     expect(dtpCreated(w.since())).toEqual([]);
     expect(w.sim.device(SW2)!.stateSnapshots().find((s) => s.process === DTP_PROCESS)!.state).toMatchObject({ speaking: [] });
+  });
+
+  it('a static trunk facing an access port turns access: its one message is not answered, and both access ports stay silent (no answer loop)', () => {
+    const w = twoSwitches(linesFor('trunk'), linesFor('access'));
+    w.sim.runFor(SETTLE);
+    // SW2's access port heard SW1's trunk messages (and answered them): both ends have a row
+    expect(rowIn(w.sim, SW2, GI1)).toMatchObject({ admin: 'access', oper: 'access', status: 'static', neighborMode: 'trunk' });
+    expect(rowIn(w.sim, SW1, GI1)).toMatchObject({ admin: 'trunk', oper: 'trunk', neighborMode: 'access' });
+    w.since();
+    expect(w.sim.configure(SW1, [`interface ${GI1}`, 'switchport mode access'])).toMatchObject({ ok: true });
+    const at = w.sim.now;
+    // capped: an answer loop would exhaust the budget within a few milliseconds of sim time
+    const run = w.sim.runUntil(at + 1 * SEC, { maxEvents: 10_000 });
+    expect(run.stopped).toBeUndefined();
+    expect(w.sim.now).toBe(at + 1 * SEC);
+    const evs = w.since();
+    // SW1's one message (§3.3 rule 1b); SW2's access port records it and does not answer an access neighbour
+    expect(dtpCreated(evs).map((e) => [e.device, e.t])).toEqual([[SW1, at]]);
+    expect(rowIn(w.sim, SW1, GI1)).toMatchObject({ admin: 'access', oper: 'access', status: 'static', neighborMode: 'access' });
+    expect(rowIn(w.sim, SW2, GI1)).toMatchObject({ admin: 'access', oper: 'access', status: 'static', neighborMode: 'access' });
+    // and nothing more is ever sent on that link
+    w.sim.runFor(120 * SEC);
+    expect(dtpCreated(w.since())).toEqual([]);
   });
 
   it('a neighbour that goes nonegotiate falls silent: the auto port keeps its trunk for 300 s after its last message, then returns to access', () => {

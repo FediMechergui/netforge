@@ -160,13 +160,18 @@ describe('sim: snapshots v2', () => {
     expect(JSON.stringify(snap)).not.toContain('labpass-secret-1');
     expect(home.runningConfig).toContain(`passphrase ${CONFIG_SECRET_MASK}`);
     expect(sim.device('home')!.running.render()).toContain('passphrase labpass-secret-1');
-    // the home router derives the whole P1 daemon list at CATALOG_STAGE 'P1' (§8.2 W5), so it owns their tables too
+    // the home router derives the whole P1 daemon list at CATALOG_STAGE (§8.2 W5), so it owns their tables too;
+    // ARCHITECTURE-P2 §9.2 W4 items 13 and 20: since the W4 flip it also runs nat, hsrp [S2] and dhcpv6-server
+    // (`nat-gateway` implies `routing`), whose tables join the list at their daemons' positions
     expect(home.tables.extra?.map((t) => [t.name, t.title])).toEqual([
       ['dot11-assoc', 'Wireless associations'],
+      ['nat', 'NAT translations'],
       ['rib6', 'IPv6 routes'],
       ['nd', 'IPv6 neighbours'],
       ['sockets', 'Sockets'],
+      ['hsrp', 'Standby groups'],
       ['dhcp-bindings', 'DHCP leases'],
+      ['dhcpv6-bindings', 'DHCPv6 leases'],
       ['dns-cache', 'DNS cache'],
     ]);
     expect(home.ports.find((p) => p.id === 'Wlan0')!.radio).toMatchObject({ mode: 'ap', ssid: 'LAB' });

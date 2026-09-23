@@ -17,6 +17,7 @@ import {
   GI1,
   GI2,
   PC,
+  STP_FACTORIES,
   SWITCH,
   bpduTx,
   bridgeRow,
@@ -126,7 +127,8 @@ describe('instances (D9)', () => {
   });
 
   it('is silent in the P1 profile and writes no row before the mode line; the stp tables are P2 tables', () => {
-    const sim = stpWorld(3, 'P1');
+    // the W3 world: vlan and stp only (dtp and etherchannel removed since the W4 flip registered them: §9.2 W4 fixture pins)
+    const sim = stpWorld(3, 'P1', { ...STP_FACTORIES, dtp: undefined, etherchannel: undefined });
     sim.addDevice({ id: 'sw1', type: SWITCH, name: 'SW1', startupConfig: switchConfig('SW1', ['vlan 10'], [section(`interface ${GI1}`, ['switchport mode trunk'])]) });
     sim.addDevice({ id: 'sw2', type: SWITCH, name: 'SW2', startupConfig: switchConfig('SW2', ['vlan 10'], [section(`interface ${GI1}`, ['switchport mode trunk'])]) });
     sim.addLink({ a: { device: 'sw1', port: GI1 }, b: { device: 'sw2', port: GI1 } });

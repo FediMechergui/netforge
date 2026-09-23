@@ -6,6 +6,12 @@
  * order (its own checks in a fixed order), then every module in list order. Each issue carries a stable code
  * (CATALOG_ISSUE_CODES), the subject (model type or module type), a path inside the entry and an original message.
  * `createCatalog` (device/catalog/index.ts) refuses a catalog with any issue.
+ *
+ * P2 (ARCHITECTURE-P2 §2.1, §7 W4 catalog): the virtual interface families a model may declare are the two
+ * PORT_FAMILIES virtual entries (Vlan → svi, Loopback → virtual) and the P2 families that live only in their family
+ * specs, as names.ts resolves them (the short name comes from the spec, not from PORT_FAMILIES): `Port-channel` → channel
+ * (define.ts PORT_CHANNEL_FAMILY). The controller tunnel family (role wlan-tunnel) is added to `virtualFamilyRule` by
+ * the W6 catalog item together with its family constant.
  */
 import type { DeviceModel } from '../../contracts/device.js';
 import type { ProcessName } from '../../contracts/ids.js';
@@ -37,8 +43,9 @@ import {
   type PoeSpec,
   type PortRole,
   type SlotType,
+  type VirtualFamilySpec,
 } from '../../contracts/catalog.js';
-import { DEVICE_KINDS, deriveProcesses, deriveTables, kindOfType, modulePortSpecs, moduleReachableProcesses } from './define.js';
+import { DEVICE_KINDS, PORT_CHANNEL_FAMILY, deriveProcesses, deriveTables, kindOfType, modulePortSpecs, moduleReachableProcesses } from './define.js';
 import { portFamilyByLong, portFamilyOf, splitPortName, virtualPortName } from './names.js';
 
 // ── issue vocabulary ─────────────────────────────────────────────────────────
@@ -624,20 +631,32 @@ function checkOwners(model: DeviceModel, modules: readonly ModuleModel[], opts: 
   }
 }
 
+/**
+ * The short family and role a virtual interface family fixes: the PORT_FAMILIES virtual entries (Vlan → svi,
+ * Loopback → virtual) and the P2 families known only through their family specs (Port-channel → channel; the W6
+ * catalog item adds the controller tunnel family → wlan-tunnel). Undefined for a name that is no virtual family.
+ */
+function virtualFamilyRule(family: string): { readonly short: string; readonly role: VirtualFamilySpec['role'] } | undefined {
+  const fam = portFamilyByLong(family);
+  if (fam !== undefined && fam.kind === 'virtual') return { short: fam.short, role: family === 'Vlan' ? 'svi' : 'virtual' };
+  if (family === PORT_CHANNEL_FAMILY.family) return { short: PORT_CHANNEL_FAMILY.short, role: PORT_CHANNEL_FAMILY.role };
+  return undefined;
+}
+
 function checkVirtualFamilies(model: DeviceModel, add: Add): void {
   const families = model.virtualFamilies;
   if (families === undefined) return;
   const seen = new Set<string>();
   families.forEach((f, i) => {
     const path = `virtualFamilies[${i}]`;
-    const fam = portFamilyByLong(f.family);
+    const rule = virtualFamilyRule(f.family);
     const problems: string[] = [];
-    if (!fam || fam.kind !== 'virtual') problems.push(`"${f.family}" is not a virtual interface family`);
-    else if (f.short !== fam.short) problems.push(`the short family must be ${fam.short}`);
+    if (rule === undefined) problems.push(`"${f.family}" is not a virtual interface family`);
+    else if (f.short !== rule.short) problems.push(`the short family must be ${rule.short}`);
     if (seen.has(f.family)) problems.push('the family is declared twice');
     seen.add(f.family);
-    const expectedRole = f.family === 'Vlan' ? 'svi' : f.family === 'Loopback' ? 'virtual' : undefined;
-    if (f.role !== expectedRole) problems.push(`the role must be ${expectedRole ?? 'svi or virtual'}`);
+    const expectedRole = rule?.role;
+    if (f.role !== expectedRole) problems.push(`the role must be ${expectedRole ?? 'svi, virtual or channel'}`);
     if (!isNonNegativeInt(f.min) || !isNonNegativeInt(f.max) || f.min > f.max || f.max > MAX_VIRTUAL_NUMBER) problems.push('the number range is invalid');
     const auto = f.auto ?? [];
     if (auto.some((n, j) => !Number.isSafeInteger(n) || n < f.min || n > f.max || (j > 0 && n <= (auto[j - 1] ?? 0)))) {

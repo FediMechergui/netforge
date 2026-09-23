@@ -29,6 +29,7 @@
       "write"
     ],
     "priv-exec show": [
+      "access-lists",
       "arp",
       "history",
       "hosts",
@@ -37,6 +38,7 @@
       "ip",
       "ipv6",
       "running-config",
+      "standby",
       "startup-config",
       "version"
     ],
@@ -48,11 +50,13 @@
       "ethernet",
       "ip",
       "ipv6",
+      "standby",
       "tcp",
       "traceroute",
       "udp"
     ],
     "config": [
+      "access-list",
       "banner",
       "do",
       "enable",
@@ -71,6 +75,7 @@
       "description",
       "do",
       "duplex",
+      "encapsulation",
       "end",
       "exit",
       "ip",
@@ -78,7 +83,8 @@
       "mac-address",
       "no",
       "shutdown",
-      "speed"
+      "speed",
+      "standby"
     ]
   },
   "router.nf2911": {
@@ -111,6 +117,7 @@
       "write"
     ],
     "priv-exec show": [
+      "access-lists",
       "arp",
       "history",
       "hosts",
@@ -118,6 +125,7 @@
       "ip",
       "ipv6",
       "running-config",
+      "standby",
       "startup-config",
       "version"
     ],
@@ -129,11 +137,13 @@
       "ethernet",
       "ip",
       "ipv6",
+      "standby",
       "tcp",
       "traceroute",
       "udp"
     ],
     "config": [
+      "access-list",
       "banner",
       "do",
       "enable",
@@ -152,6 +162,7 @@
       "description",
       "do",
       "duplex",
+      "encapsulation",
       "end",
       "exit",
       "ip",
@@ -159,7 +170,8 @@
       "mac-address",
       "no",
       "shutdown",
-      "speed"
+      "speed",
+      "standby"
     ],
     "config-if serial/wan": [
       "bandwidth",
@@ -173,7 +185,8 @@
       "ipv6",
       "keepalive",
       "no",
-      "shutdown"
+      "shutdown",
+      "standby"
     ]
   },
   "router.nf4331": {
@@ -206,6 +219,7 @@
       "write"
     ],
     "priv-exec show": [
+      "access-lists",
       "arp",
       "history",
       "hosts",
@@ -214,6 +228,7 @@
       "ip",
       "ipv6",
       "running-config",
+      "standby",
       "startup-config",
       "version"
     ],
@@ -225,11 +240,13 @@
       "ethernet",
       "ip",
       "ipv6",
+      "standby",
       "tcp",
       "traceroute",
       "udp"
     ],
     "config": [
+      "access-list",
       "banner",
       "do",
       "enable",
@@ -248,6 +265,7 @@
       "description",
       "do",
       "duplex",
+      "encapsulation",
       "end",
       "exit",
       "ip",
@@ -255,7 +273,8 @@
       "mac-address",
       "no",
       "shutdown",
-      "speed"
+      "speed",
+      "standby"
     ]
   },
   "router.nf4451": {
@@ -288,6 +307,7 @@
       "write"
     ],
     "priv-exec show": [
+      "access-lists",
       "arp",
       "history",
       "hosts",
@@ -296,6 +316,7 @@
       "ip",
       "ipv6",
       "running-config",
+      "standby",
       "startup-config",
       "version"
     ],
@@ -307,11 +328,13 @@
       "ethernet",
       "ip",
       "ipv6",
+      "standby",
       "tcp",
       "traceroute",
       "udp"
     ],
     "config": [
+      "access-list",
       "banner",
       "do",
       "enable",
@@ -330,6 +353,7 @@
       "description",
       "do",
       "duplex",
+      "encapsulation",
       "end",
       "exit",
       "ip",
@@ -337,7 +361,8 @@
       "mac-address",
       "no",
       "shutdown",
-      "speed"
+      "speed",
+      "standby"
     ]
   },
   "router.nfgeneric": {
@@ -370,6 +395,7 @@
       "write"
     ],
     "priv-exec show": [
+      "access-lists",
       "arp",
       "history",
       "hosts",
@@ -378,6 +404,7 @@
       "ip",
       "ipv6",
       "running-config",
+      "standby",
       "startup-config",
       "version"
     ],
@@ -389,11 +416,13 @@
       "ethernet",
       "ip",
       "ipv6",
+      "standby",
       "tcp",
       "traceroute",
       "udp"
     ],
     "config": [
+      "access-list",
       "banner",
       "do",
       "enable",
@@ -438,35 +467,52 @@
     ],
     "priv-exec show": [
       "arp",
+      "dtp",
+      "errdisable",
+      "etherchannel",
       "history",
       "interfaces",
       "ip",
+      "lacp",
       "mac",
+      "port-security",
       "running-config",
+      "spanning-tree",
       "startup-config",
-      "version"
+      "version",
+      "vlan"
     ],
     "priv-exec debug": [
       "all",
       "arp",
+      "dtp",
+      "etherchannel",
       "ethernet",
-      "ip"
+      "ip",
+      "port-security",
+      "spanning-tree",
+      "sw-vlan"
     ],
     "config": [
       "banner",
       "do",
       "enable",
       "end",
+      "errdisable",
       "exit",
       "hostname",
       "interface",
       "ip",
       "line",
       "no",
+      "port-channel",
       "service",
-      "username"
+      "spanning-tree",
+      "username",
+      "vlan"
     ],
     "config-if ethernet/switched": [
+      "channel-group",
       "description",
       "do",
       "duplex",
@@ -475,6 +521,7 @@
       "mac-address",
       "no",
       "shutdown",
+      "spanning-tree",
       "speed",
       "switchport"
     ],
@@ -517,35 +564,52 @@
     ],
     "priv-exec show": [
       "arp",
+      "dtp",
+      "errdisable",
+      "etherchannel",
       "history",
       "interfaces",
       "ip",
+      "lacp",
       "mac",
+      "port-security",
       "running-config",
+      "spanning-tree",
       "startup-config",
-      "version"
+      "version",
+      "vlan"
     ],
     "priv-exec debug": [
       "all",
       "arp",
+      "dtp",
+      "etherchannel",
       "ethernet",
-      "ip"
+      "ip",
+      "port-security",
+      "spanning-tree",
+      "sw-vlan"
     ],
     "config": [
       "banner",
       "do",
       "enable",
       "end",
+      "errdisable",
       "exit",
       "hostname",
       "interface",
       "ip",
       "line",
       "no",
+      "port-channel",
       "service",
-      "username"
+      "spanning-tree",
+      "username",
+      "vlan"
     ],
     "config-if ethernet/switched": [
+      "channel-group",
       "description",
       "do",
       "duplex",
@@ -554,6 +618,7 @@
       "mac-address",
       "no",
       "shutdown",
+      "spanning-tree",
       "speed",
       "switchport"
     ],
@@ -596,35 +661,52 @@
     ],
     "priv-exec show": [
       "arp",
+      "dtp",
+      "errdisable",
+      "etherchannel",
       "history",
       "interfaces",
       "ip",
+      "lacp",
       "mac",
+      "port-security",
       "running-config",
+      "spanning-tree",
       "startup-config",
-      "version"
+      "version",
+      "vlan"
     ],
     "priv-exec debug": [
       "all",
       "arp",
+      "dtp",
+      "etherchannel",
       "ethernet",
-      "ip"
+      "ip",
+      "port-security",
+      "spanning-tree",
+      "sw-vlan"
     ],
     "config": [
       "banner",
       "do",
       "enable",
       "end",
+      "errdisable",
       "exit",
       "hostname",
       "interface",
       "ip",
       "line",
       "no",
+      "port-channel",
       "service",
-      "username"
+      "spanning-tree",
+      "username",
+      "vlan"
     ],
     "config-if ethernet/switched": [
+      "channel-group",
       "description",
       "do",
       "duplex",
@@ -633,6 +715,7 @@
       "mac-address",
       "no",
       "shutdown",
+      "spanning-tree",
       "speed",
       "switchport"
     ],
@@ -675,35 +758,52 @@
     ],
     "priv-exec show": [
       "arp",
+      "dtp",
+      "errdisable",
+      "etherchannel",
       "history",
       "interfaces",
       "ip",
+      "lacp",
       "mac",
+      "port-security",
       "running-config",
+      "spanning-tree",
       "startup-config",
-      "version"
+      "version",
+      "vlan"
     ],
     "priv-exec debug": [
       "all",
       "arp",
+      "dtp",
+      "etherchannel",
       "ethernet",
-      "ip"
+      "ip",
+      "port-security",
+      "spanning-tree",
+      "sw-vlan"
     ],
     "config": [
       "banner",
       "do",
       "enable",
       "end",
+      "errdisable",
       "exit",
       "hostname",
       "interface",
       "ip",
       "line",
       "no",
+      "port-channel",
       "service",
-      "username"
+      "spanning-tree",
+      "username",
+      "vlan"
     ],
     "config-if ethernet/switched": [
+      "channel-group",
       "description",
       "do",
       "duplex",
@@ -712,6 +812,7 @@
       "mac-address",
       "no",
       "shutdown",
+      "spanning-tree",
       "speed",
       "switchport"
     ],
@@ -754,35 +855,52 @@
     ],
     "priv-exec show": [
       "arp",
+      "dtp",
+      "errdisable",
+      "etherchannel",
       "history",
       "interfaces",
       "ip",
+      "lacp",
       "mac",
+      "port-security",
       "running-config",
+      "spanning-tree",
       "startup-config",
-      "version"
+      "version",
+      "vlan"
     ],
     "priv-exec debug": [
       "all",
       "arp",
+      "dtp",
+      "etherchannel",
       "ethernet",
-      "ip"
+      "ip",
+      "port-security",
+      "spanning-tree",
+      "sw-vlan"
     ],
     "config": [
       "banner",
       "do",
       "enable",
       "end",
+      "errdisable",
       "exit",
       "hostname",
       "interface",
       "ip",
       "line",
       "no",
+      "port-channel",
       "service",
-      "username"
+      "spanning-tree",
+      "username",
+      "vlan"
     ],
     "config-if ethernet/switched": [
+      "channel-group",
       "description",
       "do",
       "duplex",
@@ -791,6 +909,7 @@
       "mac-address",
       "no",
       "shutdown",
+      "spanning-tree",
       "speed",
       "switchport"
     ],
@@ -834,34 +953,51 @@
       "write"
     ],
     "priv-exec show": [
+      "access-lists",
       "arp",
+      "dtp",
+      "errdisable",
+      "etherchannel",
       "history",
       "hosts",
       "interfaces",
       "ip",
       "ipv6",
+      "lacp",
       "mac",
+      "port-security",
       "running-config",
+      "spanning-tree",
+      "standby",
       "startup-config",
-      "version"
+      "version",
+      "vlan"
     ],
     "priv-exec debug": [
       "all",
       "arp",
       "dhcp",
       "dns",
+      "dtp",
+      "etherchannel",
       "ethernet",
       "ip",
       "ipv6",
+      "port-security",
+      "spanning-tree",
+      "standby",
+      "sw-vlan",
       "tcp",
       "traceroute",
       "udp"
     ],
     "config": [
+      "access-list",
       "banner",
       "do",
       "enable",
       "end",
+      "errdisable",
       "exit",
       "hostname",
       "interface",
@@ -869,10 +1005,14 @@
       "ipv6",
       "line",
       "no",
+      "port-channel",
       "service",
-      "username"
+      "spanning-tree",
+      "username",
+      "vlan"
     ],
     "config-if ethernet/switched": [
+      "channel-group",
       "description",
       "do",
       "duplex",
@@ -881,13 +1021,16 @@
       "mac-address",
       "no",
       "shutdown",
+      "spanning-tree",
       "speed",
       "switchport"
     ],
     "config-if ethernet/routed": [
+      "channel-group",
       "description",
       "do",
       "duplex",
+      "encapsulation",
       "end",
       "exit",
       "ip",
@@ -895,7 +1038,9 @@
       "mac-address",
       "no",
       "shutdown",
+      "spanning-tree",
       "speed",
+      "standby",
       "switchport"
     ],
     "config-if virtual/svi": [
@@ -906,7 +1051,8 @@
       "ip",
       "ipv6",
       "no",
-      "shutdown"
+      "shutdown",
+      "standby"
     ]
   },
   "mlswitch.nfc9300-48": {
@@ -939,34 +1085,51 @@
       "write"
     ],
     "priv-exec show": [
+      "access-lists",
       "arp",
+      "dtp",
+      "errdisable",
+      "etherchannel",
       "history",
       "hosts",
       "interfaces",
       "ip",
       "ipv6",
+      "lacp",
       "mac",
+      "port-security",
       "running-config",
+      "spanning-tree",
+      "standby",
       "startup-config",
-      "version"
+      "version",
+      "vlan"
     ],
     "priv-exec debug": [
       "all",
       "arp",
       "dhcp",
       "dns",
+      "dtp",
+      "etherchannel",
       "ethernet",
       "ip",
       "ipv6",
+      "port-security",
+      "spanning-tree",
+      "standby",
+      "sw-vlan",
       "tcp",
       "traceroute",
       "udp"
     ],
     "config": [
+      "access-list",
       "banner",
       "do",
       "enable",
       "end",
+      "errdisable",
       "exit",
       "hostname",
       "interface",
@@ -974,10 +1137,14 @@
       "ipv6",
       "line",
       "no",
+      "port-channel",
       "service",
-      "username"
+      "spanning-tree",
+      "username",
+      "vlan"
     ],
     "config-if ethernet/switched": [
+      "channel-group",
       "description",
       "do",
       "duplex",
@@ -986,13 +1153,16 @@
       "mac-address",
       "no",
       "shutdown",
+      "spanning-tree",
       "speed",
       "switchport"
     ],
     "config-if ethernet/routed": [
+      "channel-group",
       "description",
       "do",
       "duplex",
+      "encapsulation",
       "end",
       "exit",
       "ip",
@@ -1000,7 +1170,9 @@
       "mac-address",
       "no",
       "shutdown",
+      "spanning-tree",
       "speed",
+      "standby",
       "switchport"
     ],
     "config-if virtual/svi": [
@@ -1011,7 +1183,8 @@
       "ip",
       "ipv6",
       "no",
-      "shutdown"
+      "shutdown",
+      "standby"
     ]
   },
   "dcswitch.nfn9k-48": {
@@ -1044,34 +1217,51 @@
       "write"
     ],
     "priv-exec show": [
+      "access-lists",
       "arp",
+      "dtp",
+      "errdisable",
+      "etherchannel",
       "history",
       "hosts",
       "interfaces",
       "ip",
       "ipv6",
+      "lacp",
       "mac",
+      "port-security",
       "running-config",
+      "spanning-tree",
+      "standby",
       "startup-config",
-      "version"
+      "version",
+      "vlan"
     ],
     "priv-exec debug": [
       "all",
       "arp",
       "dhcp",
       "dns",
+      "dtp",
+      "etherchannel",
       "ethernet",
       "ip",
       "ipv6",
+      "port-security",
+      "spanning-tree",
+      "standby",
+      "sw-vlan",
       "tcp",
       "traceroute",
       "udp"
     ],
     "config": [
+      "access-list",
       "banner",
       "do",
       "enable",
       "end",
+      "errdisable",
       "exit",
       "hostname",
       "interface",
@@ -1079,10 +1269,14 @@
       "ipv6",
       "line",
       "no",
+      "port-channel",
       "service",
-      "username"
+      "spanning-tree",
+      "username",
+      "vlan"
     ],
     "config-if ethernet/switched": [
+      "channel-group",
       "description",
       "do",
       "duplex",
@@ -1091,13 +1285,16 @@
       "mac-address",
       "no",
       "shutdown",
+      "spanning-tree",
       "speed",
       "switchport"
     ],
     "config-if ethernet/routed": [
+      "channel-group",
       "description",
       "do",
       "duplex",
+      "encapsulation",
       "end",
       "exit",
       "ip",
@@ -1105,7 +1302,9 @@
       "mac-address",
       "no",
       "shutdown",
+      "spanning-tree",
       "speed",
+      "standby",
       "switchport"
     ],
     "config-if virtual/svi": [
@@ -1116,7 +1315,8 @@
       "ip",
       "ipv6",
       "no",
-      "shutdown"
+      "shutdown",
+      "standby"
     ]
   },
   "dcswitch.nfn9k-32": {
@@ -1149,34 +1349,51 @@
       "write"
     ],
     "priv-exec show": [
+      "access-lists",
       "arp",
+      "dtp",
+      "errdisable",
+      "etherchannel",
       "history",
       "hosts",
       "interfaces",
       "ip",
       "ipv6",
+      "lacp",
       "mac",
+      "port-security",
       "running-config",
+      "spanning-tree",
+      "standby",
       "startup-config",
-      "version"
+      "version",
+      "vlan"
     ],
     "priv-exec debug": [
       "all",
       "arp",
       "dhcp",
       "dns",
+      "dtp",
+      "etherchannel",
       "ethernet",
       "ip",
       "ipv6",
+      "port-security",
+      "spanning-tree",
+      "standby",
+      "sw-vlan",
       "tcp",
       "traceroute",
       "udp"
     ],
     "config": [
+      "access-list",
       "banner",
       "do",
       "enable",
       "end",
+      "errdisable",
       "exit",
       "hostname",
       "interface",
@@ -1184,10 +1401,14 @@
       "ipv6",
       "line",
       "no",
+      "port-channel",
       "service",
-      "username"
+      "spanning-tree",
+      "username",
+      "vlan"
     ],
     "config-if ethernet/switched": [
+      "channel-group",
       "description",
       "do",
       "duplex",
@@ -1196,13 +1417,16 @@
       "mac-address",
       "no",
       "shutdown",
+      "spanning-tree",
       "speed",
       "switchport"
     ],
     "config-if ethernet/routed": [
+      "channel-group",
       "description",
       "do",
       "duplex",
+      "encapsulation",
       "end",
       "exit",
       "ip",
@@ -1210,7 +1434,9 @@
       "mac-address",
       "no",
       "shutdown",
+      "spanning-tree",
       "speed",
+      "standby",
       "switchport"
     ],
     "config-if virtual/svi": [
@@ -1221,7 +1447,8 @@
       "ip",
       "ipv6",
       "no",
-      "shutdown"
+      "shutdown",
+      "standby"
     ]
   },
   "hub.nfhub4": {
@@ -1636,6 +1863,7 @@
       "write"
     ],
     "priv-exec show": [
+      "access-lists",
       "arp",
       "history",
       "hosts",
@@ -1643,6 +1871,7 @@
       "ip",
       "ipv6",
       "running-config",
+      "standby",
       "startup-config",
       "version"
     ],
@@ -1654,11 +1883,13 @@
       "ethernet",
       "ip",
       "ipv6",
+      "standby",
       "tcp",
       "traceroute",
       "udp"
     ],
     "config": [
+      "access-list",
       "banner",
       "do",
       "enable",
@@ -1677,6 +1908,7 @@
       "description",
       "do",
       "duplex",
+      "encapsulation",
       "end",
       "exit",
       "ip",
@@ -1684,7 +1916,8 @@
       "mac-address",
       "no",
       "shutdown",
-      "speed"
+      "speed",
+      "standby"
     ]
   },
   "firewall.nfngfw1120": {
@@ -1717,6 +1950,7 @@
       "write"
     ],
     "priv-exec show": [
+      "access-lists",
       "arp",
       "history",
       "hosts",
@@ -1724,6 +1958,7 @@
       "ip",
       "ipv6",
       "running-config",
+      "standby",
       "startup-config",
       "version"
     ],
@@ -1735,11 +1970,13 @@
       "ethernet",
       "ip",
       "ipv6",
+      "standby",
       "tcp",
       "traceroute",
       "udp"
     ],
     "config": [
+      "access-list",
       "banner",
       "do",
       "enable",
@@ -1758,6 +1995,7 @@
       "description",
       "do",
       "duplex",
+      "encapsulation",
       "end",
       "exit",
       "ip",
@@ -1765,7 +2003,8 @@
       "mac-address",
       "no",
       "shutdown",
-      "speed"
+      "speed",
+      "standby"
     ]
   },
   "ids.nfsensor": {
@@ -2234,6 +2473,7 @@
       "write"
     ],
     "priv-exec show": [
+      "access-lists",
       "arp",
       "history",
       "hosts",
@@ -2242,6 +2482,7 @@
       "ipv6",
       "mac",
       "running-config",
+      "standby",
       "startup-config",
       "version",
       "wireless"
@@ -2254,12 +2495,14 @@
       "ethernet",
       "ip",
       "ipv6",
+      "standby",
       "tcp",
       "traceroute",
       "udp",
       "wireless"
     ],
     "config": [
+      "access-list",
       "banner",
       "do",
       "enable",
@@ -2285,7 +2528,8 @@
       "mac-address",
       "no",
       "shutdown",
-      "speed"
+      "speed",
+      "standby"
     ],
     "config-if ethernet/switched": [
       "description",
@@ -2323,7 +2567,8 @@
       "ip",
       "ipv6",
       "no",
-      "shutdown"
+      "shutdown",
+      "standby"
     ]
   },
   "wrouter.nfhome-ax": {
@@ -2356,6 +2601,7 @@
       "write"
     ],
     "priv-exec show": [
+      "access-lists",
       "arp",
       "history",
       "hosts",
@@ -2364,6 +2610,7 @@
       "ipv6",
       "mac",
       "running-config",
+      "standby",
       "startup-config",
       "version",
       "wireless"
@@ -2376,12 +2623,14 @@
       "ethernet",
       "ip",
       "ipv6",
+      "standby",
       "tcp",
       "traceroute",
       "udp",
       "wireless"
     ],
     "config": [
+      "access-list",
       "banner",
       "do",
       "enable",
@@ -2407,7 +2656,8 @@
       "mac-address",
       "no",
       "shutdown",
-      "speed"
+      "speed",
+      "standby"
     ],
     "config-if ethernet/switched": [
       "description",
@@ -2445,7 +2695,8 @@
       "ip",
       "ipv6",
       "no",
-      "shutdown"
+      "shutdown",
+      "standby"
     ]
   },
   "tv.nfsmarttv": {

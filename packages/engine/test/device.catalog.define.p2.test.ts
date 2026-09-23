@@ -68,11 +68,23 @@ describe('the P2 derivations are made at stage P2 only', () => {
     }
   });
 
-  it('the live catalog (stage P1 until the W4 flip) carries no P2 member on any model', () => {
-    expect(CATALOG_STAGE).toBe('P1');
+  it('the live catalog (stage P2 since the W4 flip) carries the P2 members exactly where the derivations put them', () => {
+    // W4 catalog: the flip made the stage 'P2'; a model gains a P2 member only through `routing` (subinterfaces) or
+    // `managed-switch` (stpDefaultMode, profileConfig), and no other model gets one.
+    expect(CATALOG_STAGE).toBe('P2');
     for (const input of ALL_MODEL_INPUTS) {
       const model = defineModel(input, CATALOG_STAGE);
-      expect([model.type, model.subinterfaces, model.profileConfig, model.stpDefaultMode]).toEqual([model.type, undefined, undefined, undefined]);
+      const caps = model.capabilities ?? [];
+      const routing = caps.includes('routing');
+      const managed = caps.includes('managed-switch');
+      const mode = managed ? (input.stpDefaultMode ?? DEFAULT_STP_MODE) : undefined;
+      expect([model.type, model.subinterfaces, model.profileConfig, model.stpDefaultMode]).toEqual([
+        model.type,
+        routing ? { roles: ['routed'], max: SUBINTERFACE_MAX } : undefined,
+        managed ? { P2: [`spanning-tree mode ${mode}`, 'spanning-tree extend system-id', ...(caps.includes('layer3-switch') ? ['no ip routing'] : [])] } : undefined,
+        mode,
+      ]);
+      if (!routing && !managed) for (const k of ['subinterfaces', 'profileConfig', 'stpDefaultMode']) expect(Object.keys(model), model.type).not.toContain(k);
     }
   });
 });
@@ -155,11 +167,14 @@ describe('egress owners of the new roles (D10, D17)', () => {
 
   it('a Port-channel family takes its owner once the model runs etherchannel (W4)', () => {
     const sw = defineModel(MANAGED_SWITCH_INPUT, 'P2');
-    // before the W4 CAPABILITY_PROCESSES rows exist the daemon is not in `processes`, so no owner is derived
-    expect(sw.portOwners).toEqual({ svi: 'eth-switch' });
+    // since the W4 CAPABILITY_PROCESSES rows exist the daemon is in `processes`, so the owner is derived (D10)
+    expect(sw.processes).toEqual(['eth-switch', 'vlan', 'dtp', 'etherchannel', 'stp', 'arp', 'ipv4', 'icmpv4', 'host']);
+    expect(sw.portOwners).toEqual({ svi: 'eth-switch', channel: 'etherchannel' });
     expect(derivePortOwners(sw.ports, sw.virtualFamilies ?? [], ['eth-switch', 'vlan', 'dtp', 'etherchannel', 'stp'])).toEqual({
       svi: 'eth-switch',
       channel: 'etherchannel',
     });
+    // a daemon list without etherchannel derives no owner for the family
+    expect(derivePortOwners(sw.ports, sw.virtualFamilies ?? [], ['eth-switch', 'vlan', 'dtp', 'stp'])).toEqual({ svi: 'eth-switch' });
   });
 });

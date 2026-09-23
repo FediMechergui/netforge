@@ -170,11 +170,14 @@ describe('table sections from ownership, not kind', () => {
 
   it('shows only the tables each device owns', () => {
     expect(sections('hub.nfhub4')).toEqual([]);
-    expect(sections('switch.nfc2960')).toEqual(['cam', 'arp', 'rib']); // P1: L2 switches gain arp/ipv4 for the Vlan1 SVI
+    // P1: L2 switches gain arp/ipv4 for the Vlan1 SVI. ARCHITECTURE-P2 §9.2 W4 item 19: since the W4 catalog flip a
+    // managed switch owns the VLAN, port-security, trunk-negotiation, EtherChannel and spanning-tree tables.
+    expect(sections('switch.nfc2960')).toEqual(['cam', 'arp', 'rib', 'vlans', 'port-security', 'dtp', 'etherchannel', 'stp', 'stp-bridge']);
     // P1: hosts own the IPv6, socket and resolver tables; routers add the DHCP bindings. An AP has no transport daemon.
+    // P2 (W4): routing devices add the NAT, standby-group and DHCPv6 tables (dhcpv6-client owns no table).
     expect(sections('pc.nfpc')).toEqual(['arp', 'rib', 'rib6', 'nd', 'sockets', 'dns-cache']);
-    expect(sections('router.nf2911')).toEqual(['arp', 'rib', 'rib6', 'nd', 'sockets', 'dhcp-bindings', 'dns-cache']);
-    expect(sections('mlswitch.nfc3650-24')).toEqual(['cam', 'arp', 'rib', 'rib6', 'nd', 'sockets', 'dhcp-bindings', 'dns-cache']);
+    expect(sections('router.nf2911')).toEqual(['arp', 'rib', 'nat', 'rib6', 'nd', 'sockets', 'hsrp', 'dhcp-bindings', 'dhcpv6-bindings', 'dns-cache']);
+    expect(sections('mlswitch.nfc3650-24')).toEqual(['cam', 'arp', 'rib', 'vlans', 'port-security', 'dtp', 'etherchannel', 'stp', 'stp-bridge', 'nat', 'rib6', 'nd', 'sockets', 'hsrp', 'dhcp-bindings', 'dhcpv6-bindings', 'dns-cache']);
     expect(sections('ap.nfap-auto')).toEqual(['cam', 'arp', 'rib', 'dot11-assoc']);
     expect(sections('laptop.nflaptop')).toEqual(['arp', 'rib', 'dot11-assoc', 'rib6', 'nd', 'sockets', 'dns-cache']);
   });

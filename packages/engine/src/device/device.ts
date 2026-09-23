@@ -73,6 +73,20 @@
  *  - `setPortL3` merges `virtual4` and [S2] `groups4` like the other members; a drop of a PDU with
  *    `meta.background` carries `background: true` (§2.7).
  *
+ * P2 (ARCHITECTURE-P2 §2.4, §2.12, §3.12 step 4; W4 device — wireless):
+ *  - action `radio-profile` (capwap-wtp → runtime): stores (`bss: null` clears) the controller profile of radio
+ *    `port` — a frozen copy of the BSS list, ordered by `index`, and the pushing controller's name when the action
+ *    carries one — then `deps.onPortPhyConfig(port)` so the link model re-reads the radio. A port that is not a
+ *    radio (or does not exist) is only a runtime debug line. The profile is RAM: power-off forgets it, and the next
+ *    boot renders the local lines until the controller pushes a profile again;
+ *  - `radioSettings(port)` is the ONE renderer: the local interface lines, overlaid by the controller profile when
+ *    one is stored (`overlayRadioProfile`: BSS 0 supplies `ssid`, `security` and `passphrase`, the whole list is
+ *    `bss`, the stored name is `controller`; the radio-level lines band/channel/width/tx-power/beacons/peer-key stay
+ *    local). A radio without a profile takes the unchanged P0.5 path, so its settings are byte-identical to before
+ *    (the wifi goldens and the P1 digests do not move);
+ *  - `ctx.radioSettings(port)` (device/process-ctx.ts) is this same renderer, so wlan-ap and the air medium read
+ *    one answer.
+ *
  * Power-off semantics (RAM is lost, NVRAM survives): every daemon's `onShutdown` runs first (its actions apply while the
  * ports are still up; P1), then tables are cleared (declared order), processes and timers
  * dropped, virtual interfaces other than the auto ones removed, roles/encapsulations/admin state/counters/L3
@@ -115,7 +129,7 @@ import type { Pdu, PduFactory, RewrapOp } from '../contracts/pdu.js';
 import type { ErrDisableCause, Ipv6PortAddress, PortIpv4Address, PortL3, PortState, PortView, VirtualIpv4 } from '../contracts/port.js';
 import type { Action, DebugEvent, DemuxLayer, Process, ProcessCtx, StateView } from '../contracts/process.js';
 import type { L2ChangedEvent } from '../contracts/transport.js';
-import { CHANNELS, type ChannelWidthMhz, type RadioSettings, type RfBand, type WifiSecurity } from '../contracts/rf.js';
+import { CHANNELS, type BssSettings, type ChannelWidthMhz, type RadioSettings, type RfBand, type WifiSecurity } from '../contracts/rf.js';
 import {
   stpKey,
   vlanKey,
@@ -326,6 +340,58 @@ const CHANNEL_WIDTHS: readonly ChannelWidthMhz[] = Object.freeze([20, 40, 80, 16
 
 /** `speed <n>` values are megabits per second. */
 const MBPS = 1_000_000;
+
+/**
+ * @since P2 (wireless; W4 device) The stored form of a controller profile (`radio-profile` action): a frozen copy of
+ * every BSS (only the members that are set are copied, so an absent `passphrase` stays absent), ordered by `index`
+ * ascending (§4.5 "BSSs of a radio by index"; equal indexes keep the order given). The daemon's own array and
+ * objects are never kept, so a daemon that reuses them cannot change a stored profile.
+ */
+export function copyRadioProfile(bss: readonly BssSettings[]): readonly BssSettings[] {
+  const out = bss.map((b, i): { b: BssSettings; i: number } => {
+    const c: BssSettings = { index: b.index, ssid: b.ssid, security: b.security, switching: b.switching };
+    if (b.passphrase !== undefined) c.passphrase = b.passphrase;
+    if (b.keyTag !== undefined) c.keyTag = b.keyTag;
+    if (b.vlan !== undefined) c.vlan = b.vlan;
+    if (b.wlanId !== undefined) c.wlanId = b.wlanId;
+    return { b: Object.freeze(c), i };
+  });
+  out.sort((x, y) => x.b.index - y.b.index || x.i - y.i);
+  return Object.freeze(out.map((e) => e.b));
+}
+
+/**
+ * @since P2 (wireless; W4 device) Overlay a stored controller profile on the settings rendered from the local
+ * interface lines, in place (§2.12, §3.12 step 4). The controller owns the BSS set: BSS 0 (today's single BSS)
+ * supplies `ssid`, `security` and `passphrase` — a profile without a BSS 0 (or an empty one) leaves the radio idle
+ * (no `ssid`, security `open`, no `passphrase`), as a lightweight access point with no WLAN mapped serves nothing —
+ * and the whole list is `bss`; `controller`, the name of the controller that pushed the profile (the action's
+ * `controller`), is set when one was given and left out otherwise (§2.12: display only). The radio-level lines (band,
+ * channel, width, transmit power, beacons, peer key) stay as the local lines set them.
+ */
+export function overlayRadioProfile(settings: RadioSettings, profile: readonly BssSettings[], controller?: string): RadioSettings {
+  const primary = profile.find((b) => b.index === 0);
+  if (primary === undefined) {
+    delete settings.ssid;
+    settings.security = 'open';
+    delete settings.passphrase;
+  } else {
+    settings.ssid = primary.ssid;
+    settings.security = primary.security;
+    if (primary.passphrase === undefined) delete settings.passphrase;
+    else settings.passphrase = primary.passphrase;
+  }
+  settings.bss = profile;
+  if (controller === undefined) delete settings.controller;
+  else settings.controller = controller;
+  return settings;
+}
+
+/** @since P2 (wireless; W4 device) One stored controller profile: the BSS list and, when the action named it, the controller. */
+interface StoredRadioProfile {
+  readonly bss: readonly BssSettings[];
+  readonly controller?: string;
+}
 
 /** Timer map key. */
 const timerKey = (process: ProcessName, key: string): string => `${process}\0${key}`;
@@ -549,6 +615,8 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
   private version = 0;
   private airResolved = false;
   private airCache: AirView | undefined;
+  /** @since P2 (wireless) Controller profiles by radio port (`radio-profile` action); RAM, cleared on power-off. */
+  private readonly radioProfiles = new Map<PortId, StoredRadioProfile>();
 
   constructor(spec: DeviceSpec, deps: DeviceRuntimeDeps, now: SimTime) {
     const model = deps.catalog.get(spec.type);
@@ -999,9 +1067,31 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
         if (!result.ok) this.runtimeDebug(owner, `config line "${a.negate ? 'no ' : ''}${a.line.join(' ')}" refused: ${result.error ?? 'unknown reason'}`, now);
         return undefined;
       }
+      // ── P2 wireless (ARCHITECTURE-P2 §2.4, §3.12 step 4; W4 device) ──
+      case 'radio-profile':
+        this.radioProfile(owner, a.port, a.bss, a.controller, now);
+        return undefined;
       default:
         return undefined;
     }
+  }
+
+  /**
+   * @since P2 (wireless; W4 device) The `radio-profile` action: store (`null` = clear) the controller profile of radio
+   * `portId` as a frozen, index-ordered copy together with the pushing controller's name (when the action carries
+   * one), then `deps.onPortPhyConfig` so the link model re-reads `radioSettings` (the BSS starts, changes or stops). A
+   * profile replaces the previous one whole, name included. A port that does not exist or is not a radio is ignored
+   * with a runtime debug line and no link-model call.
+   */
+  private radioProfile(owner: ProcessName, portId: PortId, bss: readonly BssSettings[] | null, controller: string | undefined, now: SimTime): void {
+    const port = this.ports.get(portId);
+    if (port === undefined || port.spec.radio === undefined || !RADIO_KINDS.includes(port.spec.kind)) {
+      this.runtimeDebug(owner, `radio profile for ${portId} ignored: not a radio`, now);
+      return;
+    }
+    if (bss === null) this.radioProfiles.delete(portId);
+    else this.radioProfiles.set(portId, controller === undefined ? { bss: copyRadioProfile(bss) } : { bss: copyRadioProfile(bss), controller });
+    this.deps.onPortPhyConfig?.({ device: this.id, port: portId }, now);
   }
 
   /**
@@ -1418,7 +1508,10 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
     const peerKey = text('peer-key');
     if (peerKey !== undefined) out.peerKey = peerKey;
     if (lines.has('beacons')) out.emitBeacons = true;
-    return out;
+    // P2 (wireless, §3.12 step 4): a stored controller profile overlays the BSS members; without one, the P0.5 render
+    // above is returned untouched (byte-identical)
+    const profile = this.radioProfiles.get(portId);
+    return profile === undefined ? out : overlayRadioProfile(out, profile.bss, profile.controller);
   }
 
   // ── device-level operations ─────────────────────────────────────────────
@@ -1487,6 +1580,7 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
     this.demuxIndex = buildDemuxIndex([], new Map());
     this.airResolved = false;
     this.airCache = undefined;
+    this.radioProfiles.clear(); // P2 (wireless): a controller profile is RAM
     for (const name of this.tables.names()) this.tables.get(name)?.clear('cleared');
     this.hostname = this.spec.name;
 

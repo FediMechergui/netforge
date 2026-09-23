@@ -7,6 +7,12 @@
  * Vlan1 (administratively down) and Loopback interfaces. Copper ports are auto-MDIX; uplinks are SFP/SFP+ cages
  * bound to transceiver slots (D7).
  *
+ * P2 (ARCHITECTURE-P2 D3, D5, §7 W4 catalog): both models list `managed-switch` explicitly (`layer3-switch` does
+ * not imply it, D5), so at stage P2 they derive the L2 control daemons, the Vlan family widened to 1–4094, the
+ * Port-channel family and the P2 profile lines (`spanning-tree mode …`, `spanning-tree extend system-id`, and
+ * `no ip routing`: a multilayer switch in a P2 world routes only after `ip routing`, §4.4). NF-C9300 defaults to
+ * rapid spanning tree (`stpDefaultMode: 'rapid-pvst'`, model data); NF-C3650 keeps the derived 'pvst'.
+ *
  * All names, descriptions, labels and tags are original wording (§1.6, D13).
  */
 import type { DeviceModel } from '../../contracts/device.js';
@@ -15,7 +21,7 @@ import type { BuildStage, PoeSpec } from '../../contracts/catalog.js';
 import { defineModel, type ModelInput, type PortInput, type SlotInput } from './define.js';
 
 /** Build stage the exported `MULTILAYER_MODELS` are defined for (device/catalog/index.ts re-defines MULTILAYER_INPUTS for its own stage when it differs). */
-export const MULTILAYER_DATA_STAGE: BuildStage = 'P1';
+export const MULTILAYER_DATA_STAGE: BuildStage = 'P2';
 
 /** High-power (802.3bt class) power-sourcing port, 60 W. */
 const POE_HIGH: PoeSpec = { pse: { standard: 'bt', maxW: 60 } };
@@ -60,7 +66,7 @@ export const NF_C3650_24_INPUT: ModelInput = {
   family: 'nf-c3650',
   variant: '24-port',
   tags: ['multilayer switch', 'layer 3', 'svi', 'inter-vlan routing', 'gigabit', 'sfp', 'fibre'],
-  capabilities: ['layer3-switch'],
+  capabilities: ['layer3-switch', 'managed-switch'],
   ports: [...range(gig, 'GigabitEthernet', '1/0', 1, 24), ...C3650_UPLINKS],
   slots: cageSlots('sfp', 'Gi', C3650_UPLINKS),
 };
@@ -77,7 +83,8 @@ export const NF_C9300_48_INPUT: ModelInput = {
   family: 'nf-c9300',
   variant: '48-port high-power PoE',
   tags: ['multilayer switch', 'layer 3', 'svi', 'inter-vlan routing', 'gigabit', 'poe', 'sfp+', '10g', 'fibre', 'stackable'],
-  capabilities: ['layer3-switch', 'poe-source'],
+  capabilities: ['layer3-switch', 'poe-source', 'managed-switch'],
+  stpDefaultMode: 'rapid-pvst',
   poeBudgetW: 1100,
   ports: [...range((n) => ({ ...gig(n), poe: POE_HIGH }), 'GigabitEthernet', '1/0', 1, 48), ...C9300_UPLINKS],
   slots: cageSlots('sfp+', 'Te', C9300_UPLINKS),

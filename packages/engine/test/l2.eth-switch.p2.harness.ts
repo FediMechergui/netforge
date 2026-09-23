@@ -42,8 +42,12 @@ export const MAC_X = '00:1f:00:00:00:0d';
 /** The base MAC every SVI of the fake device shares (ports.ts: virtual ports use ordinal 0). */
 export const SVI_MAC = '02:4e:00:10:00:00';
 
-/** The P2-stage NF-C2960 with the real `vlan` factory: `managed-switch`, processes with `vlan`, tables with `vlans`. */
-export const VLAN_AWARE_MODEL: DeviceModel = defineP2Model(NF_C2960_INPUT, p2Registry({ vlan: createVlan }));
+/**
+ * The P2-stage NF-C2960 with the real `vlan` factory: `managed-switch`, processes with `vlan`, tables with `vlans`.
+ * The model these harness tests were written for: since the W4 flip registered every P2 factory, dtp, etherchannel
+ * and stp are removed explicitly (`undefined` overlay; ARCHITECTURE-P2 §9.2 W4 fixture pins).
+ */
+export const VLAN_AWARE_MODEL: DeviceModel = defineP2Model(NF_C2960_INPUT, p2Registry({ vlan: createVlan, dtp: undefined, etherchannel: undefined, stp: undefined }));
 
 /** Every table name the VLAN-aware path may read. */
 const TABLE_NAMES: readonly TableName[] = ['cam', 'arp', 'rib', 'vlans', 'port-security', 'dtp', 'stp', 'stp-bridge', 'etherchannel'];

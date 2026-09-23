@@ -15,7 +15,16 @@
  *
  * Epoch change (reset/load) clears mirrored history: events, in-flight frames, markers, flashes, dropped and
  * truncated counters, the inspected PDU and PDU selection, desktop windows, the keyboard canvas focus, plus the P1
- * slices when present (sim-mode stop, live captures, lab status).
+ * slices when present (sim-mode stop, live captures, lab status) and the P2 review state.
+ *
+ * P2 [SHOULD S1] review (ARCHITECTURE-P2 §2.14; W4 web-shell): a batch whose `review` is set shows an earlier
+ * instant of the same world. Its snapshot or delta, `now`, playing state and in-flight frames apply exactly as a live
+ * batch's do (the canvas, tables and packets show that instant); its events go to `timeline.reviewEvents` (at most
+ * `REVIEW_EVENT_RING`, newest kept) and never to `events`, spawn no drop marker or table flash, and its dropped and
+ * left-out counts are not the live stream's; the epoch does not change. `review: null` ends review: that batch
+ * carries a full live snapshot and applies as a live batch, and `reviewEvents` is emptied. `timelineHead` keeps
+ * `timeline.head` (the scrubber's right end) on every batch. `timeline.lanes` and `timeline.seeking` are UI state the
+ * strip owns; batches never touch them.
  */
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
@@ -26,6 +35,7 @@ import {
   selectionKey,
   type DeviceSnapshot,
   type InflightFrame,
+  type LaneId,
   type SessionId,
   type SimSnapshot,
   type TraceEvent,
@@ -44,6 +54,7 @@ import {
   type Store,
   type TableFlash,
   type Theme,
+  type TimelineUiState,
   type WorkspaceView,
 } from './types';
 
@@ -56,6 +67,32 @@ const INFLIGHT_GRACE_NS = 1_000_000_000;
 /** Upper bound on live drop markers / flashes so a flood cannot grow the arrays unbounded. */
 const MAX_DROP_MARKERS = 200;
 const MAX_FLASHES = 400;
+/** @since P2 [S1] Events of the reviewed instant kept in `timeline.reviewEvents` (newest last; §2.14). */
+export const REVIEW_EVENT_RING = 2000;
+
+/**
+ * @since P2 [S1] The lanes a fresh strip shows, in the engine's canonical order (`LANE_IDS`). Written out here rather
+ * than read from the engine at module scope (§0 rule 12); `store.timeline.test.ts` pins it to `LANE_IDS`.
+ */
+export const DEFAULT_TIMELINE_LANES: readonly LaneId[] = Object.freeze([
+  'link',
+  'stp',
+  'etherchannel',
+  'vlan',
+  'fhrp',
+  'routing',
+  'nat',
+  'dhcp',
+  'wireless',
+  'security',
+  'config',
+  'drops',
+]);
+
+/** @since P2 [S1] A fresh timeline slice: no review, no head yet, every lane, nothing in flight. */
+export function defaultTimelineUi(): TimelineUiState {
+  return { review: null, head: null, lanes: [...DEFAULT_TIMELINE_LANES], seeking: false, reviewEvents: [] };
+}
 
 /** Desktop window geometry. */
 export const DESKTOP_WINDOW_DEFAULT = Object.freeze({ w: 520, h: 380 });
@@ -278,12 +315,17 @@ export const useStore = create<Store>()(
     lab: { active: null, status: null, browserOpen: true },
     // `lastCourse` (P2) is the persisted course context a new world takes its defaults profile from (D2).
     learn: { courseId: null, lessonId: null, lastCourse: persisted.learn.lastCourse },
+    // P2 [S1] (W4 web-shell): review and the timeline head mirror the worker; lanes and seeking are the strip's.
+    timeline: defaultTimelineUi(),
 
     // ── actions ──────────────────────────────────────────────────────────
     applyBatch(batch: EngineBatch) {
       const wall = performance.now();
       const prev = get();
       const epochChanged = batch.epoch !== prev.epoch;
+      // [S1] a batch of the reviewed instant (never a change of epoch: it is the same world, seen earlier)
+      const review = batch.review ?? null;
+      const reviewing = review !== null;
 
       let nextSnapshot: SimSnapshot | undefined;
       let nextIndex: SnapshotIndex | undefined;
@@ -309,20 +351,38 @@ export const useStore = create<Store>()(
         s.playing = batch.playing;
         s.rate = batch.rate;
         s.effectiveRate = batch.effectiveRate;
-        if (batch.dropped > 0) s.droppedEvents += batch.dropped;
-        if (batch.eventsTruncated !== undefined && batch.eventsTruncated > 0) s.eventsTruncated += batch.eventsTruncated;
+        const timeline = timelineOf(s);
+        if (batch.timelineHead !== undefined) timeline.head = { t: batch.timelineHead.t, at: batch.timelineHead.at };
 
-        if (batch.events.length > 0) {
-          for (const ev of batch.events) s.events.push(castDraft(Object.isFrozen(ev) ? ev : Object.freeze(ev)));
-          const excess = s.events.length - EVENT_RING;
-          if (excess > 0) s.events.splice(0, excess);
+        if (reviewing) {
+          // [S1] the reviewed instant: its events are context of the past, never the live stream's
+          timeline.review = review;
+          if (batch.events.length > 0) {
+            for (const ev of batch.events) timeline.reviewEvents.push(castDraft(Object.isFrozen(ev) ? ev : Object.freeze(ev)));
+            const excess = timeline.reviewEvents.length - REVIEW_EVENT_RING;
+            if (excess > 0) timeline.reviewEvents.splice(0, excess);
+          }
+        } else {
+          if (batch.review === null && (timeline.review !== null || timeline.reviewEvents.length > 0)) {
+            // [S1] review ended: the full live snapshot of this batch restores the mirror
+            timeline.review = null;
+            timeline.reviewEvents = [];
+          }
+          if (batch.dropped > 0) s.droppedEvents += batch.dropped;
+          if (batch.eventsTruncated !== undefined && batch.eventsTruncated > 0) s.eventsTruncated += batch.eventsTruncated;
+
+          if (batch.events.length > 0) {
+            for (const ev of batch.events) s.events.push(castDraft(Object.isFrozen(ev) ? ev : Object.freeze(ev)));
+            const excess = s.events.length - EVENT_RING;
+            if (excess > 0) s.events.splice(0, excess);
+          }
         }
 
         if (batch.events.length > 0 || authoritative !== undefined || s.inflight.length > 0) {
           s.inflight = castDraft(reconcileInflight(s.inflight as InflightFrame[], batch.events, batch.now, authoritative));
         }
 
-        recordMarkersAndFlashes(s, batch.events, wall);
+        if (!reviewing) recordMarkersAndFlashes(s, batch.events, wall);
         applyP1Fields(s, batch);
 
         if (nextSnapshot !== undefined && nextIndex !== undefined) {
@@ -735,6 +795,18 @@ function clearHistory(s: Draft<Store>, epoch: number): void {
   // The lab belonged to the world that just went: the panel offers the catalogue again until the worker
   // reports a lab on a batch (loadScenario, or a reopened project carrying one — §4.13).
   s.lab = castDraft({ active: null, status: null, browserOpen: true });
+  // [S1] the past of the previous world is gone with it; the strip keeps its lane choice
+  const timeline = timelineOf(s);
+  timeline.review = null;
+  timeline.head = null;
+  timeline.seeking = false;
+  timeline.reviewEvents = [];
+}
+
+/** [S1] The timeline slice of a draft (created when a state predating the slice lacks it). */
+function timelineOf(s: Draft<Store>): Draft<TimelineUiState> {
+  if (s.timeline === undefined) s.timeline = castDraft(defaultTimelineUi());
+  return s.timeline;
 }
 
 /**

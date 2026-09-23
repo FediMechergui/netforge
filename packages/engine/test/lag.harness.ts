@@ -161,16 +161,20 @@ export interface LagWorldOptions {
   readonly links?: readonly (readonly [PortId, PortId])[];
   /** Add PC1 on SW1 Fa0/1 (10.0.0.1) and PC2 on SW2 Fa0/1 (10.0.0.2). Default true. */
   readonly pcs?: boolean;
-  /** Extra factories laid over the default (vlan + etherchannel). */
+  /** Extra factories laid over the default (vlan + etherchannel; stp and dtp removed unless given here). */
   readonly factories?: Parameters<typeof createP2Simulation>[0]['factories'];
 }
 
-/** Two NF-C2960 switches with the vlan and etherchannel daemons, joined by parallel links, with a PC behind each. */
+/**
+ * Two NF-C2960 switches with the vlan and etherchannel daemons, joined by parallel links, with a PC behind each. The
+ * world the W3 lag tests were written for: since the W4 flip registered every P2 factory, stp and dtp are removed
+ * explicitly (`undefined` overlay) unless a test passes them (ARCHITECTURE-P2 §9.2 W4 fixture pins).
+ */
 export function lagWorld(o: LagWorldOptions): LagWorld {
   const sim = createP2Simulation({
     seed: o.seed ?? 11,
     profile: o.profile ?? 'P2',
-    factories: { vlan: createVlan, etherchannel: createEtherchannel, ...(o.factories ?? {}) },
+    factories: { vlan: createVlan, etherchannel: createEtherchannel, stp: undefined, dtp: undefined, ...(o.factories ?? {}) },
   });
   sim.addDevice({ id: 'sw1', type: 'switch.nfc2960', name: o.sw1.hostname, startupConfig: switchConfig(o.sw1) });
   sim.addDevice({ id: 'sw2', type: 'switch.nfc2960', name: o.sw2.hostname, startupConfig: switchConfig(o.sw2) });

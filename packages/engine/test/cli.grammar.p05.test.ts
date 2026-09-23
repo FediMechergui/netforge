@@ -164,8 +164,10 @@ describe('serial lines', () => {
   });
 
   it('help lists the serial lines on a serial port only', () => {
-    expect(tokens(serial, '')).toEqual(['bandwidth', 'clock', 'description', 'do', 'encapsulation', 'end', 'exit', 'ip', 'ipv6', 'keepalive', 'no', 'shutdown']);
-    expect(tokens(gig, '')).toEqual(['description', 'do', 'duplex', 'end', 'exit', 'ip', 'ipv6', 'mac-address', 'no', 'shutdown', 'speed']);
+    // ARCHITECTURE-P2 §9.2 W4 item 18 (the P2 fragments folded into GRAMMAR): `standby` on both, `encapsulation` on the
+    // routed Ethernet port
+    expect(tokens(serial, '')).toEqual(['bandwidth', 'clock', 'description', 'do', 'encapsulation', 'end', 'exit', 'ip', 'ipv6', 'keepalive', 'no', 'shutdown', 'standby']);
+    expect(tokens(gig, '')).toEqual(['description', 'do', 'duplex', 'encapsulation', 'end', 'exit', 'ip', 'ipv6', 'mac-address', 'no', 'shutdown', 'speed', 'standby']);
   });
 
   it('show controllers serial and debug serial run but are not listed', () => {
@@ -175,7 +177,8 @@ describe('serial lines', () => {
     expect(fail(priv, 'show controllers serial gi0/0')).toMatchObject({ kind: 'invalid-arg', error: { column: 24 } });
     expect(tokens(priv, 'show ')).not.toContain('controllers');
     expect(ok(priv, 'debug serial').args.category).toBe('serial');
-    expect(tokens(priv, 'debug ')).toEqual(['all', 'arp', 'dhcp', 'dns', 'ethernet', 'ip', 'ipv6', 'tcp', 'traceroute', 'udp']);
+    // ARCHITECTURE-P2 §9.2 W4 item 18: `standby` (hsrp, routing row) joins through the registry
+    expect(tokens(priv, 'debug ')).toEqual(['all', 'arp', 'dhcp', 'dns', 'ethernet', 'ip', 'ipv6', 'standby', 'tcp', 'traceroute', 'udp']);
   });
 });
 
@@ -259,7 +262,8 @@ describe('inventory and status tables', () => {
   it('show interfaces status exists on bridging devices; routers keep the P0 show list', () => {
     expect(ok(on('switch.nfc2960', 'priv-exec'), 'show interfaces status').spec.handler).toBe(HANDLERS.showInterfacesStatus);
     const r1 = on('router.nf2911', 'priv-exec');
-    expect(tokens(r1, 'show ')).toEqual(['arp', 'history', 'hosts', 'interfaces', 'ip', 'ipv6', 'running-config', 'startup-config', 'version']);
+    // the P0 show list plus (ARCHITECTURE-P2 §9.2 W4 item 18) `access-lists` and `standby`
+    expect(tokens(r1, 'show ')).toEqual(['access-lists', 'arp', 'history', 'hosts', 'interfaces', 'ip', 'ipv6', 'running-config', 'standby', 'startup-config', 'version']);
     expect(ok(r1, 'show interfaces serial0/0/0').args.iface).toBe('Serial0/0/0');
   });
 

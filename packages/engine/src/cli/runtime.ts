@@ -30,9 +30,10 @@
  * Module removal (§3.11): `onPortsRemoved` drops sessions whose context names a removed port to `config`.
  *
  * P2 (ARCHITECTURE-P2 §2.11, §5.1, §7 W2 cli): the built-in table is `BUILTIN_GRAMMAR` (the P1 table followed by
- * the P2 fragments). Two interface-context modes reuse the `config-if` command set: `config-subif` (a router
- * subinterface, context `[['interface', 'GigabitEthernet0/0.10']]`) is matched as `config-if` with its own context,
- * so every `config-if` spec whose port requirement the subinterface meets applies there; `config-if-range` (context
+ * the P2 fragments; since the W4 fold it is `GRAMMAR` itself, §9.2 item 18). Two interface-context modes reuse the
+ * `config-if` command set: `config-subif` (a router subinterface, context `[['interface', 'GigabitEthernet0/0.10']]`)
+ * is matched as `config-if` with its own context, so every `config-if` spec whose port requirement the subinterface
+ * meets applies there; `config-if-range` (context
  * `[['interface', 'range', <ports…>]]`, entered by `interface range`) is matched as `config-if` against the FIRST port,
  * and a `config-if` line is then re-matched and run once per port of the list with that port's own context (so port
  * requirements and interface args are checked per port; a port's error is printed with its name and the others

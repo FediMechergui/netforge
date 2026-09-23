@@ -381,7 +381,8 @@ removes whole wave items and never a piece of a seam.
   wlan-ap paths that the wireless goldens pin, for a difference a learner sees only in a capture. Lesson 25 teaches
   split MAC as the real design and states this simplification; deviation (14), §12.2.
 - **The controller is a new model, `wlc.nfwlc9800` (NF-WLC-9800).** `wlc.nfwlc3504` (NF-WLC-3504) is a `host` end
-  system in P1 files and stays exactly that (moved to the palette's Legacy category, description updated), so no P1
+  system in P1 files and keeps its P1 behaviour: it stays a host end system (moved to the palette's Legacy category,
+  description updated; like every host model it derives the silent `dhcpv6-client`, §9.2 items 13 and 20c), so no P1
   document changes behaviour. The new appliance's distribution ports are intrinsic 802.1Q trunks (no switchport
   lines, no DTP, no spanning tree); it bridges between its tunnel, its interfaces and **one** active distribution
   port, never port to port (§3.0), so it cannot become a transit bridge. Its WLANs point at named controller
@@ -792,8 +793,10 @@ export type L2ChangeKind = 'vlans' | 'trunk' | 'channel' | 'stp' | 'security';
       // (the issuer receives its own onConfig too; eth-switch's handling of the sticky line is idempotent, §3.8).
       // Used by eth-switch for sticky secure MACs. Counts against ACTION_BUDGET like any action.
   // [wireless; W4 device]
-  | { type: 'radio-profile'; port: PortId; bss: readonly BssSettings[] | null }
+  | { type: 'radio-profile'; port: PortId; bss: readonly BssSettings[] | null; controller?: string }
       // capwap-wtp → runtime: store (null = clear) the controller profile of radio `port`, then onPortPhyConfig(port).
+      // `controller` (optional by meaning, W4 close-out 2026-09-23): the pushing controller's name, stored with the
+      // profile and reported by radioSettings(port) as RadioSettings.controller (§2.12, display only).
 // setPortL3 += virtual4?: readonly VirtualIpv4[] | null   (same merge rules); [S2] groups4?: readonly Ipv4Address[] | null
 
 // ProcessRequest += (all @since P2)
@@ -1305,7 +1308,7 @@ member, that the type still accepts an object without it.
 |---|---|
 | port.ts | `PortSpec.parent`, `PortState.dot1q`, `PortL3.virtual4`, [S2] `PortL3.groups4` |
 | pdu.ts | `RewrapOp.as`, `PduMeta.protected` |
-| process.ts | `DebugEvent.fsm`, `DemuxSelector.frame`, `ProcessCtx.radioSettings`, widened `arp.gratuitous` `address`/`mac`, `udp.open` `tunnel` |
+| process.ts | `DebugEvent.fsm`, `DemuxSelector.frame`, `ProcessCtx.radioSettings`, widened `arp.gratuitous` `address`/`mac`, `udp.open` `tunnel`, action `radio-profile` `controller` |
 | transport.ts | `LeaseEvent.family` |
 | tables.ts | `CamRow.secure`, `RouteRow.paths` / `Route6Row.paths` [S6] |
 | events.ts | `frameArrival.central` |
@@ -1522,9 +1525,12 @@ on it — §4.3):
 1. **Who speaks.** `trunk` and `dynamic-desirable` ports send a DTP frame at link-up and every 30 s
    (`dtp-hello:<port>`, periodic). A `dynamic-auto` port sends nothing until it has received DTP on that port; from
    then on it answers immediately and sends every 30 s like the others. An `access` port with `negotiate` true
-   **only answers**: (a) every DTP frame it receives is answered at once with one DTP frame advertising
-   `adminMode` access; (b) when a port changes to `access` while its `dtp` row shows a DTP-speaking neighbour, it
-   sends one such frame at once. It never sends on a timer. `nonegotiate` ports send nothing and ignore DTP (dropped
+   **only answers**: (a) every DTP frame it receives from a neighbour that is not itself an access port is answered
+   at once with one DTP frame advertising `adminMode` access (a frame advertising access is consumed and recorded but
+   never answered: an access neighbour is static, so the answer carries nothing, and two access ports answering each
+   other would never stop — W4 close-out, 2026-09-23, architect ruling on `accept.p2.stp-guards`); (b) when a port
+   changes to `access` while its `dtp` row shows a DTP-speaking neighbour, it sends one such frame at once. It never
+   sends on a timer. `nonegotiate` ports send nothing and ignore DTP (dropped
    silently, no row). Untouched switches stay silent: no port is in access mode by default and nothing is received.
    A dynamic port that receives `adminMode` access goes oper `access` at once (the IOS outcome: "the port
    negotiates to convert the link into a non-trunk link").
@@ -1908,13 +1914,21 @@ SRV with ICMP id 1 at the same time.
    owner derives this list in `nat.pat.test.ts` from real calls; the acceptance test pins the observed sequence.
 3. SRV's reply to 203.0.113.1 id 2 → `nat.inbound` runs **before** the for-me test (203.0.113.1 is R1's own address)
    → match → `ipv4.dst → 192.168.1.11`, `icmpv4.id 2→1` → `ipv4.resume` → forwarded to PC2.
-4. **Port allocation** (deterministic, no rng): keep the inside port if `(proto, insideGlobal, port)` is free;
+4. **Keying** (architect ruling, 2026-09-23, W3 review finding #9): a row is keyed by
+   `(proto, insideGlobal, insideGlobalPort)` only — the inside socket and the inside global socket, never the
+   destination. One inside socket therefore keeps ONE inside-global port for every destination it talks to, which is
+   what `show ip nat translations` shows in the course and what the NAT lesson teaches ("endpoint-independent
+   mapping", RFC 4787 REQ-1). The alternative — keying by destination as well — would give the same inside socket a
+   different inside-global port per destination, which is address-and-port-dependent mapping: closer to some real
+   firewalls, but it breaks the lesson's table and the §3.9 walk-through. The NAT lesson (§11) states the chosen
+   behaviour in words; the inbound match rule below is what keeps it safe.
+5. **Port allocation** (deterministic, no rng): keep the inside port if `(proto, insideGlobal, port)` is free;
    otherwise walk upward inside the same class (1–511, 512–1023, 1024–65535), wrapping within the class, skipping
    ports held by local sockets (the `sockets` table); ICMP ids use the class 0–65535. Pool addresses: lowest free.
    Timeouts: ICMP 60 s, UDP 300 s, TCP 86 400 s while open and **60 s after a FIN or RST has been seen in both
    directions or an RST in either** (`tcp-finrst`), address-only 86 400 s; `nat-sweep` (60 s, periodic) is armed
    only while a dynamic row exists and cancelled when none is left.
-5. **ICMP errors** [SHOULD S9], both directions (RFC 5508 §4); the outer header carries no port or id, so the lookup
+6. **ICMP errors** [SHOULD S9], both directions (RFC 5508 §4); the outer header carries no port or id, so the lookup
    uses the **embedded** packet with its roles reversed:
    - *Inbound* (an error from beyond R1 about a packet R1 translated outbound, e.g. time-exceeded for traceroute):
      find `natKey(embedded proto, embedded ipv4.src, embedded srcPort | icmp id)` and require embedded
@@ -2703,7 +2717,14 @@ gate G (rules 9, 10). Adversarial verify from W2 on replays real worlds built wi
   lines), station configuration 25/26 and `wlan.authorize` (`wifi.enterprise.test.ts`). **wireless [S12]** —
   neighbours and airtime.
 - **cli** — `cli/grammar/wlc.ts` and handlers (`wlc-interface` section with the SVI-maintaining handler, `wlan`
-  section lines, `capwap enable`, `capwap controller`, `show capwap`). Tests: `cli.wlc.test.ts`.
+  section lines, `capwap enable`, `capwap controller`, `show capwap`). Tests: `cli.wlc.test.ts`. Also (architect
+  ruling of 2026-09-23, §9.2 W4 item 20e): `cli/grammar/hsrp.ts` scopes the `standby` interface lines to the roles
+  `routed`, `subif` and `svi`; un-skips the `accept.p2.profile` `no capwap enable` case (§9.2b). Polish found at
+  the W4 browser gate: `show vlan [brief]` wraps its Ports cell at 48 characters on a `, ` boundary, continuation
+  lines indented under the column (today one 200-character cell breaks mid-name in an 80-column console); the pins of
+  `cli.vlan` move with exact values.
+- **sim** (continued) — un-skips the `accept.p2.static-routing` `route` lab-assertion case once the `route` kind lands
+  (§9.2b).
 
 ### W6 — wireless catalog flip, web visuals, course text
 
@@ -2888,7 +2909,8 @@ the assertion's strength and states the new exact value (or the rule that comput
   index 0 keeps its ids, bytes and stream labels; central switching is opt-in; `wlan.grant` is sent only for central
   BSSs.
 - `device.catalog.wireless-wan.test.ts:108-140` ("the controller is an end system with a host shell"): NF-WLC-3504
-  stays exactly that (D17).
+  keeps its P1 behaviour (D17): capabilities, shell, GUI, host ports and IP defaults are unchanged; only its derived
+  `processes` list moves, gaining the silent `dhcpv6-client` like every host model (§9.2 items 13 and 20c).
 - `apps/web/test/canvas.overlays.test.ts:215-218` (the six wireless overlay keys): P2 overlays use a new slice.
 - `apps/web/test/hotkeys.test.ts:141-143, 155-157`: no dock tab and no `DOCK_STAGE` change.
 - `curriculum.test.ts:77-78, :121-126, :160-162` until W7: the CCNA 2 skeleton stays detached from
@@ -3009,6 +3031,59 @@ the assertion's strength and states the new exact value (or the rule that comput
     StateViews (additive, listed literally). The catalog owner greps `toEqual(` on snapshots of NF-C2960 / NF-C3650 /
     NF-2911 and lists each one in the wave report. (The P1 digest test normalises these away, §10.1.)
 
+**W4 close-out (2026-09-23): confirmed findings of the W4 review, applied with exact values, assertions unchanged
+unless stated**
+
+20a. Fixture pins. The flip registered every P2 factory, so the `p2.world` helpers that passed only the daemons under
+     test gained dtp, etherchannel and stp. Each helper is pinned to the world it was written for with the
+     `undefined` overlay: `lag.harness.ts` `lagWorld` → `{vlan, etherchannel, stp: undefined, dtp: undefined,
+     ...factories}`; `l2.eth-switch.p2.harness.ts` `VLAN_AWARE_MODEL` → `p2Registry({vlan, dtp: undefined,
+     etherchannel: undefined, stp: undefined})`; `trace.pdu-vlan.test.ts:37` → `{vlan, dtp: undefined}`;
+     `stp.instances.test.ts:129` → `stpWorld(3, 'P1', {...STP_FACTORIES, dtp: undefined, etherchannel: undefined})`.
+     `STP_FACTORIES` itself is NOT pinned: it is the default world of `accept.p2.stp-*`, which must keep equalling the
+     real catalog (§10); `stp.guards.test.ts` passes with dtp present once the DTP defect is fixed (§3.3 rule 1a).
+20b. Tests that used the live catalog as "the P1 switch" or "a model without profile lines": the negatives
+     `cli.vlan.test.ts:164`, `cli.stp.test.ts:140`, `cli.switchport.test.ts:295` and `:316-319` use
+     `p1SwitchModel()` = `defineModel({...NF_C2960_INPUT, capabilities: ['switching']}, 'P1')` (`test/cli.p2.fixture.ts`;
+     the stage alone is not enough, the P2 lines are scoped by the stage-independent `managed-switch`);
+     `sim.snapshot-l2.test.ts:81` passes `catalog: createCatalog(PROCESS_FACTORIES, {models:
+     ALL_MODEL_INPUTS.map((i) => defineModel(i, 'P1')), stage: 'P1'})`; `device.profile.test.ts:28` builds
+     `PLAIN_MODEL` from NF_C2960 without its `profileConfig` and `stpDefaultMode`.
+20c. `device.catalog.wireless-wan.test.ts` (the wireless, home, radio and WAN data are authored for stage P2 since the
+     flip, as `device.catalog.data.test.ts:84-93` requires): `:49` validates the P1-derived inputs at 'P1' and the
+     exported arrays at 'P2' (as `device.catalog.network-data.test.ts:36-40`); `:133` NF-WLC-3504 `processes` gains
+     `'dhcpv6-client'` after `'dhcp-client'` (item 13; it keeps its P1 behaviour, §9.1, D17); `:146` the home routers'
+     `processes` are `['wlan-ap', 'hdlc', 'eth-switch', 'arp', 'ipv4', 'nat', 'icmpv4', 'host', 'ipv6', 'nd', 'icmpv6',
+     'udp', 'tcp', 'hsrp', 'dhcp-client', 'dhcp-server', 'dhcpv6-client', 'dhcpv6-server', 'dns-client', 'dns-server',
+     'http-server', 'traceroute']`.
+20d. Item 18, `DEBUG_CATEGORIES` through the registry: a routing model's `debug ` list gains `'standby'` after
+     `'ipv6'` (`cli.parser.help.test.ts:129`, `cli.grammar.p05.test.ts:178`, `cli.stp.test.ts:456`) and its
+     `debug ip ` list is `['icmp', 'nat', 'packet', 'routing']` (`cli.parser.help.test.ts:130`).
+20e. Items 17 and 18, the fold: the P2 fragments join `GRAMMAR_FRAGMENTS` after the P1 ones (in
+     `P2_GRAMMAR_FRAGMENTS` order), `P2_HANDLERS` joins `HANDLERS`, and `BUILTIN_GRAMMAR` is `GRAMMAR`. Pins moved,
+     each with its exact new value: `cli.parser.grammar.test.ts` `EXPECTED_IDS` += the 77 P2 ids (listed literally)
+     and `:103-106` += `vlan, switchport-p2, subif, routing, spanning-tree, etherchannel, port-security, errdisable,
+     nat, acl, dhcpv6, hsrp`; `cli.grammar.help-goldens.test.ts:58-59` (item 12: router `config-if ethernet/routed`
+     += `encapsulation`, `standby`; `config` += `access-list`); `cli.parser.help.test.ts:61` (config +=
+     `access-list`), `:63` (config-if += `encapsulation`, `standby`), `:73` (show += `access-lists`, `standby`),
+     `:80` (`show ip ` += `nat`), `:141` (`no ` += `encapsulation`, `standby`); `cli.grammar.p05.test.ts:167` (serial
+     += `standby`), `:168` (gigabit += `encapsulation`, `standby`), `:263` (router show += `access-lists`,
+     `standby`); `cli.vlan.test.ts:171-182` and `cli.stp.test.ts:427-431` pin the folded table (the P1 keys then the
+     P2 keys, every P2 id in `HANDLERS`, `BUILTIN_GRAMMAR === GRAMMAR`). `goldens/cli-help.p05.json` regenerated: 64
+     listings gain tokens and none loses one (the superset guard holds). Open question for the architect: the W3
+     `standby` scope (`L3_PORT`) also offers `standby` on the NF-2911's serial WAN ports. **Architect ruling
+     (2026-09-23):** a standby group needs a shared multi-access segment on which a virtual MAC can answer ARP, so the
+     `standby` interface lines are scoped to the roles `routed`, `subif` and `svi` only (not `wan`, which holds the
+     point-to-point serial links, and not `virtual`/`mgmt`), with one original mismatch message that also points a
+     switch port at `no switchport`. `show standby` and the `standby` debug category keep their capability scope.
+     Owner: §7 W5 **cli**, in the same change as `cli.wlc` (it regenerates `cli-help.p05.json` anyway): the serial
+     listings of `cli.grammar.p05.test.ts:167` lose `standby` again, and `cli.hsrp` gains the serial and loopback
+     refusals.
+20f. New golden `test/goldens/p1-template-exports.json` (a new file): the startup text every template device exports,
+     recorded from the pre-P2 engine (commit 7e623b9) and byte-identical to this engine's. `accept.p2.profile` compares
+     every template export with it, so a config-rule or renderer change cannot move a P1 export unseen (the
+     `asP1Export` expectation is rendered by the store under test). Never regenerated to make a test pass.
+
 **W5**
 21. `labs.solutions.test.ts:69-71` and `accept.p1.labs.test.ts:47-49`: "the CCNA 1 labs are the tail of `SCENARIOS`"
     becomes "templates, then `CCNA1_LABS`, then `CCNA2_LABS`" (index checks, same strength).
@@ -3036,6 +3111,19 @@ the assertion's strength and states the new exact value (or the rule that comput
     New CCNA 2 pins are added as new tests.
 29. `apps/web/test/learn.landing.test.ts:62-72`: `not.toContain('Start CCNA 2')` becomes `toContain`; the "planned"
     fixture becomes CCNA 3.
+
+### 9.2b Acceptance cases deferred to W5 (architect, 2026-09-23)
+
+Two §10 acceptance cases are skipped in W4 because the item that makes them possible belongs to W5, not because of an
+engine defect. Each carries its cause in the `it.skip` title, and the W5 owner named here MUST un-skip it in the same
+change that lands the item; the W8 exit gate checks that no `it.skip` is left in `accept.p2.*`.
+
+| Case | Blocked on | Un-skipped by |
+|---|---|---|
+| `accept.p2.profile` — `no capwap enable` on the NF-AP-1832 holds in the live world, the reload and the clone | `capwap enable` has no CLI grammar before W5 | §7 W5 **cli** (`cli/grammar/wlc.ts`) |
+| `accept.p2.static-routing` — the `route` lab assertion picks a /24 over a /16 | `sim/lab-checks.ts` does not implement the `route` LabAssertion kind yet | §7 W5 **sim** (new `LabAssertion` kinds) |
+
+---
 
 ### 9.3 P1-profile digest changes (the only ones allowed)
 
@@ -3080,8 +3168,8 @@ flips have landed.
 | `accept.p2.dtp.test.ts` | All 25 mode pairs of §3.3 (access, trunk, desirable, auto, trunk + nonegotiate): 1 s after link-up, each end's oper mode equals the table. auto–auto and auto–access send zero DTP PDUs. After a negotiated trunk's peer is reconfigured to `access`, the dynamic port is `access` within propagation + 1 s (the access port's one DTP frame). A Port-channel of two `dynamic desirable` members facing two `dynamic auto` members is a trunk; a member whose peer is set to access is `suspended` with reason `trunk negotiation differs from Port-channel1`. |
 | `accept.p2.router-on-a-stick.test.ts` | §3.4. PC1→PC2 ping 5/5; the echo request's mutation reasons are exactly the §3.4 step 4 sequence as confirmed by the W1 `pdu.vlan.test.ts` derivation, with causes `encapsulation dot1Q 10`/`20` at R1; native `.99` frames cross untagged; `shutdown` on Gi0/0 brings both subinterfaces down with reason `parent-down`, removes their C routes, and the ping fails; a frame tagged 30 drops `encapsulation-mismatch`. |
 | `accept.p2.svi-routing.test.ts` | §3.5 in the P2 profile: PC1→PC2 fails with drop `no-route` whose detail mentions `ip routing`; after `ip routing`, 5/5 with no dot1q mutation, **and a lab `connectivity` check PC1→PC2 passes in the grader's clone** (built from `exportTopology`); shutting Gi1/0/2 takes Vlan20 down with reason `no-bridged-port-up`. **Trunked host:** an L2 NF-C2960 joined to MLS1 by a trunk, PC4 in VLAN 10 behind it: PC4 resolves Vlan10's address and pings it 5/5 (the broadcast reached the SVI untagged). The same topology in the P1 profile forwards without `ip routing`. |
-| `accept.p2.stp-pvst.test.ts` | §3.6 triangle, SW1 priority 4096: SW1 `isRoot`; exactly one alternate/blocking port, on the SW2–SW3 link at the switch with the higher bridge id; every root/designated port reaches `forwarding` with `stateSince − linkUp ∈ [30 s, 30 s + 10 ms]`; a PC broadcast reaches each other PC exactly once. Direct failure (cut SW3's root link at T): SW3's former alternate is forwarding at T + 30 s ± 10 ms. Indirect failure (cut SW1–SW2 at T): SW3's former alternate is forwarding in [T + 47 s, T + 50 s]. On each failure `stp-bridge.topologyChanges` increases, the first TCN is sent at T (detection when the port went down) and the root's TC window starts before T + 1 s. |
-| `accept.p2.stp-rapid.test.ts` | Same triangle, `rapid-pvst`, with `spanning-tree portfast` on the PC ports: final roles as above; every port in its final state within 1 s of the last link-up, with no `fwd:` timer ever armed on the (full-duplex) inter-switch links; the SW2→SW3 proposal is answered by SW3's alternate port with an agreement. Direct failure: the alternate forwards at T + propagation (< 1 ms). Indirect failure: SW3's former alternate forwards before T + 1 s. A PC port **without** PortFast reaches forwarding at link-up + 30 s ± 10 ms. A half-duplex (hub-backed) link falls back to 30 s. **Mixed:** an NF-C2960 (pvst) linked to an NF-C9300 (rapid): the C9300's port shows `protocol: 'stp'` after the migrate delay and forwards 30 s after link-up; links between rapid switches still converge within 1 s; `clear spanning-tree detected-protocols` returns the port to `rstp` and it migrates back to `stp`. |
+| `accept.p2.stp-pvst.test.ts` | §3.6 triangle, SW1 priority 4096: SW1 `isRoot`; exactly one alternate/blocking port, on the SW2–SW3 link at the switch with the higher bridge id; every root/designated port reaches `forwarding` with `stateSince − linkUp ∈ [30 s, 30 s + 10 ms]`; a PC broadcast reaches each other PC exactly once. Direct failure (cut SW3's root link at T): SW3's former alternate is forwarding at T + 30 s ± 10 ms. Indirect failure (cut SW1–SW2 at T): SW3's former alternate is forwarding in [T + 47 s, T + 50 s]. On each failure `stp-bridge.topologyChanges` increases and the root's TC window starts before T + 1 s. **TCN timing (architect ruling, 2026-09-23):** on the DIRECT failure the bridge that lost its root port has an alternate to promote, so its first TCN leaves at T. On the INDIRECT failure no bridge can send one at T — the root signals with the TC flag and never sends a TCN, the designated end of the cut has lost its only root port and claims the root role, and the alternate holder detects nothing until max age expires — so the first TCN leaves the former alternate holder when it converges, in [T + 47 s, T + 50 s]. The earlier wording ("the first TCN is sent at T") described only the direct case and is superseded. |
+| `accept.p2.stp-rapid.test.ts` | Same triangle, `rapid-pvst`, with `spanning-tree portfast` on the PC ports: final roles as above; every port in its final state within 1 s of the last link-up, and **no inter-switch port ever waits on a forward-delay timer** — **(architect ruling, 2026-09-23)** a designated port arms `fwd:<vlan>:<port>` at link-up as the no-agreement fallback that 802.1w requires, and the agreement cancels it microseconds later, so the assertion is that every inter-switch port's `nextTransitionAt` is clear within 1 s of link-up and no such port transitions on a timer expiry, not that the timer is never armed (the same row's full-duplex host port without PortFast needs exactly that timer to reach forwarding at link-up + 30 s). The earlier wording ("no `fwd:` timer ever armed") is superseded; the SW2→SW3 proposal is answered by SW3's alternate port with an agreement. Direct failure: the alternate forwards at T + propagation (< 1 ms). Indirect failure: SW3's former alternate forwards before T + 1 s. A PC port **without** PortFast reaches forwarding at link-up + 30 s ± 10 ms. A half-duplex (hub-backed) link falls back to 30 s. **Mixed:** an NF-C2960 (pvst) linked to an NF-C9300 (rapid): the C9300's port shows `protocol: 'stp'` after the migrate delay and forwards 30 s after link-up; links between rapid switches still converge within 1 s; `clear spanning-tree detected-protocols` returns the port to `rstp` and it migrates back to `stp`. |
 | `accept.p2.stp-guards.test.ts` | PortFast host port: forwarding at link-up; `spanning-tree portfast default` on an untouched switch (ports `dynamic auto`) makes host ports edge. BPDU guard: cabling a switch to a PortFast + bpduguard port err-disables it (`errDisabled: 'bpduguard'`) on the first BPDU. Root guard: a switch with priority 0 attached to a root-guard port puts that port `inconsistent: 'root'` and SW1 stays root; after it is removed the port recovers within 25 s (`runFor`). **Type:** a static trunk facing an access port puts the access port `inconsistent: 'type'` (blocking). |
 | `accept.p2.stp-scale.test.ts` | P2 world: 8 NF-C2960 in a ring with two cross links, 20 VLANs, every inter-switch link a trunk, 10 access ports per switch up. After convergence, `runFor(60 s)` dispatches fewer than 100 000 events, no drop has detail `action-budget`, and the `stp-bridge` row of every VLAN names the same root on all 8 switches. |
 | `accept.p2.loop-storm-bounded.test.ts` | A topology whose loop **multiplies** frames: two NF-C2960 joined by three parallel FastEthernet (100 Mb/s) cables, one PC on each, one broadcast. P1 profile (no spanning tree), `runFor(1 s)`: `queue-full` drops are present; at the end, on every P2P port, queued plus in-flight frames ≤ `P2P_QUEUE_LIMIT + 1` (memory bound); dispatched events ≤ `links × 2 × ⌈1 s / slot⌉ × P2P_EVENTS_PER_FRAME × 1.1`, where slot = 84 bytes × 8 / 100 Mb/s = 6.72 µs and `P2P_EVENTS_PER_FRAME` comes from the W1 media test (event bound = line rate). No fixed events-per-second constant. P2 profile: after convergence (`runFor(65 s)` first), the same broadcast gives zero `queue-full` drops and each PC receives it exactly once. |

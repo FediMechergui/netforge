@@ -44,6 +44,13 @@
  *  - `transition(category, message, fsm, data?)`: exactly ONE debug event, emitted and recorded like `ctx.debug`,
  *    whose `DebugEvent.fsm` is a copy of the transition. `category` is the daemon's §5.4 debug category, so the CLI
  *    prints the line under `debug <category>`. P0/P1 daemons never call it, so their debug bytes are unchanged.
+ *
+ * P2 wireless member (ARCHITECTURE-P2 §2.4, §3.12 step 4; W4 device):
+ *  - `radioSettings(port)`: the ONE radio settings renderer — the host's `radioSettings` (device/device.ts: the local
+ *    interface lines overlaid by the controller profile a `radio-profile` action stored), so wlan-ap and the air
+ *    medium read the same answer; undefined for a port that is not a radio. It is present on the ctx exactly when the
+ *    host offers a renderer (the device runtime always does); a hand-built host without one gives a ctx without the
+ *    member (optional by meaning, §2.15), so a daemon may fall back to its own reader there.
  */
 import { broadcastOf, inSubnet, isIpv4Broadcast, type Ipv4Address, type Ipv6Address, type MacAddress } from '../contracts/addr.js';
 import type { Capability, DefaultsProfile } from '../contracts/catalog.js';
@@ -54,6 +61,7 @@ import type { AirView } from '../contracts/medium.js';
 import type { FieldValue, LayerSpec, MutationReason, Pdu, PduFactory, PduMeta, RewrapOp } from '../contracts/pdu.js';
 import type { Ipv6PortAddress, PortState, PortView } from '../contracts/port.js';
 import type { DebugEvent, FsmTransition, ProcessCtx } from '../contracts/process.js';
+import type { RadioSettings } from '../contracts/rf.js';
 import type { Rng } from '../contracts/rng.js';
 import type { DeviceTables, Lpm6Result, LpmResult, Route6Row } from '../contracts/tables.js';
 import type { SimTime } from '../contracts/time.js';
@@ -84,6 +92,12 @@ export interface ProcessHost {
    * keep compiling: an absent value is the P1 profile. The device runtime always provides it.
    */
   readonly profile?: DefaultsProfile;
+  /**
+   * @since P2 (wireless; W4 device) The radio settings renderer (`DeviceRuntime.radioSettings`: local lines overlaid
+   * by the controller profile). Optional so hand-built hosts keep compiling; the device runtime always provides it,
+   * and `ctx.radioSettings` exists exactly when it does.
+   */
+  radioSettings?(port: PortId): RadioSettings | undefined;
 }
 
 /**
@@ -370,6 +384,11 @@ export function createProcessCtx(host: ProcessHost, name: ProcessName, rng: Rng)
   // Cached child streams (ProcessCtx.stream): one ctx per process instance, so draws advance across handlers.
   const streams = new Map<string, Rng>();
 
+  // P2 wireless (§2.4): the host's renderer, when it has one (`?.()` keeps the host as `this`)
+  const radioSettings = host.radioSettings === undefined
+    ? undefined
+    : (port: PortId): RadioSettings | undefined => host.radioSettings?.(port);
+
   const ctx: ProcessCtx = {
     get now(): SimTime {
       return host.now;
@@ -511,6 +530,7 @@ export function createProcessCtx(host: ProcessHost, name: ProcessName, rng: Rng)
       const chosen = selectSource6(port.l3.ipv6 ?? [], dst);
       return chosen === undefined ? undefined : { address: chosen.address, iface: egress };
     },
+    ...(radioSettings !== undefined ? { radioSettings } : {}),
   };
   return ctx;
 }

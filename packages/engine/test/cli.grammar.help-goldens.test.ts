@@ -55,8 +55,10 @@ describe('help goldens', () => {
   it('the P0 models carry their P0 lists plus the P1 additions', () => {
     // ARCHITECTURE-P1 §9.2 (P1): IPv6, the line and password commands and the host shell additions join the lists;
     // every P0 entry is still there, in the same order.
-    expect(goldens['router.nf2911']!['config-if ethernet/routed']).toEqual(['description', 'do', 'duplex', 'end', 'exit', 'ip', 'ipv6', 'mac-address', 'no', 'shutdown', 'speed']);
-    expect(goldens['router.nf2911']!.config).toEqual(['banner', 'do', 'enable', 'end', 'exit', 'hostname', 'interface', 'ip', 'ipv6', 'line', 'no', 'service', 'username']);
+    // ARCHITECTURE-P2 §9.2 items 12 and 18 (W4 folds the P2 fragments into GRAMMAR): `encapsulation` (W2) and `standby`
+    // [S2] (W3) on the routed Ethernet port, `access-list` (W3) in config
+    expect(goldens['router.nf2911']!['config-if ethernet/routed']).toEqual(['description', 'do', 'duplex', 'encapsulation', 'end', 'exit', 'ip', 'ipv6', 'mac-address', 'no', 'shutdown', 'speed', 'standby']);
+    expect(goldens['router.nf2911']!.config).toEqual(['access-list', 'banner', 'do', 'enable', 'end', 'exit', 'hostname', 'interface', 'ip', 'ipv6', 'line', 'no', 'service', 'username']);
     expect(goldens['router.nf2911']!['user-exec']).toEqual(['enable', 'exit', 'logout', 'nslookup', 'ping', 'show', 'traceroute']);
     expect(goldens['pc.nfpc']!['user-exec']).toEqual(['adapter', 'arp', 'exit', 'ip', 'ipconfig', 'ipv6', 'ipv6config', 'netstat', 'no', 'nslookup', 'ping', 'show', 'tracert']);
     expect(goldens['pc.nfpc']!['user-exec show']).toEqual(['arp', 'history', 'hosts', 'interfaces', 'ip', 'running-config', 'version']);

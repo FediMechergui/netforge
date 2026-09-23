@@ -6,7 +6,14 @@
  * (MDI-X by default). SFP/SFP+ uplinks are cages bound to transceiver slots (D7). PoE models declare a power budget
  * and power-sourcing ports (data now, behaviour P2+).
  *
- * NF-C2960 is the P0 model: its input is field-for-field the P0 literal of device/catalog.ts.
+ * P2 (ARCHITECTURE-P2 D3, D5, §7 W4 catalog, §9.2 W4 item 13): every switch here is a managed switch
+ * (`managed-switch`): a VLAN-aware bridge with the VLAN database, DTP, spanning tree, EtherChannel and port
+ * security. At stage P2 `defineModel` derives from that capability the daemons `vlan`, `dtp`, `etherchannel`,
+ * `stp`, the Vlan family widened to 1–4094, the Port-channel family, `stpDefaultMode` ('pvst') and the P2 profile
+ * lines (`spanning-tree mode pvst`, `spanning-tree extend system-id`). In a P1 world none of that changes a byte:
+ * the profile lines are not replayed and the new daemons are silent (§4.3).
+ *
+ * NF-C2960 is the P0 model: its input is field-for-field the P0 literal of device/catalog.ts, plus `managed-switch`.
  *
  * All names, descriptions, labels and tags are original wording (§1.6, D13).
  */
@@ -16,7 +23,7 @@ import type { BuildStage, PoeSpec, VirtualFamilySpec } from '../../contracts/cat
 import { defineModel, MANAGEMENT_VLAN_FAMILY, type ModelInput, type PortInput, type SlotInput } from './define.js';
 
 /** Build stage the exported `SWITCH_MODELS` are defined for (device/catalog/index.ts re-defines SWITCH_INPUTS for its own stage when it differs). */
-export const SWITCH_DATA_STAGE: BuildStage = 'P1';
+export const SWITCH_DATA_STAGE: BuildStage = 'P2';
 
 /**
  * Management SVI family of an L2 access switch (P1 W5): the auto `Vlan1` carries the switch's management address
@@ -88,7 +95,7 @@ export const NF_C2960_8_INPUT: ModelInput = {
   family: 'nf-c2960',
   variant: '8-port compact',
   tags: ['switch', 'access', 'layer 2', 'compact', 'desktop'],
-  capabilities: ['switching'],
+  capabilities: ['switching', 'managed-switch'],
   ports: [...range(fast, 'FastEthernet', '0', 1, 8), uplink(gig('GigabitEthernet0/1'))],
   virtualFamilies: [L2_SWITCH_VLAN_FAMILY],
 };
@@ -103,7 +110,7 @@ export const NF_C2960_INPUT: ModelInput = {
   family: 'nf-c2960',
   variant: '24-port',
   tags: ['switch', 'access', 'layer 2'],
-  capabilities: ['switching'],
+  capabilities: ['switching', 'managed-switch'],
   ports: [
     ...range((name) => ({ ...fast(name), short: `Fa${name.slice('FastEthernet'.length)}` }), 'FastEthernet', '0', 1, 24),
     ...range((name) => ({ ...gig(name), short: `Gi${name.slice('GigabitEthernet'.length)}` }), 'GigabitEthernet', '0', 1, 2),
@@ -121,7 +128,7 @@ export const NF_C2960_48_INPUT: ModelInput = {
   family: 'nf-c2960',
   variant: '48-port',
   tags: ['switch', 'access', 'layer 2', 'high density'],
-  capabilities: ['switching'],
+  capabilities: ['switching', 'managed-switch'],
   ports: [...range(fast, 'FastEthernet', '0', 1, 48), ...range((n) => uplink(gig(n)), 'GigabitEthernet', '0', 1, 2)],
   virtualFamilies: [L2_SWITCH_VLAN_FAMILY],
 };
@@ -138,7 +145,7 @@ export const NF_C2960_24PG_INPUT: ModelInput = {
   family: 'nf-c2960',
   variant: '24-port gigabit PoE+',
   tags: ['switch', 'access', 'layer 2', 'gigabit', 'poe', 'sfp', 'fibre'],
-  capabilities: ['switching', 'poe-source'],
+  capabilities: ['switching', 'poe-source', 'managed-switch'],
   poeBudgetW: 370,
   ports: [...range(gigPoe, 'GigabitEthernet', '0', 1, 24), ...C2960_24PG_SFP],
   slots: cageSlots('sfp', C2960_24PG_SFP),
@@ -157,7 +164,7 @@ export const NF_C9200_48_INPUT: ModelInput = {
   family: 'nf-c9200',
   variant: '48-port gigabit PoE+',
   tags: ['switch', 'access', 'layer 2', 'gigabit', 'poe', 'sfp+', '10g', 'fibre', 'stackable'],
-  capabilities: ['switching', 'poe-source'],
+  capabilities: ['switching', 'poe-source', 'managed-switch'],
   poeBudgetW: 740,
   ports: [...range(gigPoe, 'GigabitEthernet', '1/0', 1, 48), ...C9200_48_UPLINKS],
   slots: cageSlots('sfp+', C9200_48_UPLINKS),

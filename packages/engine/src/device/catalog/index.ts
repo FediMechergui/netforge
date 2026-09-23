@@ -36,8 +36,13 @@ import { HOME_END_DEVICE_MODEL_INPUTS, PERIPHERAL_MODEL_INPUTS } from './periphe
 import { IOT_MODEL_INPUTS } from './iot.js';
 import { MODULE_MODELS } from './modules.js';
 
-/** Build stage the catalog derives daemons and GUI panels for (D1). Flipped to 'P1' in P1 W5 (§8.2). */
-export const CATALOG_STAGE: BuildStage = 'P1';
+/**
+ * Build stage the catalog derives daemons, tables, GUI panels and the P2 members for (D1). Flipped to 'P1' in P1 W5
+ * (§8.2) and to 'P2' by the ARCHITECTURE-P2 §7 W4 catalog item (the wired flip: the L2 control daemons on managed
+ * switches, nat/hsrp/DHCPv6 on routing devices, dhcpv6-client on hosts; §9.2 W4 item 13). The W6 catalog item adds
+ * the wireless models' data, not another stage. Every P1-profile world keeps byte-identical traffic (§9.3).
+ */
+export const CATALOG_STAGE: BuildStage = 'P2';
 
 /** Palette index of a category (DEVICE_CATEGORIES order); unknown categories sort last. */
 function categoryIndex(category: DeviceCategory): number {

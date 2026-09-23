@@ -34,7 +34,8 @@ function summaries(evs: readonly TraceEvent[], where: (e: TraceEvent) => boolean
 
 describe('PduSummary.vlan (§2.7)', () => {
   it('frames on a trunk carry vlan = their VID on frameTx and frameRx; frames on access ports carry no vlan key', () => {
-    const sim = createP2Simulation({ seed: 21, profile: 'P1', factories: { vlan: createVlan } });
+    // the vlan daemon only (dtp removed since the W4 flip registered it: §9.2 W4 fixture pins)
+    const sim = createP2Simulation({ seed: 21, profile: 'P1', factories: { vlan: createVlan, dtp: undefined } });
     sim.addDevice({ id: 'sw1', type: 'switch.nfc2960', name: 'SW1', startupConfig: switchConfig('SW1') });
     sim.addDevice({ id: 'sw2', type: 'switch.nfc2960', name: 'SW2', startupConfig: switchConfig('SW2') });
     sim.addDevice({ id: 'pc1', type: 'pc.nfpc', name: 'PC1', startupConfig: pcConfig('PC1', '10.0.0.1', '255.255.255.0') });

@@ -14,9 +14,11 @@
  *  - a `dynamic auto` port NEVER initiates: it stays silent until it hears a speaking neighbour (trunk or desirable);
  *    from then on it answers at once and sends every 30 s like the others, and it falls silent again when the
  *    neighbour turns out to be access or auto, ages out, or the link goes down;
- *  - an `access` port (negotiating) ONLY answers: every message it receives is answered at once with one message
- *    advertising access, and when a port becomes access while its row shows a neighbour it sends one such message
- *    at once (so a negotiated trunk drops back immediately, §13 #22). It never sends on a timer;
+ *  - an `access` port (negotiating) ONLY answers: every message it receives from a neighbour that is not itself an
+ *    access port is answered at once with one message advertising access (an access neighbour's message is consumed
+ *    and recorded but never answered — it is static, and two access ports answering each other would never stop),
+ *    and when a port becomes access while its row shows a neighbour it sends one such message at once (so a
+ *    negotiated trunk drops back immediately, §13 #22). It never sends on a timer;
  *  - `switchport nonegotiate` ports send nothing, keep no row and drop received messages `not-for-me`;
  *  - more generally, a port whose mode changes while its row shows a neighbour announces the new mode with one
  *    message (rule 1(b) generalised: "a neighbour reconfigured says so at once"), so no stale trunk waits for ageing.
@@ -269,8 +271,10 @@ class DtpDaemon implements Process {
     this.ageing.add(port);
 
     if (config.mode === 'access') {
-      // answers only, at once, never on a timer
-      actions.push(this.message(ctx, port, config.mode, oper, pdu));
+      // answers only, at once, never on a timer — and only a neighbour that can still change its mind: an access
+      // neighbour is static (its oper mode never moves), so answering it carries no information, and two access
+      // ports answering each other would never stop (§3.3 rule 1a). Its message is still consumed and recorded.
+      if (neighbourMode !== 'access') actions.push(this.message(ctx, port, config.mode, oper, pdu));
     } else if (config.mode === 'dynamic-auto') {
       if (isDtpInitiator(neighbourMode)) {
         if (!wasSpeaking) {

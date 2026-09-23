@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { deviceMacBase, portMac } from '../src/contracts/addr.js';
 import type { TraceEvent } from '../src/contracts/trace.js';
+import { createVlan } from '../src/protocols/vlan.js';
 import { boot, fakeProcess, harness } from './device.harness.js';
 
 type PortStateEv = Extract<TraceEvent, { kind: 'portState' }>;
@@ -147,9 +148,11 @@ describe('virtual interfaces: oper state', () => {
     expect((h.kinds('portState') as PortStateEv[]).map((e) => e.reason)).toEqual(['no-bridged-port-up']);
   });
 
-  it('an SVI other than Vlan1 stays down and logs why when enabled', () => {
+  it('an SVI other than Vlan1 stays down and logs why when enabled, and comes up once its VLAN exists and a port carries it', () => {
+    // ARCHITECTURE-P2 §9.2 W4 item 16: NF-C3650 is VLAN-aware since the W4 flip (it runs `vlan`, D5). The real vlan
+    // daemon writes the `vlans` row `vlan 10` creates; the other daemons stay the recording fakes.
     const p = switchProcs();
-    const h = harness({ type: 'mlswitch.nfc3650-24', name: 'SW1', processes: p.processes });
+    const h = harness({ type: 'mlswitch.nfc3650-24', name: 'SW1', processes: { ...p.processes, vlan: createVlan } });
     boot(h);
     const d = h.device;
     const gi = d.port('GigabitEthernet1/0/2')!;
@@ -161,7 +164,22 @@ describe('virtual interfaces: oper state', () => {
     expect(v10.adminUp).toBe(true);
     expect(v10.operUp).toBe(false);
     const logs = (h.kinds('log') as LogEv[]).map((l) => l.message);
-    expect(logs).toContain('Interface Vlan10 stays down: only VLAN 1 is available in this release.');
+    expect(logs).toContain('Interface Vlan10 stays down: VLAN 10 does not exist.');
+    expect(logs).not.toContain('Interface Vlan10 stays down: only VLAN 1 is available in this release.');
+
+    // the VLAN exists, but no up bridged port carries it yet (Gi1/0/2 is an access port in VLAN 1)
+    expect(d.applyConfigLine([], ['vlan', '10'], false)).toEqual({ ok: true });
+    expect(v10.operUp).toBe(false);
+    // an up access port in VLAN 10 brings the SVI up
+    h.events.length = 0;
+    expect(d.applyConfigLine([['interface', 'GigabitEthernet1/0/2']], ['switchport', 'access', 'vlan', '10'], false)).toEqual({ ok: true });
+    expect(v10.operUp).toBe(true);
+    expect((h.kinds('portState') as PortStateEv[]).map((e) => [e.port, e.operUp, e.reason])).toEqual([['Vlan10', true, undefined]]);
+    // and removing the VLAN takes it down with the VLAN-aware reason
+    h.events.length = 0;
+    expect(d.applyConfigLine([], ['vlan', '10'], true)).toEqual({ ok: true });
+    expect(v10.operUp).toBe(false);
+    expect((h.kinds('portState') as PortStateEv[]).map((e) => [e.port, e.operUp, e.reason])).toEqual([['Vlan10', false, 'vlan-missing']]);
   });
 
   it('shutdown on a loopback is runtime-owned: no link model call, oper follows admin', () => {

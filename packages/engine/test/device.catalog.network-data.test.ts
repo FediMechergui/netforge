@@ -30,11 +30,14 @@ const names = (type: string): string[] => byType(type).ports.map((p) => p.name);
 const seq = (family: string, prefix: string, first: number, count: number): string[] => Array.from({ length: count }, (_, i) => `${family}${prefix}${first + i}`);
 
 describe('network catalog data (routers, switches, multilayer, data centre, legacy, security, modules)', () => {
-  it('validates with zero issues at P0.5 and at P1', () => {
-    // §8.2 W5: the exported arrays are derived at 'P1'; the same inputs must also validate at P0.5.
+  it('validates with zero issues at P0.5, P1 and P2', () => {
+    // §8.2 W5: the exported arrays were derived at 'P1'; since the ARCHITECTURE-P2 §7 W4 flip they are derived at 'P2'.
+    // The same inputs must also validate at P0.5 and at P1.
     const p05 = GROUPS.flatMap(([, inputs]) => inputs.map((i) => defineModel(i, 'P0.5')));
     expect(formatCatalogIssues(validateCatalog(p05, MODULE_MODELS, { stage: 'P0.5' }))).toBe('');
-    expect(formatCatalogIssues(validateCatalog(MODELS, MODULE_MODELS, { stage: 'P1' }))).toBe('');
+    const p1 = GROUPS.flatMap(([, inputs]) => inputs.map((i) => defineModel(i, 'P1')));
+    expect(formatCatalogIssues(validateCatalog(p1, MODULE_MODELS, { stage: 'P1' }))).toBe('');
+    expect(formatCatalogIssues(validateCatalog(MODELS, MODULE_MODELS, { stage: 'P2' }))).toBe('');
   });
 
   it('lists every CATALOG.md model in order, each in its category, arrays equal to their inputs', () => {
@@ -58,7 +61,8 @@ describe('network catalog data (routers, switches, multilayer, data centre, lega
       expect(models).toHaveLength(inputs.length);
       models.forEach((m, i) => {
         expect(m.category).toBe(category);
-        expect(m).toEqual(defineModel(inputs[i] as ModelInput, 'P1'));
+        // ARCHITECTURE-P2 §7 W4 catalog: every data file is authored for stage 'P2' since the flip
+        expect(m).toEqual(defineModel(inputs[i] as ModelInput, 'P2'));
         expect(Object.isFrozen(m)).toBe(true);
         expect(JSON.parse(JSON.stringify(m))).toEqual(m);
       });
@@ -73,8 +77,9 @@ describe('network catalog data (routers, switches, multilayer, data centre, lega
       expect(m.ports).toHaveLength(p0.ports.length);
       p0.ports.forEach((port, i) => expect(m.ports[i]).toMatchObject(port));
     }
-    expect(byType('router.nf2911').processes).toEqual(['hdlc', 'arp', 'ipv4', 'icmpv4', 'ipv6', 'nd', 'icmpv6', 'udp', 'tcp', 'dhcp-client', 'dhcp-server', 'dns-client', 'dns-server', 'http-server', 'traceroute']);
-    expect(byType('switch.nfc2960').processes).toEqual(['eth-switch', 'arp', 'ipv4', 'icmpv4', 'host']);
+    // ARCHITECTURE-P2 §9.2 W4 item 13: the P2 daemons at their final PROCESS_ORDER positions
+    expect(byType('router.nf2911').processes).toEqual(['hdlc', 'arp', 'ipv4', 'nat', 'icmpv4', 'ipv6', 'nd', 'icmpv6', 'udp', 'tcp', 'hsrp', 'dhcp-client', 'dhcp-server', 'dhcpv6-client', 'dhcpv6-server', 'dns-client', 'dns-server', 'http-server', 'traceroute']);
+    expect(byType('switch.nfc2960').processes).toEqual(['eth-switch', 'vlan', 'dtp', 'etherchannel', 'stp', 'arp', 'ipv4', 'icmpv4', 'host']);
   });
 
   it('has the CATALOG.md port lists', () => {
@@ -108,18 +113,23 @@ describe('network catalog data (routers, switches, multilayer, data centre, lega
       const m = byType(type);
       return { caps: m.capabilities, processes: m.processes, shell: m.cli?.shell, gui: m.gui, families: m.virtualFamilies?.map((f) => f.family), up: m.portsDefaultUp };
     };
-    expect(summary('router.nf1941')).toEqual({ caps: ['routing', 'modular'], processes: ['hdlc', 'arp', 'ipv4', 'icmpv4', 'ipv6', 'nd', 'icmpv6', 'udp', 'tcp', 'dhcp-client', 'dhcp-server', 'dns-client', 'dns-server', 'http-server', 'traceroute'], shell: 'nfos', gui: ['physical'], families: ['Vlan', 'Loopback'], up: false });
-    expect(summary('mlswitch.nfc9300-48')).toEqual({ caps: ['switching', 'routing', 'layer3-switch', 'poe-source'], processes: ['hdlc', 'eth-switch', 'arp', 'ipv4', 'icmpv4', 'host', 'ipv6', 'nd', 'icmpv6', 'udp', 'tcp', 'dhcp-client', 'dhcp-server', 'dns-client', 'dns-server', 'http-server', 'traceroute'], shell: 'nfos', gui: ['physical'], families: ['Vlan', 'Loopback'], up: true });
+    // ARCHITECTURE-P2 §9.2 W4 item 13: routing devices gain nat, hsrp [S2], dhcpv6-client, dhcpv6-server; managed
+    // switches (multilayer: `managed-switch` listed in their data, D5) gain vlan, dtp, etherchannel, stp and the
+    // Port-channel family right after the Vlan family.
+    const ROUTER_P2 = ['hdlc', 'arp', 'ipv4', 'nat', 'icmpv4', 'ipv6', 'nd', 'icmpv6', 'udp', 'tcp', 'hsrp', 'dhcp-client', 'dhcp-server', 'dhcpv6-client', 'dhcpv6-server', 'dns-client', 'dns-server', 'http-server', 'traceroute'];
+    expect(summary('router.nf1941')).toEqual({ caps: ['routing', 'modular'], processes: ROUTER_P2, shell: 'nfos', gui: ['physical'], families: ['Vlan', 'Loopback'], up: false });
+    expect(summary('mlswitch.nfc9300-48')).toEqual({ caps: ['switching', 'routing', 'layer3-switch', 'poe-source', 'managed-switch'], processes: ['hdlc', 'eth-switch', 'vlan', 'dtp', 'etherchannel', 'stp', 'arp', 'ipv4', 'nat', 'icmpv4', 'host', 'ipv6', 'nd', 'icmpv6', 'udp', 'tcp', 'hsrp', 'dhcp-client', 'dhcp-server', 'dhcpv6-client', 'dhcpv6-server', 'dns-client', 'dns-server', 'http-server', 'traceroute'], shell: 'nfos', gui: ['physical'], families: ['Vlan', 'Port-channel', 'Loopback'], up: true });
     expect(summary('hub.nfhub8')).toEqual({ caps: ['repeater'], processes: [], shell: 'none', gui: ['physical'], families: [], up: true });
     // P1 W5 (catalog): everything that bridges and boots the host stack carries the management Vlan1 family, so a
     // bridge can take a management address like an access switch (§9.2 "L2 switches and APs get the Vlan family").
     expect(summary('bridge.nfbr4')).toEqual({ caps: ['switching'], processes: ['eth-switch', 'arp', 'ipv4', 'icmpv4', 'host'], shell: 'nfos', gui: ['physical'], families: ['Vlan'], up: true });
-    expect(summary('firewall.nfngfw1120')).toEqual({ caps: ['routing', 'firewall'], processes: ['hdlc', 'arp', 'ipv4', 'icmpv4', 'ipv6', 'nd', 'icmpv6', 'udp', 'tcp', 'dhcp-client', 'dhcp-server', 'dns-client', 'dns-server', 'http-server', 'traceroute'], shell: 'nfos', gui: ['physical'], families: ['Loopback'], up: false });
-    expect(summary('ids.nfsensor')).toEqual({ caps: ['host'], processes: ['arp', 'ipv4', 'icmpv4', 'host', 'ipv6', 'nd', 'icmpv6', 'udp', 'tcp', 'dhcp-client', 'dns-client', 'http-client', 'traceroute'], shell: 'host', gui: ['physical', 'desktop.ip-config', 'desktop.command-prompt', 'desktop.web-browser'], families: [], up: true });
+    expect(summary('firewall.nfngfw1120')).toEqual({ caps: ['routing', 'firewall'], processes: ROUTER_P2, shell: 'nfos', gui: ['physical'], families: ['Loopback'], up: false });
+    expect(summary('ids.nfsensor')).toEqual({ caps: ['host'], processes: ['arp', 'ipv4', 'icmpv4', 'host', 'ipv6', 'nd', 'icmpv6', 'udp', 'tcp', 'dhcp-client', 'dhcpv6-client', 'dns-client', 'http-client', 'traceroute'], shell: 'host', gui: ['physical', 'desktop.ip-config', 'desktop.command-prompt', 'desktop.web-browser'], families: [], up: true });
 
     for (const m of [...MULTILAYER_MODELS, ...DATACENTRE_MODELS]) {
       for (const p of m.ports) expect([p.role, p.allowedRoles]).toEqual(['switched', ['switched', 'routed']]);
-      expect(m.portOwners).toEqual({ svi: 'eth-switch' });
+      // W4: the Port-channel family is owned by etherchannel (D10)
+      expect(m.portOwners).toEqual({ svi: 'eth-switch', channel: 'etherchannel' });
     }
     for (const type of ['hub.nfhub4', 'hub.nfhub8', 'hub.nfcoax', 'repeater.nfrep']) {
       for (const p of byType(type).ports) expect(p.role).toBe('repeater');

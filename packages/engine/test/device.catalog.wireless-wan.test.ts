@@ -41,12 +41,14 @@ function assess(band: RfBand, cls: 'wifi' | 'ptp' | 'cell', widthMhz: ChannelWid
 }
 
 describe('wireless and WAN catalog data', () => {
-  it('validates with zero issues at P0.5 and P1', () => {
-    // §8.2 W5: the exported arrays are derived at 'P1'; the same inputs must also validate at P0.5.
+  it('validates with zero issues at P0.5, P1 and P2', () => {
+    // §8.2 W5: the exported arrays were derived at 'P1'; since the ARCHITECTURE-P2 §7 W4 flip they are derived at 'P2'
+    // (§9.2 W4 fixture pins). The same inputs must also validate at P0.5 and at P1.
     const inputs = [...WIRELESS_INPUTS, ...HOME_INPUTS, ...RADIO_INPUTS, ...WAN_INPUTS];
     const p05 = validateCatalog(inputs.map((i) => defineModel(i, 'P0.5')), [], { stage: 'P0.5' });
     expect(formatCatalogIssues(p05)).toBe('');
-    expect(formatCatalogIssues(validateCatalog(ALL, [], { stage: 'P1' }))).toBe('');
+    expect(formatCatalogIssues(validateCatalog(inputs.map((i) => defineModel(i, 'P1')), [], { stage: 'P1' }))).toBe('');
+    expect(formatCatalogIssues(validateCatalog(ALL, [], { stage: 'P2' }))).toBe('');
   });
 
   it('lists every CATALOG.md model of the four categories in table order', () => {
@@ -130,7 +132,8 @@ describe('derived summaries', () => {
     const wlc = byType('wlc.nfwlc3504');
     expect(summary(wlc)).toMatchObject({
       capabilities: ['host'],
-      processes: ['arp', 'ipv4', 'icmpv4', 'host', 'ipv6', 'nd', 'icmpv6', 'udp', 'tcp', 'dhcp-client', 'dns-client', 'http-client', 'traceroute'],
+      // §9.2 W4 item 13: a host model gains the (silent) dhcpv6-client; the controller keeps its P1 behaviour (D17)
+      processes: ['arp', 'ipv4', 'icmpv4', 'host', 'ipv6', 'nd', 'icmpv6', 'udp', 'tcp', 'dhcp-client', 'dhcpv6-client', 'dns-client', 'http-client', 'traceroute'],
       shell: 'host',
       gui: ['physical', 'desktop.ip-config', 'desktop.command-prompt', 'desktop.web-browser'],
       hostPorts: ['GigabitEthernet0/1', 'GigabitEthernet0/2', 'GigabitEthernet0/3', 'GigabitEthernet0/4'],
@@ -144,7 +147,8 @@ describe('derived summaries', () => {
       const m = byType(type);
       expect(summary(m)).toMatchObject({
         capabilities: ['switching', 'routing', 'wifi-ap', 'nat-gateway', 'dhcp-server'],
-        processes: ['wlan-ap', 'hdlc', 'eth-switch', 'arp', 'ipv4', 'icmpv4', 'host', 'ipv6', 'nd', 'icmpv6', 'udp', 'tcp', 'dhcp-client', 'dhcp-server', 'dns-client', 'dns-server', 'http-server', 'traceroute'],
+        // §9.2 W4 item 13: a routing model (and nat-gateway) gains nat, hsrp [S2], dhcpv6-client and dhcpv6-server
+        processes: ['wlan-ap', 'hdlc', 'eth-switch', 'arp', 'ipv4', 'nat', 'icmpv4', 'host', 'ipv6', 'nd', 'icmpv6', 'udp', 'tcp', 'hsrp', 'dhcp-client', 'dhcp-server', 'dhcpv6-client', 'dhcpv6-server', 'dns-client', 'dns-server', 'http-server', 'traceroute'],
         shell: 'none',
         grammar: 'nfos',
         gui: ['physical', 'home-router.setup'],

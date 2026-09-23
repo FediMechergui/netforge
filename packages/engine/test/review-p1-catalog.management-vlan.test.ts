@@ -13,13 +13,19 @@ import { ALL_MODELS } from '../src/device/catalog/index.js';
 import { createSimulation } from '../src/sim/simulation.js';
 import type { Simulation } from '../src/contracts/simulation.js';
 
-/** Every model whose management SVI this change added, plus the NF-C2960 that already had it. */
-const MANAGED = [
+/**
+ * The managed switches (ARCHITECTURE-P2 §9.2 W4 item 15: since the W4 flip they are VLAN-aware, so their Vlan family
+ * spans 1–4094 and a Port-channel family follows it; Vlan1 is still automatic and down).
+ */
+const MANAGED_SWITCHES = [
   'switch.nfc2960',
   'switch.nfc2960-8',
   'switch.nfc2960-48',
   'switch.nfc2960-24pg',
   'switch.nfc9200-48',
+] as const;
+/** The learning bridges and access points: the P1 management family, Vlan1 only (`max: 1`). */
+const VLAN1_ONLY = [
   'bridge.nfbr2',
   'bridge.nfbr4',
   'ap.nfap-auto',
@@ -27,6 +33,8 @@ const MANAGED = [
   'ap.nfap-lw',
   'ap.nfap-mesh',
 ] as const;
+/** Every model whose management SVI this change added, plus the NF-C2960 that already had it. */
+const MANAGED = [...MANAGED_SWITCHES, ...VLAN1_ONLY] as const;
 
 /** One booted device of `type`. */
 function booted(type: string): Simulation {
@@ -56,10 +64,13 @@ describe('review P1 W5: the management Vlan of switches, bridges and access poin
   it('the family is data on the bridging models and derived on the access points, always Vlan1 and down', () => {
     for (const type of MANAGED) {
       const model = ALL_MODELS.find((m) => m.type === type)!;
-      expect([type, model.virtualFamilies?.map((f) => f.family)]).toEqual([type, ['Vlan']]);
+      // §9.2 W4 item 15: the MANAGED list splits — managed switches pin the 1–4094 family (with the Port-channel
+      // family after it); the bridges and access points keep `max: 1`.
+      const managed = (MANAGED_SWITCHES as readonly string[]).includes(type);
+      expect([type, model.virtualFamilies?.map((f) => f.family)]).toEqual([type, managed ? ['Vlan', 'Port-channel'] : ['Vlan']]);
       expect([type, model.virtualFamilies?.[0]]).toEqual([
         type,
-        { family: 'Vlan', short: 'Vl', role: 'svi', min: 1, max: 1, defaultAdminUp: false, auto: [1] },
+        { family: 'Vlan', short: 'Vl', role: 'svi', min: 1, max: managed ? 4094 : 1, defaultAdminUp: false, auto: [1] },
       ]);
       expect([type, model.portOwners?.svi]).toEqual([type, 'eth-switch']);
     }

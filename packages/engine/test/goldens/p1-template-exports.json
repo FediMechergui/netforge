@@ -1,0 +1,56 @@
+{
+  "two-pcs-and-switch": {
+    "pc1": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC1\n!\ninterface GigabitEthernet0\n ip address 10.0.0.1 255.255.255.0\n!\nend\n",
+    "sw1": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname SW1\n!\nend\n",
+    "pc2": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC2\n!\ninterface GigabitEthernet0\n ip address 10.0.0.2 255.255.255.0\n!\nend\n"
+  },
+  "pc-router-pc": {
+    "pc1": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC1\n!\ninterface GigabitEthernet0\n ip address 10.0.0.1 255.255.255.0\n!\nip default-gateway 10.0.0.254\n!\nend\n",
+    "r1": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname R1\n!\ninterface GigabitEthernet0/0\n ip address 10.0.0.254 255.255.255.0\n!\ninterface GigabitEthernet0/1\n ip address 10.0.1.254 255.255.255.0\n!\nend\n",
+    "pc2": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC2\n!\ninterface GigabitEthernet0\n ip address 10.0.1.1 255.255.255.0\n!\nip default-gateway 10.0.1.254\n!\nend\n"
+  },
+  "three-routers": {
+    "pc1": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC1\n!\ninterface GigabitEthernet0\n ip address 10.1.0.10 255.255.255.0\n!\nip default-gateway 10.1.0.1\n!\nend\n",
+    "r1": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname R1\n!\ninterface GigabitEthernet0/0\n ip address 10.1.0.1 255.255.255.0\n!\ninterface GigabitEthernet0/1\n ip address 10.0.12.1 255.255.255.0\n!\nip route 10.0.23.0 255.255.255.0 10.0.12.2\nip route 10.3.0.0 255.255.255.0 10.0.12.2\n!\nend\n",
+    "r2": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname R2\n!\ninterface GigabitEthernet0/0\n ip address 10.0.12.2 255.255.255.0\n!\ninterface GigabitEthernet0/1\n ip address 10.0.23.2 255.255.255.0\n!\nip route 10.1.0.0 255.255.255.0 10.0.12.1\nip route 10.3.0.0 255.255.255.0 10.0.23.3\n!\nend\n",
+    "r3": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname R3\n!\ninterface GigabitEthernet0/0\n ip address 10.0.23.3 255.255.255.0\n!\ninterface GigabitEthernet0/1\n ip address 10.3.0.1 255.255.255.0\n!\nip route 10.1.0.0 255.255.255.0 10.0.23.2\nip route 10.0.12.0 255.255.255.0 10.0.23.2\n!\nend\n",
+    "pc3": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC3\n!\ninterface GigabitEthernet0\n ip address 10.3.0.10 255.255.255.0\n!\nip default-gateway 10.3.0.1\n!\nend\n"
+  },
+  "home-wifi": {
+    "home1": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname HOME1\n!\ninterface Vlan1\n ip address 192.168.1.1 255.255.255.0\n!\ninterface Wlan0\n ssid LAB\n security wpa2-psk\n passphrase lab-wireless-2468\n!\nend\n",
+    "pc1": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC1\n!\ninterface GigabitEthernet0\n ip address 192.168.1.10 255.255.255.0\n!\nip default-gateway 192.168.1.1\n!\nend\n",
+    "laptop1": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname LAPTOP1\n!\ninterface Wlan0\n ip address 192.168.1.20 255.255.255.0\n ssid LAB\n security wpa2-psk\n passphrase lab-wireless-2468\n!\nip default-gateway 192.168.1.1\n!\nend\n"
+  },
+  "hub-collision": {
+    "pc1": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC1\n!\ninterface GigabitEthernet0\n ip address 10.0.0.1 255.255.255.0\n!\nend\n",
+    "pc2": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC2\n!\ninterface GigabitEthernet0\n ip address 10.0.0.2 255.255.255.0\n!\nend\n",
+    "pc3": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC3\n!\ninterface GigabitEthernet0\n ip address 10.0.0.3 255.255.255.0\n!\nend\n"
+  },
+  "serial-pair": {
+    "pc1": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC1\n!\ninterface GigabitEthernet0\n ip address 10.1.0.10 255.255.255.0\n!\nip default-gateway 10.1.0.1\n!\nend\n",
+    "r1": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname R1\n!\ninterface GigabitEthernet0/0\n ip address 10.1.0.1 255.255.255.0\n!\ninterface Serial0/0/0\n clock rate 64000\n ip address 10.0.12.1 255.255.255.252\n!\nip route 10.2.0.0 255.255.255.0 10.0.12.2\n!\nend\n",
+    "r2": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname R2\n!\ninterface GigabitEthernet0/0\n ip address 10.2.0.1 255.255.255.0\n!\ninterface Serial0/0/0\n ip address 10.0.12.2 255.255.255.252\n!\nip route 10.1.0.0 255.255.255.0 10.0.12.1\n!\nend\n",
+    "pc2": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC2\n!\ninterface GigabitEthernet0\n ip address 10.2.0.10 255.255.255.0\n!\nip default-gateway 10.2.0.1\n!\nend\n"
+  },
+  "multilayer-routed-port": {
+    "pc2": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC2\n!\ninterface GigabitEthernet0\n ip address 10.5.0.2 255.255.255.0\n!\nend\n",
+    "pc3": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC3\n!\ninterface GigabitEthernet0\n ip address 10.5.0.3 255.255.255.0\n!\nend\n",
+    "mls1": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname MLS1\n!\ninterface GigabitEthernet1/0/24\n no switchport\n ip address 10.1.1.1 255.255.255.0\n!\ninterface Loopback0\n ip address 10.9.9.1 255.255.255.255\n!\nip route 10.2.0.0 255.255.255.0 10.1.1.2\n!\nend\n",
+    "r1": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname R1\n!\ninterface GigabitEthernet0/0\n ip address 10.1.1.2 255.255.255.0\n!\ninterface GigabitEthernet0/1\n ip address 10.2.0.1 255.255.255.0\n!\nip route 10.9.9.1 255.255.255.255 10.1.1.1\n!\nend\n",
+    "pc1": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC1\n!\ninterface GigabitEthernet0\n ip address 10.2.0.10 255.255.255.0\n!\nip default-gateway 10.2.0.1\n!\nend\n"
+  },
+  "radio-bridge": {
+    "pc1": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC1\n!\ninterface GigabitEthernet0\n ip address 10.0.0.1 255.255.255.0\n!\nend\n",
+    "sw1": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname SW1\n!\nend\n",
+    "radio1": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname RADIO1\n!\ninterface Radio0\n channel 149\n peer-key ridge-link-7\n!\nend\n",
+    "radio2": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname RADIO2\n!\ninterface Radio0\n channel 149\n peer-key ridge-link-7\n!\nend\n",
+    "sw2": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname SW2\n!\nend\n",
+    "pc2": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC2\n!\ninterface GigabitEthernet0\n ip address 10.0.0.2 255.255.255.0\n!\nend\n"
+  },
+  "cellular-phones": {
+    "srv1": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname SRV1\n!\ninterface GigabitEthernet0\n ip address 10.20.0.100 255.255.255.0\n!\nend\n",
+    "tower1": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname TOWER1\n!\ninterface Cellular0\n!\nend\n",
+    "phone1": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PHONE1\n!\ninterface Cellular0\n ip address 10.20.0.11 255.255.255.0\n!\nend\n",
+    "phone2": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PHONE2\n!\ninterface Cellular0\n ip address 10.20.0.12 255.255.255.0\n!\nend\n"
+  }
+}

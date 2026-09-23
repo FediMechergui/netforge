@@ -8,7 +8,9 @@
  *
  * Fragments, in table order: core EXEC, shared show commands, global configuration, shared interface lines,
  * virtual interfaces, switchport, serial, wireless, modules, then the P1 features (IPv6, DHCP, DNS, web services,
- * transport, traceroute, passwords and lines) and the host shell. Scoping is capability-, grammar- and
+ * transport, traceroute, passwords and lines) and the host shell, then (ARCHITECTURE-P2, folded in by the W4 catalog
+ * flip) the P2 fragments: VLANs, the P2 switchport lines, subinterfaces, routing, spanning tree, EtherChannel, port
+ * security, err-disable recovery, NAT, access lists, DHCPv6 and HSRP. Scoping is capability-, grammar- and
  * port-role-driven (`grammars`, `requires`, `requiresAny`, `portRequires`); no spec names a device kind.
  *
  * `HANDLERS` is the union of every fragment's handler ids (frozen names shared with the runtime and handler
@@ -105,59 +107,12 @@ export const P2_DEBUG_OBJECTIVES: Readonly<Record<string, readonly string[]>> = 
  */
 export const P2_DEBUG_GRAMMAR: readonly CommandSpec[] = Object.freeze(debugSpecs(P2_DEBUG_CATEGORIES, P2_DEBUG_OBJECTIVES));
 
-/** Handler ids resolved by the CLI runtime's registry: the union of every fragment. Never rename. */
-export const HANDLERS = Object.freeze({
-  ...CORE_EXEC_HANDLERS,
-  ...SHOW_HANDLERS,
-  ...CONFIG_GLOBAL_HANDLERS,
-  ...CONFIG_IF_HANDLERS,
-  ...SWITCHPORT_HANDLERS,
-  ...SERIAL_HANDLERS,
-  ...WIRELESS_HANDLERS,
-  ...MODULES_HANDLERS,
-  ...IPV6_HANDLERS,
-  ...DHCP_HANDLERS,
-  ...DNS_HANDLERS,
-  ...SERVICES_HANDLERS,
-  ...TRANSPORT_HANDLERS,
-  ...LINE_AUTH_HANDLERS,
-  ...HOST_SHELL_HANDLERS,
-});
-
-/** Union of every handler id in `HANDLERS`. */
-export type HandlerId = (typeof HANDLERS)[keyof typeof HANDLERS];
-
-/** The grammar fragments by name, in table order (focused tests and runtime injection). */
-export const GRAMMAR_FRAGMENTS: Readonly<Record<string, readonly CommandSpec[]>> = Object.freeze({
-  // P2 (W3 cli): the P2 `debug` specs follow the core EXEC specs (see `P2_DEBUG_GRAMMAR`).
-  'core-exec': Object.freeze([...CORE_EXEC_GRAMMAR, ...P2_DEBUG_GRAMMAR]),
-  show: SHOW_GRAMMAR,
-  'config-global': CONFIG_GLOBAL_GRAMMAR,
-  'config-if': CONFIG_IF_GRAMMAR,
-  svi: SVI_GRAMMAR,
-  switchport: SWITCHPORT_GRAMMAR,
-  serial: SERIAL_GRAMMAR,
-  wireless: WIRELESS_GRAMMAR,
-  modules: MODULES_GRAMMAR,
-  ipv6: IPV6_GRAMMAR,
-  dhcp: DHCP_GRAMMAR,
-  dns: DNS_GRAMMAR,
-  services: SERVICES_GRAMMAR,
-  transport: TRANSPORT_GRAMMAR,
-  traceroute: TRACEROUTE_GRAMMAR,
-  'line-auth': LINE_AUTH_GRAMMAR,
-  'host-shell': HOST_SHELL_GRAMMAR,
-});
-
-/** The full built-in command table: every fragment concatenated in `GRAMMAR_FRAGMENTS` order. */
-export const GRAMMAR: readonly CommandSpec[] = Object.freeze(Object.values(GRAMMAR_FRAGMENTS).flat());
-
-// ── P2 (ARCHITECTURE-P2 §7 W2 cli) ───────────────────────────────────────────────────────────────────────────────
-// The P2 fragments are assembled beside the P1 table, not inside it: `HANDLERS` and `GRAMMAR_FRAGMENTS` are pinned
-// exactly by cli.parser.grammar.test.ts (`EXPECTED_IDS`), whose migration §9.2 schedules for the W4 catalog flip
-// (item 18: the union with the P2 fragments). Until then the runtime's built-in table is `BUILTIN_GRAMMAR` (P1 table
-// followed by the P2 fragments) and `HANDLER_REGISTRY` carries the P2 handlers under `P2_HANDLERS`; W4 folds the
-// P2 fragments into `GRAMMAR_FRAGMENTS` / `HANDLERS` together with that migration. New ids join `P2_HANDLERS`.
+// ── P2 (ARCHITECTURE-P2 §7 W2/W3 cli, folded in by the W4 catalog flip, §9.2 items 17 and 18) ─────────────────────
+// The P2 fragments were assembled beside the P1 table until the W4 flip; since then they are part of it: `HANDLERS`
+// is the union with `P2_HANDLERS`, `GRAMMAR_FRAGMENTS` lists the P2 fragments after the P1 ones, and `GRAMMAR` (the
+// table the help goldens and the runtime read) holds every spec. `P2_HANDLERS`, `P2_GRAMMAR_FRAGMENTS` and
+// `P2_GRAMMAR` stay as the named P2 subset (the P2 handler files key their registries on `P2_HANDLERS`), and
+// `BUILTIN_GRAMMAR` is `GRAMMAR`. New P2 ids join `P2_HANDLERS`.
 
 /**
  * @since P2 Handler ids of the P2 fragments (W2: vlan, the P2 switchport lines, subinterfaces and ranges, routing;
@@ -201,8 +156,66 @@ export const P2_GRAMMAR_FRAGMENTS: Readonly<Record<string, readonly CommandSpec[
 /** @since P2 Every P2 spec, in `P2_GRAMMAR_FRAGMENTS` order. */
 export const P2_GRAMMAR: readonly CommandSpec[] = Object.freeze(Object.values(P2_GRAMMAR_FRAGMENTS).flat());
 
-/** @since P2 The command table the CLI runtime uses by default: the P1 table followed by the P2 fragments. */
-export const BUILTIN_GRAMMAR: readonly CommandSpec[] = Object.freeze([...GRAMMAR, ...P2_GRAMMAR]);
+/**
+ * Handler ids resolved by the CLI runtime's registry: the union of every fragment, P1 and (since the W4 fold, §9.2
+ * item 18) P2. Never rename.
+ */
+export const HANDLERS = Object.freeze({
+  ...CORE_EXEC_HANDLERS,
+  ...SHOW_HANDLERS,
+  ...CONFIG_GLOBAL_HANDLERS,
+  ...CONFIG_IF_HANDLERS,
+  ...SWITCHPORT_HANDLERS,
+  ...SERIAL_HANDLERS,
+  ...WIRELESS_HANDLERS,
+  ...MODULES_HANDLERS,
+  ...IPV6_HANDLERS,
+  ...DHCP_HANDLERS,
+  ...DNS_HANDLERS,
+  ...SERVICES_HANDLERS,
+  ...TRANSPORT_HANDLERS,
+  ...LINE_AUTH_HANDLERS,
+  ...HOST_SHELL_HANDLERS,
+  ...P2_HANDLERS,
+});
+
+/** Union of every handler id in `HANDLERS`. */
+export type HandlerId = (typeof HANDLERS)[keyof typeof HANDLERS];
+
+/**
+ * The grammar fragments by name, in table order (focused tests and runtime injection): the P1 fragments, then (since
+ * the W4 fold, §9.2 items 17 and 18) the P2 fragments in `P2_GRAMMAR_FRAGMENTS` order.
+ */
+export const GRAMMAR_FRAGMENTS: Readonly<Record<string, readonly CommandSpec[]>> = Object.freeze({
+  // P2 (W3 cli): the P2 `debug` specs follow the core EXEC specs (see `P2_DEBUG_GRAMMAR`).
+  'core-exec': Object.freeze([...CORE_EXEC_GRAMMAR, ...P2_DEBUG_GRAMMAR]),
+  show: SHOW_GRAMMAR,
+  'config-global': CONFIG_GLOBAL_GRAMMAR,
+  'config-if': CONFIG_IF_GRAMMAR,
+  svi: SVI_GRAMMAR,
+  switchport: SWITCHPORT_GRAMMAR,
+  serial: SERIAL_GRAMMAR,
+  wireless: WIRELESS_GRAMMAR,
+  modules: MODULES_GRAMMAR,
+  ipv6: IPV6_GRAMMAR,
+  dhcp: DHCP_GRAMMAR,
+  dns: DNS_GRAMMAR,
+  services: SERVICES_GRAMMAR,
+  transport: TRANSPORT_GRAMMAR,
+  traceroute: TRACEROUTE_GRAMMAR,
+  'line-auth': LINE_AUTH_GRAMMAR,
+  'host-shell': HOST_SHELL_GRAMMAR,
+  ...P2_GRAMMAR_FRAGMENTS,
+});
+
+/** The full built-in command table: every fragment concatenated in `GRAMMAR_FRAGMENTS` order (P1, then P2). */
+export const GRAMMAR: readonly CommandSpec[] = Object.freeze(Object.values(GRAMMAR_FRAGMENTS).flat());
+
+/**
+ * @since P2 The command table the CLI runtime uses by default. Since the W4 fold it is `GRAMMAR` itself (the P1 table
+ * followed by the P2 fragments, the order it always had).
+ */
+export const BUILTIN_GRAMMAR: readonly CommandSpec[] = GRAMMAR;
 
 /** The debug category registry (`debug <category>` specs and handler validation derive from it). */
 export const DEBUG_CATEGORY_DEFS: readonly GrammarDebugCategory[] = Object.freeze([

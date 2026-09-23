@@ -62,7 +62,8 @@ const CATALOG_TABLE: Record<string, [string, string[], string[]]> = {
 };
 
 /** Daemons the `host` capability contributes at P1, in PROCESS_ORDER. */
-const HOST_STACK = ['arp', 'ipv4', 'icmpv4', 'host', 'ipv6', 'nd', 'icmpv6', 'udp', 'tcp', 'dhcp-client', 'dns-client', 'http-client', 'traceroute'];
+/** The host daemon list (P1 stack; ARCHITECTURE-P2 §9.2 W4 item 13: dhcpv6-client after dhcp-client since the W4 flip). */
+const HOST_STACK = ['arp', 'ipv4', 'icmpv4', 'host', 'ipv6', 'nd', 'icmpv6', 'udp', 'tcp', 'dhcp-client', 'dhcpv6-client', 'dns-client', 'http-client', 'traceroute'];
 
 const byType = (type: string): DeviceModel => {
   const m = ALL.find((x) => x.type === type);
@@ -72,7 +73,7 @@ const byType = (type: string): DeviceModel => {
 
 describe('end-device catalog data', () => {
   it('validates with zero issues at the end-device stage (with a host-expansion card in the module list)', () => {
-    expect(END_DEVICE_STAGE).toBe('P1');
+    expect(END_DEVICE_STAGE).toBe('P2');
     expect(validateCatalog(ALL, [WLAN_CARD], { stage: END_DEVICE_STAGE })).toEqual([]);
   });
 
@@ -160,7 +161,7 @@ describe('end-device catalog data', () => {
     const rack = byType('server.nfrack');
     expect(rack.hostPorts).toEqual(['GigabitEthernet0', 'GigabitEthernet1', 'GigabitEthernet2', 'GigabitEthernet3', 'TenGigabitEthernet0', 'TenGigabitEthernet1']);
     expect(rack.ports[4]).toMatchObject({ speedBps: SPEED_10G, speeds: [SPEED_10G, SPEED_1G, SPEED_100M], group: 'uplink' });
-    expect(rack.processes).toEqual(['arp', 'ipv4', 'icmpv4', 'host', 'ipv6', 'nd', 'icmpv6', 'udp', 'tcp', 'dhcp-client', 'dhcp-server', 'dns-client', 'dns-server', 'http-client', 'http-server', 'traceroute']);
+    expect(rack.processes).toEqual(['arp', 'ipv4', 'icmpv4', 'host', 'ipv6', 'nd', 'icmpv6', 'udp', 'tcp', 'dhcp-client', 'dhcp-server', 'dhcpv6-client', 'dns-client', 'dns-server', 'http-client', 'http-server', 'traceroute']);
   });
 
   it('derives nominal radio rates from the rate tables', () => {

@@ -1,7 +1,7 @@
 /**
- * Process registry (protocols/index.ts, ARCHITECTURE-P1 §8.1 W4 l2l3, §8.2 W5 l2l3): every daemon of
- * PROCESS_ORDER — the P0 five, the four P0.5 ones and the twelve P1 ones — is registered in canonical daemon
- * order, each factory builds a fresh process whose name matches its key, and every daemon a catalog model lists
+ * Process registry (protocols/index.ts, ARCHITECTURE-P1 §8.1 W4 l2l3, §8.2 W5 l2l3; ARCHITECTURE-P2 §7 W4 catalog,
+ * §9.2 W4 item 14): every daemon of PROCESS_ORDER — the P0 five, the four P0.5 ones, the twelve P1 ones and the
+ * eight P2 ones the W4 flip registered — is registered in canonical daemon order, each factory builds a fresh process whose name matches its key, and every daemon a catalog model lists
  * at CATALOG_STAGE resolves to a factory.
  */
 import { describe, expect, it } from 'vitest';
@@ -12,21 +12,29 @@ import {
   createCellClient,
   createDhcpClient,
   createDhcpServer,
+  createDhcpv6Client,
+  createDhcpv6Server,
   createDnsClient,
   createDnsServer,
+  createDtp,
   createEthSwitch,
+  createEtherchannel,
   createHdlc,
   createHost,
+  createHsrp,
   createHttpClient,
   createHttpServer,
   createIcmpv4,
   createIcmpv6,
   createIpv4,
   createIpv6,
+  createNat,
   createNd,
+  createStp,
   createTcp,
   createTraceroute,
   createUdp,
+  createVlan,
   createWlanAp,
   createWlanClient,
   processFactory,
@@ -58,8 +66,14 @@ describe('protocols registry', () => {
       'cell-client': createCellClient,
       hdlc: createHdlc,
       'eth-switch': createEthSwitch,
+      // ARCHITECTURE-P2 §9.2 W4 item 14: the eight P2 daemons at their §2.1 positions
+      vlan: createVlan,
+      dtp: createDtp,
+      etherchannel: createEtherchannel,
+      stp: createStp,
       arp: createArp,
       ipv4: createIpv4,
+      nat: createNat,
       icmpv4: createIcmpv4,
       host: createHost,
       ipv6: createIpv6,
@@ -67,8 +81,11 @@ describe('protocols registry', () => {
       icmpv6: createIcmpv6,
       udp: createUdp,
       tcp: createTcp,
+      hsrp: createHsrp,
       'dhcp-client': createDhcpClient,
       'dhcp-server': createDhcpServer,
+      'dhcpv6-client': createDhcpv6Client,
+      'dhcpv6-server': createDhcpv6Server,
       'dns-client': createDnsClient,
       'dns-server': createDnsServer,
       'http-client': createHttpClient,

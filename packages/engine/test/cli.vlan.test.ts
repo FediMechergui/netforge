@@ -25,7 +25,7 @@ import {
 import { isArgToken, matchCommand } from '../src/cli/parser.js';
 import { specModeAllows } from '../src/cli/modes.js';
 import { catalogModel, commandCtxFor, matchContextFor, type CommandCtxOptions, type RecordingCtx } from './cli.p05.fixture.js';
-import { p2Model } from './cli.p2.fixture.js';
+import { p1SwitchModel, p2Model } from './cli.p2.fixture.js';
 
 function handler(id: string): CommandHandler {
   const h = HANDLER_REGISTRY[id];
@@ -161,25 +161,30 @@ describe('scope', () => {
     expect(matchCommand(BUILTIN_GRAMMAR, matchContextFor(SW2960, 'user-exec'), 'show vlan id 10')).toMatchObject({ ok: true, args: { form: 'id', vlan: '10' } });
     expect(matchCommand(BUILTIN_GRAMMAR, matchContextFor(SW2960, 'config'), 'no vlan 10')).toMatchObject({ ok: true, negated: true, args: { vlans: '10' } });
     // the P1 switch and the router are not VLAN-aware (D5)
-    expect(matchCommand(BUILTIN_GRAMMAR, matchContextFor(catalogModel('switch.nfc2960'), 'config'), 'vlan 10').ok).toBe(false);
+    expect(matchCommand(BUILTIN_GRAMMAR, matchContextFor(p1SwitchModel(), 'config'), 'vlan 10').ok).toBe(false);
     expect(matchCommand(BUILTIN_GRAMMAR, matchContextFor(catalogModel('router.nf2911'), 'user-exec'), 'show vlan').ok).toBe(false);
   });
 });
 
-describe('the P2 fragments beside the P1 table (ARCHITECTURE-P2 §7 W2 cli; §9.2 W4 item 18 folds them in)', () => {
-  it('leaves the P1 table, its fragments and its handler ids untouched', () => {
-    expect(Object.keys(GRAMMAR_FRAGMENTS)).toEqual([
+describe('the P2 fragments folded into the table (ARCHITECTURE-P2 §7 W2 cli; §9.2 W4 item 18)', () => {
+  it('the P1 fragments come first, unchanged; the P2 fragments follow them; the P2 handler ids are in HANDLERS; the runtime table is GRAMMAR', () => {
+    const P1_KEYS = [
       'core-exec', 'show', 'config-global', 'config-if', 'svi', 'switchport', 'serial', 'wireless', 'modules',
       'ipv6', 'dhcp', 'dns', 'services', 'transport', 'traceroute', 'line-auth', 'host-shell',
-    ]);
-    for (const id of Object.values(P2_HANDLERS)) expect(Object.values(HANDLERS), id).not.toContain(id);
+    ];
     // W2 fragments, then the W3 cli fragments (spanning tree, EtherChannel, port security, err-disable, NAT, ACL, DHCPv6, [S2] HSRP)
-    expect(Object.keys(P2_GRAMMAR_FRAGMENTS)).toEqual([
+    const P2_KEYS = [
       'vlan', 'switchport-p2', 'subif', 'routing',
       'spanning-tree', 'etherchannel', 'port-security', 'errdisable', 'nat', 'acl', 'dhcpv6', 'hsrp',
-    ]);
+    ];
+    expect(Object.keys(GRAMMAR_FRAGMENTS)).toEqual([...P1_KEYS, ...P2_KEYS]);
+    expect(Object.keys(P2_GRAMMAR_FRAGMENTS)).toEqual(P2_KEYS);
+    for (const k of P2_KEYS) expect(GRAMMAR_FRAGMENTS[k], k).toBe(P2_GRAMMAR_FRAGMENTS[k]);
+    for (const id of Object.values(P2_HANDLERS)) expect(Object.values(HANDLERS), id).toContain(id);
     expect(P2_GRAMMAR).toEqual(Object.values(P2_GRAMMAR_FRAGMENTS).flat());
-    expect(BUILTIN_GRAMMAR).toEqual([...GRAMMAR, ...P2_GRAMMAR]);
+    // the table is the P1 fragments followed by the P2 specs, the order the runtime table always had
+    expect(GRAMMAR).toEqual([...P1_KEYS.flatMap((k) => GRAMMAR_FRAGMENTS[k] ?? []), ...P2_GRAMMAR]);
+    expect(BUILTIN_GRAMMAR).toBe(GRAMMAR);
   });
 
   it('every P2 spec uses a P2 handler id, every id is used and registered, and every spec is well formed', () => {

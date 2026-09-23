@@ -37,7 +37,7 @@ import {
 } from '../src/cli/handlers/spanning-tree.js';
 import { help, matchCommand } from '../src/cli/parser.js';
 import { catalogModel, commandCtxFor, devicePortViews, matchContextFor, type CommandCtxOptions, type RecordingCtx } from './cli.p05.fixture.js';
-import { p2Model } from './cli.p2.fixture.js';
+import { p1SwitchModel, p2Model } from './cli.p2.fixture.js';
 
 const SW = p2Model('switch.nfc2960');
 const MLS = p2Model('mlswitch.nfc3650-24');
@@ -137,7 +137,7 @@ describe('scope and parsing', () => {
     expect(ok(matchCommand(BUILTIN_GRAMMAR, priv, 'clear spanning-tree detected-protocols'))).toBe(P2_HANDLERS.execClearStpDetected);
     expect(matchCommand(BUILTIN_GRAMMAR, priv, 'clear spanning-tree detected-protocols interface gi0/1')).toMatchObject({ ok: true, args: { iface: GI1 } });
     // the P1 switch and the router are not VLAN-aware (D5)
-    expect(matchCommand(BUILTIN_GRAMMAR, matchContextFor(catalogModel('switch.nfc2960'), 'config'), 'spanning-tree mode pvst').ok).toBe(false);
+    expect(matchCommand(BUILTIN_GRAMMAR, matchContextFor(p1SwitchModel(), 'config'), 'spanning-tree mode pvst').ok).toBe(false);
     expect(matchCommand(BUILTIN_GRAMMAR, matchContextFor(ROUTER, 'user-exec'), 'show spanning-tree').ok).toBe(false);
   });
 });
@@ -419,17 +419,19 @@ describe('clear spanning-tree detected-protocols', () => {
   });
 });
 
-describe('the W3 fragments beside the P1 table (ARCHITECTURE-P2 §7 W3 cli)', () => {
+describe('the W3 fragments, folded into the table by W4 (ARCHITECTURE-P2 §7 W3 cli; §9.2 W4 item 18)', () => {
   const W3 = ['spanning-tree', 'etherchannel', 'port-security', 'errdisable', 'nat', 'acl', 'dhcpv6', 'hsrp'];
 
-  it('adds its fragments after the W2 ones and leaves the P1 fragment keys and handler ids untouched', () => {
+  it('adds its fragments after the W2 ones; they close the table after the unchanged P1 fragment keys, and their handler ids are in HANDLERS', () => {
     expect(Object.keys(P2_GRAMMAR_FRAGMENTS).slice(4)).toEqual(W3);
     expect(Object.keys(GRAMMAR_FRAGMENTS)).toEqual([
       'core-exec', 'show', 'config-global', 'config-if', 'svi', 'switchport', 'serial', 'wireless', 'modules',
       'ipv6', 'dhcp', 'dns', 'services', 'transport', 'traceroute', 'line-auth', 'host-shell',
+      'vlan', 'switchport-p2', 'subif', 'routing', ...W3,
     ]);
-    for (const id of Object.values(P2_HANDLERS)) expect(Object.values(HANDLERS), id).not.toContain(id);
-    expect(BUILTIN_GRAMMAR).toEqual([...GRAMMAR, ...P2_GRAMMAR]);
+    for (const id of Object.values(P2_HANDLERS)) expect(Object.values(HANDLERS), id).toContain(id);
+    expect(GRAMMAR.slice(GRAMMAR.length - P2_GRAMMAR.length)).toEqual(P2_GRAMMAR);
+    expect(BUILTIN_GRAMMAR).toBe(GRAMMAR);
     for (const name of W3) {
       for (const s of P2_GRAMMAR_FRAGMENTS[name] ?? []) {
         expect(P2_HANDLER_REGISTRY[s.handler], `${name}: ${s.path.join(' ')}`).toBeDefined();
@@ -450,10 +452,10 @@ describe('the W3 fragments beside the P1 table (ARCHITECTURE-P2 §7 W3 cli)', ()
       expect(spec, d.category).toBeDefined();
       expect(P2_DEBUG_GRAMMAR).toContain(spec);
     }
-    // the rows are filled by the W4 catalog (§2.1): until then no P1 model offers a P2 category, so every pinned
-    // P1 debug listing is unchanged
+    // the rows are filled by the W4 catalog (§2.1): since the flip a routing model offers the categories of its
+    // routing row's daemons — `standby` (hsrp) and, under `debug ip`, `nat` (§9.2 W4 item 18)
     const router = help(GRAMMAR, matchContextFor(catalogModel('router.nf2911'), 'priv-exec'), 'debug ').items.map((i) => i.token);
-    expect(router).toEqual(['all', 'arp', 'dhcp', 'dns', 'ethernet', 'ip', 'ipv6', 'tcp', 'traceroute', 'udp']);
+    expect(router).toEqual(['all', 'arp', 'dhcp', 'dns', 'ethernet', 'ip', 'ipv6', 'standby', 'tcp', 'traceroute', 'udp']);
   });
 
   it('uses original wording in help, args and messages', () => {

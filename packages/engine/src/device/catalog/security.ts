@@ -15,7 +15,7 @@ import type { BuildStage } from '../../contracts/catalog.js';
 import { defineModel, type ModelInput, type PortInput, type SlotInput } from './define.js';
 
 /** Build stage the exported `SECURITY_MODELS` are defined for (device/catalog/index.ts re-defines SECURITY_INPUTS for its own stage when it differs). */
-export const SECURITY_DATA_STAGE: BuildStage = 'P1';
+export const SECURITY_DATA_STAGE: BuildStage = 'P2';
 
 /** Console line (9600 baud). */
 const CONSOLE: PortInput = { name: 'Console', kind: 'console', speedBps: 9_600 };

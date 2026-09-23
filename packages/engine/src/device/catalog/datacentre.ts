@@ -3,6 +3,9 @@
  * ARCHITECTURE-P1 D2, D3).
  *
  * Leaf and spine switches with `layer3-switch` (switched ports that may be routed, SVIs, loopbacks) and jumbo MTU.
+ * P2 (ARCHITECTURE-P2 D5, §7 W4 catalog): both list `managed-switch` explicitly (`layer3-switch` does not imply
+ * it), so at stage P2 they derive the L2 control daemons, the 1–4094 Vlan family, the Port-channel family and the
+ * P2 profile lines like the multilayer switches (spanning tree 'pvst', `no ip routing` until `ip routing`).
  * A model has at most MAX_SLOTS transceiver slots, fewer than these port counts, so the ports carry their physical
  * layer built in rather than as cages:
  *   - 10G `Ethernet` leaf access ports are auto-MDIX copper RJ-45 (10G/1G/100M);
@@ -16,7 +19,7 @@ import type { BuildStage } from '../../contracts/catalog.js';
 import { defineModel, type ModelInput, type PortInput } from './define.js';
 
 /** Build stage the exported `DATACENTRE_MODELS` are defined for (device/catalog/index.ts re-defines DATACENTRE_INPUTS for its own stage when it differs). */
-export const DATACENTRE_DATA_STAGE: BuildStage = 'P1';
+export const DATACENTRE_DATA_STAGE: BuildStage = 'P2';
 
 /** `count` ports `${family}1/${first + i}` built by `make`. */
 function range(make: (name: string) => PortInput, family: string, first: number, count: number): PortInput[] {
@@ -43,7 +46,7 @@ export const NF_N9K_48_INPUT: ModelInput = {
   family: 'nf-n9k',
   variant: 'Leaf 48x10G',
   tags: ['data centre', 'leaf', 'top of rack', 'layer 3', '10g', '40g', 'jumbo', 'fibre'],
-  capabilities: ['layer3-switch'],
+  capabilities: ['layer3-switch', 'managed-switch'],
   ports: [...range(tenGigCopper, 'Ethernet', 1, 48), ...range((n) => ({ ...fortyGigOptic(n), group: 'uplink' }), 'FortyGigabitEthernet', 49, 6)],
 };
 
@@ -57,7 +60,7 @@ export const NF_N9K_32_INPUT: ModelInput = {
   family: 'nf-n9k',
   variant: 'Spine 32x40G',
   tags: ['data centre', 'spine', 'fabric', 'layer 3', '40g', 'jumbo', 'fibre'],
-  capabilities: ['layer3-switch'],
+  capabilities: ['layer3-switch', 'managed-switch'],
   ports: range(fortyGigOptic, 'FortyGigabitEthernet', 1, 32),
 };
 

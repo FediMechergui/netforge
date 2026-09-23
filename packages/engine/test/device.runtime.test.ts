@@ -114,7 +114,8 @@ describe('device runtime: construction and boot lifecycle', () => {
     boot(h);
     expect(h.device.processes.size).toBe(0);
     const logs = h.kinds('log') as Extract<TraceEvent, { kind: 'log' }>[];
-    // the P1 catalog derives the whole host daemon list for pc.nfpc (CATALOG_STAGE 'P1', §8.2 W5)
+    // the catalog derives the whole host daemon list for pc.nfpc (CATALOG_STAGE, §8.2 W5; ARCHITECTURE-P2 §9.2 W4
+    // item 13: dhcpv6-client after dhcp-client since the W4 flip)
     expect(logs.map((l) => l.message)).toEqual([
       'Process arp is not available on this platform',
       'Process ipv4 is not available on this platform',
@@ -126,6 +127,7 @@ describe('device runtime: construction and boot lifecycle', () => {
       'Process udp is not available on this platform',
       'Process tcp is not available on this platform',
       'Process dhcp-client is not available on this platform',
+      'Process dhcpv6-client is not available on this platform',
       'Process dns-client is not available on this platform',
       'Process http-client is not available on this platform',
       'Process traceroute is not available on this platform',

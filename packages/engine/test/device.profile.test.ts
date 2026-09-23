@@ -24,8 +24,12 @@ const PROFILE_MODEL: DeviceModel = {
   profileConfig: { P1: [P1_LINE], P2: P2_LINES },
 };
 
-/** The same switch without any profile lines. */
-const PLAIN_MODEL: DeviceModel = { ...NF_C2960, processes: ['eth-switch'], defaultConfig: [DEFAULT_LINE] };
+/**
+ * The same switch without any profile lines. Since the W4 flip the live NF-C2960 carries its own P2 profile lines
+ * (and a model may carry a spanning-tree default mode), so both are taken out before the spread (§9.2 W4 fixture pins).
+ */
+const { profileConfig: _liveProfileConfig, stpDefaultMode: _liveStpDefaultMode, ...NF_C2960_WITHOUT_PROFILE } = NF_C2960;
+const PLAIN_MODEL: DeviceModel = { ...NF_C2960_WITHOUT_PROFILE, processes: ['eth-switch'], defaultConfig: [DEFAULT_LINE] };
 
 /** A fake eth-switch that only remembers its ctx. */
 function ctxFake(name: ProcessName): { factory: () => Process; ctx: () => ProcessCtx | undefined } {

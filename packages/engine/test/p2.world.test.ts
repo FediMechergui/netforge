@@ -17,14 +17,20 @@ import { defineModel, deriveTables } from '../src/device/catalog/define.js';
 import { NF_C2960_INPUT } from '../src/device/catalog/switches.js';
 import { PROCESS_FACTORIES } from '../src/protocols/index.js';
 import { pcConfig } from '../src/sim/scenarios/templates.js';
+import { NF_AP_1832_INPUT } from '../src/device/catalog/wireless.js';
 import {
+  CAPWAP_TUNNEL_FAMILY,
+  NF_WLC_9800_TEST_INPUT,
   P2_CAPABILITY_PROCESS_ROWS,
   P2_DAEMONS,
   P2_MODEL_DELTAS,
   P2_PROCESS_ORDER,
+  P2_WIRELESS_MODEL_DELTAS,
   applyP2ModelDelta,
   createP2Catalog,
   createP2Simulation,
+  p2ModelDeltaFor,
+  p2ModelInputs,
   p2Registry,
   type P2FactoryOverlay,
 } from './p2.world.js';
@@ -215,5 +221,97 @@ describe('createP2Simulation', () => {
       return JSON.stringify([sim.trace(0).events, sim.snapshot()]);
     };
     expect(build()).toBe(build());
+  });
+});
+
+describe('p2.world wireless deltas (W6 model data, test-only for W5)', () => {
+  it('NF-AP-1832 gains lightweight-ap (idempotently) while the W4 delta list stays the nine managed switches', () => {
+    expect(Object.keys(P2_WIRELESS_MODEL_DELTAS)).toEqual(['ap.nfap-lw']);
+    expect(P2_MODEL_DELTAS).not.toHaveProperty('ap.nfap-lw');
+    expect(p2ModelDeltaFor('ap.nfap-lw')).toEqual({ addCapabilities: ['lightweight-ap'] });
+    expect(p2ModelDeltaFor('switch.nfc2960')).toEqual(P2_MODEL_DELTAS['switch.nfc2960']);
+    expect(p2ModelDeltaFor('mlswitch.nfc9300-48')).toEqual(P2_MODEL_DELTAS['mlswitch.nfc9300-48']);
+    expect(p2ModelDeltaFor('hub.nfhub4')).toBeUndefined();
+    const once = applyP2ModelDelta(NF_AP_1832_INPUT);
+    expect(once).not.toBe(NF_AP_1832_INPUT);
+    expect(once.capabilities).toEqual(['wifi-ap', 'poe-powered', 'lightweight-ap']);
+    expect(expandCapabilities(once.capabilities)).toEqual(['wifi-ap', 'poe-powered', 'lightweight-ap']);
+    expect(applyP2ModelDelta(once)).toEqual(once);
+    expect(NF_AP_1832_INPUT.capabilities).toEqual(['wifi-ap', 'poe-powered']);
+  });
+
+  it('the lightweight AP model derives its P2 profile lines and its daemons, capwap-wtp only with a factory', () => {
+    const without = createP2Catalog(onlyP2()).get('ap.nfap-lw')!;
+    expect(without.capabilities).toEqual(['wifi-ap', 'poe-powered', 'lightweight-ap']);
+    expect(without.processes).toEqual(['wlan-ap', 'eth-switch', 'arp', 'ipv4', 'icmpv4', 'host', 'udp', 'dhcp-client']);
+    expect(without.tables).not.toContain('capwap');
+    expect(without.profileConfig).toEqual({ P2: ['capwap enable', 'interface Vlan1', ' ip address dhcp', ' no shutdown'] });
+    const withWtp = createP2Catalog(onlyP2('capwap-wtp')).get('ap.nfap-lw')!;
+    expect(withWtp.processes).toEqual(['wlan-ap', 'capwap-wtp', 'eth-switch', 'arp', 'ipv4', 'icmpv4', 'host', 'udp', 'dhcp-client']);
+    expect(withWtp.tables).toContain('capwap');
+    // the other access points are untouched
+    const none = createP2Catalog(onlyP2());
+    for (const type of ['ap.nfap-auto', 'ap.nfap-mesh', 'ap.nfap-ax']) {
+      const m = none.get(type)!;
+      expect(m.capabilities).not.toContain('lightweight-ap');
+      expect(m.profileConfig).toBeUndefined();
+      expect(m.processes).not.toContain('dhcp-client');
+    }
+  });
+
+  it('NF-WLC-9800 is a test-only wireless-controller model before NF-WLC-3504 in palette order', () => {
+    const types = p2ModelInputs().map((i) => i.type);
+    expect(types.indexOf('wlc.nfwlc9800')).toBe(types.indexOf('wlc.nfwlc3504') - 1);
+    expect(types.filter((t) => t !== 'wlc.nfwlc9800')).toEqual(ALL_MODEL_INPUTS.map((i) => i.type));
+    expect(ALL_MODEL_INPUTS.some((i) => i.type === 'wlc.nfwlc9800')).toBe(false);
+    expect(Object.isFrozen(NF_WLC_9800_TEST_INPUT)).toBe(true);
+
+    const model = createP2Catalog(onlyP2('vlan')).get('wlc.nfwlc9800')!;
+    expect(model.kind).toBe('wlc');
+    expect(model.model).toBe('NF-WLC-9800');
+    expect(model.capabilities).toEqual(['switching', 'wireless-controller']);
+    expect(model.processes).toEqual(['eth-switch', 'vlan', 'arp', 'ipv4', 'icmpv4', 'host', 'udp']);
+    expect(isVlanAware(model)).toBe(true);
+    expect(model.cli).toEqual({ shell: 'none', grammar: 'nfos', initialPrivilege: 1, consoleVia: [] });
+    expect(model.gui).toContain('wlc.controller');
+    expect(model.ports.map((p) => p.name)).toEqual(['GigabitEthernet0/1', 'GigabitEthernet0/2', 'GigabitEthernet0/3', 'GigabitEthernet0/4', 'Console']);
+    expect(model.ports.filter((p) => p.kind === 'ethernet').every((p) => p.role === 'switched')).toBe(true);
+    expect(model.virtualFamilies).toEqual([expect.objectContaining({ family: 'Vlan', role: 'svi', max: 4094 }), CAPWAP_TUNNEL_FAMILY]);
+    expect(model.defaultConfig).toBeUndefined();
+    expect(model.portOwners['wlan-tunnel']).toBeUndefined();
+    expect(model.tables).not.toContain('capwap-aps');
+
+    const withAc = createP2Catalog(onlyP2('vlan', 'capwap-ac')).get('wlc.nfwlc9800')!;
+    expect(withAc.processes).toEqual(['eth-switch', 'vlan', 'arp', 'ipv4', 'icmpv4', 'host', 'udp', 'capwap-ac']);
+    expect(withAc.portOwners['wlan-tunnel']).toBe('capwap-ac');
+    expect(withAc.tables).toEqual(expect.arrayContaining(['capwap-aps', 'wlan-clients']));
+    expect(JSON.parse(JSON.stringify(withAc))).toEqual(withAc);
+  });
+
+  it('a controller and a lightweight AP build in a real world: Capwap0 exists, the P2 profile replays the AP lines, no daemon is missing', () => {
+    const sim = createP2Simulation({ seed: 6, factories: onlyP2('vlan') });
+    sim.addDevice({ id: 'wlc1', type: 'wlc.nfwlc9800', name: 'WLC1' });
+    sim.addDevice({ id: 'lap1', type: 'ap.nfap-lw', name: 'LAP1' });
+    sim.addDevice({ id: 'sw1', type: 'switch.nfc2960', name: 'SW1' });
+    sim.addLink({ id: 'l_wlc', a: { device: 'wlc1', port: 'GigabitEthernet0/1' }, b: { device: 'sw1', port: 'GigabitEthernet0/1' } });
+    sim.addLink({ id: 'l_lap', a: { device: 'lap1', port: 'GigabitEthernet0' }, b: { device: 'sw1', port: 'FastEthernet0/2' } });
+    sim.runFor(70 * SEC);
+    const wlc = sim.device('wlc1')!;
+    expect(wlc.port('Capwap0')).toMatchObject({ role: 'wlan-tunnel', adminUp: true });
+    expect(wlc.processes.has('vlan')).toBe(true);
+    expect(wlc.processes.has('capwap-ac')).toBe(false);
+    const lap = sim.device('lap1')!;
+    expect(lap.processes.has('dhcp-client')).toBe(true);
+    expect(lap.processes.has('capwap-wtp')).toBe(false);
+    const running = lap.running.render();
+    expect(running).toContain('capwap enable');
+    expect(running).toMatch(/interface Vlan1\n ip address dhcp\n!/);
+    expect(lap.port('Vlan1')).toMatchObject({ adminUp: true });
+    expect(missing(sim.trace(0).events)).toEqual([]);
+    // the P1 profile replays nothing on the AP
+    const p1 = createP2Simulation({ seed: 6, profile: 'P1', factories: onlyP2('vlan') });
+    p1.addDevice({ id: 'lap1', type: 'ap.nfap-lw', name: 'LAP1' });
+    p1.runFor(70 * SEC);
+    expect(p1.device('lap1')!.running.render()).not.toContain('capwap');
   });
 });

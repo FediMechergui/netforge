@@ -15,7 +15,7 @@ import { MSG_DYNAMIC_WITH_NONEGOTIATE, MSG_NO_SUCH_PORT, MSG_NO_TRUNK, resolveAl
 import { matchCommand } from '../src/cli/parser.js';
 import { readSwitchport } from '../src/protocols/l2/switchport-config.js';
 import { catalogModel, commandCtxFor, devicePortViews, matchContextFor, type CommandCtxOptions, type RecordingCtx } from './cli.p05.fixture.js';
-import { p2Model } from './cli.p2.fixture.js';
+import { p1SwitchModel, p2Model } from './cli.p2.fixture.js';
 
 const SW = p2Model('switch.nfc2960');
 const MLS = p2Model('mlswitch.nfc3650-24');
@@ -292,7 +292,7 @@ describe('scope and parsing', () => {
     expect(ok(matchCommand(BUILTIN_GRAMMAR, confIf, 'switchport nonegotiate'))).toBe(P2_HANDLERS.ifSwitchportNonegotiate);
     expect(ok(matchCommand(BUILTIN_GRAMMAR, confIf, 'switchport'))).toBe(HANDLERS.ifSwitchport);
     // the P1 switch is not VLAN-aware; a routed MLS port reaches the handler (which names the problem)
-    expect(matchCommand(BUILTIN_GRAMMAR, matchContextFor(catalogModel('switch.nfc2960'), 'config-if', { iface: FA1 }), 'switchport mode access').ok).toBe(false);
+    expect(matchCommand(BUILTIN_GRAMMAR, matchContextFor(p1SwitchModel(), 'config-if', { iface: FA1 }), 'switchport mode access').ok).toBe(false);
     const routed = devicePortViews(MLS, { patch: { 'GigabitEthernet1/0/24': { role: 'routed' } } });
     expect(matchCommand(BUILTIN_GRAMMAR, matchContextFor(MLS, 'config-if', { ports: routed, iface: 'GigabitEthernet1/0/24' }), 'switchport mode access').ok).toBe(true);
     expect(matchCommand(BUILTIN_GRAMMAR, matchContextFor(MLS, 'config-if', { iface: 'Vlan1' }), 'switchport mode access').ok).toBe(false);
@@ -313,7 +313,7 @@ describe('scope and parsing', () => {
     expect(matchCommand(BUILTIN_GRAMMAR, exec, 'show mac address-table interface fa0/1')).toMatchObject({ ok: true, args: { iface: FA1 } });
     expect(matchCommand(BUILTIN_GRAMMAR, exec, 'show mac address-table count')).toMatchObject({ ok: true, args: { count: 'count' } });
     // the P1 switch has the P1 forms and the mac/status filters (bridging), not the trunk view
-    const p1 = matchContextFor(catalogModel('switch.nfc2960'), 'priv-exec');
+    const p1 = matchContextFor(p1SwitchModel(), 'priv-exec');
     expect(matchCommand(BUILTIN_GRAMMAR, p1, 'show mac address-table count').ok).toBe(true);
     expect(matchCommand(BUILTIN_GRAMMAR, p1, 'show interfaces status err-disabled').ok).toBe(true);
     expect(matchCommand(BUILTIN_GRAMMAR, p1, 'show interfaces trunk').ok).toBe(false);

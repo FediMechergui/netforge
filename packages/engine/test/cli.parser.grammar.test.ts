@@ -39,7 +39,10 @@ const MSG_MODULES: readonly Record<string, unknown>[] = [
   msgWireless, msgParser, msgRuntime,
 ];
 
-/** Every handler id: the P0 ids plus the P0.5 fragments (serial, switchport, wireless, modules, host shell, show). */
+/**
+ * Every handler id: the P0 ids plus the P0.5 fragments (serial, switchport, wireless, modules, host shell, show), the
+ * P1 fragments and, since the W4 fold (ARCHITECTURE-P2 §9.2 item 18), the P2 fragments.
+ */
 const EXPECTED_IDS = [
   'exec.enable', 'exec.disable', 'exec.exit', 'exec.logout', 'exec.end', 'exec.configure', 'exec.ping', 'exec.traceroute',
   'exec.copy-run-start', 'exec.write', 'exec.erase-startup', 'exec.reload', 'exec.clear-arp', 'exec.clear-mac', 'exec.debug',
@@ -65,6 +68,32 @@ const EXPECTED_IDS = [
   'host.ip-address-dhcp', 'host.ip-dns', 'host.ipv6-address', 'host.ipv6-autoconfig', 'host.ipv6config',
   // ARCHITECTURE-P2 §5.5 host-shell expansions: `ipv6 address dhcp [<adapter>]` and [S4] `voice vlan <v>`
   'host.ipv6-address-dhcp', 'host.voice-vlan',
+  // ARCHITECTURE-P2 §9.2 W4 item 18: the P2 fragments, folded in by the W4 catalog flip (P2_HANDLERS order).
+  // W2 cli: VLANs, the P2 switchport lines, subinterfaces and ranges, routing
+  'config.vlan', 'vlan.name', 'show.vlan',
+  'if.switchport-mode', 'if.switchport-access-vlan', 'if.switchport-trunk-native', 'if.switchport-trunk-allowed',
+  'if.switchport-nonegotiate', 'if.switchport-voice-vlan', 'show.interfaces-trunk', 'show.interfaces-switchport',
+  'config.subinterface', 'config.interface-range', 'if.encapsulation-dot1q',
+  'config.ip-routing', 'if.ip-proxy-arp',
+  // W3 cli: spanning tree (and DTP), EtherChannel, port security, err-disable recovery, NAT, access lists, DHCPv6, [S2] HSRP
+  'config.spanning-tree-mode', 'config.spanning-tree-extend', 'config.spanning-tree-vlan-priority',
+  'config.spanning-tree-vlan-root', 'config.spanning-tree-vlan', 'config.spanning-tree-portfast-default',
+  'config.spanning-tree-portfast-bpduguard-default', 'if.spanning-tree-portfast', 'if.spanning-tree-bpduguard',
+  'if.spanning-tree-guard', 'if.spanning-tree-cost', 'if.spanning-tree-port-priority', 'if.spanning-tree-vlan-cost',
+  'if.spanning-tree-vlan-port-priority', 'show.spanning-tree', 'show.dtp-interface', 'exec.clear-spanning-tree-detected',
+  'if.channel-group', 'config.port-channel-load-balance', 'show.etherchannel-summary', 'show.etherchannel-port-channel',
+  'show.lacp-neighbor',
+  'if.switchport-port-security', 'if.switchport-port-security-maximum', 'if.switchport-port-security-violation',
+  'if.switchport-port-security-mac-address', 'if.switchport-port-security-sticky', 'show.port-security',
+  'config.errdisable-recovery-cause', 'config.errdisable-recovery-interval', 'show.errdisable-recovery',
+  'if.ip-nat', 'config.ip-nat-pool', 'config.ip-nat-inside-source-list', 'config.ip-nat-inside-source-static',
+  'config.ip-nat-inside-source-static-port', 'config.ip-nat-translation-timeout', 'show.ip-nat-translations',
+  'show.ip-nat-statistics', 'exec.clear-ip-nat-translation',
+  'config.access-list', 'config.ip-access-list-standard', 'nacl.entry', 'show.access-lists',
+  'config.ipv6-dhcp-pool', 'dhcpv6.address-prefix', 'dhcpv6.dns-server', 'dhcpv6.domain-name', 'if.ipv6-dhcp-server',
+  'if.ipv6-nd-managed-config-flag', 'if.ipv6-nd-other-config-flag', 'if.ipv6-address-dhcp', 'show.ipv6-dhcp-pool',
+  'show.ipv6-dhcp-binding', 'show.ipv6-dhcp-interface',
+  'if.standby-version', 'if.standby-ip', 'if.standby-priority', 'if.standby-preempt', 'if.standby-timers', 'show.standby',
 ];
 
 /** Test label of a context (the device kind is no longer part of MatchContext: scope is grammar and capabilities). */
@@ -103,6 +132,9 @@ describe('HANDLERS', () => {
     expect(Object.keys(GRAMMAR_FRAGMENTS)).toEqual([
       'core-exec', 'show', 'config-global', 'config-if', 'svi', 'switchport', 'serial', 'wireless', 'modules',
       'ipv6', 'dhcp', 'dns', 'services', 'transport', 'traceroute', 'line-auth', 'host-shell',
+      // ARCHITECTURE-P2 §9.2 W4 item 18: the P2 fragments, folded in after the P1 ones
+      'vlan', 'switchport-p2', 'subif', 'routing',
+      'spanning-tree', 'etherchannel', 'port-security', 'errdisable', 'nat', 'acl', 'dhcpv6', 'hsrp',
     ]);
   });
 });

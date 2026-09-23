@@ -18,7 +18,7 @@ import type { BuildStage } from '../../contracts/catalog.js';
 import { defineModel, type ModelInput, type PortInput } from './define.js';
 
 /** Build stage the `*_MODELS` arrays of this file are defined for (the catalog index re-derives from the inputs). */
-const DATA_STAGE: BuildStage = 'P1';
+const DATA_STAGE: BuildStage = 'P2';
 
 /** Speeds of a copper gigabit port, fastest first. */
 const GIGABIT_SPEEDS: readonly number[] = [SPEED_1G, SPEED_100M, SPEED_10M];

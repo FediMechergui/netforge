@@ -370,9 +370,11 @@ export type Action =
   | { type: 'configLine'; context: readonly (readonly string[])[]; line: readonly string[]; negate: boolean }
   /**
    * @since P2 (wireless; W4 device) capwap-wtp → runtime: store (null = clear) the controller profile of radio `port`,
-   * then onPortPhyConfig(port).
+   * then onPortPhyConfig(port). `controller` (@since P2, optional by meaning: absent = no name to show) names the
+   * controller that pushed the profile; the runtime stores it with the profile and `radioSettings(port)` reports it
+   * as `RadioSettings.controller` (§2.12, display only).
    */
-  | { type: 'radio-profile'; port: PortId; bss: readonly BssSettings[] | null };
+  | { type: 'radio-profile'; port: PortId; bss: readonly BssSettings[] | null; controller?: string };
 
 /** Everything a process may read/do synchronously. Passed fresh into every handler. */
 export interface ProcessCtx {
