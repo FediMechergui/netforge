@@ -495,14 +495,14 @@ export const MODES: Readonly<Record<string, ModeDef>> = Object.freeze({
   // ── P2 (ARCHITECTURE-P2 §2.11, §9.2 W2 item 12b). A mode is registered RESERVED until the cli item whose grammar
   // enters it drops the flag in that change, so the mode helpers (`modesOfClass`, pinned by cli.modes-rules.test.ts)
   // change only together with the grammar: config-vlan, config-subif (above) and config-if-range were entered by the
-  // W2 cli item; config-dhcpv6 and config-std-nacl by the W3 cli item; config-wlan and config-wlc-if: W5 cli.
+  // W2 cli item; config-dhcpv6 and config-std-nacl by the W3 cli item; config-wlan and config-wlc-if by the W5 cli item.
   // config-if-range is declared after config-if and is reached only through the `interface range …` refinement of
   // `modeForContextEntry`, so a plain 'interface' context entry still maps to config-if.
   'config-if-range': { name: 'config-if-range', class: 'config', parent: 'config', prompt: '(config-if-range)#', contextKey: 'interface', grammars: ['nfos'] },
   'config-dhcpv6': { name: 'config-dhcpv6', class: 'config', parent: 'config', prompt: '(config-dhcpv6)#', contextKey: 'ipv6 dhcp pool', grammars: ['nfos'] },
   'config-std-nacl': { name: 'config-std-nacl', class: 'config', parent: 'config', prompt: '(config-std-nacl)#', contextKey: 'ip access-list standard', grammars: ['nfos'] },
-  'config-wlan': { name: 'config-wlan', class: 'config', parent: 'config', prompt: '(config-wlan)#', contextKey: 'wlan', grammars: ['nfos'], reserved: true },
-  'config-wlc-if': { name: 'config-wlc-if', class: 'config', parent: 'config', prompt: '(config-wlc-if)#', contextKey: 'wlc-interface', grammars: ['nfos'], reserved: true },
+  'config-wlan': { name: 'config-wlan', class: 'config', parent: 'config', prompt: '(config-wlan)#', contextKey: 'wlan', grammars: ['nfos'] },
+  'config-wlc-if': { name: 'config-wlc-if', class: 'config', parent: 'config', prompt: '(config-wlc-if)#', contextKey: 'wlc-interface', grammars: ['nfos'] },
 });
 
 /** @since P0.5 Debug categories are data (`debug <category>` grammar and validation derive from the registry). */
@@ -555,4 +555,9 @@ export const CLI_MESSAGES = Object.freeze({
   rootPriorityExhausted: '% VLAN {vlan} cannot be won by priority alone: the current root already uses priority 0.',
   /** @since P2 (wireless) A WLAN names a controller interface that does not exist. */
   wlcInterfaceMissing: '% There is no controller interface named {name}. Create it first under "wlc-interface {name}".',
+  /**
+   * @since P2 [S2] A `standby` interface line on a port that is not a routed Ethernet interface, a subinterface or a VLAN
+   * interface (architect ruling of 2026-09-23, ARCHITECTURE-P2 §9.2 item 20e): a standby group needs a shared LAN.
+   */
+  standbyNotHere: '% A standby group needs a shared LAN: use it on a routed Ethernet interface, a subinterface or a VLAN interface (on a switched port, enter "no switchport" first).',
 });

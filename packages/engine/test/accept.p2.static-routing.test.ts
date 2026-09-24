@@ -11,8 +11,8 @@
  *   • a static configured before its link is up is installed when the next hop becomes reachable, not before;
  *   • IPv6: a static with a link-local next hop and an interface forwards, and a floating IPv6 static takes over
  *     after a cut;
- *   • the `route` lab assertion picks a /24 over a /16 (deferred to W5 by §9.2b: skipped until the §7 W5 sim item
- *     implements the kind, see below).
+ *   • the `route` lab assertion picks a /24 over a /16 (§9.2b: un-skipped by the §7 W5 sim item that implements the
+ *     kind).
  */
 import { describe, expect, it } from 'vitest';
 import type { ProcessFactory } from '../src/contracts/process.js';
@@ -321,9 +321,8 @@ describe('accept P2: static routing — IPv6', () => {
 });
 
 describe('accept P2: static routing — the route lab assertion', () => {
-  // W5 sim owns `sim/lab-checks.ts` and its new LabAssertion kinds (§7 W5): today `checkOne` answers
-  // "is not a check this grader knows" for kind 'route', so the row's clause cannot pass before that item lands.
-  it.skip('picks a /24 over a /16 as the longest-prefix winner — deferred to W5 by §9.2b (row `accept.p2.static-routing`): a wave dependency, not an engine defect — `sim/lab-checks.ts` does not implement the `route` LabAssertion kind yet; un-skipped by §7 W5 sim (new `LabAssertion` kinds) in the change that lands it', () => {
+  // `sim/lab-checks.ts` grades the `route` LabAssertion kind since §7 W5 sim (§9.2b): the longest-prefix winner.
+  it('picks a /24 over a /16 as the longest-prefix winner', () => {
     const sim = world();
     const task = (id: string, network: string, destination: string): NonNullable<ScenarioInfo['tasks']>[number] => ({
       id,

@@ -17,6 +17,21 @@
  *
  * Everything here is pure (no engine state) except `applyRewrap` / `annotate`, which write through the PDU's
  * recorded write paths and mirror each new provenance entry as a `mutation` trace event.
+ *
+ * P2 central switching (ARCHITECTURE-P2 D17, §3.12 steps 6–8; W5 wireless). A BSS whose controller profile says
+ * `switching: 'central'` is not bridged at the access point: the air hands the station's 802.11 to-DS data frame to
+ * the AP unchanged (`frameArrival.central`), capwap-wtp carries it to the controller inside CAPWAP, and the controller
+ * turns it into a tagged Ethernet frame of the WLAN's VLAN. The way back is a pre-built 802.11 from-DS data frame that
+ * the AP puts on the air as it is. The helpers below describe those frames; the tunnel ops themselves live in the two
+ * CAPWAP daemons (protocols/capwap-wtp.ts, protocols/capwap-ac.ts):
+ *   • `dot11HeaderSpec(layer)`       the header of a received 802.11 data frame as a layer spec (no FCS: the codec
+ *                                    derives it, and omits it inside a CAPWAP tunnel);
+ *   • `fromDsDataHeaders(…)`         `[dot11 data fromDs {addr1 destination, addr2 BSSID, addr3 source}, llc {type}]`,
+ *                                    the controller's downlink framing (§3.12 step 8);
+ *   • causes `CAUSE_CAPWAP_TUNNEL` ('controller tunnel', the AP's encapsulation and decapsulation, step 6) and
+ *     `CAUSE_CONTROLLER_BRIDGING` ('controller bridging', the controller's decapsulation plus VLAN tag and its downlink
+ *     encapsulation, step 7).
+ * Nothing here changes a local BSS: every P0.5/P1 helper keeps its behaviour and its bytes.
  */
 import type { MacAddress } from '../contracts/addr.js';
 import { MAC_BROADCAST, isMulticastMac } from '../contracts/addr.js';
@@ -32,6 +47,15 @@ export const CAUSE_STATION_FRAMING = 'wireless client framing';
 export const CAUSE_AP_BRIDGING = 'access point bridging';
 /** Provenance cause of the received-signal annotation written on probe responses and beacons. */
 export const CAUSE_SIGNAL_ANNOTATION = 'received signal annotation';
+/** @since P2 (wireless) Provenance cause of the access point's CAPWAP tunnel encapsulation and decapsulation (§3.12 step 6). */
+export const CAUSE_CAPWAP_TUNNEL = 'controller tunnel';
+/** @since P2 (wireless) Provenance cause of the controller's bridging between its tunnel and a VLAN (§3.12 steps 7–8). */
+export const CAUSE_CONTROLLER_BRIDGING = 'controller bridging';
+
+/** @since P2 (wireless) The header fields of an 802.11 frame a layer spec carries (the FCS is derived by the codec). */
+export const DOT11_HEADER_FIELDS: readonly string[] = Object.freeze([
+  'frameType', 'subtype', 'toDs', 'fromDs', 'retry', 'protected', 'duration', 'addr1', 'addr2', 'addr3', 'seq',
+]);
 
 /** Direction of an 802.11 data frame relative to the distribution system. */
 export type DsDirection = 'to-ds' | 'from-ds';
@@ -118,6 +142,32 @@ export function dot11ToEthernetOp(pdu: Pick<PduView, 'layers'>): RewrapOp {
   const a = dot11EthernetAddresses(pdu);
   if (a === undefined) throw new Error('802.3 framing needs an 802.11 data frame with an LLC/SNAP header');
   return { strip: 2, push: [{ proto: 'ethernet', fields: { dst: a.dst, src: a.src, type: a.type } }] };
+}
+
+/**
+ * @since P2 (wireless) The header of an 802.11 layer as a layer spec: every field of `DOT11_HEADER_FIELDS` the layer
+ * carries, copied as it is. Re-encoding the spec gives the same header; the FCS is derived by the codec (and left out
+ * inside a CAPWAP tunnel).
+ */
+export function dot11HeaderSpec(layer: { readonly fields: Readonly<Record<string, FieldValue>> }): LayerSpec {
+  const fields: Record<string, FieldValue> = {};
+  for (const key of DOT11_HEADER_FIELDS) {
+    const v = layer.fields[key];
+    if (v !== undefined) fields[key] = v;
+  }
+  return { proto: 'dot11', fields };
+}
+
+/**
+ * @since P2 (wireless) The controller's downlink framing of a frame for `destination` (§3.12 step 8): an 802.11
+ * from-DS data frame `addr1 = destination, addr2 = bssid, addr3 = source` followed by the LLC/SNAP header of `type`.
+ * The access point puts the frame on the air unchanged; the station's admit turns it back into Ethernet.
+ */
+export function fromDsDataHeaders(destination: MacAddress, bssid: MacAddress, source: MacAddress, type: number): LayerSpec[] {
+  return [
+    { proto: 'dot11', fields: { frameType: 'data', subtype: 'data', toDs: false, fromDs: true, addr1: destination, addr2: bssid, addr3: source } },
+    { proto: 'llc', fields: { type } },
+  ];
 }
 
 /** Emit one `mutation` trace event per provenance entry recorded since `from`. */

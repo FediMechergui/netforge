@@ -31,10 +31,12 @@
  *    ONE candidate per configuration line, arbiter owner `static|<line>` (the canonical line text), so two lines for
  *    one prefix are two candidates and the lowest distance wins (floating statics). A line's candidate is offered
  *    only while it is USABLE, exactly: (a) with an exit interface, that interface is oper up and has an address (a
- *    fully specified route also needs its next hop inside that interface's subnet); (b) with a next hop only,
- *    `ctx.connectedPortFor(nextHop)` answers a port, else the next hop's longest match in the RIB — ignoring this
- *    line's own candidate — is an installed route, followed through static routes recursively to depth
- *    `STATIC_RECURSION_MAX`; `permanent` skips the test. Usability is re-evaluated after every connected/local/offered
+ *    fully specified route also needs its next hop inside that interface's subnet); (b) with a next hop only, the
+ *    next hop is directly connected, else its longest match in the RIB — ignoring every route of this line's own
+ *    prefix — is an installed route, followed through static routes recursively to depth `STATIC_RECURSION_MAX`;
+ *    `permanent` skips the test. "Up, addressed, directly connected" are read from ipv4's own interface record first
+ *    (the port view lags one step behind a re-address), then `ctx.connectedPortFor` for a port ipv4 does not
+ *    manage (W5 fix; the D13 rule is unchanged in meaning). Usability is re-evaluated after every connected/local/offered
  *    route change, so a static is INSTALLED WHEN IT BECOMES USABLE (at link-up, not at configuration time) and
  *    withdrawn when it stops being usable. `0.0.0.0 0.0.0.0` is flagged `isDefault`. `no ip route …` withdraws the
  *    exact line; `no ip route` alone withdraws every static.
@@ -730,35 +732,56 @@ export function createIpv4(): Process {
   }
 
   /**
+   * Is `nextHop` on a subnet whose connected route this daemon has installed? ipv4's own record answers first: the
+   * port view lags one step behind `setAddress` (the runtime applies the returned `setPortL3` after the handler
+   * returns), so a re-addressed port would still answer with its OLD subnet (W5 fix). `ctx.connectedPortFor` still
+   * answers for a port whose address ipv4 does not manage (a hand-built view in a unit fixture, §9.1 arp.host).
+   */
+  function directlyConnected(ctx: ProcessCtx, nextHop: Ipv4Address): boolean {
+    for (const e of interfaces.values()) if (e.installed && inSubnet(nextHop, e.address, e.prefixLen)) return true;
+    const port = ctx.connectedPortFor(nextHop);
+    return port !== undefined && !interfaces.has(port);
+  }
+
+  /** The address an exit interface holds for D13 (ipv4's own record first, as `directlyConnected`); undefined when down or unaddressed. */
+  function exitAddress(ctx: ProcessCtx, port: PortId): { address: Ipv4Address; prefixLen: number } | undefined {
+    const own = interfaces.get(port);
+    if (own !== undefined) return own.installed ? own : undefined;
+    const view = ctx.ports.get(port);
+    return view !== undefined && view.operUp ? view.l3.ipv4 : undefined;
+  }
+
+  /**
    * D13 "usable": exit interface up and addressed (a fully specified route also needs its next hop on that subnet);
-   * or the next hop directly connected (`ctx.connectedPortFor`), or resolved through the RIB — ignoring the line's
-   * own candidate — recursively through static lines up to `STATIC_RECURSION_MAX` deep. `permanent` lines are
-   * always usable.
+   * or the next hop directly connected, or resolved through the RIB — ignoring every route of the line's own prefix
+   * (its own candidate and a floating or equal-cost twin alike, as `resolveVia` does; W5 fix: resolving through a
+   * twin made the table flip-flop until the round limit) — recursively through static lines up to
+   * `STATIC_RECURSION_MAX` deep. `permanent` lines are always usable.
    */
   function usable(ctx: ProcessCtx, entry: StaticEntry, depth: number, visiting: Set<string>): boolean {
     const s = entry.def;
     if (s.permanent) return true;
     if (s.iface !== undefined) {
-      const view = ctx.ports.get(s.iface);
-      const l3 = view?.l3.ipv4;
-      if (view === undefined || !view.operUp || l3 === undefined) return false;
+      const l3 = exitAddress(ctx, s.iface);
+      if (l3 === undefined) return false;
       return s.nextHop === undefined || inSubnet(s.nextHop, l3.address, l3.prefixLen);
     }
     const nextHop = s.nextHop as Ipv4Address;
-    if (ctx.connectedPortFor(nextHop) !== undefined) return true;
+    if (directlyConnected(ctx, nextHop)) return true;
     if (depth >= STATIC_RECURSION_MAX) return false;
-    visiting.add(s.line);
+    const added = !visiting.has(s.key);
+    visiting.add(s.key);
     try {
       for (const inner of ctx.lpm(nextHop).candidates) {
         if (inner.source === 'L') return false;
+        if (visiting.has(inner.key)) continue; // a route of the line's own prefix (or one already on the path): ignored
         const via = staticInstalledAt(ctx, inner.key);
         if (via === undefined) return true; // connected, DHCP default or a route offered by another daemon
-        if (visiting.has(via.def.line)) continue; // the line's own candidate (or a loop): ignored
         return usable(ctx, via, depth + 1, visiting);
       }
       return false;
     } finally {
-      visiting.delete(s.line);
+      if (added) visiting.delete(s.key);
     }
   }
 

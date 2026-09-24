@@ -41,11 +41,13 @@ import { natHandlers } from './nat.js';
 import { aclHandlers } from './acl.js';
 import { dhcpv6Handlers } from './dhcpv6.js';
 import { hsrpHandlers } from './hsrp.js';
+import { wlcHandlers } from './wlc.js';
 
 /**
- * @since P2 (ARCHITECTURE-P2 §7 W2 and W3 cli) The handlers of the P2 fragments (`P2_HANDLERS` ids): VLANs, the P2
- * switchport lines and switching show commands, subinterfaces and ranges, the routing switches (W2); spanning tree,
- * EtherChannel, port security, err-disable recovery, NAT, access lists, DHCPv6 and [S2] HSRP (W3).
+ * @since P2 (ARCHITECTURE-P2 §7 W2, W3 and W5 cli) The handlers of the P2 fragments (`P2_HANDLERS` ids): VLANs, the
+ * P2 switchport lines and switching show commands, subinterfaces and ranges, the routing switches (W2); spanning tree,
+ * EtherChannel, port security, err-disable recovery, NAT, access lists, DHCPv6 and [S2] HSRP (W3); the wireless
+ * controller and lightweight access point lines and `show capwap` (W5).
  */
 export const P2_HANDLER_REGISTRY: Record<string, CommandHandler> = {
   ...vlanHandlers,
@@ -60,6 +62,7 @@ export const P2_HANDLER_REGISTRY: Record<string, CommandHandler> = {
   ...aclHandlers,
   ...dhcpv6Handlers,
   ...hsrpHandlers,
+  ...wlcHandlers,
 };
 
 /** Handler id → handler, for every command in the grammar that needs no runtime binding. */

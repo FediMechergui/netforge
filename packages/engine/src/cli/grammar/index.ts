@@ -10,8 +10,9 @@
  * virtual interfaces, switchport, serial, wireless, modules, then the P1 features (IPv6, DHCP, DNS, web services,
  * transport, traceroute, passwords and lines) and the host shell, then (ARCHITECTURE-P2, folded in by the W4 catalog
  * flip) the P2 fragments: VLANs, the P2 switchport lines, subinterfaces, routing, spanning tree, EtherChannel, port
- * security, err-disable recovery, NAT, access lists, DHCPv6 and HSRP. Scoping is capability-, grammar- and
- * port-role-driven (`grammars`, `requires`, `requiresAny`, `portRequires`); no spec names a device kind.
+ * security, err-disable recovery, NAT, access lists, DHCPv6 and HSRP, then (W5 cli) the wireless controller and
+ * lightweight access point lines. Scoping is capability-, grammar- and port-role-driven (`grammars`, `requires`,
+ * `requiresAny`, `portRequires`); no spec names a device kind.
  *
  * `HANDLERS` is the union of every fragment's handler ids (frozen names shared with the runtime and handler
  * owners), `DEBUG_CATEGORY_DEFS` the debug category registry. Every string is original wording (spec §1.6).
@@ -46,6 +47,7 @@ import { NAT_DEBUG_CATEGORIES, NAT_DEBUG_OBJECTIVES, NAT_GRAMMAR, NAT_HANDLERS }
 import { ACL_GRAMMAR, ACL_HANDLERS } from './acl.js';
 import { DHCPV6_DEBUG_CATEGORIES, DHCPV6_DEBUG_OBJECTIVES, DHCPV6_GRAMMAR, DHCPV6_HANDLERS } from './dhcpv6.js';
 import { HSRP_DEBUG_CATEGORIES, HSRP_DEBUG_OBJECTIVES, HSRP_GRAMMAR, HSRP_HANDLERS } from './hsrp.js';
+import { WLC_DEBUG_CATEGORIES, WLC_DEBUG_OBJECTIVES, WLC_GRAMMAR, WLC_HANDLERS } from './wlc.js';
 
 export * from './core-exec.js';
 export * from './show.js';
@@ -75,11 +77,13 @@ export * from './nat.js';
 export * from './acl.js';
 export * from './dhcpv6.js';
 export * from './hsrp.js';
+export * from './wlc.js';
 
 /**
  * @since P2 (ARCHITECTURE-P2 §5.4; W3 cli) The debug categories of the P2 daemons, in the §5.4 table order. Each is
  * keyed on the capability rows of its daemon (`capabilitiesRunning`), which the W4 catalog fills when it registers
- * the daemons (§2.1): until then the categories are registered but offered on no device.
+ * the daemons (§2.1): until then the categories are registered but offered on no device. W5 cli appends `capwap`
+ * (capwap-wtp and capwap-ac), whose rows the W6 catalog item adds.
  */
 export const P2_DEBUG_CATEGORIES: readonly GrammarDebugCategory[] = Object.freeze([
   ...L2_CONTROL_DEBUG_CATEGORIES,
@@ -88,6 +92,7 @@ export const P2_DEBUG_CATEGORIES: readonly GrammarDebugCategory[] = Object.freez
   ...NAT_DEBUG_CATEGORIES,
   ...HSRP_DEBUG_CATEGORIES,
   ...DHCPV6_DEBUG_CATEGORIES,
+  ...WLC_DEBUG_CATEGORIES,
 ]);
 
 /** @since P2 Objectives of the P2 debug categories. */
@@ -98,6 +103,7 @@ export const P2_DEBUG_OBJECTIVES: Readonly<Record<string, readonly string[]>> = 
   ...NAT_DEBUG_OBJECTIVES,
   ...HSRP_DEBUG_OBJECTIVES,
   ...DHCPV6_DEBUG_OBJECTIVES,
+  ...WLC_DEBUG_OBJECTIVES,
 });
 
 /**
@@ -112,11 +118,13 @@ export const P2_DEBUG_GRAMMAR: readonly CommandSpec[] = Object.freeze(debugSpecs
 // is the union with `P2_HANDLERS`, `GRAMMAR_FRAGMENTS` lists the P2 fragments after the P1 ones, and `GRAMMAR` (the
 // table the help goldens and the runtime read) holds every spec. `P2_HANDLERS`, `P2_GRAMMAR_FRAGMENTS` and
 // `P2_GRAMMAR` stay as the named P2 subset (the P2 handler files key their registries on `P2_HANDLERS`), and
-// `BUILTIN_GRAMMAR` is `GRAMMAR`. New P2 ids join `P2_HANDLERS`.
+// `BUILTIN_GRAMMAR` is `GRAMMAR`. New P2 ids join `P2_HANDLERS` and new P2 fragments `P2_GRAMMAR_FRAGMENTS` (the W5
+// cli item folded the `wlc` fragment in this way, after `hsrp`).
 
 /**
  * @since P2 Handler ids of the P2 fragments (W2: vlan, the P2 switchport lines, subinterfaces and ranges, routing;
- * W3: spanning tree, EtherChannel, port security, err-disable recovery, NAT, access lists, DHCPv6 and [S2] HSRP).
+ * W3: spanning tree, EtherChannel, port security, err-disable recovery, NAT, access lists, DHCPv6 and [S2] HSRP;
+ * W5: the wireless controller and lightweight access point lines).
  */
 export const P2_HANDLERS = Object.freeze({
   ...VLAN_HANDLERS,
@@ -131,6 +139,7 @@ export const P2_HANDLERS = Object.freeze({
   ...ACL_HANDLERS,
   ...DHCPV6_HANDLERS,
   ...HSRP_HANDLERS,
+  ...WLC_HANDLERS,
 });
 
 /** @since P2 Union of every handler id in `P2_HANDLERS`. */
@@ -151,6 +160,8 @@ export const P2_GRAMMAR_FRAGMENTS: Readonly<Record<string, readonly CommandSpec[
   acl: ACL_GRAMMAR,
   dhcpv6: DHCPV6_GRAMMAR,
   hsrp: HSRP_GRAMMAR,
+  // W5 cli
+  wlc: WLC_GRAMMAR,
 });
 
 /** @since P2 Every P2 spec, in `P2_GRAMMAR_FRAGMENTS` order. */
@@ -317,6 +328,8 @@ export const LITERAL_HELP: Readonly<Record<string, string>> = Object.freeze({
   preempt: 'Take the active role back',
   delay: 'Wait before taking over',
   prefix: 'Address prefix settings',
+  // P2 (ARCHITECTURE-P2 §5.3; W5 cli)
+  capwap: 'Controller link settings',
 });
 
 /** Help for the parser's pseudo-keywords. Original wording. */

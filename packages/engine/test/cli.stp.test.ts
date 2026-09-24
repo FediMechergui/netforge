@@ -422,12 +422,13 @@ describe('clear spanning-tree detected-protocols', () => {
 describe('the W3 fragments, folded into the table by W4 (ARCHITECTURE-P2 §7 W3 cli; §9.2 W4 item 18)', () => {
   const W3 = ['spanning-tree', 'etherchannel', 'port-security', 'errdisable', 'nat', 'acl', 'dhcpv6', 'hsrp'];
 
-  it('adds its fragments after the W2 ones; they close the table after the unchanged P1 fragment keys, and their handler ids are in HANDLERS', () => {
-    expect(Object.keys(P2_GRAMMAR_FRAGMENTS).slice(4)).toEqual(W3);
+  it('adds its fragments after the W2 ones (then the W5 `wlc` fragment closes the table) after the unchanged P1 fragment keys, and their handler ids are in HANDLERS', () => {
+    // ARCHITECTURE-P2 §7 W5 cli: the `wlc` fragment is folded in after the W3 ones
+    expect(Object.keys(P2_GRAMMAR_FRAGMENTS).slice(4)).toEqual([...W3, 'wlc']);
     expect(Object.keys(GRAMMAR_FRAGMENTS)).toEqual([
       'core-exec', 'show', 'config-global', 'config-if', 'svi', 'switchport', 'serial', 'wireless', 'modules',
       'ipv6', 'dhcp', 'dns', 'services', 'transport', 'traceroute', 'line-auth', 'host-shell',
-      'vlan', 'switchport-p2', 'subif', 'routing', ...W3,
+      'vlan', 'switchport-p2', 'subif', 'routing', ...W3, 'wlc',
     ]);
     for (const id of Object.values(P2_HANDLERS)) expect(Object.values(HANDLERS), id).toContain(id);
     expect(GRAMMAR.slice(GRAMMAR.length - P2_GRAMMAR.length)).toEqual(P2_GRAMMAR);
@@ -442,7 +443,8 @@ describe('the W3 fragments, folded into the table by W4 (ARCHITECTURE-P2 §7 W3 
   });
 
   it('registers the §5.4 debug categories through the registry, keyed on the daemons\' capability rows', () => {
-    expect(P2_DEBUG_CATEGORIES.map((d) => d.category)).toEqual(['sw-vlan', 'dtp', 'spanning-tree events', 'etherchannel', 'port-security', 'ip nat', 'standby', 'ipv6 dhcp']);
+    // ARCHITECTURE-P2 §5.4: W5 cli appends `capwap` (capwap-wtp and capwap-ac)
+    expect(P2_DEBUG_CATEGORIES.map((d) => d.category)).toEqual(['sw-vlan', 'dtp', 'spanning-tree events', 'etherchannel', 'port-security', 'ip nat', 'standby', 'ipv6 dhcp', 'capwap']);
     for (const d of P2_DEBUG_CATEGORIES) {
       expect(DEBUG_CATEGORIES).toContain(d.category);
       expect(DEBUG_CATEGORY_DEFS).toContain(d);

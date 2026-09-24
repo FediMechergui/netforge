@@ -153,6 +153,9 @@ export * from './protocols/stp/guards.js';
 export * from './protocols/stp/mixed.js';
 export * from './protocols/stp/pvst.js';
 export * from './protocols/stp/rstp.js';
+// protocols — P2 wireless (W5 wireless)
+export * from './protocols/capwap-wtp.js';
+export * from './protocols/capwap-ac.js';
 
 // cli
 export * from './cli/runtime.js';

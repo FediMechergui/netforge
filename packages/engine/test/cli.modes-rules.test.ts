@@ -60,8 +60,9 @@ describe('modes', () => {
     expect(specModeAllows(['config', 'config-if'], 'config-line')).toBe(false);
     expect(modesOfClass('exec')).toEqual(['user-exec', 'priv-exec']);
     // ARCHITECTURE-P2 §9.2 W2 item 12b: the W2 cli item entered config-subif, config-vlan and config-if-range;
-    // the W3 cli item entered config-dhcpv6 and config-std-nacl (declaration order)
-    expect(modesOfClass('config')).toEqual(['config', 'config-if', 'config-line', 'dhcp-config', 'config-subif', 'config-vlan', 'config-if-range', 'config-dhcpv6', 'config-std-nacl']);
+    // the W3 cli item entered config-dhcpv6 and config-std-nacl; the W5 cli item config-wlan and config-wlc-if
+    // (declaration order)
+    expect(modesOfClass('config')).toEqual(['config', 'config-if', 'config-line', 'dhcp-config', 'config-subif', 'config-vlan', 'config-if-range', 'config-dhcpv6', 'config-std-nacl', 'config-wlan', 'config-wlc-if']);
     expect(modesOfClass('exec', { grammar: 'host' })).toEqual(['user-exec']);
   });
 

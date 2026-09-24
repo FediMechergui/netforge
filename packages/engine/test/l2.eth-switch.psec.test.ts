@@ -128,6 +128,24 @@ describe('§3.8 step 2 — sticky learning is idempotent', () => {
     expect(psec(h).get(FA1)).toMatchObject({ count: 0, status: 'secure-down' });
   });
 
+  it('turning sticky learning on pins the addresses the port already learned dynamically and writes their lines (W5 fix)', () => {
+    const { h, sw } = setup([]);
+    sw.onPdu(h.ctx, h.frame(MAC_A, MAC_BROADCAST), FA1);
+    expect(h.tables.cam.get(camKey(1, MAC_A))).toMatchObject({ type: 'static', secure: 'dynamic' });
+    const on = h.configure(sw, [['interface', FA1]], ['switchport', 'port-security', 'mac-address', 'sticky']);
+    expect(configLines(on)).toEqual([stickyConfigLine(FA1, MAC_A)]);
+    expect(h.tables.cam.get(camKey(1, MAC_A))).toMatchObject({ port: FA1, type: 'static', secure: 'sticky' });
+    expect(psec(h).get(FA1)).toMatchObject({ count: 1, sticky: true });
+    expect(h.debug.filter((d) => d.category === PORT_SECURITY_DEBUG_CATEGORY).map((d) => d.message)).toContain(
+      `made ${MAC_A} on ${FA1} sticky (vlan 1): sticky learning is on`,
+    );
+    // the runtime applies the line; its own onConfig changes nothing more
+    expect(h.configure(sw, [['interface', FA1]], stickyConfigLine(FA1, MAC_A).line)).toEqual([]);
+    // a pinned address survives a link-down, which removes dynamic secure rows
+    sw.onLinkChange!(h.ctx, FA1, false);
+    expect(h.tables.cam.get(camKey(1, MAC_A))).toMatchObject({ secure: 'sticky' });
+  });
+
   it('a sticky row survives link-down and a membership flush; a membership change re-keys it to the new VLAN', () => {
     const { h, sw } = setup();
     sw.onPdu(h.ctx, h.frame(MAC_A, MAC_BROADCAST), FA1);

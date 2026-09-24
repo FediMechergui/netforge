@@ -160,7 +160,7 @@ describe('accept P2 port-security: violation modes (§3.8 steps 3–5)', () => {
     // the sticky row of PC1 survives the violation and the link-down
     expect(sim.device('sw1')!.tables.cam.get(camKey(1, MAC1))).toMatchObject({ secure: 'sticky', port: FA1 });
     // a lab connectivity assertion through the err-disabled port fails in the grader's clone: the real grader
-    // (evaluateLab clones on the real catalog, VLAN-aware since the W4 flip) …
+    // (evaluateLab, which since W5 clones with the live world's catalog — here the P2-stage one) …
     const status = evaluateLab(sim, reachLab(sim));
     expect(status.results[0]!.assertions[0]!.pass).toBe(false);
     expect(status.score).toBe(0);

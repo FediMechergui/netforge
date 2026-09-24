@@ -29,16 +29,35 @@
  * AP rows of `dot11-assoc` (one per client, key dot11AssocKey(port, station)) mirror the client state
  * (authenticating / associating / handshake / associated). No randomness.
  *
+ * P2 (ARCHITECTURE-P2 D17, §2.4, §2.5, §3.12 steps 4–6; W5 wireless). Association stays at the AP (local MAC, a listed
+ * deviation) even when a controller manages the radio:
+ *  • settings are read through the device's ONE renderer (`wlanDaemonSettings` → `ctx.radioSettings`): the local interface
+ *    lines, overlaid by the controller profile capwap-wtp stored with a `radio-profile` action. A profile brings the
+ *    SSID, the security and the KEY TAG (never a passphrase): EAPOL message 2 and the SAE commit are compared with the
+ *    pushed key tag when there is one, else with `passphraseTag(ssid, passphrase)` as before;
+ *  • a profile arrives by action, not by config line, so every handler first re-reads the settings: when the BSS
+ *    members changed (SSID, security, passphrase, key tag, switching, WLAN id) the air has already restarted the BSS,
+ *    and the daemon forgets every client (no deauthentication: the medium tore the associations down);
+ *  • on every grant change of a CENTRAL BSS — a client authorized, or a reported client forgotten (disassociated,
+ *    deauthenticated, lost or aged out, key failure, settings change, carrier loss) — the daemon sends capwap-wtp the
+ *    `wlan.grant` event (§2.5), `add` BEFORE the medium `authorize` so the controller's `wlan-clients` row exists before
+ *    the station's first frame can reach the controller; only when capwap-wtp runs on the device. Local BSSs never send
+ *    it, so P1 wireless traces are unchanged;
+ *  • an 802.11 data frame of a central BSS (handed over unchanged by the air, `frameArrival.central`) goes to
+ *    capwap-wtp with `deliver`: the pipeline's demux reaches this daemon's key-less dot11 selector first until the
+ *    `DemuxSelector.frame` key is honoured, so the hand-over is explicit here (a local BSS never sees such a frame).
+ *
  * `stateSnapshot()`:
- *   { process: 'wlan-ap', state: { radios: [{ port, bssid, ssid?, security, up, beacons, clients: [{ station, state,
- *     aid? }] }], probesAnswered, beaconsSent } }   (never the passphrase)
+ *   { process: 'wlan-ap', state: { radios: [{ port, security, up, beacons, clients: [{ station, state, aid? }], ssid?,
+ *     switching?: 'central', wlanId? }], probesAnswered, beaconsSent } }   (never the passphrase or the key tag;
+ *   `switching`/`wlanId` only on a central radio)
  *
  * Debug category: 'wireless'. Wording is original.
  */
 import type { MacAddress } from '../contracts/addr.js';
 import { MAC_BROADCAST, bssidFor } from '../contracts/addr.js';
 import type { ConfigDelta } from '../contracts/config.js';
-import type { PortId } from '../contracts/ids.js';
+import type { PortId, ProcessName } from '../contracts/ids.js';
 import type { MediumEvent, WifiAssocState } from '../contracts/medium.js';
 import type { FieldValue, LayerSpec, Pdu } from '../contracts/pdu.js';
 import { ETHERTYPE_EAPOL } from '../contracts/pdu.js';
@@ -49,6 +68,7 @@ import { RF } from '../contracts/rf.js';
 import { MS } from '../contracts/time.js';
 import type { Dot11AssocRow } from '../contracts/tables.js';
 import { dot11AssocKey } from '../contracts/tables.js';
+import type { WlanGrantEvent } from '../contracts/transport.js';
 import { classifyAirFrame, eapolFrame, mgmtFrame, mgmtSubtype, passphraseTag, saeCommitTag, tagFromBytes } from '../link/rewrap80211.js';
 import {
   AUTH_OPEN,
@@ -66,9 +86,8 @@ import {
   numOf,
   portRadioMode,
   ratesFor,
-  readRadioSettings,
-  readWlanConfig,
   strOf,
+  wlanDaemonSettings,
 } from './wlan-client.js';
 
 /** Process name of the access-point daemon. */
@@ -77,6 +96,8 @@ export const WLAN_AP_PROCESS = 'wlan-ap';
 export const BEACON_INTERVAL_MS = 100;
 /** Highest association id (802.11). */
 export const MAX_AID = 2007;
+/** @since P2 (wireless) The daemon that tunnels a central BSS's frames and reports its grants (§2.5, §3.12). */
+export const CAPWAP_WTP_PROCESS: ProcessName = 'capwap-wtp';
 
 type ClientState = 'authenticating' | 'authenticated' | 'handshake' | 'authorized';
 
@@ -91,6 +112,8 @@ interface ApClient {
   eapolTimeouts: number;
   replay: number;
   last?: { layers: LayerSpec[]; tag: string };
+  /** @since P2 (wireless) An `add` grant was reported to capwap-wtp (a central BSS): forgetting it reports `del`. */
+  reported?: { bssid: MacAddress; wlanId: number };
 }
 
 interface ApPort {
@@ -102,6 +125,17 @@ interface ApPort {
   beacons: boolean;
   beaconArmed: boolean;
   readonly clients: Map<MacAddress, ApClient>;
+  /** @since P2 (wireless) The key tag a controller pushed with the BSS (compared instead of the passphrase's tag). */
+  keyTag?: number;
+  /** @since P2 (wireless) BSS index 0 is centrally switched (a controller profile). */
+  central: boolean;
+  /** @since P2 (wireless) Controller WLAN id of a central BSS (reported with every grant). */
+  wlanId?: number;
+}
+
+/** @since P2 (wireless) The members whose change restarts a BSS (the medium tears its associations down). */
+function bssSignature(ap: Pick<ApPort, 'ssid' | 'security' | 'passphrase' | 'keyTag' | 'central' | 'wlanId'>): string {
+  return `${ap.ssid ?? ''}|${ap.security}|${ap.passphrase ?? ''}|${ap.keyTag ?? ''}|${ap.central ? 'central' : 'local'}|${ap.wlanId ?? ''}`;
 }
 
 const ROW_STATE: Readonly<Record<ClientState, WifiAssocState>> = Object.freeze({
@@ -146,10 +180,31 @@ class WlanAp implements Process {
     const station = strOf(header.addr2);
     const receiver = strOf(header.addr1);
     if (station === undefined || receiver === undefined) return [];
+    const refreshed = this.refresh(ctx, ap);
     const bssid = this.bssid(ctx, port);
     const cls = classifyAirFrame(pdu);
-    if (cls === 'eapol') return receiver === bssid ? this.onEapol(ctx, ap, station, pdu) : [];
-    if (cls !== 'mgmt') return [];
+    if (cls === 'dot11-data') {
+      // P2 (§3.12 step 6): a central BSS's data frame reached the AP unchanged; capwap-wtp tunnels it to the controller
+      if (!ap.central || !this.hasWtp(ctx)) return refreshed;
+      return [...refreshed, { type: 'deliver', to: CAPWAP_WTP_PROCESS, pdu, port }];
+    }
+    if (cls === 'eapol') return receiver === bssid ? [...refreshed, ...this.onEapol(ctx, ap, station, pdu)] : refreshed;
+    if (cls !== 'mgmt') return refreshed;
+    return [...refreshed, ...this.onMgmt(ctx, ap, view, pdu, station, receiver, bssid, header)];
+  }
+
+  /** Management frames (probe, authentication, association, leaving). */
+  private onMgmt(
+    ctx: ProcessCtx,
+    ap: ApPort,
+    view: PortView,
+    pdu: Pdu,
+    station: MacAddress,
+    receiver: MacAddress,
+    bssid: MacAddress,
+    header: Readonly<Record<string, FieldValue>>,
+  ): Action[] {
+    const port = ap.port;
     const body = pdu.layer('dot11-mgmt')?.fields ?? {};
     const subtype = mgmtSubtype(pdu);
     if (subtype === 'probe-req') return this.onProbe(ctx, ap, view, station, body);
@@ -177,26 +232,29 @@ class WlanAp implements Process {
     if (key.startsWith('beacon:')) {
       const ap = this.radios.get(key.slice('beacon:'.length));
       if (ap === undefined) return [];
+      const refreshed = this.refresh(ctx, ap);
       if (!ap.carrier || !ap.beacons || ap.ssid === undefined) {
         ap.beaconArmed = false;
-        return [];
+        return refreshed;
       }
       this.beaconsSent++;
-      return [this.beacon(ctx, ap), { type: 'timer', key: beaconKey(ap.port), delay: BEACON_INTERVAL_MS * MS, periodic: true }];
+      return [...refreshed, this.beacon(ctx, ap), { type: 'timer', key: beaconKey(ap.port), delay: BEACON_INTERVAL_MS * MS, periodic: true }];
     }
     if (key.startsWith('eapol:')) {
       const rest = key.slice('eapol:'.length);
       const bar = rest.lastIndexOf('|');
       if (bar <= 0) return [];
       const ap = this.radios.get(rest.slice(0, bar));
-      const client = ap?.clients.get(rest.slice(bar + 1));
-      if (ap === undefined || client === undefined || client.state !== 'handshake') return [];
+      if (ap === undefined) return [];
+      const refreshed = this.refresh(ctx, ap);
+      const client = ap.clients.get(rest.slice(bar + 1));
+      if (client === undefined || client.state !== 'handshake') return refreshed;
       client.eapolTimeouts++;
       if (client.eapolTimeouts >= EAPOL_ATTEMPTS) {
         this.emit(ctx, `${ap.port}: key handshake with ${client.mac} timed out`, { port: ap.port, station: client.mac });
-        return [this.deauth(ctx, ap, client.mac, REASON_HANDSHAKE), ...this.forget(ctx, ap, client.mac, true)];
+        return [...refreshed, this.deauth(ctx, ap, client.mac, REASON_HANDSHAKE), ...this.forget(ctx, ap, client.mac, true)];
       }
-      const actions: Action[] = [];
+      const actions: Action[] = [...refreshed];
       if (client.last !== undefined) {
         this.emit(ctx, `${ap.port}: re-sending ${client.last.tag} to ${client.mac}`, { port: ap.port, station: client.mac });
         actions.push({ type: 'send', port: ap.port, pdu: ctx.newPdu(client.last.layers, { tag: client.last.tag }) });
@@ -219,9 +277,11 @@ class WlanAp implements Process {
       return this.syncBeacons(ctx, ap);
     }
     if (key === undefined || !WLAN_ASSOC_KEYS.includes(key)) return [];
-    const before = `${ap.ssid ?? ''}|${ap.security}|${ap.passphrase ?? ''}`;
+    // the BSS members (P2 adds the pushed key tag, the switching and the WLAN id: always unset in a local BSS, so a
+    // local radio compares exactly ssid|security|passphrase as before)
+    const before = bssSignature(ap);
     this.load(ctx, ap);
-    if (`${ap.ssid ?? ''}|${ap.security}|${ap.passphrase ?? ''}` === before) return [];
+    if (bssSignature(ap) === before) return [];
     this.emit(ctx, `${ap.port}: network settings changed (${ap.ssid === undefined ? 'no SSID' : `"${ap.ssid}"`}, ${ap.security}); clients must join again`, { port: ap.port });
     const actions: Action[] = [];
     for (const mac of [...ap.clients.keys()].sort()) {
@@ -236,16 +296,17 @@ class WlanAp implements Process {
     const view = ctx.ports.get(port);
     if (view === undefined || portRadioMode(view) !== 'ap') return [];
     const ap = this.ensure(ctx, port);
+    const refreshed = this.refresh(ctx, ap);
     if (ev.kind === 'station-lost') {
       const client = ap.clients.get(ev.station);
-      if (client === undefined) return [];
+      if (client === undefined) return refreshed;
       client.granted = false;
       this.emit(ctx, `${port}: lost ${ev.station} (${ev.reason})`, { port, station: ev.station, reason: ev.reason });
-      return this.forget(ctx, ap, ev.station, false);
+      return [...refreshed, ...this.forget(ctx, ap, ev.station, false)];
     }
     if (ev.kind === 'carrier') {
       ap.carrier = ev.up;
-      const actions: Action[] = [];
+      const actions: Action[] = [...refreshed];
       if (!ev.up) {
         for (const mac of [...ap.clients.keys()].sort()) {
           const client = ap.clients.get(mac)!;
@@ -257,7 +318,7 @@ class WlanAp implements Process {
       actions.push(...this.syncBeacons(ctx, ap));
       return actions;
     }
-    return [];
+    return refreshed;
   }
 
   stateSnapshot(): StateView {
@@ -273,6 +334,11 @@ class WlanAp implements Process {
           .map((c) => (c.aid === undefined ? { station: c.mac, state: ROW_STATE[c.state] } : { station: c.mac, state: ROW_STATE[c.state], aid: c.aid })),
       };
       if (ap.ssid !== undefined) entry.ssid = ap.ssid;
+      // P2 (wireless): only a centrally switched radio shows it (a local radio's entry keeps its P0.5 keys)
+      if (ap.central) {
+        entry.switching = 'central';
+        if (ap.wlanId !== undefined) entry.wlanId = ap.wlanId;
+      }
       radios.push(entry);
     }
     return { process: WLAN_AP_PROCESS, state: { radios, probesAnswered: this.probesAnswered, beaconsSent: this.beaconsSent } };
@@ -287,29 +353,85 @@ class WlanAp implements Process {
   private ensure(ctx: ProcessCtx, port: PortId): ApPort {
     let ap = this.radios.get(port);
     if (ap === undefined) {
-      ap = { port, carrier: false, security: 'open', beacons: false, beaconArmed: false, clients: new Map() };
+      ap = { port, carrier: false, security: 'open', beacons: false, beaconArmed: false, clients: new Map(), central: false };
       this.radios.set(port, ap);
       this.load(ctx, ap);
     }
     return ap;
   }
 
+  /** Read the radio's settings through the device's one renderer (P2 §2.4; the local lines when it has no profile). */
   private load(ctx: ProcessCtx, ap: ApPort): void {
-    const cfg = readWlanConfig(ctx.config, ap.port);
+    const cfg = wlanDaemonSettings(ctx, ap.port);
     if (cfg.ssid === undefined) delete ap.ssid;
     else ap.ssid = cfg.ssid;
     ap.security = cfg.security;
     if (cfg.passphrase === undefined) delete ap.passphrase;
     else ap.passphrase = cfg.passphrase;
     ap.beacons = cfg.beacons;
+    if (cfg.keyTag === undefined) delete ap.keyTag;
+    else ap.keyTag = cfg.keyTag;
+    ap.central = cfg.central;
+    if (cfg.wlanId === undefined) delete ap.wlanId;
+    else ap.wlanId = cfg.wlanId;
+  }
+
+  /**
+   * @since P2 (wireless) Re-read the settings before handling anything: a controller profile arrives by action (no
+   * config line), and the air restarts the BSS when its members change. On such a change every client is forgotten
+   * without a deauthentication (the medium already tore the associations down); a reported client of a central BSS is
+   * reported `del`. With local lines only nothing can change here (config changes go through `onConfig`), so this is a
+   * no-op for every P0.5/P1 radio.
+   */
+  private refresh(ctx: ProcessCtx, ap: ApPort): Action[] {
+    const before = bssSignature(ap);
+    this.load(ctx, ap);
+    if (bssSignature(ap) === before) return [];
+    this.emit(ctx, `${ap.port}: the controller changed this radio's network (${ap.ssid === undefined ? 'no SSID' : `"${ap.ssid}"`}, ${ap.security}); clients must join again`, { port: ap.port });
+    const actions: Action[] = [];
+    for (const mac of [...ap.clients.keys()].sort()) {
+      const client = ap.clients.get(mac)!;
+      client.granted = false;
+      actions.push(...this.forget(ctx, ap, mac, false));
+    }
+    return actions;
+  }
+
+  /** @since P2 (wireless) capwap-wtp runs on this device (the only receiver of grant events and central data frames). */
+  private hasWtp(ctx: ProcessCtx): boolean {
+    return ctx.model.processes.includes(CAPWAP_WTP_PROCESS);
+  }
+
+  /**
+   * @since P2 (wireless, §2.5, §3.12 step 5) The `wlan.grant` event of a grant change of a CENTRAL BSS: `add` when a
+   * client is authorized, `del` when a reported client is forgotten. Nothing for a local BSS, for a client that was
+   * never reported, or when capwap-wtp does not run here.
+   */
+  private grant(ctx: ProcessCtx, ap: ApPort, client: ApClient, op: 'add' | 'del'): Action[] {
+    if (!this.hasWtp(ctx)) return [];
+    if (op === 'add') {
+      if (!ap.central) return [];
+      const reported = { bssid: this.bssid(ctx, ap.port), wlanId: ap.wlanId ?? 0 };
+      client.reported = reported;
+      const ev: WlanGrantEvent = { kind: 'wlan.grant', op: 'add', port: ap.port, station: client.mac, bssid: reported.bssid, wlanId: reported.wlanId, state: 'associated' };
+      return [{ type: 'event', to: CAPWAP_WTP_PROCESS, ev }];
+    }
+    // `reported` is set only for a client of a central BSS, so the del follows the add even when the BSS has just
+    // stopped being central (a profile cleared or replaced)
+    const reported = client.reported;
+    if (reported === undefined) return [];
+    delete client.reported;
+    const ev: WlanGrantEvent = { kind: 'wlan.grant', op: 'del', port: ap.port, station: client.mac, bssid: reported.bssid, wlanId: reported.wlanId, state: 'idle' };
+    return [{ type: 'event', to: CAPWAP_WTP_PROCESS, ev }];
   }
 
   private bssid(ctx: ProcessCtx, port: PortId): MacAddress {
     return bssidFor(ctx.macOf(port), 0);
   }
 
+  /** The tag EAPOL message 2 and the SAE commit are compared with: the controller's key tag, else the passphrase's. */
   private tag(ap: ApPort): number {
-    return passphraseTag(ap.ssid ?? '', ap.passphrase ?? '');
+    return ap.keyTag ?? passphraseTag(ap.ssid ?? '', ap.passphrase ?? '');
   }
 
   /** Management body describing the BSS (probe responses and beacons). */
@@ -320,9 +442,9 @@ class WlanAp implements Process {
     };
     const spec = view?.spec.radio;
     if (spec !== undefined) {
-      const settings = readRadioSettings(ctx.config, ap.port, spec);
-      body.band = settings.band;
-      body.rates = ratesFor(settings.band);
+      const settings = wlanDaemonSettings(ctx, ap.port);
+      body.band = settings.band ?? spec.defaultBand;
+      body.rates = ratesFor(settings.band ?? spec.defaultBand);
       if (typeof settings.channel === 'number') body.channel = settings.channel;
     } else {
       body.rates = ratesFor(undefined);
@@ -364,12 +486,16 @@ class WlanAp implements Process {
     return { type: 'medium', port: ap.port, op };
   }
 
-  /** Forget a client: cancel its timer, drop its row and (when the medium holds a grant and `release`) issue `assoc none`. */
+  /**
+   * Forget a client: cancel its timer, drop its row and (when the medium holds a grant and `release`) issue `assoc none`.
+   * P2: a client reported to the controller is reported `del` (central BSS only, `grant`).
+   */
   private forget(ctx: ProcessCtx, ap: ApPort, mac: MacAddress, release: boolean): Action[] {
     const client = ap.clients.get(mac);
     if (client === undefined) return [];
     const actions: Action[] = [{ type: 'cancelTimer', key: eapolKey(ap.port, mac) }];
     if (release && client.granted) actions.push(this.medium(ap, { op: 'assoc', station: mac, state: 'none' }));
+    actions.push(...this.grant(ctx, ap, client, 'del'));
     ap.clients.delete(mac);
     this.writeRow(ctx, ap, undefined, mac);
     return actions;
@@ -404,13 +530,17 @@ class WlanAp implements Process {
     return [this.sendMgmt(ctx, ap, 'probe-resp', station, this.bssBody(ctx, ap), 'probe-resp')];
   }
 
-  /** Create (or restart) a client record; a client holding a grant is reset in the medium first. */
-  private restart(ap: ApPort, mac: MacAddress, state: ClientState, actions: Action[]): ApClient {
+  /**
+   * Create (or restart) a client record; a client holding a grant is reset in the medium first. P2: a restarted client
+   * that was reported to the controller is reported `del` (it is reported `add` again once authorized).
+   */
+  private restart(ctx: ProcessCtx, ap: ApPort, mac: MacAddress, state: ClientState, actions: Action[]): ApClient {
     const old = ap.clients.get(mac);
     if (old !== undefined && old.granted) {
       actions.push({ type: 'cancelTimer', key: eapolKey(ap.port, mac) });
       actions.push(this.medium(ap, { op: 'assoc', station: mac, state: 'none' }));
     }
+    if (old !== undefined) actions.push(...this.grant(ctx, ap, old, 'del'));
     const client: ApClient = { mac, state, granted: false, eapolStep: 0, eapolTimeouts: 0, replay: old?.replay ?? 0 };
     ap.clients.set(mac, client);
     return client;
@@ -427,7 +557,7 @@ class WlanAp implements Process {
         this.emit(ctx, `${ap.port}: ${station} tried open authentication on an SAE network`, { port: ap.port, station });
         return [this.sendMgmt(ctx, ap, 'auth', station, { authAlgorithm: AUTH_OPEN, authSeq: 2, statusCode: STATUS_FAILURE }, 'auth')];
       }
-      const client = this.restart(ap, station, 'authenticated', actions);
+      const client = this.restart(ctx, ap, station, 'authenticated', actions);
       client.granted = true;
       this.emit(ctx, `${ap.port}: ${station} authenticated (open system)`, { port: ap.port, station });
       actions.push(this.sendMgmt(ctx, ap, 'auth', station, { authAlgorithm: AUTH_OPEN, authSeq: 2, statusCode: STATUS_SUCCESS }, 'auth'));
@@ -441,7 +571,7 @@ class WlanAp implements Process {
     }
     const ownTag = saeCommitTag(this.tag(ap));
     if (seq === 1) {
-      const client = this.restart(ap, station, 'authenticating', actions);
+      const client = this.restart(ctx, ap, station, 'authenticating', actions);
       const peer = numOf(header.duration);
       if (peer !== undefined) client.saeTag = peer;
       this.emit(ctx, `${ap.port}: SAE commit from ${station}, sending ours`, { port: ap.port, station });
@@ -503,6 +633,8 @@ class WlanAp implements Process {
     client.granted = true;
     if (ap.security === 'open') {
       client.state = 'authorized';
+      // P2 (§3.12 step 5): a central BSS reports the grant to the controller before the medium opens the station
+      actions.push(...this.grant(ctx, ap, client, 'add'));
       actions.push(this.medium(ap, { op: 'authorize', station }));
       this.writeRow(ctx, ap, client, station);
       return actions;
@@ -544,7 +676,8 @@ class WlanAp implements Process {
       delete client.last;
       this.emit(ctx, `${ap.port}: key handshake with ${station} complete, traffic allowed`, { port: ap.port, station });
       this.writeRow(ctx, ap, client, station);
-      return [{ type: 'cancelTimer', key: eapolKey(ap.port, station) }, this.medium(ap, { op: 'authorize', station })];
+      // P2 (§3.12 step 5): a central BSS reports the grant to the controller before the medium opens the station
+      return [{ type: 'cancelTimer', key: eapolKey(ap.port, station) }, ...this.grant(ctx, ap, client, 'add'), this.medium(ap, { op: 'authorize', station })];
     }
     return [];
   }

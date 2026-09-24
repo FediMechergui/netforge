@@ -4,13 +4,14 @@
  * exactly one lesson, and every spec §2.2 objective traced to a lesson (§11.4).
  *
  * The skeleton is imported directly: it stays detached from `curriculum/index.ts` until W7, so the planned-course pins
- * of `curriculum.test.ts` keep holding. Whether each lab name exists in `SCENARIOS` is checked from W5 (W7 for the
- * wireless lab), when the labs land — not here.
+ * of `curriculum.test.ts` keep holding. Since W5 every lesson's lab name exists in `SCENARIOS` (§11.3), except the
+ * wireless lab `ccna2-wlc-wlan`, which lands in W7.
  */
 import { describe, expect, it } from 'vitest';
 import type { Lesson } from '../src/contracts/curriculum.js';
 import { CCNA1_MODULES } from '../src/curriculum/ccna1/lessons.js';
 import { CCNA2_MODULES } from '../src/curriculum/ccna2/lessons.js';
+import { SCENARIOS } from '../src/sim/scenarios.js';
 
 const KEBAB = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 /** Names this course never prints (§0 rule 6: original wording, no vendors). */
@@ -303,6 +304,19 @@ describe('CCNA 2 lesson skeleton', () => {
       expect(name.startsWith('ccna2-'), name).toBe(true);
     }
     for (const name of UNAPPROVED_LABS) expect(used, name).not.toContain(name);
+  });
+
+  it('names only labs that exist in SCENARIOS as CCNA 2 labs, except the wireless lab of W7 (§11.3)', () => {
+    const wireless = 'ccna2-wlc-wlan';
+    const named = lessons()
+      .map((l) => l.lab)
+      .filter((name): name is string => name !== undefined && name !== wireless);
+    expect(named.length).toBe(19);
+    for (const name of named) {
+      const lab = SCENARIOS.find((s) => s.name === name);
+      expect(lab, `${name} is not in SCENARIOS`).toBeDefined();
+      expect(lab?.category, name).toBe('ccna2-lab');
+    }
   });
 
   it('uses original wording with no vendor names', () => {

@@ -1149,6 +1149,17 @@ class EthSwitch implements Process {
       cam.set({ key: camKey(vlan, d.mac), mac: d.mac, vlan, port, type: 'static', secure: d.secure, updatedAt: ctx.now });
       this.emit(ctx, `secured ${d.mac} on ${port} (vlan ${vlan}, ${d.secure})`, { mac: d.mac, port, vlan, secure: d.secure }, PORT_SECURITY_DEBUG_CATEGORY);
     }
+    // Sticky learning switched on also pins the addresses the port already learned dynamically, and writes their
+    // sticky lines, as a real switch does (§3.8 step 2; W5 fix). The line comes back through onConfig as a no-op.
+    const stickyLines: Action[] = [];
+    if (cfg.sticky) {
+      for (const row of current) {
+        if (row.secure !== 'dynamic' || cam.get(row.key) === undefined) continue;
+        cam.set({ ...row, secure: 'sticky', updatedAt: ctx.now });
+        this.emit(ctx, `made ${row.mac} on ${port} sticky (vlan ${row.vlan}): sticky learning is on`, { mac: row.mac, port, vlan: row.vlan, secure: 'sticky' }, PORT_SECURITY_DEBUG_CATEGORY);
+        stickyLines.push(stickyConfigLine(port, row.mac));
+      }
+    }
     const view = ctx.ports.get(port);
     const status = prev?.status ?? portSecurityStatus(view?.operUp ?? false, view?.errDisabled);
     const next: PortSecurityRow = { ...portSecurityRow(port, cfg, ctx.now, prev, status), count: this.secureRowsOf(ctx, port).length };
@@ -1160,7 +1171,7 @@ class EthSwitch implements Process {
     } else if (!samePortSecurityRow(prev, next)) {
       table.set(next);
     }
-    return [];
+    return stickyLines;
   }
 
   /**

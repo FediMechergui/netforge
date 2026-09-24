@@ -164,9 +164,10 @@ describe('serial lines', () => {
   });
 
   it('help lists the serial lines on a serial port only', () => {
-    // ARCHITECTURE-P2 §9.2 W4 item 18 (the P2 fragments folded into GRAMMAR): `standby` on both, `encapsulation` on the
-    // routed Ethernet port
-    expect(tokens(serial, '')).toEqual(['bandwidth', 'clock', 'description', 'do', 'encapsulation', 'end', 'exit', 'ip', 'ipv6', 'keepalive', 'no', 'shutdown', 'standby']);
+    // ARCHITECTURE-P2 §9.2 W4 item 18 (the P2 fragments folded into GRAMMAR): `standby` and `encapsulation` on the routed
+    // Ethernet port; §9.2 item 20e (architect ruling of 2026-09-23, W5 cli): the serial port (role `wan`, a
+    // point-to-point link) loses `standby` again
+    expect(tokens(serial, '')).toEqual(['bandwidth', 'clock', 'description', 'do', 'encapsulation', 'end', 'exit', 'ip', 'ipv6', 'keepalive', 'no', 'shutdown']);
     expect(tokens(gig, '')).toEqual(['description', 'do', 'duplex', 'encapsulation', 'end', 'exit', 'ip', 'ipv6', 'mac-address', 'no', 'shutdown', 'speed', 'standby']);
   });
 

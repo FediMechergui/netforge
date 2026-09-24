@@ -26,7 +26,7 @@ import { PROCESS_FACTORIES } from '../src/protocols/index.js';
 import { evaluateLab } from '../src/sim/lab-checks.js';
 import { createSimulation } from '../src/sim/simulation.js';
 import { CCNA1_LABS } from '../src/sim/scenarios/ccna1/index.js';
-import { SCENARIOS } from '../src/sim/scenarios.js';
+import { CCNA2_LABS, SCENARIOS, TEMPLATES } from '../src/sim/scenarios.js';
 
 /** Long enough for every model of a lab to boot (the router takes 45 s). */
 const BOOT_NS = 60 * SEC;
@@ -68,7 +68,10 @@ function typesOf(topo: Topology): string[] {
 describe('CCNA1 labs: the catalogue', () => {
   it('lists the labs after the templates, with unique names and a lab category', () => {
     expect(CCNA1_LABS.length).toBeGreaterThanOrEqual(14);
-    expect(SCENARIOS.slice(SCENARIOS.length - CCNA1_LABS.length)).toEqual(CCNA1_LABS);
+    // P2 §9.2 item 21: SCENARIOS is the templates, then CCNA1_LABS, then CCNA2_LABS
+    expect(SCENARIOS.slice(TEMPLATES.length, TEMPLATES.length + CCNA1_LABS.length)).toEqual(CCNA1_LABS);
+    expect(SCENARIOS.slice(0, TEMPLATES.length)).toEqual(TEMPLATES);
+    expect(SCENARIOS.slice(TEMPLATES.length + CCNA1_LABS.length)).toEqual(CCNA2_LABS);
     expect(new Set(SCENARIOS.map((s) => s.name)).size).toBe(SCENARIOS.length);
     for (const lab of CCNA1_LABS) {
       expect(lab.category).toBe('ccna1-lab');

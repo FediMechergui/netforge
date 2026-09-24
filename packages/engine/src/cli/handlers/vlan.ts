@@ -9,7 +9,10 @@
  * `show vlan [brief | id <v>]` renders the VLAN database from live state: the `vlans` table when the device has one
  * (the daemon is the writer), else the `vlan` sections of the running config (a device without the daemon), plus
  * the implicit VLANs; the access ports of each VLAN come from every switched port's `readSwitchport` configuration
- * and its operational mode (a trunk belongs to no VLAN's port list). Every string is original wording (spec §1.6).
+ * and its operational mode (a trunk belongs to no VLAN's port list). The Ports cell wraps on a `, ` boundary so that
+ * every line fits `VLAN_TABLE_WIDTH` (80) columns, each continuation line indented under the Ports column
+ * (ARCHITECTURE-P2 §7 W5 cli, the W4 browser-gate polish: one long cell used to break mid-name in an 80-column
+ * console). Every string is original wording (spec §1.6).
  *
  * The VLAN-existence helpers are shared with the switchport handlers (auto-creation, §5.1).
  */
@@ -156,11 +159,46 @@ const vlanName: CommandHandler = (ctx, args, negate) => {
 
 // ── show vlan ───────────────────────────────────────────────────────────────
 
-/** The `show vlan` table over `rows`. */
+/** Every `show vlan` line fits this console width (§7 W5 cli, the ruling restated on 2026-09-24). */
+export const VLAN_TABLE_WIDTH = 80;
+/** The narrowest Ports cell the wrap ever uses, however wide the Name and Status columns grow. */
+export const VLAN_PORTS_MIN_WRAP = 20;
+
+/**
+ * The lines of a Ports cell: the names joined by `, `, broken at a `, ` boundary (the separator is dropped at the
+ * break) so that no line is longer than `width`; a single name longer than `width` stands alone on its line. An
+ * empty list is one empty line.
+ */
+export function wrapPortList(ports: readonly string[], width: number): string[] {
+  const lines: string[] = [];
+  let current = '';
+  for (const port of ports) {
+    if (current === '') current = port;
+    else if (current.length + 2 + port.length <= width) current += `, ${port}`;
+    else {
+      lines.push(current);
+      current = port;
+    }
+  }
+  lines.push(current);
+  return lines;
+}
+
+/**
+ * The `show vlan` table over `rows`; a wrapped Ports cell continues on rows whose other cells are empty. The Ports
+ * column starts after the three columns before it (each as wide as its widest cell, two spaces apart), and the cell
+ * wraps at whatever is left of `VLAN_TABLE_WIDTH` — 44 characters in the usual layout, whose Ports column starts at 36.
+ */
 function renderVlanTable(ctx: CommandCtx, rows: readonly VlanListing[]): string {
   const out: string[][] = [['VLAN', 'Name', 'Status', 'Ports']];
+  const widest = (header: string, cells: readonly string[]): number => cells.reduce((w, c) => Math.max(w, c.length), header.length);
+  const portsColumn =
+    widest('VLAN', rows.map((r) => String(r.vlan))) + 2 + widest('Name', rows.map((r) => r.name)) + 2 + widest('Status', rows.map((r) => r.status)) + 2;
+  const wrap = Math.max(VLAN_PORTS_MIN_WRAP, VLAN_TABLE_WIDTH - portsColumn);
   for (const r of rows) {
-    out.push([String(r.vlan), r.name, r.status, r.status === 'reserved' ? '' : accessPortsOf(ctx, r.vlan).join(', ')]);
+    const [first = '', ...more] = r.status === 'reserved' ? [''] : wrapPortList(accessPortsOf(ctx, r.vlan), wrap);
+    out.push([String(r.vlan), r.name, r.status, first]);
+    for (const line of more) out.push(['', '', '', line]);
   }
   return table(out, { align: ['right'] });
 }

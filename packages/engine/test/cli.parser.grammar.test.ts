@@ -94,6 +94,10 @@ const EXPECTED_IDS = [
   'if.ipv6-nd-managed-config-flag', 'if.ipv6-nd-other-config-flag', 'if.ipv6-address-dhcp', 'show.ipv6-dhcp-pool',
   'show.ipv6-dhcp-binding', 'show.ipv6-dhcp-interface',
   'if.standby-version', 'if.standby-ip', 'if.standby-priority', 'if.standby-preempt', 'if.standby-timers', 'show.standby',
+  // W5 cli: the wireless controller (controller interfaces, WLANs) and the lightweight access point lines
+  'config.wlc-interface', 'wlc-if.vlan', 'wlc-if.address', 'wlc-if.gateway', 'wlc-if.dhcp-server',
+  'config.wlan', 'wlan.security', 'wlan.passphrase', 'wlan.interface', 'wlan.radio', 'wlan.shutdown',
+  'config.capwap-enable', 'config.capwap-controller', 'show.capwap',
 ];
 
 /** Test label of a context (the device kind is no longer part of MatchContext: scope is grammar and capabilities). */
@@ -132,9 +136,10 @@ describe('HANDLERS', () => {
     expect(Object.keys(GRAMMAR_FRAGMENTS)).toEqual([
       'core-exec', 'show', 'config-global', 'config-if', 'svi', 'switchport', 'serial', 'wireless', 'modules',
       'ipv6', 'dhcp', 'dns', 'services', 'transport', 'traceroute', 'line-auth', 'host-shell',
-      // ARCHITECTURE-P2 §9.2 W4 item 18: the P2 fragments, folded in after the P1 ones
+      // ARCHITECTURE-P2 §9.2 W4 item 18: the P2 fragments, folded in after the P1 ones; W5 cli folds `wlc` in the same way
       'vlan', 'switchport-p2', 'subif', 'routing',
       'spanning-tree', 'etherchannel', 'port-security', 'errdisable', 'nat', 'acl', 'dhcpv6', 'hsrp',
+      'wlc',
     ]);
   });
 });

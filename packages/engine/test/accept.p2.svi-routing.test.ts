@@ -7,7 +7,7 @@
  *  • PC1→PC2 fails with drop `no-route` whose detail names `ip routing` (local delivery to the SVI still works);
  *  • after `ip routing`: 5/5 with no dot1q mutation, and a lab `connectivity` check PC1→PC2 passes in the grader's
  *    clone built from `exportTopology` (both a clone built the grader's way on the P2-stage catalog and the real
- *    grader, `evaluateLab`, which clones on the real catalog — VLAN-aware since the W4 flip);
+ *    grader, `evaluateLab`, which since W5 clones with the live world's catalog — here the P2-stage one);
  *  • shutting Gi1/0/2 takes Vlan20 down with reason `no-bridged-port-up`;
  *  • trunked host: an L2 NF-C2960 joined to MLS1 by a trunk with PC4 in VLAN 10 behind it resolves Vlan10's address
  *    and pings it 5/5 — its broadcast reached the SVI untagged (the SVI ingress copy is popped, cause `interface
@@ -136,7 +136,7 @@ describe('accept P2 svi-routing: §3.5 in the P2 profile', () => {
     expect(ping(clone, 'pc1', '192.168.20.10').text).toContain('Sent 5, received 5, lost 0');
   });
 
-  it('a lab connectivity check PC1→PC2 passes in the grader\'s clone (evaluateLab, the real catalog after the W4 flip)', () => {
+  it('a lab connectivity check PC1→PC2 passes in the grader\'s clone (evaluateLab, with the catalog of the live world)', () => {
     const sim = sviWorld();
     sim.runUntil(CONVERGED);
     expect(sim.configure('mls1', ['ip routing']).ok).toBe(true);

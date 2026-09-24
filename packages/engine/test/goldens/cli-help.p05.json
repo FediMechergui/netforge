@@ -185,8 +185,7 @@
       "ipv6",
       "keepalive",
       "no",
-      "shutdown",
-      "standby"
+      "shutdown"
     ]
   },
   "router.nf4331": {
@@ -2528,8 +2527,7 @@
       "mac-address",
       "no",
       "shutdown",
-      "speed",
-      "standby"
+      "speed"
     ],
     "config-if ethernet/switched": [
       "description",
@@ -2656,8 +2654,7 @@
       "mac-address",
       "no",
       "shutdown",
-      "speed",
-      "standby"
+      "speed"
     ],
     "config-if ethernet/switched": [
       "description",

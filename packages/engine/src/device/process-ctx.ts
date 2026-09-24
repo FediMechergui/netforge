@@ -116,6 +116,19 @@ export function pduSummary(pdu: Pdu): PduSummary {
   // P2 (§2.7): the outermost 802.1Q VID of a tagged frame; absent for every untagged frame (P1 bytes unchanged)
   const l1 = pdu.layers[1];
   if (l1 !== undefined && l1.proto === 'dot1q' && typeof l1.fields.vid === 'number') s.vlan = l1.fields.vid;
+  // P2 (§2.7, §3.12 step 6): a station frame inside a CAPWAP tunnel — a capwap layer followed by the frame it
+  // carries. Control messages and keep-alives carry no frame; P0/P1 PDUs never hold a capwap layer (bytes unchanged).
+  // A tunnelled frame has at least five layers (frame, ipv4, udp, capwap, inner frame): shorter PDUs, the hot path
+  // of every frame event, skip the walk.
+  const ls = pdu.layers;
+  if (ls.length >= 5) {
+    for (let i = 1; i < ls.length - 1; i++) {
+      if (ls[i]!.proto !== 'capwap') continue;
+      const inner = ls[i + 1]!.proto;
+      if (inner === 'dot11' || inner === 'ethernet') s.tunnel = 'capwap';
+      break;
+    }
+  }
   return s;
 }
 

@@ -2720,13 +2720,19 @@ gate G (rules 9, 10). Adversarial verify from W2 on replays real worlds built wi
   section lines, `capwap enable`, `capwap controller`, `show capwap`). Tests: `cli.wlc.test.ts`. Also (architect
   ruling of 2026-09-23, §9.2 W4 item 20e): `cli/grammar/hsrp.ts` scopes the `standby` interface lines to the roles
   `routed`, `subif` and `svi`; un-skips the `accept.p2.profile` `no capwap enable` case (§9.2b). Polish found at
-  the W4 browser gate: `show vlan [brief]` wraps its Ports cell at 48 characters on a `, ` boundary, continuation
-  lines indented under the column (today one 200-character cell breaks mid-name in an 80-column console); the pins of
-  `cli.vlan` move with exact values.
+  the W4 browser gate: `show vlan [brief]` wraps its Ports cell on a `, ` boundary so that **every line fits 80
+  columns** — the cell wraps at 80 minus the Ports column's start (44 in the usual layout, whose Ports column starts at
+  36; never below 20) — continuation lines indented under the column (before, one 200-character cell broke mid-name
+  in an 80-column console); the pins of `cli.vlan` move with exact values. (Ruling restated by the architect on
+  2026-09-24: the first wording, "at 48 characters", still gave 83-column lines — W5 review findings #11 and #15.)
 - **sim** (continued) — un-skips the `accept.p2.static-routing` `route` lab-assertion case once the `route` kind lands
   (§9.2b).
 
 ### W6 — wireless catalog flip, web visuals, course text
+
+- **wireless** (W5 close-out, §9.2 item 22b) — the CAPWAP AP identity: `wtpMac` in the Discovery and Join Requests
+  (additive codec edit in `pdu/codecs/capwap.ts`, reviewed), capwap-ac sessions and `capwap-aps` rows keyed by it, the
+  interim same-source refusal removed. Tests: `capwap.join` (two APs behind one router, both in `run`).
 
 - **catalog** — `device/catalog/wireless.ts`: NF-AP-1832 gains `lightweight-ap` and its `profileConfig`
   (`capwap enable`, `interface Vlan1` / `ip address dhcp` / `no shutdown` in P2); the new NF-WLC-9800
@@ -2742,7 +2748,7 @@ gate G (rules 9, 10). Adversarial verify from W2 on replays real worlds built wi
   `inspector/HomeRouterPanel.tsx`.
 - **web-canvas** — `canvas/capwap.ts` and its layer in `canvas/scene.ts` / `canvas/Canvas.tsx`.
 - **web-timeline [S1]** — `timeline/{TimelineStrip,Scrubber,LaneRows}.tsx`. **[S15]** — `timeline/ConvergencePanel.tsx`.
-- **web-learn** — `labs/LabBrowser.tsx`.
+- **web-learn** — `labs/LabBrowser.tsx`; a busy "checking" state while a lab check runs (§9.2 item 22c).
 - **web-shell** — `app/FileMenu.tsx` (`ccna2-lab` category); **[S1]** `app/App.tsx` (the timeline grid row).
 - **course** — `curriculum/ccna2/{theory-a,theory-b,theory-c,videos}.ts` for every non-wireless lesson.
   Tests: `curriculum.ccna2.commands.test.ts` (every backticked command in a lesson parses in `GRAMMAR` for the model the
@@ -3089,6 +3095,36 @@ unless stated**
     becomes "templates, then `CCNA1_LABS`, then `CCNA2_LABS`" (index checks, same strength).
 22. The lab-check clone re-applies err-disabled ports and scheduled `after` faults. CCNA 1 labs have neither, so their
     results are unchanged.
+
+**W5 close-out (architect, 2026-09-24): rulings on the W5 review**
+
+22a. `show vlan` wrap: the §7 W5 cli ruling is restated as "every line fits 80 columns" (wrap = 80 minus the Ports
+     column's start, never below 20; `VLAN_TABLE_WIDTH`, `VLAN_PORTS_MIN_WRAP` in `cli/handlers/vlan.ts`), applied by
+     the architect: `cli.vlan` pins the 11-line layout of its fixture and gains a case with a 32-character VLAN name.
+22b. CAPWAP AP identity (review finding #13). **Interim, shipped in W5:** capwap-ac refuses a newcomer's Discovery and
+     Join (result 1) while another device is joined under the same Ethernet source at another address, so two APs
+     behind one router no longer evict each other (one joins, one waits). **Proper fix, owner §7 W6 wireless (with a
+     reviewed additive edit in the pdu owner's `pdu/codecs/capwap.ts`):** the Discovery and Join Requests carry the
+     AP's base MAC (`wtpMac`, NF vendor element 3 — the role the WTP Board Data element plays in RFC 5415); capwap-ac
+     keys its sessions and `capwap-aps` rows by `wtpMac`, never by the Ethernet source; the interim refusal is
+     removed; `capwap.join` gains two APs behind one router, both reaching `run`. The W7 wireless lab keeps its APs
+     in the controller's management VLAN, so it does not depend on this.
+22c. A wrong EtherChannel answer (one side `mode on`, the other LACP with lone members) keeps sending topology-change
+     notices that the neighbour acknowledges on an inferior port, which 802.1D ignores — faithful behaviour for that
+     misconfiguration. The world never idles, so grading that wrong answer runs each clone to its 200 000-event cap
+     (about 17 s). Accepted for P2 (the guard that would err-disable such a bundle is [S5], not approved). W6
+     web-learn shows a busy "checking" state while a lab check runs, so a long check does not look like a hang.
+22d. Accepted as built: the `debug capwap` category the W5 cli item added (original wording; §5.4 gains it).
+     Recorded for later, not changed: the device pipeline ignores the `frame: 'data'` demux selector (wlan-ap's
+     workaround is correct; W8 reconciles the contract); the trace filter has no VLAN key; a multilayer switch relays
+     DHCP with `no ip routing` (fidelity backlog, P3); grader limits met by the labs — `cut` removes every cable
+     between two devices, `connectivity` pings a device's first address, no TCP check (P3).
+22e. Suite health, for the W8 gate: the `accept.p2.loop-storm-bounded` P1 case (one simulated second at line rate on
+     five links) takes 2–5 minutes alone and far longer on a throttled machine — past its nominal 300 s budget,
+     which vitest cannot enforce on a synchronous test; W8 decides whether the §10.1 row keeps `runFor(1 s)` or
+     scales its bound to a shorter window. The two "always-post rule while paused" cases of `worker.delta` fail at
+     full parallelism on a loaded machine (the first overruns its 5 s budget and its tail posts into the second);
+     they pass alone and with `--maxWorkers=4`, and the worker code is unchanged since W4. Neither is a W5 regression.
 
 **W6 (wireless catalog)**
 23. `device.catalog.data.test.ts:120` (ap.nfap-lw gains `lightweight-ap`, processes `capwap-wtp, udp, dhcp-client`,

@@ -18,9 +18,12 @@ import {
   MSG_NO_SUCH_VLAN,
   MSG_NO_VLAN_SELECTED,
   MSG_VLAN_RESERVED,
+  VLAN_PORTS_MIN_WRAP,
+  VLAN_TABLE_WIDTH,
   vlanExists,
   vlanListings,
   vlanNameOf,
+  wrapPortList,
 } from '../src/cli/handlers/vlan.js';
 import { isArgToken, matchCommand } from '../src/cli/parser.js';
 import { specModeAllows } from '../src/cli/modes.js';
@@ -134,13 +137,61 @@ describe('show vlan', () => {
     const r = configured();
     const out = lines(run(r, P2_HANDLERS.showVlan, { form: 'brief' }).output);
     expect(out[0]).toMatch(/^VLAN\s+Name\s+Status\s+Ports$/);
+    // ARCHITECTURE-P2 §7 W5 cli (W4 browser-gate polish, ruling restated 2026-09-24): VLAN 1's 23 access ports wrap on
+    // a ', ' boundary so that every line fits 80 columns — the Ports column starts at 36, so the cell wraps at 44 —
+    // the continuation lines indented under the Ports column, so the VLAN 10 row moves from line 2 to 6, VLAN 1002
+    // from 3 to 7, and the output from 7 lines to 11
     expect(out[1]).toMatch(/^\s+1\s+default\s+active\s+Fa0\/3, Fa0\/4, /);
-    expect(out[1]).not.toContain('Gi0/1');
-    expect(out[2]).toMatch(/^\s+10\s+SALES\s+active\s+Fa0\/1, Fa0\/2$/);
-    expect(out[3]).toMatch(/^1002\s+fddi-default\s+reserved$/);
-    expect(out).toHaveLength(7);
+    expect(out.slice(1, 6)).toEqual([
+      '   1  default             active    Fa0/3, Fa0/4, Fa0/5, Fa0/6, Fa0/7, Fa0/8',
+      '                                    Fa0/9, Fa0/10, Fa0/11, Fa0/12, Fa0/13',
+      '                                    Fa0/14, Fa0/15, Fa0/16, Fa0/17, Fa0/18',
+      '                                    Fa0/19, Fa0/20, Fa0/21, Fa0/22, Fa0/23',
+      '                                    Fa0/24, Gi0/2',
+    ]);
+    expect(out.slice(1, 6).join('\n')).not.toContain('Gi0/1');
+    expect(out[6]).toMatch(/^\s+10\s+SALES\s+active\s+Fa0\/1, Fa0\/2$/);
+    expect(out[7]).toMatch(/^1002\s+fddi-default\s+reserved$/);
+    expect(out).toHaveLength(11);
     expect(accessPortsOf(r.ctx, 10)).toEqual(['Fa0/1', 'Fa0/2']);
     expect(run(r, P2_HANDLERS.showVlan).output).toBe(run(r, P2_HANDLERS.showVlan, { form: 'brief' }).output);
+  });
+
+  it('wraps the Ports cell on a ", " boundary so every line fits 80 columns, continuation lines under the Ports column', () => {
+    const out = lines(run(configured(), P2_HANDLERS.showVlan, { form: 'brief' }).output);
+    const column = out[0]!.indexOf('Ports');
+    expect(column).toBe(36);
+    for (const line of out) expect(line.length, line).toBeLessThanOrEqual(VLAN_TABLE_WIDTH);
+    for (const line of out.slice(1, 6)) {
+      const cell = line.slice(column);
+      expect(cell.length, line).toBeLessThanOrEqual(VLAN_TABLE_WIDTH - column);
+      expect(cell, line).toMatch(/^Fa0\/\d+(?:, (?:Fa|Gi)0\/\d+)*$/);
+    }
+    for (const line of out.slice(2, 6)) expect(line.slice(0, column), line).toBe(' '.repeat(column));
+    expect(VLAN_TABLE_WIDTH).toBe(80);
+    expect(VLAN_PORTS_MIN_WRAP).toBe(20);
+    expect(wrapPortList([], 48)).toEqual(['']);
+    expect(wrapPortList(['Fa0/1'], 48)).toEqual(['Fa0/1']);
+    // a line that would pass the width breaks at the last ', ' before it (the separator is dropped at the break)
+    const six = ['Gi1/0/1', 'Gi1/0/2', 'Gi1/0/3', 'Gi1/0/4', 'Gi1/0/5', 'Gi1/0/6'];
+    expect(six.join(', ')).toHaveLength(52);
+    expect(wrapPortList(six, 48)).toEqual(['Gi1/0/1, Gi1/0/2, Gi1/0/3, Gi1/0/4, Gi1/0/5', 'Gi1/0/6']);
+    // exactly the width stays on one line; one more character does not
+    expect(wrapPortList(['a'.repeat(23), 'b'.repeat(23)], 48)).toEqual([`${'a'.repeat(23)}, ${'b'.repeat(23)}`]);
+    expect(wrapPortList(['a'.repeat(23), 'b'.repeat(24)], 48)).toEqual(['a'.repeat(23), 'b'.repeat(24)]);
+    // a single name longer than the width stands alone
+    expect(wrapPortList(['x'.repeat(50), 'Fa0/1'], 48)).toEqual(['x'.repeat(50), 'Fa0/1']);
+  });
+
+  it('a longer VLAN name moves the Ports column right and narrows the wrap, so lines still fit 80 columns', () => {
+    const r = configured();
+    r.running.set([['vlan', '10']], ['name', 'ENGINEERING-AND-OPERATIONS-LAB-A']); // 32 characters, the longest name
+    const out = lines(run(r, P2_HANDLERS.showVlan, { form: 'brief' }).output);
+    const column = out[0]!.indexOf('Ports');
+    expect(column).toBe(4 + 2 + 32 + 2 + 8 + 2);
+    for (const line of out) expect(line.length, line).toBeLessThanOrEqual(VLAN_TABLE_WIDTH);
+    // 80 − 50 leaves 30 characters: 'Fa0/3, Fa0/4, Fa0/5, Fa0/6' is 26, and ', Fa0/7' would make it 33
+    expect(out[1]!.slice(column)).toBe('Fa0/3, Fa0/4, Fa0/5, Fa0/6');
   });
 
   it('show vlan id prints one VLAN or refuses a missing one', () => {
@@ -172,10 +223,12 @@ describe('the P2 fragments folded into the table (ARCHITECTURE-P2 §7 W2 cli; §
       'core-exec', 'show', 'config-global', 'config-if', 'svi', 'switchport', 'serial', 'wireless', 'modules',
       'ipv6', 'dhcp', 'dns', 'services', 'transport', 'traceroute', 'line-auth', 'host-shell',
     ];
-    // W2 fragments, then the W3 cli fragments (spanning tree, EtherChannel, port security, err-disable, NAT, ACL, DHCPv6, [S2] HSRP)
+    // W2 fragments, then the W3 cli fragments (spanning tree, EtherChannel, port security, err-disable, NAT, ACL, DHCPv6, [S2] HSRP),
+    // then the W5 cli fragment (the wireless controller and lightweight access point lines)
     const P2_KEYS = [
       'vlan', 'switchport-p2', 'subif', 'routing',
       'spanning-tree', 'etherchannel', 'port-security', 'errdisable', 'nat', 'acl', 'dhcpv6', 'hsrp',
+      'wlc',
     ];
     expect(Object.keys(GRAMMAR_FRAGMENTS)).toEqual([...P1_KEYS, ...P2_KEYS]);
     expect(Object.keys(P2_GRAMMAR_FRAGMENTS)).toEqual(P2_KEYS);

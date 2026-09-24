@@ -63,6 +63,28 @@
  *
  * Medium notifications are queued while the medium updates its state and delivered in order at the end of the
  * public call, so a daemon reacting synchronously always sees a consistent medium.
+ *
+ * P2 central switching (ARCHITECTURE-P2 D17, §2.7, §2.12, §3.12 steps 4–8; W5 wireless). The radio's settings
+ * (`LinkModelDeps.radioSettings`, the device's ONE renderer: local lines overlaid by a controller profile) may carry
+ * `bss`; BSS index 0 of that list decides the BSS's switching. A BSS is CENTRAL when that entry says
+ * `switching: 'central'`; every other BSS (no `bss` list at all, which is every P0.5/P1 radio, or a local entry) is
+ * LOCAL and keeps today's behaviour, ids, stream labels and bytes exactly (index-0 identity: the id stays
+ * `bss:<dev>/<port>`, the BSSID `bssidFor(radio MAC, 0)`). For a central BSS only:
+ *   • station → AP data: the station's framing is unchanged (Ethernet → 802.11 to-DS, 'wireless client framing'),
+ *     but the leg arrives with `frameArrival.central` instead of the dot11 → Ethernet rewrap: `admit` still checks
+ *     that the transmitter holds an authorized association of the BSS, then hands the 802.11 frame over UNCHANGED
+ *     (the AP's capwap-wtp tunnels it to the controller, §3.12 step 6);
+ *   • AP → station data: the AP sends a pre-built 802.11 from-DS data frame (addr2 = the BSSID); the air delivers it
+ *     like bridged Ethernet data (unicast to the authorized station addr1, group to every authorized station but the
+ *     source addr3) and the station's admit rewraps it to Ethernet as today (§3.12 step 8);
+ *   • Ethernet frames the AP's own bridge floods onto a central radio are not put on the air (the controller, not the
+ *     AP, switches that network): no leg, no trace, as for a group frame with no station;
+ *   • airtime: a radio serves one BSS (several WLANs per radio are not built), so the per-radio busy time of a central
+ *     BSS is its record's `busyUntil`, shared with co-channel BSSs exactly as for a local BSS;
+ *   • the BSS signature (a change restarts the BSS) adds the switching, the pushed key tag and the WLAN id; the VLAN
+ *     is display data and never restarts it;
+ *   • snapshots: `BssSnapshot` gains `wlanId`, `vlan` and `switching: 'central'`, and the AP's `RadioPortView` a
+ *     `bss` list, only when the radio's settings carry `bss` (absent otherwise, so P1 snapshots keep their bytes).
  */
 import type { MacAddress } from '../../contracts/addr.js';
 import { bssidFor } from '../../contracts/addr.js';
@@ -83,7 +105,7 @@ import type {
 } from '../../contracts/medium.js';
 import type { Pdu } from '../../contracts/pdu.js';
 import type { PortState } from '../../contracts/port.js';
-import type { ChannelWidthMhz, RadioPortSpec, RadioPortView, RadioSettings, RfBand, WifiSecurity } from '../../contracts/rf.js';
+import type { BssSettings, ChannelWidthMhz, RadioPortSpec, RadioPortView, RadioSettings, RfBand, WifiSecurity } from '../../contracts/rf.js';
 import { MCS_TABLES, RF, radioModeOf } from '../../contracts/rf.js';
 import type { SimTime } from '../../contracts/time.js';
 import { propagationNs, serializationNs } from '../../contracts/time.js';
@@ -186,6 +208,12 @@ interface BssRecord {
   since: SimTime;
   /** Associations by station port key. */
   readonly stations: Map<string, AssocRecord>;
+  /** @since P2 (wireless) 'central' when the radio's BSS index 0 is centrally switched (a controller profile); else 'local'. */
+  switching: 'local' | 'central';
+  /** @since P2 (wireless) Controller WLAN id of a central BSS (display, snapshots). */
+  wlanId?: number;
+  /** @since P2 (wireless) VLAN the WLAN maps to at the controller (display only; never restarts the BSS). */
+  vlan?: number;
 }
 
 interface AssocRecord {
@@ -245,7 +273,13 @@ interface AirSend {
   readonly txLabel: string;
   readonly rateBps: number;
   readonly unicast: boolean;
-  readonly rewrap: boolean;
+  /**
+   * How a DATA leg arrives (undefined for management, EAPOL and control frames, which are never rewrapped):
+   * 'rewrap' = `frameArrival.rewrap` (dot11 → Ethernet at the receiver, P0.5); 'central' (@since P2) =
+   * `frameArrival.central` (the 802.11 frame reaches the AP of a central BSS unchanged). Both are data legs that die
+   * with their association.
+   */
+  readonly arrival?: 'rewrap' | 'central';
   readonly receivers: AirReceiver[];
 }
 
@@ -258,6 +292,14 @@ export function defaultRadioSettings(spec: RadioPortSpec): RadioSettings {
     txPowerDbm: spec.maxTxPowerDbm,
     security: 'open',
   };
+}
+
+/**
+ * @since P2 (wireless) BSS index 0 of a radio's settings list (the one BSS a radio serves; several WLANs per radio are
+ * not built), or undefined when the settings carry no list (every P0.5/P1 radio) or no index 0 (an idle profile).
+ */
+export function primaryBss(settings: Pick<RadioSettings, 'bss'>): BssSettings | undefined {
+  return settings.bss?.find((b) => b.index === 0);
 }
 
 const byKey = <T extends { key: string }>(a: T, b: T): number => compareOrdinal(a.key, b.key);
@@ -317,6 +359,7 @@ export function createAirMedium(host: MediumHost): AirMedium {
       bssByAp.set(v.key, {
         id: bssId(v.ref), ap: v.ref, key: v.key, bssid: bssidFor(v.port.mac, 0), up: false, ssid: '', security: 'open',
         band: v.spec.defaultBand, channel: v.spec.defaultChannel, widthMhz: 20, signature: '', busyUntil: 0, since: 0, stations: new Map(),
+        switching: 'local',
       });
     }
     return v;
@@ -591,8 +634,17 @@ export function createAirMedium(host: MediumHost): AirMedium {
     const carrier = radioCarrier(v);
     const band = bandOf(v);
     const width = effectiveWidthMhz(band, Math.min(v.settings.widthMhz, v.spec.maxWidthMhz) as ChannelWidthMhz);
-    const signature = [v.settings.ssid ?? '', v.settings.security, v.settings.passphrase ?? '', band, String(v.settings.channel), String(width)].join('|');
+    let signature = [v.settings.ssid ?? '', v.settings.security, v.settings.passphrase ?? '', band, String(v.settings.channel), String(width)].join('|');
+    // P2 (wireless): only a radio whose settings carry a BSS list (a controller profile) extends the signature, so every
+    // local radio keeps exactly its P0.5 signature and behaviour
+    const bss0 = primaryBss(v.settings);
+    if (v.settings.bss !== undefined) signature += `|${bss0?.switching ?? 'local'}|${bss0?.keyTag ?? ''}|${bss0?.wlanId ?? ''}`;
     bss.bssid = bssidFor(v.port.mac, 0);
+    bss.switching = bss0?.switching === 'central' ? 'central' : 'local';
+    if (bss0?.wlanId === undefined) delete bss.wlanId;
+    else bss.wlanId = bss0.wlanId;
+    if (bss0?.vlan === undefined) delete bss.vlan;
+    else bss.vlan = bss0.vlan;
     if (bss.up && (!carrier || signature !== bss.signature)) {
       for (const rec of [...bss.stations.values()].sort(byKey)) {
         teardown(rec, now, changes, { kind: 'bss-down', bssid: bss.bssid }, undefined, 'link-down');
@@ -679,9 +731,10 @@ export function createAirMedium(host: MediumHost): AirMedium {
     if (attempt > 1) tx.attempt = attempt;
     host.emit(tx);
     const body: FrameArrivalBody = { kind: 'frameArrival', device: to.device, port: to.port, pdu: rx.pdu, medium: rx.medium };
-    if (s.rewrap) body.rewrap = 'dot11-to-ethernet';
+    if (s.arrival === 'rewrap') body.rewrap = 'dot11-to-ethernet';
+    else if (s.arrival === 'central') body.central = true;
     const seq = host.schedule(arrive, body);
-    if (s.rewrap) dataLegs.add(seq);
+    if (s.arrival !== undefined) dataLegs.add(seq);
     host.inflight.sweep(now);
     const leg: InflightLeg = { pdu: summary, link: rx.medium, from, to, txStart: start, txEnd: end, arrive, medium: 'air', rateBps: s.rateBps, arrivalSeq: seq };
     if (s.pdu.meta.background === true) leg.background = true;
@@ -766,9 +819,46 @@ export function createAirMedium(host: MediumHost): AirMedium {
     for (const rx of receivers) rx.pdu = clone(pdu, now);
   };
 
+  /**
+   * @since P2 (wireless) A central BSS's downlink: a pre-built 802.11 from-DS data frame (§3.12 step 8) whose addr2 is
+   * this BSS. Delivered like bridged Ethernet data — unicast to the authorized station addr1, group to every authorized
+   * station except the source addr3 — with no rewrap at the AP; the station's admit rewraps it to Ethernet as today.
+   */
+  const centralTransmit = (v: RadioView, bss: BssRecord, pdu: Pdu, now: SimTime): TransmitResult => {
+    const addrs = dot11EthernetAddresses(pdu);
+    if (addrs === undefined || addrs.direction !== 'from-ds' || pdu.layers[0]!.fields.addr2 !== bss.bssid) {
+      emitDrop(pdu, 'encapsulation-mismatch', AIR_DETAILS.malformedData, now, v.ref, bss.id);
+      return { ok: false, reason: 'encapsulation-mismatch' };
+    }
+    const group = isGroupAddress(addrs.dst);
+    const targets = [...bss.stations.values()].filter((r) => r.authorized && (group ? r.mac !== addrs.src : r.mac === addrs.dst)).sort(byKey);
+    if (!group && targets.length === 0) {
+      emitDrop(pdu, 'not-associated', AIR_DETAILS.unknownStation, now, v.ref, bss.id);
+      return { ok: false, reason: 'not-associated' };
+    }
+    const receivers: AirReceiver[] = [];
+    for (const rec of targets) {
+      const sv = view(rec.station);
+      if (sv === undefined) continue;
+      const a = assess(v, bss, sv, rec.mcs);
+      receivers.push({ ref: rec.station, key: rec.key, medium: bss.id, pdu, rssiDbm: a.rssiDbm, per: group ? mgmtPer(a) : a.perPermille, distanceMm: a.distanceMm });
+    }
+    if (receivers.length === 0) return { ok: true, link: bss.id, txStart: now, txEnd: now, arrive: now };
+    fanOut(pdu, receivers, now);
+    const unicastRec = group ? undefined : targets[0];
+    const sv0 = unicastRec === undefined ? undefined : view(unicastRec.station);
+    const rate = unicastRec !== undefined && unicastRec.rateBps > 0
+      ? unicastRec.rateBps
+      : basicRate(bss.band, v.spec.generations, sv0?.spec.generations);
+    return send({ from: v.ref, pdu, bss, txLabel: `air:${bss.id}:${v.key}`, rateBps: rate, unicast: !group, arrival: 'rewrap', receivers }, now);
+  };
+
   const apTransmit = (v: RadioView, pdu: Pdu, now: SimTime): TransmitResult => {
     const bss = bssByAp.get(v.key)!;
     const cls = classifyAirFrame(pdu);
+    // P2 (wireless): a central BSS is switched by the controller, so the AP's own bridge never puts Ethernet on it
+    if (cls === 'ethernet' && bss.switching === 'central') return { ok: true, link: bss.id, txStart: now, txEnd: now, arrive: now };
+    if (cls === 'dot11-data' && bss.switching === 'central') return centralTransmit(v, bss, pdu, now);
     if (cls === 'ethernet') {
       const eth = pdu.layers[0]!;
       const dst = eth.fields.dst;
@@ -798,7 +888,7 @@ export function createAirMedium(host: MediumHost): AirMedium {
       const rate = unicastRec !== undefined && unicastRec.rateBps > 0
         ? unicastRec.rateBps
         : basicRate(bss.band, v.spec.generations, sv0?.spec.generations);
-      return send({ from: v.ref, pdu, bss, txLabel: `air:${bss.id}:${v.key}`, rateBps: rate, unicast: !group, rewrap: true, receivers }, now);
+      return send({ from: v.ref, pdu, bss, txLabel: `air:${bss.id}:${v.key}`, rateBps: rate, unicast: !group, arrival: 'rewrap', receivers }, now);
     }
     if (cls === 'mgmt' || cls === 'eapol' || cls === 'ctrl') {
       const addr1 = pdu.layers[0]!.fields.addr1;
@@ -825,7 +915,7 @@ export function createAirMedium(host: MediumHost): AirMedium {
       }
       fanOut(pdu, receivers, now);
       const rate = basicRate(bss.band, v.spec.generations, rateGen);
-      return send({ from: v.ref, pdu, bss, txLabel: `air:${bss.id}:${v.key}`, rateBps: rate, unicast: !group, rewrap: false, receivers }, now);
+      return send({ from: v.ref, pdu, bss, txLabel: `air:${bss.id}:${v.key}`, rateBps: rate, unicast: !group, receivers }, now);
     }
     emitDrop(pdu, 'encapsulation-mismatch', AIR_DETAILS.notWifiFrame, now, v.ref, bss.id);
     return { ok: false, reason: 'encapsulation-mismatch' };
@@ -848,7 +938,7 @@ export function createAirMedium(host: MediumHost): AirMedium {
       applyRewrap(pdu, ethernetToDot11Op(pdu, 'to-ds', rec.bss.bssid), v.ref.device, now, CAUSE_STATION_FRAMING, host.emit);
       const rate = rec.rateBps > 0 ? rec.rateBps : basicRate(rec.bss.band, v.spec.generations, ap.spec.generations);
       const rx: AirReceiver = { ref: rec.bss.ap, key: rec.bss.key, medium: rec.bss.id, pdu, rssiDbm: a.rssiDbm, per: a.perPermille, distanceMm: a.distanceMm };
-      return send({ from: v.ref, pdu, bss: rec.bss, txLabel: `air:${rec.bss.id}:${v.key}`, rateBps: rate, unicast: true, rewrap: true, receivers: [rx] }, now);
+      return send({ from: v.ref, pdu, bss: rec.bss, txLabel: `air:${rec.bss.id}:${v.key}`, rateBps: rate, unicast: true, arrival: rec.bss.switching === 'central' ? 'central' : 'rewrap', receivers: [rx] }, now);
     }
     if (cls === 'mgmt' || cls === 'eapol' || cls === 'ctrl') {
       const addr1 = pdu.layers[0]!.fields.addr1;
@@ -868,7 +958,7 @@ export function createAirMedium(host: MediumHost): AirMedium {
         }
         fanOut(pdu, receivers, now);
         const rate = basicRate(bandOf(v), v.spec.generations);
-        return send({ from: v.ref, pdu, txLabel: `air:scan:${v.key}`, rateBps: rate, unicast: false, rewrap: false, receivers }, now);
+        return send({ from: v.ref, pdu, txLabel: `air:scan:${v.key}`, rateBps: rate, unicast: false, receivers }, now);
       }
       const bss = sortedBss().find((b) => b.up && b.bssid === addr1);
       const ap = bss === undefined ? undefined : view(bss.ap);
@@ -879,7 +969,7 @@ export function createAirMedium(host: MediumHost): AirMedium {
       }
       const rx: AirReceiver = { ref: bss.ap, key: bss.key, medium: bss.id, pdu, rssiDbm: a.rssiDbm, per: mgmtPer(a), distanceMm: a.distanceMm };
       const rate = basicRate(bss.band, v.spec.generations, ap.spec.generations);
-      return send({ from: v.ref, pdu, bss, txLabel: `air:${bss.id}:${v.key}`, rateBps: rate, unicast: true, rewrap: false, receivers: [rx] }, now);
+      return send({ from: v.ref, pdu, bss, txLabel: `air:${bss.id}:${v.key}`, rateBps: rate, unicast: true, receivers: [rx] }, now);
     }
     emitDrop(pdu, 'encapsulation-mismatch', AIR_DETAILS.notWifiFrame, now, v.ref, 'air');
     return { ok: false, reason: 'encapsulation-mismatch' };
@@ -966,6 +1056,23 @@ export function createAirMedium(host: MediumHost): AirMedium {
         const pdu = ev.pdu;
         host.capture({ t: now, dir: 'rx', port: to, pdu, linkType: captureLinkTypeOf(pdu) });
         const rv = view(to);
+        if (ev.central === true) {
+          // P2 (wireless, §3.12 step 6): a central BSS's uplink reaches the AP as 802.11, unchanged; the transmitter must
+          // still hold an authorized association of this BSS
+          const addrs = dot11EthernetAddresses(pdu);
+          const bss = rv === undefined ? undefined : bssByAp.get(rv.key);
+          if (addrs === undefined || addrs.direction !== 'to-ds' || bss === undefined) {
+            emitDrop(pdu, 'encapsulation-mismatch', AIR_DETAILS.malformedData, now, to, ev.medium);
+            return { deliver: false };
+          }
+          const station = pdu.layers[0]!.fields.addr2;
+          const rec = [...bss.stations.values()].find((r) => r.mac === station && r.authorized);
+          if (rec === undefined) {
+            emitDrop(pdu, 'not-associated', AIR_DETAILS.notAssociated, now, to, ev.medium ?? bss.id);
+            return { deliver: false };
+          }
+          return { deliver: true, pdu, rx: { medium: 'air' } };
+        }
         if (ev.rewrap === 'dot11-to-ethernet') {
           const addrs = dot11EthernetAddresses(pdu);
           if (addrs === undefined || rv === undefined) {
@@ -1157,6 +1264,12 @@ export function createAirMedium(host: MediumHost): AirMedium {
           id: bss.id, ap: bss.ap, bssid: bss.bssid, ssid: bss.ssid, band: bss.band, channel: bss.channel, widthMhz: bss.widthMhz,
           security: bss.security, up: bss.up, loaded: loaded(bss), contention: bss.up ? contentionOf(bss).map((b) => b.id) : [], busyUntil: bss.busyUntil,
         };
+        // P2 (wireless, §2.12): present only for a centrally switched BSS (index 0 is the default and never written)
+        if (bss.switching === 'central') {
+          if (bss.wlanId !== undefined) snap.wlanId = bss.wlanId;
+          if (bss.vlan !== undefined) snap.vlan = bss.vlan;
+          snap.switching = 'central';
+        }
         into.bss.push(snap);
       }
       const recs = [...assocByStation.values()].sort((x, y) => compareOrdinal(x.bss.id, y.bss.id) || compareOrdinal(x.key, y.key));
@@ -1202,6 +1315,12 @@ export function createAirMedium(host: MediumHost): AirMedium {
         }
         if (v.settings.ssid !== undefined) out.ssid = v.settings.ssid;
         out.security = v.settings.security;
+        // P2 (wireless, §2.12): a radio serving a controller profile lists its BSSs (only index 0 exists: one WLAN per radio)
+        if (v.settings.bss !== undefined && bss !== undefined) {
+          out.bss = v.settings.bss
+            .filter((b) => b.index === 0)
+            .map((b) => ({ index: b.index, ssid: b.ssid, bssid: bss.bssid, security: b.security, clients: out.clients ?? 0 }));
+        }
         return out;
       }
       const s = stations.get(v.key);

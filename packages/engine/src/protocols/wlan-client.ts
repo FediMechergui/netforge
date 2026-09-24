@@ -42,6 +42,13 @@
  *
  * Also exports the Wlan interface-config readers shared with wlan-ap and usable by the device runtime
  * (`readWlanConfig`, `readRadioSettings`). Debug category: 'wireless'. Wording is original.
+ *
+ * P2 (ARCHITECTURE-P2 §2.4, §2.12, §3.12 steps 4–5; W5 wireless): both wlan daemons read a radio's settings through
+ * `wlanDaemonSettings(ctx, port)`, which asks the device's ONE renderer `ctx.radioSettings(port)` (the local interface
+ * lines overlaid by a controller profile) and falls back to `readRadioSettings` only where the ctx offers no renderer
+ * (hand-built test hosts). For a radio without a controller profile the renderer is byte-identical to the local reader,
+ * so a station (which never has a profile) behaves exactly as before. A profile's BSS index 0 adds the pushed key tag,
+ * the switching, the WLAN id and the VLAN (`WlanDaemonSettings`); the passphrase never comes from a controller.
  */
 import type { MacAddress } from '../contracts/addr.js';
 import type { ConfigAst, ConfigDelta, ConfigNode } from '../contracts/config.js';
@@ -182,6 +189,65 @@ export function readRadioSettings(config: ConfigAst, port: PortId, spec: RadioPo
   if (cfg.ssid !== undefined) out.ssid = cfg.ssid;
   if (cfg.passphrase !== undefined) out.passphrase = cfg.passphrase;
   if (cfg.beacons) out.emitBeacons = true;
+  return out;
+}
+
+/**
+ * @since P2 (wireless) The settings of one Wi-Fi radio as the wlan daemons use them (§2.12, §3.12 step 4): the BSS
+ * members (SSID, security, passphrase or the controller's key tag), the beacons extension, band and channel, and — for
+ * a controller profile — the switching, WLAN id and VLAN of BSS index 0.
+ */
+export interface WlanDaemonSettings {
+  ssid?: string;
+  security: WifiSecurity;
+  /** Local lines only; a controller never pushes a passphrase. */
+  passphrase?: string;
+  /** The key tag a controller pushed with BSS index 0 (`fnv1a32(ssid \0 passphrase)`, the P0.5 tag); absent for local lines. */
+  keyTag?: number;
+  beacons: boolean;
+  band?: RfBand;
+  channel?: number | 'auto';
+  /** True when BSS index 0 is centrally switched (a controller profile with `switching: 'central'`). */
+  central: boolean;
+  wlanId?: number;
+  vlan?: number;
+}
+
+/**
+ * @since P2 (wireless) The settings of radio `port` (§2.4 `ctx.radioSettings`, the ONE renderer): read through the
+ * ctx renderer when it exists, else from the local interface lines (`readRadioSettings`, or `readWlanConfig` when the
+ * port has no radio data). Without a controller profile the two sources agree field for field.
+ */
+export function wlanDaemonSettings(ctx: Pick<ProcessCtx, 'config' | 'ports' | 'radioSettings'>, port: PortId): WlanDaemonSettings {
+  const rendered = ctx.radioSettings?.(port);
+  if (rendered === undefined) {
+    const spec = ctx.ports.get(port)?.spec.radio;
+    if (spec === undefined) {
+      const cfg = readWlanConfig(ctx.config, port);
+      const out: WlanDaemonSettings = { security: cfg.security, beacons: cfg.beacons, central: false };
+      if (cfg.ssid !== undefined) out.ssid = cfg.ssid;
+      if (cfg.passphrase !== undefined) out.passphrase = cfg.passphrase;
+      if (cfg.band !== undefined) out.band = cfg.band;
+      if (cfg.channel !== undefined) out.channel = cfg.channel;
+      return out;
+    }
+    return settingsView(readRadioSettings(ctx.config, port, spec));
+  }
+  return settingsView(rendered);
+}
+
+/** The daemon view of rendered radio settings (BSS index 0 of a controller profile adds its members). */
+function settingsView(s: RadioSettings): WlanDaemonSettings {
+  const out: WlanDaemonSettings = { security: s.security, beacons: s.emitBeacons === true, band: s.band, channel: s.channel, central: false };
+  if (s.ssid !== undefined) out.ssid = s.ssid;
+  if (s.passphrase !== undefined) out.passphrase = s.passphrase;
+  const primary = s.bss?.find((b) => b.index === 0);
+  if (primary !== undefined) {
+    if (primary.keyTag !== undefined) out.keyTag = primary.keyTag;
+    out.central = primary.switching === 'central';
+    if (primary.wlanId !== undefined) out.wlanId = primary.wlanId;
+    if (primary.vlan !== undefined) out.vlan = primary.vlan;
+  }
   return out;
 }
 
@@ -489,7 +555,9 @@ class WlanClient implements Process {
   }
 
   private loadConfig(ctx: ProcessCtx, sp: StaPort): void {
-    const cfg = readWlanConfig(ctx.config, sp.port);
+    // P2 (§2.4): through the device's one renderer (a station radio never carries a controller profile, so this is
+    // exactly its interface lines)
+    const cfg = wlanDaemonSettings(ctx, sp.port);
     if (cfg.ssid === undefined) delete sp.ssid;
     else sp.ssid = cfg.ssid;
     sp.security = cfg.security;

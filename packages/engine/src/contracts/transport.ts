@@ -118,7 +118,8 @@ export interface ResolveEvent {
 }
 
 /**
- * DHCP client lease changes, delivered to interested daemons (dns-client).
+ * DHCP client lease changes, delivered to interested daemons (dns-client; since P2 W5 also capwap-wtp, and only on a
+ * model that runs it, so a lightweight AP starts controller discovery the moment its management address is leased).
  * `family` @since P2 (optional by meaning): absent = IPv4 (dhcp-client); dhcpv6-client sends
  * {kind:'dhcp.lease', family: 6, iface, op, dnsServers, domainName}. Consumer rule (dns-client, W3 svc): learned
  * servers are keyed by (iface, family); a lease replaces only its own family's list and 'lost' removes only that

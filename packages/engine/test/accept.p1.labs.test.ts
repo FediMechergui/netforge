@@ -17,6 +17,7 @@ import { SEC } from '../src/contracts/time.js';
 import { evaluateLab } from '../src/sim/lab-checks.js';
 import { createSimulation } from '../src/sim/simulation.js';
 import { CCNA1_LABS } from '../src/sim/scenarios/ccna1/index.js';
+import { CCNA2_LABS, SCENARIOS, TEMPLATES } from '../src/sim/scenarios.js';
 
 /** Long enough for every model of a lab to boot (the router takes 45 s). */
 const BOOT_NS = 60 * SEC;
@@ -45,6 +46,10 @@ function failures(status: LabStatus): string[] {
 describe('P1 acceptance: the CCNA1 labs grade themselves', () => {
   it('ships a lab catalogue with tasks and a reference solution', () => {
     expect(CCNA1_LABS.length).toBeGreaterThanOrEqual(14);
+    // P2 §9.2 item 21: the catalogue is the templates, then CCNA1_LABS, then CCNA2_LABS
+    expect(SCENARIOS.slice(0, TEMPLATES.length)).toEqual(TEMPLATES);
+    expect(SCENARIOS.slice(TEMPLATES.length, TEMPLATES.length + CCNA1_LABS.length)).toEqual(CCNA1_LABS);
+    expect(SCENARIOS.slice(TEMPLATES.length + CCNA1_LABS.length)).toEqual(CCNA2_LABS);
     for (const lab of CCNA1_LABS) {
       expect(lab.category, lab.name).toBe('ccna1-lab');
       expect((lab.tasks ?? []).length, lab.name).toBeGreaterThan(1);

@@ -13,7 +13,7 @@
  *    NF-C9300, `no ip address` and `no capwap enable` on NF-AP-1832); export, reload and a lab clone built the
  *    grader's way give the same running configuration, the same forwarding (a ping across the MLS) and the same
  *    daemon state; `no spanning-tree extend system-id` is refused with its message and stores nothing. (`no capwap
- *    enable` is a skipped case, deferred to W5 by §9.2b, until the §7 W5 cli item gives `capwap enable` its grammar.)
+ *    enable` was deferred to W5 by §9.2b; the §7 W5 cli item gave `capwap enable` its grammar and un-skipped it.)
  *  • "Use current defaults" on a P1 world with two switches and a routing NF-C3650 (the worker's pure
  *    `withCurrentDefaults` step, replayed here on the engine API: export, `ip routing` written where the P2 profile
  *    would replay `no ip routing`, `profile: 'P2'` + `schemaIdFor`, reload) gives profile P2, schema 1.2, `stp-bridge`
@@ -343,7 +343,7 @@ describe('accept P2 profile: completeness (D2) — every profile line reversed, 
     expect(states(clone, 'ap')).toBe(states(reloaded, 'ap'));
   });
 
-  it.skip('`no capwap enable` on the NF-AP-1832 holds in the live world, the reload and the clone — deferred to W5 by §9.2b (row `accept.p2.profile`): a wave dependency, not an engine defect — `capwap enable` has no CLI grammar before W5 (in W4 only the config-store rule replays the P2 profile line at boot, so configure(ap, ["no capwap enable"]) is refused with "% Unrecognized input at the marked position."); un-skipped by §7 W5 cli (`cli/grammar/wlc.ts`) in the change that lands it', () => {
+  it('`no capwap enable` on the NF-AP-1832 holds in the live world, the reload and the clone', () => {
     const live = fresh();
     live.loadTopology(apDoc());
     live.runUntil(T1);

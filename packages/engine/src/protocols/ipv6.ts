@@ -27,11 +27,11 @@
  *    so two lines for one prefix are two candidates and the lowest distance wins (floating statics). A line is
  *    offered only while USABLE: with an exit interface, that interface is up with IPv6 enabled (a global next hop
  *    must then be on-link there; a link-local next hop always is); with a next hop only, `connectedPortFor6` answers
- *    a port, else the next hop's longest match in rib6 — ignoring the line's own candidate — is an installed route,
- *    followed through static lines recursively up to `STATIC6_RECURSION_MAX` deep. Re-evaluated after every route
- *    change, so a static is installed when its next hop becomes reachable (after DAD, at link-up), not at
- *    configuration time. [S6] Equal-cost lines for one prefix install one row with `paths`; forwarding picks the
- *    path with `ecmpIndex6` (the §4.1 hash over the folded addresses).
+ *    a port, else the next hop's longest match in rib6 — ignoring every route of the line's own prefix (W5 fix) —
+ *    is an installed route, followed through static lines recursively up to `STATIC6_RECURSION_MAX` deep.
+ *    Re-evaluated after every route change, so a static is installed when its next hop becomes reachable (after DAD,
+ *    at link-up), not at configuration time. [S6] Equal-cost lines for one prefix install one row with `paths`;
+ *    forwarding picks the path with `ecmpIndex6` (the §4.1 hash over the folded addresses).
  *  • DHCPv6 leases (P2 D16): `ipv6.lease bind|unbind` from dhcpv6-client adds or removes an address of origin
  *    'dhcpv6' (prefix length 128 by default) with its lifetimes; it starts tentative and runs DAD like any other.
  *    `ipv6 address dhcp` enables IPv6 on the interface (link-local only until a lease binds).
@@ -711,18 +711,21 @@ export function createIpv6(): Process {
     const nextHop = s.nextHop as Ipv6Address;
     if (h.connectedPortFor6(nextHop) !== undefined) return true;
     if (depth >= STATIC6_RECURSION_MAX) return false;
-    visiting.add(s.line);
+    // every route of the line's own prefix is ignored (its own candidate and a floating or equal-cost twin alike, as
+    // forwarding's walk does; W5 fix: resolving through a twin made the table flip-flop until the round limit)
+    const added = !visiting.has(s.key);
+    visiting.add(s.key);
     try {
       for (const inner of h.lpm6(nextHop).candidates) {
         if (inner.source === 'L') return false;
+        if (visiting.has(inner.key)) continue; // a route of the line's own prefix (or one already on the path): ignored
         const via = staticInstalledAt(ctx, inner.key);
         if (via === undefined) return true; // connected or ND default
-        if (visiting.has(via.def.line)) continue; // the line's own candidate (or a loop): ignored
         return usable(ctx, via, depth + 1, visiting);
       }
       return false;
     } finally {
-      visiting.delete(s.line);
+      if (added) visiting.delete(s.key);
     }
   }
 

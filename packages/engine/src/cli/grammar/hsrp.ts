@@ -5,12 +5,17 @@
  * `show standby [brief]`. The hsrp daemon is the consumer; the CLI validates (group range per version, timers) and
  * stores the lines as typed (a group-less line is group 0).
  *
- * Scope: the `routing` capability (the S2 item adds `hsrp` to it in the W4 catalog). The `standby` debug category
- * (§5.4) is declared here. Help strings are original wording (spec §1.6).
+ * Scope: the `routing` capability (the S2 item adds `hsrp` to it in the W4 catalog). The interface lines are scoped to
+ * the port roles `routed`, `subif` and `svi` (`STANDBY_PORT`, architect ruling of 2026-09-23, ARCHITECTURE-P2 §9.2
+ * item 20e): a standby group needs a shared multi-access segment on which a virtual MAC can answer ARP, so neither
+ * the `wan` role (the point-to-point serial links) nor `virtual` (loopbacks) nor `mgmt` takes one; the one mismatch
+ * message (`CLI_MESSAGES.standbyNotHere`) also points a switched port at `no switchport`. `show standby` and the
+ * `standby` debug category keep their capability scope. The `standby` debug category (§5.4) is declared here. Help
+ * strings are original wording (spec §1.6).
  */
-import type { CommandSpec } from '../../contracts/cli.js';
+import { CLI_MESSAGES, type CommandSpec, type PortRequirement } from '../../contracts/cli.js';
 import type { Capability } from '../../contracts/catalog.js';
-import { capabilitiesRunning, choiceArg, type GrammarDebugCategory, intArg, ipv4Arg, L3_PORT, NFOS_ONLY } from './core-exec.js';
+import { capabilitiesRunning, choiceArg, type GrammarDebugCategory, intArg, ipv4Arg, NFOS_ONLY } from './core-exec.js';
 
 /** Handler ids of the HSRP fragment. Never rename. */
 export const HSRP_HANDLERS = {
@@ -38,6 +43,12 @@ export const HSRP_HOLD_MAX_S = 255;
 /** Preempt delay bounds (seconds). */
 export const HSRP_PREEMPT_DELAY_MAX_S = 3600;
 
+/**
+ * Port requirement of the `standby` interface lines (architect ruling of 2026-09-23, §9.2 item 20e): a routed port,
+ * a router subinterface or an SVI — the roles on a shared LAN segment.
+ */
+export const STANDBY_PORT: PortRequirement = Object.freeze<PortRequirement>({ roles: Object.freeze(['routed', 'subif', 'svi'] as const), mismatch: CLI_MESSAGES.standbyNotHere });
+
 /** Arg name of `show standby brief` (`fixedArgs`). */
 export const HSRP_SHOW_BRIEF_ARG = 'brief';
 
@@ -60,7 +71,7 @@ const IF_LINE = {
   allowNo: true,
   grammars: NFOS_ONLY,
   requiresAny: HSRP_CAPABILITIES,
-  portRequires: L3_PORT,
+  portRequires: STANDBY_PORT,
   since: 'P2',
   objectives: ['CCNA2.11.1'],
 } as const;

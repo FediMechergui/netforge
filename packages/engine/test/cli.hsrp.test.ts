@@ -1,16 +1,20 @@
 /**
  * [SHOULD S2] cli/grammar/hsrp.ts and cli/handlers/hsrp.ts (ARCHITECTURE-P2 §3.10, §5.2, §5.4; §7 W3 cli [S2]): the
  * `standby …` lines with the group-range and timer checks, and `show standby [brief]` against a fake `hsrp` table.
+ * Since W5 cli (architect ruling of 2026-09-23, §9.2 item 20e) the interface lines take the roles `routed`, `subif` and
+ * `svi` only: a serial link, a loopback and a switched port are refused with `CLI_MESSAGES.standbyNotHere`.
  */
 import { describe, expect, it } from 'vitest';
-import type { CommandHandler, CommandOutcome } from '../src/contracts/cli.js';
+import { CLI_MESSAGES, type CommandHandler, type CommandOutcome } from '../src/contracts/cli.js';
 import type { HsrpRow, Table, TableRow } from '../src/contracts/tables.js';
 import { createTable } from '../src/core/table.js';
-import { BUILTIN_GRAMMAR, P2_HANDLERS } from '../src/cli/grammar/index.js';
+import { findBannedWords } from '../src/device/catalog/validate.js';
+import { BUILTIN_GRAMMAR, P2_HANDLERS, STANDBY_PORT } from '../src/cli/grammar/index.js';
 import { HANDLER_REGISTRY } from '../src/cli/handlers/index.js';
 import { hsrpGroupsOf, hsrpTimersOf, hsrpVersionOf, MSG_HSRP_GROUP_RANGE, MSG_HSRP_TIMERS, MSG_HSRP_VERSION_DOWNGRADE, MSG_NO_STANDBY } from '../src/cli/handlers/hsrp.js';
 import { help, matchCommand } from '../src/cli/parser.js';
-import { catalogModel, commandCtxFor, matchContextFor, type CommandCtxOptions, type RecordingCtx } from './cli.p05.fixture.js';
+import { catalogModel, commandCtxFor, devicePortViews, matchContextFor, type CommandCtxOptions, type RecordingCtx } from './cli.p05.fixture.js';
+import { testPortView } from './cli.parser.fixture.js';
 import { p2Model } from './cli.p2.fixture.js';
 
 const ROUTER = p2Model('router.nf2911');
@@ -59,6 +63,42 @@ describe('parsing', () => {
     expect(matchCommand(BUILTIN_GRAMMAR, exec, 'show standby brief')).toMatchObject({ ok: true, args: { brief: 'brief' } });
     expect(matchCommand(BUILTIN_GRAMMAR, matchContextFor(p2Model('switch.nfc2960'), 'config-if', { iface: 'FastEthernet0/1' }), 'standby 1 ip 10.0.0.1').ok).toBe(false);
     expect(matchCommand(BUILTIN_GRAMMAR, matchContextFor(catalogModel('pc.nfpc'), 'user-exec'), 'show standby').ok).toBe(false);
+  });
+
+  it('refuses the standby lines on a serial link, a loopback and a switched port, and offers them on routed ports, subinterfaces and SVIs (architect ruling of 2026-09-23, §9.2 item 20e)', () => {
+    const refused = { ok: false, kind: 'port-unsupported', error: { message: CLI_MESSAGES.standbyNotHere, column: 0 } };
+    // a serial port has the `wan` role: a point-to-point link, no shared segment for a virtual MAC
+    const serial = matchContextFor(ROUTER, 'config-if', { iface: 'Serial0/0/0' });
+    expect(serial.iface?.role).toBe('wan');
+    expect(matchCommand(BUILTIN_GRAMMAR, serial, 'standby 1 ip 10.0.0.1')).toEqual(refused);
+    expect(matchCommand(BUILTIN_GRAMMAR, serial, 'standby version 2')).toEqual(refused);
+    expect(matchCommand(BUILTIN_GRAMMAR, serial, 'no standby 1 ip')).toEqual({ ...refused, error: { message: CLI_MESSAGES.standbyNotHere, column: 3 } });
+    expect(help(BUILTIN_GRAMMAR, serial, '').items.map((i) => i.token)).not.toContain('standby');
+    // a loopback has the `virtual` role
+    const loopback = matchContextFor(ROUTER, 'config-if', {
+      ifaceView: testPortView({ name: 'Loopback0', short: 'Lo0', kind: 'virtual', speedBps: 0, role: 'virtual', encap: 'none' }),
+    });
+    expect(matchCommand(BUILTIN_GRAMMAR, loopback, 'standby 1 ip 10.0.0.1')).toEqual(refused);
+    expect(matchCommand(BUILTIN_GRAMMAR, loopback, 'standby 1 priority 110')).toEqual(refused);
+    expect(help(BUILTIN_GRAMMAR, loopback, '').items.map((i) => i.token)).not.toContain('standby');
+    // a switched port of a multilayer switch is told the way out (`no switchport`)
+    const MLS = p2Model('mlswitch.nfc3650-24');
+    const switched = matchContextFor(MLS, 'config-if', { iface: 'GigabitEthernet1/0/1' });
+    expect(switched.iface?.role).toBe('switched');
+    expect(matchCommand(BUILTIN_GRAMMAR, switched, 'standby 1 ip 10.0.0.1')).toEqual(refused);
+    expect(CLI_MESSAGES.standbyNotHere).toContain('no switchport');
+    // routed ports, subinterfaces and SVIs take them
+    const routed = { ...devicePortViews(MLS).get('GigabitEthernet1/0/1')!, role: 'routed' as const };
+    expect(matchCommand(BUILTIN_GRAMMAR, matchContextFor(MLS, 'config-if', { ifaceView: routed }), 'standby 1 ip 10.0.0.1')).toMatchObject({ ok: true, spec: { handler: P2_HANDLERS.ifStandbyIp } });
+    expect(matchCommand(BUILTIN_GRAMMAR, matchContextFor(MLS, 'config-if', { iface: 'Vlan1' }), 'standby 1 ip 10.0.0.1')).toMatchObject({ ok: true, spec: { handler: P2_HANDLERS.ifStandbyIp } });
+    const subif = testPortView({ name: 'GigabitEthernet0/0.10', short: 'Gi0/0.10', kind: 'virtual', speedBps: 1_000_000_000, role: 'subif', encap: 'ethernet' });
+    expect(matchCommand(BUILTIN_GRAMMAR, matchContextFor(ROUTER, 'config-if', { ifaceView: subif }), 'standby 10 ip 192.168.10.1')).toMatchObject({ ok: true, args: { group: '10', address: '192.168.10.1' } });
+    expect(matchCommand(BUILTIN_GRAMMAR, matchContextFor(ROUTER, 'config-if', { iface: GI0 }), 'standby 1 ip 192.168.1.1').ok).toBe(true);
+    // show standby and the standby debug category keep their capability scope
+    expect(matchCommand(BUILTIN_GRAMMAR, matchContextFor(ROUTER, 'user-exec'), 'show standby').ok).toBe(true);
+    expect(matchCommand(BUILTIN_GRAMMAR, matchContextFor(ROUTER, 'priv-exec'), 'debug standby').ok).toBe(true);
+    expect(STANDBY_PORT).toEqual({ roles: ['routed', 'subif', 'svi'], mismatch: CLI_MESSAGES.standbyNotHere });
+    expect(findBannedWords(CLI_MESSAGES.standbyNotHere)).toEqual([]);
   });
 });
 

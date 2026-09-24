@@ -36,12 +36,21 @@
  *
  * Silence (§5.3): this daemon sends nothing by itself; it only answers requests and received datagrams.
  *
+ * P2 tunnel sockets (ARCHITECTURE-P2 §2.4 `udp.open` `tunnel`, §3.12 steps 7–8; W5 wireless): `udp.open {…, tunnel:
+ * true}` binds exactly like any other socket (same conflict key, same `sockets` row), but a datagram matched to it is
+ * delivered as `sock.datagram` WITHOUT the `consume` action: the owner takes over the PDU's lifecycle (it rewraps and
+ * forwards the same PduId, or consumes or drops it itself). Only capwap-ac and capwap-wtp open one, for the CAPWAP data
+ * channel (5247), so a tunnelled frame keeps one PduId end to end and shows no `pduConsumed` before the station or the
+ * gateway. Every other path — the checksum check, the closed-port drop, ICMP errors reported as `sock.error`, the
+ * counters — is the same for tunnel and ordinary sockets. A socket without `tunnel` behaves exactly as before, so no
+ * P1 trace or StateView changes (the `tunnel` key appears in the StateView only for a tunnel socket).
+ *
  * Debug category: 'udp'.
  *
  * stateSnapshot():
- *   { process: 'udp', state: { sockets: [{ id, owner, family, localAddr, localPort, iface? }], ephemeralNext,
+ *   { process: 'udp', state: { sockets: [{ id, owner, family, localAddr, localPort, iface?, tunnel? }], ephemeralNext,
  *     datagramsIn, datagramsOut, noPort, checksumErrors, icmpErrors } }
- *   `ephemeralNext` is null until the first ephemeral bind.
+ *   `ephemeralNext` is null until the first ephemeral bind; `tunnel: true` only on a tunnel socket.
  */
 import { IPV4_ANY, IPV6_ANY, isIpv4, isIpv4Broadcast, isIpv4Multicast, type IpAddress, type IpFamily } from '../contracts/addr.js';
 import type { PortId, ProcessName } from '../contracts/ids.js';
@@ -95,6 +104,11 @@ export interface UdpSocket {
   readonly localPort: number;
   /** Receive restricted to this port (DHCP client sockets). */
   readonly iface?: PortId;
+  /**
+   * @since P2 (wireless) A tunnel socket (`udp.open {tunnel: true}`, §2.4): a matched datagram is handed to the owner
+   * without the `consume` action, so the owner carries the same PduId on. Absent on every ordinary socket.
+   */
+  readonly tunnel?: true;
 }
 
 /** The part of a bind that decides conflicts. */
@@ -365,17 +379,31 @@ export function createUdp(): Process {
         return [sockError(ctx, owner, socket, 'addr-in-use', `port ${localPort} is already bound by ${clash.id}`)];
       }
     }
-    const s: UdpSocket = iface === undefined ? { id: socket, owner, family, localAddr, localPort } : { id: socket, owner, family, localAddr, localPort, iface };
+    const bound: UdpSocket = iface === undefined ? { id: socket, owner, family, localAddr, localPort } : { id: socket, owner, family, localAddr, localPort, iface };
+    // P2 (§2.4): a tunnel socket carries the flag; an ordinary socket is built exactly as before (no extra key)
+    const s: UdpSocket = req.tunnel === true ? { ...bound, tunnel: true } : bound;
     sockets.set(socket, s);
     writeRow(ctx, s);
-    debug(ctx, `socket ${socket} bound to ${flowEndpoint(family, localAddr, localPort)}${iface !== undefined ? ` on ${iface}` : ''} for ${owner}`, {
-      socket,
-      owner,
-      family,
-      localAddr,
-      localPort,
-      iface,
-    });
+    if (s.tunnel === true) {
+      debug(ctx, `socket ${socket} bound to ${flowEndpoint(family, localAddr, localPort)}${iface !== undefined ? ` on ${iface}` : ''} for ${owner} as a tunnel socket`, {
+        socket,
+        owner,
+        family,
+        localAddr,
+        localPort,
+        iface,
+        tunnel: true,
+      });
+    } else {
+      debug(ctx, `socket ${socket} bound to ${flowEndpoint(family, localAddr, localPort)}${iface !== undefined ? ` on ${iface}` : ''} for ${owner}`, {
+        socket,
+        owner,
+        family,
+        localAddr,
+        localPort,
+        iface,
+      });
+    }
     return [event(owner, { kind: 'sock.opened', socket, proto: 'udp', family, localAddr, localPort })];
   }
 
@@ -514,15 +542,22 @@ export function createUdp(): Process {
     const end = udpLayer.offset + udpLayer.length;
     const data = pdu.bytes.slice(start, Math.max(start, end));
     datagramsIn++;
+    const datagram = event(s.owner, { kind: 'sock.datagram', socket: s.id, from: src, fromPort: srcPort, to: dst, iface: port, data, pdu });
+    if (s.tunnel === true) {
+      // P2 (§2.4): a tunnel socket's owner takes the PDU over (same PduId on, or its own consume/drop): no consume here
+      debug(ctx, `receive ${flowEndpoint(family, src, srcPort)} > ${flowEndpoint(family, dst, dstPort)} on ${port}: ${data.length} bytes handed to tunnel socket ${s.id}`, {
+        socket: s.id,
+        pdu: pdu.id,
+        port,
+      });
+      return [datagram];
+    }
     debug(ctx, `receive ${flowEndpoint(family, src, srcPort)} > ${flowEndpoint(family, dst, dstPort)} on ${port}: ${data.length} bytes to socket ${s.id}`, {
       socket: s.id,
       pdu: pdu.id,
       port,
     });
-    return [
-      { type: 'consume', pdu },
-      event(s.owner, { kind: 'sock.datagram', socket: s.id, from: src, fromPort: srcPort, to: dst, iface: port, data, pdu }),
-    ];
+    return [{ type: 'consume', pdu }, datagram];
   }
 
   function receiveError(ctx: ProcessCtx, pdu: Pdu, ipLayer: LayerView, errIdx: number, port: PortId): Action[] {
@@ -627,6 +662,7 @@ export function createUdp(): Process {
       for (const s of sockets.values()) {
         const row: Record<string, unknown> = { id: s.id, owner: s.owner, family: s.family, localAddr: s.localAddr, localPort: s.localPort };
         if (s.iface !== undefined) row.iface = s.iface;
+        if (s.tunnel === true) row.tunnel = true;
         list.push(row);
       }
       return {

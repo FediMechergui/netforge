@@ -4,7 +4,9 @@
  * Silent unless an interface has `ip address dhcp`. Per such interface: socket 'dhcp-client#<iface>'
  * (0.0.0.0:68, receive restricted to the iface), then on link up:
  *   INIT → SELECTING (DISCOVER, xid from `ctx.stream('xid:<iface>')`) → REQUESTING (first OFFER → broadcast REQUEST)
- *   → BOUND (ACK → `ipv4.lease bind`, periodic timers t1/t2/lease, `dhcp.lease` event to dns-client, syslog 6).
+ *   → BOUND (ACK → `ipv4.lease bind`, periodic timers t1/t2/lease, `dhcp.lease` event to dns-client — and to capwap-wtp
+ *   when the model runs it (P2 W5: a lightweight AP starts controller discovery the moment its management address is
+ *   leased; P1 models never run capwap-wtp, so their events are unchanged) — syslog 6).
  * T1 → RENEWING (unicast REQUEST with ciaddr), T2 → REBINDING (broadcast), expiry → unbind, `dhcp.lease lost`, restart.
  * NAK → unbind and restart. Retransmit timer `dhcp:<iface>` (one-shot) 4, 8, 16, 32 s with ±1 s jitter from
  * `ctx.stream('dhcp-jitter:<iface>')`. After DHCP_DISCOVER_RETRIES unanswered DISCOVERs: APIPA — candidate
@@ -40,6 +42,8 @@ import type { ProcessEvent } from '../contracts/transport.js';
 import { configTextLinesOf } from '../cli/config-text.js';
 
 const NAME = 'dhcp-client';
+/** The lightweight AP's CAPWAP daemon, the second consumer of `dhcp.lease` (P2 W5; named here, not imported). */
+const CAPWAP_WTP_PROCESS = 'capwap-wtp';
 const CAT = 'dhcp';
 const DEBUG_RING = 256;
 const PRL = '1,3,6,15,51';
@@ -173,10 +177,13 @@ export function createDhcpClient(): Process {
     return discover(ctx, c);
   }
 
-  function leaseEvent(c: Client, op: 'bound' | 'renewed' | 'lost'): Action {
+  function leaseEvent(ctx: ProcessCtx, c: Client, op: 'bound' | 'renewed' | 'lost'): Action[] {
     const ev: ProcessEvent = { kind: 'dhcp.lease', iface: c.iface, op, dnsServers: c.lease?.dns ?? [] };
     if (c.lease?.domain !== undefined) ev.domainName = c.lease.domain;
-    return { type: 'event', to: 'dns-client', ev };
+    const out: Action[] = [{ type: 'event', to: 'dns-client', ev }];
+    // P2 W5: only a model that runs capwap-wtp gets the second copy (a missing target would log a runtime debug line)
+    if (ctx.model.processes.includes(CAPWAP_WTP_PROCESS)) out.push({ type: 'event', to: CAPWAP_WTP_PROCESS, ev: { ...ev } });
+    return out;
   }
 
   function finishJob(c: Client, text: string): Action[] {
@@ -203,7 +210,7 @@ export function createDhcpClient(): Process {
     if (c.lease === undefined && c.apipa === undefined) return out;
     debug(ctx, `${c.iface}: address ${c.lease?.address ?? c.apipa} removed (${why})`, { iface: c.iface, why });
     out.push({ type: 'request', to: 'ipv4', req: { kind: 'ipv4.lease', op: 'unbind', iface: c.iface, address: (c.lease?.address ?? c.apipa)! } });
-    if (c.lease !== undefined) out.push(leaseEvent(c, 'lost'));
+    if (c.lease !== undefined) out.push(...leaseEvent(ctx, c, 'lost'));
     delete c.lease;
     delete c.apipa;
     return out;
@@ -256,7 +263,7 @@ export function createDhcpClient(): Process {
       { type: 'request', to: 'ipv4', req },
     ];
     if (!infinite) out.push(timer(`t1:${c.iface}`, t1S * SEC, true), timer(`t2:${c.iface}`, t2S * SEC, true), timer(`lease:${c.iface}`, leaseS * SEC, true));
-    out.push(leaseEvent(c, renewed ? 'renewed' : 'bound'));
+    out.push(...leaseEvent(ctx, c, renewed ? 'renewed' : 'bound'));
     if (!renewed) out.push({ type: 'log', severity: 6, facility: 'DHCP', message: `Interface ${c.iface} received address ${address}/${prefixLen} from ${server}` });
     debug(ctx, `${c.iface}: bound ${address}/${prefixLen} for ${leaseS} s (pdu ${pdu.id})`, { iface: c.iface, address, prefixLen, pdu: pdu.id });
     out.push(...finishJob(c, `${c.iface}: ${address}/${prefixLen} leased from ${server}`));

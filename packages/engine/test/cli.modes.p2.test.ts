@@ -37,8 +37,8 @@ describe('the P2 modes', () => {
       expect(exitTarget(mode, [['interface', 'GigabitEthernet0/1']]), mode).toEqual({ close: false, mode: 'config', context: [] });
     }
     // W2 cli entered config-subif, config-vlan and config-if-range (§9.2 W2 item 12b); W3 cli entered config-dhcpv6
-    // and config-std-nacl; the W5 modes (config-wlan, config-wlc-if) stay reserved
-    expect(modesOfClass('config')).toEqual(['config', 'config-if', 'config-line', 'dhcp-config', 'config-subif', 'config-vlan', 'config-if-range', 'config-dhcpv6', 'config-std-nacl']);
+    // and config-std-nacl; W5 cli entered config-wlan and config-wlc-if
+    expect(modesOfClass('config')).toEqual(['config', 'config-if', 'config-line', 'dhcp-config', 'config-subif', 'config-vlan', 'config-if-range', 'config-dhcpv6', 'config-std-nacl', 'config-wlan', 'config-wlc-if']);
   });
 
   it('maps a sub-mode context entry to its mode', () => {
