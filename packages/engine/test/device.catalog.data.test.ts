@@ -14,7 +14,7 @@ import {
   createCatalog,
 } from '../src/device/catalog/index.js';
 import * as shim from '../src/device/catalog.js';
-import { defineModel, modulePortSpecs } from '../src/device/catalog/define.js';
+import { CAPWAP_TUNNEL_FAMILY, CATEGORY_BOOT_NS, CONTROLLER_VLAN_FAMILY, defineModel, modulePortSpecs } from '../src/device/catalog/define.js';
 import { virtualPortName } from '../src/device/catalog/names.js';
 import { formatCatalogIssues, validateCatalog } from '../src/device/catalog/validate.js';
 import { ROUTER_DATA_STAGE } from '../src/device/catalog/routers.js';
@@ -28,9 +28,10 @@ import { WIRELESS_MODELS } from '../src/device/catalog/wireless.js';
 import { HOME_MODELS } from '../src/device/catalog/home.js';
 import { RADIO_MODELS } from '../src/device/catalog/radios.js';
 import { WAN_MODELS } from '../src/device/catalog/wan.js';
-import { DEVICE_CATEGORIES, L3_ROLES, MAX_FIXED_PORT_ORDINAL, SLOT_ACCEPTS, type ModuleModel } from '../src/contracts/catalog.js';
+import { DEVICE_CATEGORIES, L3_ROLES, MAX_FIXED_PORT_ORDINAL, SLOT_ACCEPTS, isVlanAware, type ModuleModel } from '../src/contracts/catalog.js';
 import type { DeviceModel, PortNameSource } from '../src/contracts/device.js';
 import type { PortSpec } from '../src/contracts/port.js';
+import { SEC } from '../src/contracts/time.js';
 
 /** Run-length summary of the default roles of a model's fixed ports: `routed×2 wan×2 console`. */
 function roleSummary(model: DeviceModel): string {
@@ -93,7 +94,8 @@ describe('catalog index', () => {
   });
 
   it('lists every model once, in DEVICE_CATEGORIES order, each category populated', () => {
-    expect(ALL_MODELS).toHaveLength(54);
+    // ARCHITECTURE-P2 §9.2 W6 item 23: the NF-WLC-9800 controller appliance joins the catalog (54 → 55)
+    expect(ALL_MODELS).toHaveLength(55);
     expect(ALL_MODULES).toHaveLength(9);
     expect(new Set(ALL_MODELS.map((m) => m.type)).size).toBe(ALL_MODELS.length);
     expect(new Set(ALL_MODELS.map((m) => m.model)).size).toBe(ALL_MODELS.length);
@@ -118,7 +120,7 @@ describe('catalog index', () => {
       {
         "ap.nfap-auto": "caps=wifi-ap,poe-powered | proc=wlan-ap,eth-switch,arp,ipv4,icmpv4,host | roles=switched wireless-bss×2 | cli=nfos/nfos/1/console+vty | gui=physical,wireless.ap | owners=svi:eth-switch | host= | virtual=Vlan[1] | up=true",
         "ap.nfap-ax": "caps=wifi-ap,poe-powered | proc=wlan-ap,eth-switch,arp,ipv4,icmpv4,host | roles=switched wireless-bss×3 | cli=nfos/nfos/1/console+vty | gui=physical,wireless.ap | owners=svi:eth-switch | host= | virtual=Vlan[1] | up=true",
-        "ap.nfap-lw": "caps=wifi-ap,poe-powered | proc=wlan-ap,eth-switch,arp,ipv4,icmpv4,host | roles=switched wireless-bss×2 | cli=nfos/nfos/1/console+vty | gui=physical,wireless.ap | owners=svi:eth-switch | host= | virtual=Vlan[1] | up=true",
+        "ap.nfap-lw": "caps=wifi-ap,poe-powered,lightweight-ap | proc=wlan-ap,capwap-wtp,eth-switch,arp,ipv4,icmpv4,host,udp,dhcp-client | roles=switched wireless-bss×2 | cli=nfos/nfos/1/console+vty | gui=physical,wireless.ap | owners=svi:eth-switch | host= | virtual=Vlan[1] | up=true",
         "ap.nfap-mesh": "caps=wifi-ap | proc=wlan-ap,eth-switch,arp,ipv4,icmpv4,host | roles=switched wireless-bss×2 | cli=nfos/nfos/1/console+vty | gui=physical,wireless.ap | owners=svi:eth-switch | host= | virtual=Vlan[1] | up=true",
         "bridge.nfbr2": "caps=switching | proc=eth-switch,arp,ipv4,icmpv4,host | roles=switched×2 | cli=nfos/nfos/1/console+vty | gui=physical | owners=svi:eth-switch | host= | virtual=Vlan[1] | up=true",
         "bridge.nfbr4": "caps=switching | proc=eth-switch,arp,ipv4,icmpv4,host | roles=switched×4 | cli=nfos/nfos/1/console+vty | gui=physical | owners=svi:eth-switch | host= | virtual=Vlan[1] | up=true",
@@ -168,10 +170,63 @@ describe('catalog index', () => {
         "tablet.nftablet-lte": "caps=host,wifi-client,cellular-client | proc=wlan-client,cell-client,arp,ipv4,icmpv4,host,ipv6,nd,icmpv6,udp,tcp,dhcp-client,dhcpv6-client,dns-client,http-client,traceroute | roles=wireless-client cellular | cli=host/host/15/console | gui=physical,desktop.ip-config,desktop.wifi,desktop.cellular,desktop.command-prompt,desktop.web-browser | owners= | host=Wlan0,Cellular0 | virtual= | up=true",
         "tv.nfsmarttv": "caps=host,wifi-client | proc=wlan-client,arp,ipv4,icmpv4,host,ipv6,nd,icmpv6,udp,tcp,dhcp-client,dhcpv6-client,dns-client,http-client,traceroute | roles=routed wireless-client | cli=host/host/15/console | gui=physical,desktop.ip-config,desktop.wifi,desktop.command-prompt,desktop.web-browser | owners= | host=FastEthernet0,Wlan0 | virtual= | up=true",
         "wlc.nfwlc3504": "caps=host | proc=arp,ipv4,icmpv4,host,ipv6,nd,icmpv6,udp,tcp,dhcp-client,dhcpv6-client,dns-client,http-client,traceroute | roles=routed×4 console | cli=host/host/15/console | gui=physical,desktop.ip-config,desktop.command-prompt,desktop.web-browser | owners= | host=GigabitEthernet0/1,GigabitEthernet0/2,GigabitEthernet0/3,GigabitEthernet0/4 | virtual= | up=true",
+        "wlc.nfwlc9800": "caps=switching,wireless-controller | proc=eth-switch,vlan,arp,ipv4,icmpv4,host,udp,capwap-ac | roles=switched×4 console | cli=none/nfos/1/ | gui=physical,wlc.controller | owners=svi:eth-switch,wlan-tunnel:capwap-ac | host= | virtual=Vlan,Capwap[0] | up=true",
         "wrouter.nfhome": "caps=switching,routing,wifi-ap,nat-gateway,dhcp-server | proc=wlan-ap,hdlc,eth-switch,arp,ipv4,nat,icmpv4,host,ipv6,nd,icmpv6,udp,tcp,hsrp,dhcp-client,dhcp-server,dhcpv6-client,dhcpv6-server,dns-client,dns-server,http-server,traceroute | roles=wan switched×4 wireless-bss×2 | cli=none/nfos/1/ | gui=physical,home-router.setup | owners=svi:eth-switch | host= | virtual=Vlan[1] | up=true",
         "wrouter.nfhome-ax": "caps=switching,routing,wifi-ap,nat-gateway,dhcp-server | proc=wlan-ap,hdlc,eth-switch,arp,ipv4,nat,icmpv4,host,ipv6,nd,icmpv6,udp,tcp,hsrp,dhcp-client,dhcp-server,dhcpv6-client,dhcpv6-server,dns-client,dns-server,http-server,traceroute | roles=wan switched×4 wireless-bss×3 | cli=none/nfos/1/ | gui=physical,home-router.setup | owners=svi:eth-switch | host= | virtual=Vlan[1] | up=true",
       }
     `);
+  });
+
+  it('the W6 wireless catalog: NF-AP-1832 is lightweight, NF-WLC-9800 is the controller, NF-WLC-3504 moves to Legacy (§9.2 item 23)', () => {
+    const byType = (type: string): DeviceModel => ALL_MODELS.find((m) => m.type === type)!;
+    const types = ALL_MODELS.map((m) => m.type);
+
+    // ap.nfap-lw gains `lightweight-ap`, the daemons capwap-wtp, udp and dhcp-client, the table capwap and its P2 lines
+    const ap = byType('ap.nfap-lw');
+    expect(ap.capabilities).toEqual(['wifi-ap', 'poe-powered', 'lightweight-ap']);
+    expect(ap.processes).toEqual(['wlan-ap', 'capwap-wtp', 'eth-switch', 'arp', 'ipv4', 'icmpv4', 'host', 'udp', 'dhcp-client']);
+    expect(ap.tables).toEqual(['cam', 'arp', 'rib', 'dot11-assoc', 'capwap', 'sockets']);
+    expect(ap.profileConfig).toEqual({ P2: ['capwap enable', 'interface Vlan1', ' ip address dhcp', ' no shutdown'] });
+    expect(ap.description).toBe('Lightweight dual-band access point that joins a wireless LAN controller over CAPWAP; with CAPWAP turned off it works on its own');
+    expect(ap.description).not.toContain('until wireless controllers are simulated');
+    for (const k of ['stpDefaultMode', 'subinterfaces', 'defaultConfig']) expect(Object.keys(ap)).not.toContain(k);
+
+    // NF-WLC-3504: the Legacy category and its new description; capabilities, daemons, ports and boot time unchanged
+    const old = byType('wlc.nfwlc3504');
+    expect([old.category, old.icon, old.kind]).toEqual(['legacy', 'wlc', 'wlc']);
+    expect(old.description).toBe('Earlier wireless LAN controller kept for older projects: an end system with four gigabit ports and a console that manages no access points (the NF-WLC-9800 does)');
+    expect(old.capabilities).toEqual(['host']);
+    expect(old.processes).toEqual(['arp', 'ipv4', 'icmpv4', 'host', 'ipv6', 'nd', 'icmpv6', 'udp', 'tcp', 'dhcp-client', 'dhcpv6-client', 'dns-client', 'http-client', 'traceroute']);
+    expect(old.ports.map((p) => `${p.name}:${p.role}:${p.speedBps}`)).toEqual([
+      'GigabitEthernet0/1:routed:1000000000', 'GigabitEthernet0/2:routed:1000000000', 'GigabitEthernet0/3:routed:1000000000',
+      'GigabitEthernet0/4:routed:1000000000', 'Console:console:9600',
+    ]);
+    expect(old.bootNs).toBe(CATEGORY_BOOT_NS.wireless);
+    expect(old.cli?.shell).toBe('host');
+
+    // the new NF-WLC-9800: wireless-controller, no shell, the controller panel, four distribution ports, a console and Capwap0
+    const wlc = byType('wlc.nfwlc9800');
+    expect([wlc.model, wlc.kind, wlc.category, wlc.icon, wlc.hostnamePrefix, wlc.bootNs]).toEqual(['NF-WLC-9800', 'wlc', 'wireless', 'wlc', 'WLC', 20 * SEC]);
+    expect(wlc.capabilities).toEqual(['switching', 'wireless-controller']);
+    expect(wlc.processes).toEqual(['eth-switch', 'vlan', 'arp', 'ipv4', 'icmpv4', 'host', 'udp', 'capwap-ac']);
+    expect(isVlanAware(wlc)).toBe(true);
+    expect(wlc.tables).toEqual(['cam', 'arp', 'rib', 'vlans', 'port-security', 'sockets', 'capwap-aps', 'wlan-clients']);
+    expect(wlc.cli).toEqual({ shell: 'none', grammar: 'nfos', initialPrivilege: 1, consoleVia: [] });
+    expect(wlc.gui).toEqual(['physical', 'wlc.controller']);
+    expect(wlc.ports.map((p) => `${p.name}:${p.short}:${p.role}:${p.ordinal}`)).toEqual([
+      'GigabitEthernet0/1:Gi0/1:switched:1', 'GigabitEthernet0/2:Gi0/2:switched:2', 'GigabitEthernet0/3:Gi0/3:switched:3',
+      'GigabitEthernet0/4:Gi0/4:switched:4', 'Console:Con:console:5',
+    ]);
+    expect(wlc.virtualFamilies).toEqual([CONTROLLER_VLAN_FAMILY, CAPWAP_TUNNEL_FAMILY]);
+    expect(wlc.virtualFamilies?.flatMap((f) => (f.auto ?? []).map((n) => virtualPortName(f, n)))).toEqual(['Capwap0']);
+    expect(wlc.portOwners).toEqual({ svi: 'eth-switch', 'wlan-tunnel': 'capwap-ac' });
+    expect([wlc.hostPorts, wlc.ipForwarding, wlc.portsDefaultUp]).toEqual([[], false, true]);
+    for (const k of ['defaultConfig', 'profileConfig', 'stpDefaultMode', 'subinterfaces']) expect(Object.keys(wlc)).not.toContain(k);
+
+    // palette: the NF-WLC-9800 closes the Wireless category, the NF-WLC-3504 closes the Legacy category
+    expect(ALL_MODELS.filter((m) => m.category === 'wireless').map((m) => m.type)).toEqual(['ap.nfap-auto', 'ap.nfap-lw', 'ap.nfap-mesh', 'ap.nfap-ax', 'wlc.nfwlc9800']);
+    expect(ALL_MODELS.filter((m) => m.category === 'legacy').map((m) => m.type)).toEqual(['hub.nfhub4', 'hub.nfhub8', 'hub.nfcoax', 'repeater.nfrep', 'bridge.nfbr2', 'bridge.nfbr4', 'wlc.nfwlc3504']);
+    expect(types.indexOf('wlc.nfwlc3504')).toBeLessThan(types.indexOf('ap.nfap-auto'));
   });
 
   it('every model that boots the IPv4 host stack has somewhere to hold an address', () => {

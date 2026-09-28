@@ -12,6 +12,11 @@
  * its `LabStatus` on a batch, and this panel adopts the matching `ScenarioMeta` from the catalogue it already
  * read (§4.13 "Reopening a saved file"). A status that names another lab is never graded against these tasks.
  *
+ * @since P2 (W6 web-learn, §9.2 item 22c) Loading and checking are a `LabWork` state rather than one busy flag: a
+ * check announces its start once, shows a progress bar with the seconds so far (`LabWorkingNote`), and says why a
+ * long one takes a while, so a check that runs for many seconds never looks like a hang. The store's `lab.checking`
+ * carries the same busy state to the status bar and the Simulate menu, and a check the menu started shows here too.
+ *
  * ponytail: the panel keeps its own copy of the lab UI state and mirrors it into the store when the store
  * offers the P1 `lab` slice, so it works before and after the shell wave lands; nothing here polls — the status
  * arrives with the worker's batches and the Check button asks once. Wording is original (§1.6).
@@ -22,7 +27,7 @@ import { engine } from '../bridge/client';
 import { errorText } from '../desktop/shared';
 import { useStore } from '../store/store';
 import type { LabUiState } from '../store/types';
-import { LabBrowser } from './LabBrowser';
+import { LAB_CHECK_ANNOUNCEMENT, LabBrowser, LabWorkingNote, useWorkElapsed, type LabWork } from './LabBrowser';
 import { inlineText, parseMarkdown, type ConceptLinkTool, type MdBlock, type MdInline } from './markdown';
 
 // ── markdown rendering ───────────────────────────────────────────────────────
@@ -167,9 +172,13 @@ export function LabPanel() {
   const workspace = useStore((s) => s.view);
   const [local, setLocal] = useState<LabUiState>(EMPTY_LAB);
   const [scenarios, setScenarios] = useState<readonly ScenarioMeta[]>([]);
-  const [busy, setBusy] = useState(false);
+  const [ownWork, setWork] = useState<LabWork>('idle');
   const [message, setMessage] = useState<string | null>(null);
   const state = stored ?? local;
+  // W6 fix (§9.2 item 22c): a check started from the Simulate menu shows here as well (the store's `lab.checking`)
+  const work: LabWork = ownWork !== 'idle' ? ownWork : state.checking === true ? 'checking' : 'idle';
+  const busy = work !== 'idle';
+  const elapsed = useWorkElapsed(work);
 
   const update = useCallback(
     (patch: Partial<LabUiState>): void => {
@@ -204,7 +213,7 @@ export function LabPanel() {
   }, [stored?.status?.lab, stored?.active?.name, scenarios, update]);
 
   const open = async (meta: ScenarioMeta): Promise<void> => {
-    setBusy(true);
+    setWork('loading');
     setMessage(null);
     const result = await loadLab(meta);
     // The status of the world the lab just built arrives on the worker's batch; only the choice is ours.
@@ -214,15 +223,18 @@ export function LabPanel() {
       if (meta.concept !== undefined) setView?.(workspace ?? 'topology', meta.concept);
     }
     setMessage(result.message);
-    setBusy(false);
+    setWork('idle');
   };
 
   const check = async (): Promise<void> => {
-    setBusy(true);
+    if (busy) return;
+    setWork('checking');
+    setMessage(LAB_CHECK_ANNOUNCEMENT);
+    update({ checking: true });
     const result = await checkLabNow();
-    update({ status: result.status });
+    update({ status: result.status, checking: false });
     setMessage(result.message);
-    setBusy(false);
+    setWork('idle');
   };
 
   const active = state.active;
@@ -243,7 +255,7 @@ export function LabPanel() {
         )}
         {active !== null && (
           <button type="button" className="btn btn-primary" disabled={busy} onClick={() => void check()}>
-            {busy ? 'Working…' : 'Check my work'}
+            {work === 'checking' ? 'Checking…' : busy ? 'Working…' : 'Check my work'}
           </button>
         )}
         <span className="dim">{active === null ? 'Pick a lab to load it.' : labScoreText(status)}</span>
@@ -253,9 +265,10 @@ export function LabPanel() {
       <p className={`insp-note${message === null ? ' is-empty' : ''}`} role="status" aria-live="polite">
         {message}
       </p>
+      <LabWorkingNote work={work} elapsedS={elapsed} />
 
       {showBrowser ? (
-        <LabBrowser scenarios={scenarios} activeName={active?.name} busy={busy} onOpen={(meta) => void open(meta)} />
+        <LabBrowser scenarios={scenarios} activeName={active?.name} work={work} onOpen={(meta) => void open(meta)} />
       ) : (
         <div className="dock-scroll">
           <p className="dim">{active.description}</p>

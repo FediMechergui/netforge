@@ -8,11 +8,16 @@
  *
  * Tab bodies: Overview, Ports, Config, Tables (generic extra tables), Processes, Physical (hardware and module
  * slots), Desktop (end-device apps), the device's settings panels (Wi-Fi access point, home router, radio link,
- * tower, modem status) and Services. Nothing here branches on the device kind; the header shows the category.
+ * tower, modem status; P2 W6: the wireless controller, `WlcPanel`) and Services. Nothing here branches on the device
+ * kind; the header shows the category.
+ *
+ * P2 [S14] (§6): the Processes tab opens with the state-machine history of the device-level machines
+ * (`DEVICE_FSM_MACHINES`: the bridge's root role, the access point's and the controller's CAPWAP joins); the per-port
+ * machines have theirs in the port inspector.
  */
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { KeyboardEvent } from 'react';
-import type { DeviceModel, DeviceSnapshot, GuiPanelId, PortSnapshot, StateView } from '@netforge/engine';
+import type { DeviceModel, DeviceSnapshot, FsmMachine, GuiPanelId, PortSnapshot, StateView } from '@netforge/engine';
 import { engine } from '../bridge/client';
 import { DesktopTab } from '../desktop/DesktopTab';
 import { store, useStore } from '../store/store';
@@ -20,6 +25,7 @@ import type { InspectorTab } from '../store/types';
 import { CAPABILITY_VOCAB, GUI_PANEL_VOCAB, categoryLabel, portRoleLabel } from '../vocab/categories';
 import { CellTowerPanel } from './CellTowerPanel';
 import { ConfigView } from './ConfigView';
+import { FsmStrip } from './FsmStrip';
 import { HomeRouterPanel } from './HomeRouterPanel';
 import { ModulesPanel } from './ModulesPanel';
 import { revealDockTab, toastError } from './PacketInspector';
@@ -29,6 +35,7 @@ import { ServicesPanel } from './ServicesPanel';
 import { TablesTab } from './TablesTab';
 import { useTickNow } from './TablesView';
 import { WirelessPanel } from './WirelessPanel';
+import { WlcPanel } from './WlcPanel';
 import {
   associationsOfDevice,
   catalogModel,
@@ -44,6 +51,12 @@ import {
 import './inspector.css';
 
 // ── tab state ───────────────────────────────────────────────────────────────
+
+/**
+ * [S14] The state machines whose history the Processes tab shows: those about the whole device, not one port (a
+ * port's own machines are in the port inspector's strip).
+ */
+export const DEVICE_FSM_MACHINES: readonly FsmMachine[] = Object.freeze(['stp-bridge', 'capwap-wtp', 'capwap-ac']);
 
 /** Kept for callers of the P0 name; every inspector tab is valid. */
 export type DeviceTab = InspectorTab;
@@ -159,7 +172,12 @@ export function DeviceInspector({ device }: { device: DeviceSnapshot }) {
         {tab === 'ports' && <PortsTab device={device} />}
         {tab === 'config' && <ConfigTab device={device} highlight={local.highlight} nonce={local.nonce} />}
         {tab === 'tables' && <TablesTab device={device} />}
-        {tab === 'processes' && <ProcessesTab processes={device.processes} booted={device.booted} />}
+        {tab === 'processes' && (
+          <>
+            <FsmStrip device={device.id} machines={DEVICE_FSM_MACHINES} hideWhenEmpty />
+            <ProcessesTab processes={device.processes} booted={device.booted} />
+          </>
+        )}
         {tab === 'physical' && <ModulesPanel device={device} />}
         {tab === 'desktop' && <DesktopTab device={device} />}
         {tab === 'wireless' && <SettingsTab device={device} />}
@@ -577,7 +595,7 @@ function ProcessesTab({ processes, booted }: { processes: readonly StateView[]; 
 
 // ── settings panels ─────────────────────────────────────────────────────────
 
-function SettingsPanel({ device, panel }: { device: DeviceSnapshot; panel: GuiPanelId }) {
+export function SettingsPanel({ device, panel }: { device: DeviceSnapshot; panel: GuiPanelId }) {
   switch (panel) {
     case 'wireless.ap':
       return <WirelessPanel device={device} />;
@@ -589,6 +607,9 @@ function SettingsPanel({ device, panel }: { device: DeviceSnapshot; panel: GuiPa
       return <CellTowerPanel device={device} />;
     case 'modem.status':
       return <ModemStatusPanel device={device} />;
+    // P2 W6 (§5.5 "Controller panel"): the wireless controller's one configuration surface (it has no shell)
+    case 'wlc.controller':
+      return <WlcPanel device={device} />;
     default:
       return null;
   }

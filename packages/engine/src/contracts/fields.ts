@@ -400,6 +400,8 @@ export const PROTO_FIELDS: Readonly<Record<string, ProtoFieldTable>> = Object.fr
     f('resultCode', 'uint', 'Result code.', u(32)),
     f('wlans', 'string', "WLAN configuration: '<id>:<ssid>:<security>:<vlan>:<keyTag>' (never a passphrase)."),
     f('stations', 'string', "WTP event station reports: '<add|del>:<station mac>:<bssid>:<wlanId>' joined by ';' (NF vendor-specific element)."),
+    // added by the W6 wireless item (ARCHITECTURE-P2 §9.2 item 22b): the minimal additive contract fix of the AP identity
+    f('wtpMac', 'mac', "Discovery and Join Requests: the access point's base MAC (NF vendor-specific element 3, the role of RFC 5415's WTP Board Data); the controller knows an access point by it."),
     f('keepAlive', 'bool', 'Data channel keep-alive.'),
   ], 'UDP 5246 (control) / 5247 (data); control vs data by the outer udp port. Control messages after the simulated DTLS step carry meta.protected. Inspector labels are the RFC names.'),
   // [SHOULD S2]

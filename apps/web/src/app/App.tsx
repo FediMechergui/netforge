@@ -11,6 +11,10 @@
  *
  * Also owns the wall-clock ticker that expires drop markers / table flashes, the global hotkeys and the
  * preference persistence (store/persist.ts).
+ *
+ * @since P2 [SHOULD S1] The timeline strip has its own grid row between the workspace and the dock (ARCHITECTURE-P2
+ * §6; `with-timeline` in timeline/timeline.css). While the past is shown the grid carries `data-review`, which frames
+ * the canvas and writes "Viewing the past" over it; the strip's banner says the same in words and holds the way back.
  */
 import { useEffect, type CSSProperties } from 'react';
 import { DOCK_MIN_HEIGHT } from '../dock/registry';
@@ -18,6 +22,8 @@ import { Inspector } from '../inspector/Inspector';
 import { LearnShell } from '../learn/LearnShell';
 import { applyThemeAttribute, startPersistence, store, useStore } from '../store/store';
 import { isLearnView } from '../store/types';
+import { TimelineStrip } from '../timeline/TimelineStrip';
+import { isReviewing } from '../timeline/timeline-client';
 import { Dock } from './Dock';
 import { useHotkeys } from './hotkeys';
 import { PaletteV2 } from './palette/Palette';
@@ -59,6 +65,8 @@ export function App() {
   const setInspectorWidth = useStore((s) => s.setInspectorWidth);
   const dockHeight = useStore((s) => s.dockHeight);
   const view = useStore((s) => s.view);
+  // [S1] the past is on screen: the grid says so (timeline.css frames the canvas)
+  const reviewing = useStore((s) => isReviewing(s.timeline?.review));
 
   const style = {
     '--inspector-w': `${inspectorWidth}px`,
@@ -77,7 +85,12 @@ export function App() {
 
   return (
     <>
-      <div className={`app ${dockHeight <= DOCK_MIN_HEIGHT ? 'dock-collapsed' : ''}`} style={style} hidden={learning}>
+      <div
+        className={`app with-timeline ${dockHeight <= DOCK_MIN_HEIGHT ? 'dock-collapsed' : ''}`}
+        style={style}
+        hidden={learning}
+        data-review={reviewing ? 'true' : undefined}
+      >
         <TopBar />
         <aside className="app-palette" aria-label="Device palette">
           <PaletteV2 />
@@ -87,6 +100,9 @@ export function App() {
           <ResizeHandle orientation="vertical" onDrag={onInspectorDrag} label="Resize the inspector" />
           <Inspector />
         </aside>
+        <section className="app-timeline" aria-label="Timeline">
+          <TimelineStrip />
+        </section>
         <section className="app-dock" aria-label="Bottom dock">
           <Dock />
         </section>

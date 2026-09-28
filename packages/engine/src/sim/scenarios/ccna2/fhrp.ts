@@ -105,7 +105,7 @@ export const ccna2HsrpGateway: ScenarioInfo = {
     `- On R1 \`GigabitEthernet0/0\`, join group ${HSRP_USER_GROUP} with the virtual address \`${HSRP_USER_VIRTUAL}\`. Use version 2, as R2 does: two versions never hear each other.`,
     `- Give R1 priority ${HSRP_R1_PRIORITY} and let it preempt. Without preemption it would wait as standby behind R2, which became active first.`,
     `- Point PC1 and PC2 at the virtual gateway \`${HSRP_USER_VIRTUAL}\`.`,
-    '- Ping SRV from PC1. Then switch R1 off and ping again: after a few lost replies R2 answers for both virtual addresses, and the PCs never notice which router it is. Switch R1 back on and watch it take the active role back.',
+    '- Ping SRV from PC1. Save R1\'s configuration with `copy running-config startup-config` first, because a power cut loses every line that was never saved. Then switch R1 off and ping again: after a few lost replies R2 answers for both virtual addresses, and the PCs never notice which router it is. Switch R1 back on and watch it take the active role back.',
     '',
     '*The virtual address comes with a virtual MAC address, so the hosts keep the same gateway entry whichever router is active.*',
   ].join('\n'),

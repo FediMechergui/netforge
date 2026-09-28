@@ -29,7 +29,9 @@
  * cable row its shared chip or the disagreement; while the spanning-tree overlay is on, a port row says its role and
  * state ("alternate port, blocking (crossed)"), a device row whether it is the root and its topology changes, and a
  * cable row its place in the tree. `decorateOutline` (pure) folds the facts of `l2.ts` / `stp.ts` into the outline
- * model, so what the canvas draws is what the tree says (every overlay fact has a text form).
+ * model, so what the canvas draws is what the tree says (every overlay fact has a text form). @since W6 While the
+ * controller-tunnel overlay is on, an access point's row says each tunnel and how far its join has got ("CAPWAP Jn
+ * 3/6"), and a controller's row how many of its access points have joined (`capwapDeviceFacts` of `capwap.ts`).
  */
 import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { FocusEvent as ReactFocusEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react';
@@ -39,8 +41,9 @@ import * as canvasModule from '../Canvas';
 import { store, useStore } from '../../store/store';
 import type { TopoOverlayState } from '../../store/types';
 import { isPickablePort } from '../../app/cable/cable-compat.js';
+import { capwapDeviceFacts, capwapTunnelViews } from '../capwap';
 import { l2LinkFacts, l2PortFacts, type OverlayFact } from '../l2';
-import { STP_OVERLAY, TOPO_OVERLAY_DEFAULTS, VLAN_OVERLAY } from '../overlays/registry';
+import { CAPWAP_OVERLAY, STP_OVERLAY, TOPO_OVERLAY_DEFAULTS, VLAN_OVERLAY } from '../overlays/registry';
 import { stpDeviceFacts, stpLinkFacts, stpPortFacts } from '../stp';
 import { announceWith, attachCanvasAnnouncer, subscribeFallbackAnnouncements } from './announcer';
 import {
@@ -103,7 +106,7 @@ function merge<K>(into: Map<K, OverlayFact[]>, from: ReadonlyMap<K, OverlayFact>
 /** Facts of the overlays the slice switches on, from the same registry models the canvas draws (pure). */
 export function outlineFacts(snapshot: SimSnapshot | null, topo: TopoOverlayState | undefined): OutlineFacts {
   const state = topo ?? TOPO_OVERLAY_DEFAULTS;
-  if (snapshot === null || (!state.vlan && !state.stp)) return NO_FACTS;
+  if (snapshot === null || (!state.vlan && !state.stp && !state.capwap)) return NO_FACTS;
   const now = snapshot.now;
   const ports = new Map<string, OverlayFact[]>();
   const devices = new Map<DeviceId, OverlayFact[]>();
@@ -115,6 +118,8 @@ export function outlineFacts(snapshot: SimSnapshot | null, topo: TopoOverlayStat
   merge(ports, stpPortFacts(stp));
   merge(devices, stpDeviceFacts(stp));
   merge(links, stpLinkFacts(stp));
+  // W6: the controller tunnels, on the access point's row and the controller's (the layer draws the same views)
+  merge(devices, capwapDeviceFacts(capwapTunnelViews(CAPWAP_OVERLAY.sync({ state, snapshot, now }), snapshot), snapshot));
   return { ports, devices, links };
 }
 

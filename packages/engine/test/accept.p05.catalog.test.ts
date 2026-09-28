@@ -17,14 +17,18 @@ import { createSimulation } from '../src/sim/simulation.js';
 import { ofKind } from './sim.harness.js';
 import { device, topology } from './accept.p05.harness.js';
 
-/** Model ids of docs/CATALOG.md: "Network devices", then "End devices", in document order. */
+/**
+ * Model ids of docs/CATALOG.md: "Network devices", then "End devices", in document order. ARCHITECTURE-P2 §9.2 W6
+ * item 23: the NF-WLC-9800 controller at its palette position (closing the Wireless category) and the NF-WLC-3504 in
+ * the Legacy group (closing it).
+ */
 const CATALOG_MD_MODELS: readonly string[] = [
   'router.nf1941', 'router.nf2911', 'router.nf4331', 'router.nf4451', 'router.nfgeneric',
   'switch.nfc2960-8', 'switch.nfc2960', 'switch.nfc2960-48', 'switch.nfc2960-24pg', 'switch.nfc9200-48',
   'mlswitch.nfc3650-24', 'mlswitch.nfc9300-48', 'dcswitch.nfn9k-48', 'dcswitch.nfn9k-32',
-  'hub.nfhub4', 'hub.nfhub8', 'hub.nfcoax', 'repeater.nfrep', 'bridge.nfbr2', 'bridge.nfbr4',
+  'hub.nfhub4', 'hub.nfhub8', 'hub.nfcoax', 'repeater.nfrep', 'bridge.nfbr2', 'bridge.nfbr4', 'wlc.nfwlc3504',
   'firewall.nfasa5506', 'firewall.nfngfw1120', 'ids.nfsensor',
-  'ap.nfap-auto', 'ap.nfap-lw', 'ap.nfap-mesh', 'ap.nfap-ax', 'wlc.nfwlc3504',
+  'ap.nfap-auto', 'ap.nfap-lw', 'ap.nfap-mesh', 'ap.nfap-ax', 'wlc.nfwlc9800',
   'wrouter.nfhome', 'wrouter.nfhome-ax', 'radio.nfptp5', 'radio.nfptp60', 'cell.nftower',
   'modem.nfdsl', 'modem.nfcable', 'modem.nfont', 'csu.nfcsu', 'cloud.nfinternet',
   'pc.nfpc', 'pc.nfpc-wifi', 'laptop.nflaptop', 'server.nfserver', 'server.nfrack',

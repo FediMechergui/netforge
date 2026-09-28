@@ -3141,6 +3141,17 @@ unless stated**
 26. [S13] `apps/web/test/inspector.panels.test.ts` stops pinning the home router's "next stage" DHCP note.
 27. [S11] `apps/web/test/tabs.test.ts:351` (`WIFI_PHASES`) gains `eap`.
 
+**W6 fix (the W6 review, applied by the fix agent)**
+25a. [S1] `apps/web/test/store.timeline.test.ts:167-169` ("timelineHead keeps timeline.head … (without the lane
+     revision)"): the store's `timeline.head` now keeps the worker's `lanesRevision` as well
+     (`UiState.timeline.head: { t; at; lanesRevision: number } | null`, a minimal additive change to the §2.14
+     contract, rule 3), because the strip keys its lane queries on it: a configuration change or a power cut while
+     paused adds lane events without dispatching anything, so the dispatched count the strip keyed on stayed the same
+     and the lanes went stale (review finding #9). The pin becomes `toEqual({ t, at, lanesRevision: 7 })` plus the
+     revision of the review batch, and gains a paused batch whose only change is the revision. Same fix, no migration:
+     `LabUiState.checking?: boolean` (optional by meaning: absent = no check running), set by the Labs panel and by
+     Simulate → "Check the lab now" alike, so both paths show the item-22c busy state (review finding #10).
+
 **W7**
 28. `packages/engine/test/curriculum.test.ts:70-85`: CCNA 1 and CCNA 2 `available`, CCNA 3 `planned`. The planned-course
     pins (:77-78, :121-126, :160-162) are unchanged in code and now hold for CCNA 3 (every CCNA 2 lab exists by W7).
@@ -3172,6 +3183,7 @@ event is of the listed kind:
 |---|---|---|---|---|
 | (a) | W2 l3 | the templates whose startup configs hold `ip route` (templates.ts:268, :281, :318) and the CCNA 1 labs with static routes (ccna1/routing.ts:232-234, :451; ccna1/services.ts:159, the relay lab) | the rib `tableWrite` of each `S` row **and its companion `debug` line (`add S … via …`, ipv4, category `ip routing`)** move from boot to the dispatch in which its next hop becomes usable (and their order among that dispatch's rib writes); the row's `updatedAt` follows (multilayer-routed-port: mls1's row 40 s → 45 s), so the device's snapshot hash moves with it | D13: a real router installs a static only when its next hop resolves; every frame, ping and `show` output of the script is unchanged. **Applied after W2** (2026-09-21): the recorded diff was exactly 36 `tableWrite` + 36 `debug` lines per world set, same event counts, no other kind — worlds three-routers, serial-pair, multilayer-routed-port, ccna1-traceroute-path, ccna1-dhcp-relay re-recorded |
 | (b) | W2 device | every scenario whose script drops an HDLC keepalive or a beacon | those `drop` events gain `background: true` | the canvas and sim-mode list must be able to hide background drops (§2.7) |
+| (c) | W6 catalog | none — no `SCENARIOS` entry holds an NF-AP-1832, so no digest moves; the row records a behaviour change for **P1 user files** that do | an NF-AP-1832 derives `capwap-wtp`, `udp` and `dhcp-client` in every profile (the `lightweight-ap` row of §2.1); all three stay silent unless configured (`accept.p2.silence` case (c)); a UDP datagram to an addressed NF-AP-1832 now draws ICMP port unreachable (3/3) instead of protocol unreachable (3/2), with the matching drop detail | **Architect ruling, 2026-09-28 (W6 review finding #8):** D2 wins — every P2 command typed in a P1 world works, so `capwap enable` on this AP needs its UDP stack in P1 worlds too; the same principle that gave NF-WLC-3504 its silent `dhcpv6-client` in W4. A P1 file that probes an AP with UDP is the only visible difference, and the new answer is the realistic one |
 
 Everything else — the W4 and W6 catalog flips, the air changes of W5, `ctx.radioSettings`, the new daemons — must
 leave every digest byte-identical; the lead proves it by running the test inside those changes.

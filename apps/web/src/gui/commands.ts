@@ -23,10 +23,25 @@
  *   (the port inspector's quick action); ipv6 address dhcp | autoconfig (nfos interface lines) and the host-shell
  *   forms ipv6 address dhcp [<adapter>] / ipv6 autoconfig [<adapter>] with their `no` forms (the Desktop IP
  *   configuration app's IPv6 choice); [S4] voice vlan <v> / no voice vlan (the IP phone's Voice VLAN field).
+ *   P2 wireless controller (ARCHITECTURE-P2 §3.12, §5.3, §5.5; W6 web-inspector), the controller panel's Interfaces
+ *   and WLANs pages: `wlc-interface <name>` with vlan <v> / address A M / no address / gateway <a> / no gateway /
+ *   dhcp-server <a> / no dhcp-server, and `no wlc-interface <name>`; `wlan <id> <profile> <ssid>` with
+ *   security <mode> / passphrase <rest> / no passphrase / interface <name> / radio 2.4|5 / no radio / shutdown /
+ *   no shutdown, and `no wlan <id>`.
  */
 import type { CliGrammar, ConfigureOptions, PortId } from '@netforge/engine';
-import { normalizeIpv4, normalizeMask } from './forms.js';
-import type { CellTowerForm, HomeRouterForm, InterfaceAddressForm, IpConfigForm, RadioLinkForm, WifiClientForm, WirelessApForm } from './forms.js';
+import { normalizeIpv4, normalizeMask, sameWlanIdentity } from './forms.js';
+import type {
+  CellTowerForm,
+  HomeRouterForm,
+  InterfaceAddressForm,
+  IpConfigForm,
+  RadioLinkForm,
+  WifiClientForm,
+  WirelessApForm,
+  WlanForm,
+  WlcInterfaceForm,
+} from './forms.js';
 
 // ── plans ────────────────────────────────────────────────────────────────────
 
@@ -103,6 +118,18 @@ class PlanBuilder {
     if (children.length === 0) return this;
     if (this.grammar !== 'nfos') throw new RangeError('Interface sections exist only in the nfos grammar.');
     this.lines.push(makeLine([['interface', null], [port, null]], 0));
+    for (const c of children) this.lines.push(makeLine(c, 1));
+    return this;
+  }
+
+  /**
+   * @since P2 Any configuration section: the `header` line followed by its lines one level deeper (`wlc-interface X`,
+   * `wlan 1 STAFF LabNet`); nothing when there are no child lines.
+   */
+  block(header: readonly Token[], children: readonly (readonly Token[])[]): this {
+    if (children.length === 0) return this;
+    if (this.grammar !== 'nfos') throw new RangeError('Configuration sections exist only in the nfos grammar.');
+    this.lines.push(makeLine(header, 0));
     for (const c of children) this.lines.push(makeLine(c, 1));
     return this;
   }
@@ -471,4 +498,106 @@ export function voiceVlanCommands(grammar: CliGrammar, next: string, previous?: 
     return b.build();
   }
   return b.global([['voice', VOICE_VLAN_FIELD], ['vlan', VOICE_VLAN_FIELD], [n, VOICE_VLAN_FIELD]]).build();
+}
+
+// ── P2: wireless controller (ARCHITECTURE-P2 §3.12, §5.3, §5.5 "Controller panel") ─────────────────────────────────
+
+/** The header line of a controller interface section (both tokens belong to the field `name`). */
+function wlcInterfaceHeader(name: string): Token[] {
+  return [['wlc-interface', 'name'], [name, 'name']];
+}
+
+/**
+ * The lines inside `wlc-interface <name>` that move `previous` to `next` (every non-empty value when there is no
+ * baseline), in the §3.12 order: `vlan <v>` (field `vlan`), `address <a> <mask>` / `no address` (fields `address` and
+ * `mask`), `gateway <a>` / `no gateway` (`gateway`), `dhcp-server <a>` / `no dhcp-server` (`dhcpServer`). The VLAN comes
+ * first because the controller keeps the interface's SVI on it. Addresses and masks are sent canonical (a `/24` mask
+ * becomes 255.255.255.0); a value that does not parse is sent as typed so the device's refusal lands on its field.
+ */
+export function wlcInterfaceLines(next: WlcInterfaceForm, previous?: WlcInterfaceForm): Token[][] {
+  const out: Token[][] = [];
+  const vlan = next.vlan.trim();
+  if (vlan !== (previous?.vlan.trim() ?? '') && vlan !== '') out.push([['vlan', 'vlan'], [vlan, 'vlan']]);
+  const nextAddr = addressValue(next) as AddressValue;
+  const prevAddr = addressValue(previous);
+  if (!sameAddress(nextAddr, prevAddr)) {
+    if (nextAddr.address === '') {
+      if (prevAddr !== undefined && prevAddr.address !== '') out.push([['no', 'address'], ['address', 'address']]);
+    } else {
+      out.push([['address', 'address'], [nextAddr.address, 'address'], [nextAddr.mask, 'mask']]);
+    }
+  }
+  const optional = (keyword: string, key: 'gateway' | 'dhcpServer'): void => {
+    const n = gatewayValue(next[key]);
+    const p = gatewayValue(previous?.[key]);
+    if (n === p) return;
+    if (n === '') out.push([['no', key], [keyword, key]]);
+    else out.push([[keyword, key], [n, key]]);
+  };
+  optional('gateway', 'gateway');
+  optional('dhcp-server', 'dhcpServer');
+  return out;
+}
+
+/**
+ * Create or edit a controller interface: `wlc-interface <name>` followed by `wlcInterfaceLines` one level deeper
+ * (nfos pasted-config form; nothing when nothing changed). For a new interface, `previous` is undefined.
+ */
+export function wlcInterfaceCommands(next: WlcInterfaceForm, previous?: WlcInterfaceForm): CommandPlan {
+  return new PlanBuilder('nfos').block(wlcInterfaceHeader(next.name.trim()), wlcInterfaceLines(next, previous)).build();
+}
+
+/** Remove a controller interface: `no wlc-interface <name>` (a refusal is a general message: the line has no field). */
+export function wlcInterfaceRemoveCommands(name: string): CommandPlan {
+  return new PlanBuilder('nfos').global([['no', null], ['wlc-interface', null], [name.trim(), null]]).build();
+}
+
+/** The header line of a WLAN section (fields `id`, `profile`, `ssid`). */
+function wlanHeader(w: Pick<WlanForm, 'id' | 'profile' | 'ssid'>): Token[] {
+  return [['wlan', 'id'], [w.id.trim(), 'id'], [w.profile.trim(), 'profile'], [w.ssid.trim(), 'ssid']];
+}
+
+/**
+ * The lines inside `wlan <id> <profile> <ssid>` that move `previous` to `next` (the full WLAN when there is no
+ * baseline). Order: `shutdown` when the WLAN stops being offered, `security <mode>`, `passphrase <text>` (only when
+ * typed) or `no passphrase` (choosing open security over a stored one), `interface <name>`, `radio 2.4|5` / `no radio`
+ * (every radio is the default, so a new WLAN on every radio sends no radio line), and `no shutdown` last when it is
+ * offered — a new WLAN is written exactly as §3.12 shows it. Field keys are the form's property names.
+ */
+export function wlanLines(next: WlanForm, previous?: WlanForm): Token[][] {
+  const out: Token[][] = [];
+  const admin = adminChange(next.enabled, previous?.enabled);
+  if (admin === 'down') out.push([['shutdown', 'enabled']]);
+  if (previous === undefined || previous.security !== next.security) out.push([['security', 'security'], [next.security, 'security']]);
+  if (next.security === 'open') {
+    if (previous !== undefined && previous.security !== 'open' && (next.hasPassphrase || previous.hasPassphrase)) out.push([['no', 'passphrase'], ['passphrase', 'passphrase']]);
+  } else if (next.passphrase !== '') {
+    out.push([['passphrase', 'passphrase'], ...words(next.passphrase, 'passphrase')]);
+  }
+  const iface = next.iface.trim();
+  if (previous === undefined ? iface !== '' : iface !== previous.iface.trim()) out.push([['interface', 'iface'], [iface, 'iface']]);
+  if (next.radio !== (previous?.radio ?? 'all')) {
+    out.push(next.radio === 'all' ? [['no', 'radio'], ['radio', 'radio']] : [['radio', 'radio'], [next.radio, 'radio']]);
+  }
+  if (admin === 'up') out.push([['no', 'enabled'], ['shutdown', 'enabled']]);
+  return out;
+}
+
+/**
+ * Create or edit a WLAN (nfos pasted-config form). When the number, profile or network name changed
+ * (`sameWlanIdentity`), the old WLAN is removed first (`no wlan <old id>`, no field) and the WLAN is written again in
+ * full: the controller keys a WLAN by those three words. Nothing is sent when nothing changed.
+ */
+export function wlanCommands(next: WlanForm, previous?: WlanForm): CommandPlan {
+  const b = new PlanBuilder('nfos');
+  if (previous !== undefined && !sameWlanIdentity(next, previous)) {
+    b.global([['no', null], ['wlan', null], [previous.id.trim(), null]]);
+    return b.block(wlanHeader(next), wlanLines({ ...next, hasPassphrase: false })).build();
+  }
+  return b.block(wlanHeader(next), wlanLines(next, previous)).build();
+}
+
+/** Remove a WLAN: `no wlan <id>` (a refusal is a general message: the line has no field). */
+export function wlanRemoveCommands(id: string): CommandPlan {
+  return new PlanBuilder('nfos').global([['no', null], ['wlan', null], [id.trim(), null]]).build();
 }

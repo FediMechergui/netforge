@@ -1,9 +1,10 @@
 /**
  * test/capwap.harness.ts — the §3.12 controller world for the W5 wireless tests (not a test file).
  *
- * Built with `createP2Simulation` (ARCHITECTURE-P2 §0 rule 13) on the TEST-ONLY wireless models of `p2.world`
- * (NF-AP-1832 with `lightweight-ap`, the NF-WLC-9800 appliance), with the two W5 factories laid over the registry —
- * the W6 catalog item registers them for real. The controller is configured through its saved configuration (the text
+ * Built with `createP2Simulation` (ARCHITECTURE-P2 §0 rule 13) on the wireless models of `p2.world` (NF-AP-1832 with
+ * `lightweight-ap`, the NF-WLC-9800 appliance: TEST-ONLY data in W5, the real catalog data since the W6 catalog item),
+ * with the two CAPWAP factories laid over the registry (since W6 the registry's own entries, so the overlay changes
+ * nothing). The controller is configured through its saved configuration (the text
  * the §5.3 lines store: `wlc-interface`, `wlan`, and the SVI + default gateway the controller's CLI handler maintains),
  * so these tests do not depend on the same-wave cli grammar.
  *

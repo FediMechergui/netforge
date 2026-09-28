@@ -9,7 +9,7 @@
  *   - a `GuiPanelId`       a Desktop app in a floating window (desktop-app panels) or the inspector tab that hosts
  *                          a settings panel;
  *   - 'default'            the device's natural surface: its Desktop, else its console, else its first settings
- *                          panel, else the overview.
+ *                          panel (the Physical hardware view only when it has no other), else the overview.
  * Nothing here branches on `DeviceSnapshot.kind`: the decision uses `cli.shell`, `gui` and the panel vocabulary.
  * Hidden panes are revealed (a collapsed dock opens, a hidden inspector gets its width back) and every outcome is
  * announced to screen readers.
@@ -48,7 +48,8 @@ export const SURFACE_PANEL_TAB: Readonly<Record<GuiPanelId, InspectorTab>> = Obj
   'radio.link': 'wireless',
   'cell.tower': 'wireless',
   'modem.status': 'wireless',
-  // P2 (wave 0 stub): the controller panel is a settings panel of a network appliance.
+  // P2 (ARCHITECTURE-P2 §5.5, W6): the controller panel. The NF-WLC-9800 has no command line (shell 'none'), so its
+  // 'default' surface is this tab and a refused 'console' names it ("Its settings are under Controller …").
   'wlc.controller': 'wireless',
 });
 
@@ -68,9 +69,19 @@ function hasShell(device: SurfaceDevice): boolean {
   return device.cli === undefined || device.cli.shell !== 'none';
 }
 
+/**
+ * The settings panel of a device: its first inspector-tab panel other than the hardware view (`physical`, which every
+ * catalog model lists first), else `physical`. P2 W6: without the skip, every shell-less appliance (the NF-WLC-9800's
+ * `wlc.controller`, a home router's setup) opened on its Physical tab instead of its settings.
+ */
+export function settingsPanelOf(device: Pick<SurfaceDevice, 'gui'>): GuiPanelId | undefined {
+  const panels = (device.gui ?? []).filter((g) => GUI_PANEL_VOCAB[g].placement === 'inspector-tab');
+  return panels.find((g) => g !== 'physical') ?? panels[0];
+}
+
 /** Where the settings of a device without a command line live, for the refusal text. */
 function settingsHint(device: SurfaceDevice): string {
-  const panel = (device.gui ?? []).find((g) => GUI_PANEL_VOCAB[g].placement === 'inspector-tab');
+  const panel = settingsPanelOf(device);
   return panel === undefined ? '' : ` Its settings are under ${GUI_PANEL_VOCAB[panel].label} in the inspector.`;
 }
 
@@ -83,7 +94,7 @@ export function resolveDeviceSurface(device: SurfaceDevice, surface: DeviceSurfa
     const gui = device.gui ?? [];
     if (gui.some((g) => GUI_PANEL_VOCAB[g].placement === 'desktop-app')) return { kind: 'tab', tab: 'desktop' };
     if (hasShell(device)) return { kind: 'console' };
-    const settings = gui.find((g) => GUI_PANEL_VOCAB[g].placement === 'inspector-tab');
+    const settings = settingsPanelOf(device);
     return { kind: 'tab', tab: settings === undefined ? 'overview' : SURFACE_PANEL_TAB[settings] };
   }
   // 'physical' and 'services' are both panels and tabs: the panel rules below give the same tab.

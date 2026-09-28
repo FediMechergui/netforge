@@ -1,6 +1,9 @@
 /**
  * Packet inspector (spec §9.2): header with lineage links, one card per decoded
  * layer (width ∝ bytes), fields as name = value, and a synchronized hex view.
+ * P2 (ARCHITECTURE-P2 §3.12 step 3, §6; W6 web-inspector): a PDU with `meta.protected`
+ * (CAPWAP control after the simulated DTLS step) gets the "Protected (DTLS, simulated)"
+ * banner, and the layers inside its UDP payload are marked as simulated plaintext.
  *
  * Also hosts the small shared helpers of the inspector module: the PduJson cache
  * (`fetchPdu`, `usePduJson`), the device index hook, value formatters and the
@@ -257,6 +260,58 @@ export function fmtMutationValue(path: string, v: FieldValue | undefined): strin
   return paren > 0 && !s.startsWith('✓') && !s.startsWith('✗') ? s.slice(0, paren) : s;
 }
 
+// ── protected payloads (P2) ─────────────────────────────────────────────────
+
+/**
+ * @since P2 Heading of the banner shown for a PDU with `meta.protected` (ARCHITECTURE-P2 §3.12 step 3, §6): the CAPWAP
+ * control messages after the simulated DTLS step. "Headers real, crypto simulated" (spec §4.9): the story says the
+ * payload is encrypted, the simulator decodes it anyway so it can be studied.
+ */
+export const PROTECTED_BANNER_TITLE = 'Protected (DTLS, simulated)';
+
+/** @since P2 Why the protected fields are readable here (original wording). */
+export function protectedBannerText(layers: readonly Pick<LayerView, 'proto'>[]): string {
+  const what = layers.some((l) => l.proto === 'capwap')
+    ? 'This CAPWAP control message travels between the access point and its controller inside an encrypted DTLS session'
+    : 'This message travels inside an encrypted session';
+  return (
+    `${what}: a capture on a real network would show the outer addresses and ports, not the protected fields. ` +
+    'NetForge only simulates that encryption, so the protected fields below are decoded for study and marked as simulated.'
+  );
+}
+
+/** @since P2 Whether a PDU carries a protected payload (`PduMeta.protected`). */
+export function isProtectedPdu(pdu: Pick<PduJson, 'meta'>): boolean {
+  return pdu.meta.protected === true;
+}
+
+/**
+ * @since P2 Indexes of the layers a protected PDU's encryption covers: every layer inside the outermost UDP layer (DTLS
+ * runs over UDP), or only the innermost layer when there is no UDP layer.
+ */
+export function protectedLayerIndexes(layers: readonly Pick<LayerView, 'proto'>[]): ReadonlySet<number> {
+  const udp = layers.findIndex((l) => l.proto === 'udp');
+  const from = udp >= 0 ? udp + 1 : Math.max(0, layers.length - 1);
+  const out = new Set<number>();
+  for (let i = from; i < layers.length; i++) out.add(i);
+  return out;
+}
+
+/** Text of the per-layer mark on a protected layer. */
+export const PROTECTED_LAYER_MARK = 'protected · fields shown as simulated plaintext';
+
+function ProtectedBanner({ layers }: { layers: readonly LayerView[] }) {
+  return (
+    <div className="reason-box pk-protected" role="note" aria-label={PROTECTED_BANNER_TITLE}>
+      <div>
+        <span aria-hidden="true">⊘ </span>
+        <strong>{PROTECTED_BANNER_TITLE}</strong>
+      </div>
+      <div>{protectedBannerText(layers)}</div>
+    </div>
+  );
+}
+
 // ── component ───────────────────────────────────────────────────────────────
 
 interface HotField {
@@ -286,6 +341,8 @@ export function PacketInspector({ pdu }: { pdu: PduJson }) {
 
   const { meta } = pdu;
   const originName = deviceName(devices, meta.origin);
+  const isProtected = isProtectedPdu(pdu);
+  const protectedLayers = useMemo(() => (isProtected ? protectedLayerIndexes(pdu.layers) : new Set<number>()), [isProtected, pdu.layers]);
 
   return (
     <div className="pk">
@@ -293,8 +350,10 @@ export function PacketInspector({ pdu }: { pdu: PduJson }) {
         <div className="insp-title-row">
           <span className={`proto-chip ${protoClass(pdu.topProto)}`}>{pdu.topProto}</span>
           <span className="insp-title mono">Packet #{pdu.id}</span>
+          {isProtected && <span className="chip tiny">protected (simulated)</span>}
         </div>
         <div className="pk-summary">{pdu.summary}</div>
+        {isProtected && <ProtectedBanner layers={pdu.layers} />}
         <div className="pk-meta">
           <span>{size} bytes on the wire</span>
           <span>born {fmtSimTime(meta.born)}</span>
@@ -347,6 +406,7 @@ export function PacketInspector({ pdu }: { pdu: PduJson }) {
             total={size}
             selected={selectedLayer === i}
             hotField={hot && hot.layer === i ? hot.field : null}
+            simulated={protectedLayers.has(i)}
             onToggle={toggleLayer}
             onHover={hoverField}
           />
@@ -376,13 +436,15 @@ interface LayerCardProps {
   total: number;
   selected: boolean;
   hotField: string | null;
+  /** @since P2 The layer is inside a protected payload: its fields are shown as simulated plaintext. */
+  simulated?: boolean;
   onToggle(i: number): void;
   onHover(h: HotField | null): void;
 }
 
 const MIN_LAYER_PCT = 40;
 
-const LayerCard = memo(function LayerCard({ layer, index, total, selected, hotField, onToggle, onHover }: LayerCardProps) {
+const LayerCard = memo(function LayerCard({ layer, index, total, selected, hotField, simulated = false, onToggle, onHover }: LayerCardProps) {
   const pct = total > 0 ? Math.max(MIN_LAYER_PCT, Math.round((layer.length / total) * 100)) : 100;
   const style = { '--w': `${Math.min(100, pct)}%` } as CSSProperties;
   const end = layer.offset + layer.length - 1;
@@ -401,6 +463,7 @@ const LayerCard = memo(function LayerCard({ layer, index, total, selected, hotFi
           {layer.headerLength} B header{layer.trailerLength ? ` + ${layer.trailerLength} B trailer` : ''}
         </span>
         {layer.error !== undefined && <span className="err">⚠ {layer.error}</span>}
+        {simulated && <span className="chip tiny">{PROTECTED_LAYER_MARK}</span>}
         <span className="range">
           bytes {layer.offset}–{end} ({layer.length})
         </span>

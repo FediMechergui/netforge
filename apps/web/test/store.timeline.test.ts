@@ -164,14 +164,19 @@ describe('review ends', () => {
 });
 
 describe('the timeline head and the strip state', () => {
-  it('timelineHead keeps timeline.head on live and review batches alike (without the lane revision)', () => {
+  // §9.2 item 25a (W6 fix): the head keeps the lane revision too (the strip keys its lane queries on it)
+  it('timelineHead keeps timeline.head, with the lane revision, on live and review batches alike', () => {
     store.getState().applyBatch(live(epoch, 50 * SEC, [], { snapshot: snap(50 * SEC), timelineHead: { t: 50 * SEC, at: { dispatched: 100, now: 50 * SEC }, lanesRevision: 7 } }));
-    expect(store.getState().timeline?.head).toEqual({ t: 50 * SEC, at: { dispatched: 100, now: 50 * SEC } });
+    expect(store.getState().timeline?.head).toEqual({ t: 50 * SEC, at: { dispatched: 100, now: 50 * SEC }, lanesRevision: 7 });
     store.getState().applyBatch(reviewBatch(epoch, reviewInfo(20 * SEC, 50 * SEC), [], { snapshot: snap(20 * SEC), timelineHead: { t: 50 * SEC, at: { dispatched: 101, now: 50 * SEC }, lanesRevision: 8 } }));
     expect(store.getState().timeline?.head?.at.dispatched).toBe(101);
+    expect(store.getState().timeline?.head?.lanesRevision).toBe(8);
     // a batch without a head leaves it
     store.getState().applyBatch(reviewBatch(epoch, reviewInfo(21 * SEC, 50 * SEC)));
     expect(store.getState().timeline?.head?.at.dispatched).toBe(101);
+    // paused (no event dispatched, sim time still) while the lane index grew: only the revision moves
+    store.getState().applyBatch(live(epoch, 50 * SEC, [], { timelineHead: { t: 50 * SEC, at: { dispatched: 101, now: 50 * SEC }, lanesRevision: 9 } }));
+    expect(store.getState().timeline?.head).toEqual({ t: 50 * SEC, at: { dispatched: 101, now: 50 * SEC }, lanesRevision: 9 });
   });
 
   it('lanes and seeking belong to the strip: batches never change them', () => {

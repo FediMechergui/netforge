@@ -5,6 +5,9 @@
  * P2 (ARCHITECTURE-P2 D2; W2 web-shell): a world built with the classic ('P1') defaults — a saved file, a template, a
  * CCNA 1 lab, a sandbox opened from a CCNA 1 lesson — shows the "Classic defaults" chip; File → "Use current
  * defaults" moves it on. A world with the current defaults shows nothing, so the common case stays quiet.
+ *
+ * P2 (W6 fix, §9.2 item 22c): while a lab check runs (`lab.checking`, set by the Labs panel and by Simulate → "Check
+ * the lab now") the bar says so in words, since the worker posts nothing until the check ends.
  */
 import type { Selection, SimSnapshot } from '@netforge/engine';
 import { selectDevice } from '../store/selectors';
@@ -18,6 +21,9 @@ export function classicDefaultsChip(snapshot: Pick<SimSnapshot, 'profile'> | nul
     hint: 'This world keeps the defaults of the first course: no spanning tree until you switch it on. File → "Use current defaults" brings in the newer ones.',
   };
 }
+
+/** @since P2 (W6 fix) The words the status bar shows while a lab check runs. */
+export const LAB_CHECKING_STATUS = 'Checking the lab…';
 
 function selectionText(sel: Selection | null, deviceName: (id: string) => string): string {
   if (!sel) return 'nothing selected';
@@ -58,6 +64,7 @@ export function StatusBar() {
   const snapshot = useStore((s) => s.snapshot);
   const snapshotIndex = useStore((s) => s.snapshotIndex);
   const classic = classicDefaultsChip(snapshot);
+  const checking = useStore((s) => s.lab?.checking === true);
 
   const deviceName = (id: string): string => selectDevice({ snapshot, snapshotIndex }, id)?.name ?? id;
 
@@ -90,6 +97,14 @@ export function StatusBar() {
       {seed !== undefined && (
         <span className="item" title="Simulation seed">
           seed <b>{seed}</b>
+        </span>
+      )}
+      {checking && (
+        <span className="item" title="The lab's tasks are being checked on a copy of the network" data-testid="lab-checking">
+          <span className="warn" aria-hidden="true">
+            ◔
+          </span>{' '}
+          {LAB_CHECKING_STATUS}
         </span>
       )}
       {classic !== null && (

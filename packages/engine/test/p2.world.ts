@@ -1,8 +1,9 @@
 /**
- * test/p2.world.ts — real P2-stage worlds before the catalog flips (ARCHITECTURE-P2 §0 rule 13, §7 W1 qa).
+ * test/p2.world.ts — real P2-stage worlds before the catalog flips (ARCHITECTURE-P2 §0 rule 13, §7 W1 qa); since the
+ * W4 and W6 flips, the real catalog with a registry overlay.
  *
- * `createP2Simulation({seed, profile, factories})` builds a catalog the way the W4 (and later W6) catalog flip will,
- * without touching the real one:
+ * `createP2Simulation({seed, profile, factories})` builds a catalog the way the W4 and W6 catalog flips do, without
+ * touching the real one:
  *   1. every real model input (`ALL_MODEL_INPUTS`, palette order) with the model-data deltas of the flips applied
  *      idempotently (`P2_MODEL_DELTAS`: `managed-switch` on the managed switches, `stpDefaultMode` on NF-C9300);
  *   2. `defineModel(input, 'P2')`, so every P2 derivation of define.ts (profileConfig, subinterfaces, the managed
@@ -14,23 +15,23 @@
  *      from the completed list;
  *   4. `createSimulation({seed, profile, catalog, …})` with that catalog (`SimulationOptions.catalog`).
  *
- * The W6 wireless model deltas (§7 W4 qa, §7 W6 catalog, §9.2 item 23) are held here too as TEST-ONLY data for W5:
- * `P2_WIRELESS_MODEL_DELTAS` (NF-AP-1832 gains `lightweight-ap`, so define.ts derives its `capwap enable` /
- * `ip address dhcp` profile lines) and `NF_WLC_9800_TEST_INPUT` (the NF-WLC-9800 controller appliance, inserted before
- * NF-WLC-3504 in the palette). `p2ModelDeltaFor(type)` merges the W4 and W6 deltas; `P2_MODEL_DELTAS` itself stays
- * the W4 list. The descriptive parts of the W6 change (NF-AP-1832's new description, NF-WLC-3504 moving to the Legacy
- * category) are not modelled: nothing behaviour-relevant depends on them.
+ * The W6 wireless model deltas (§7 W4 qa, §7 W6 catalog, §9.2 item 23) were held here as TEST-ONLY data for W5. Since
+ * the W6 catalog item they RESOLVE TO THE REAL DATA, so the catalog is defined once: `P2_WIRELESS_MODEL_DELTAS`
+ * (NF-AP-1832 gains `lightweight-ap`) is idempotent on the real input, which already carries the capability, and
+ * `NF_WLC_9800_TEST_INPUT` is the real `NF_WLC_9800_INPUT` of device/catalog/wireless.ts (as `CAPWAP_TUNNEL_FAMILY` and
+ * `WLC_VLAN_FAMILY` are define.ts's families), so `p2ModelInputs()` inserts nothing. `p2ModelDeltaFor(type)` merges
+ * the W4 and W6 deltas; `P2_MODEL_DELTAS` itself stays the W4 list. W8 reduces this helper to a thin wrapper.
  *
  * The registry is `PROCESS_FACTORIES` with `factories` laid over it: a passed factory wins, and a name passed as
  * `undefined` is removed (so a test can model a daemon that is missing even after the flip registered it). A test
  * therefore adds only the daemons under test (`{ vlan: createVlan, stp: createStp }`) and every P0/P1 daemon keeps its
  * real factory. P1 daemons are never filtered: removing one is the caller's choice and the device logs it at boot.
  *
- * The helper never validates: the P2 daemon names are not in the contract `PROCESS_ORDER` until their factories are
- * registered (§0 rule 3), so `validateCatalog` would refuse every completed model by design. The catalog owner's own
- * tests validate `defineModel(…, 'P2')`. After the W4 and W6 flips every delta is already in the data and every row in
- * `CAPABILITY_PROCESSES`, so with the default registry the helper equals the real catalog (W8 reduces it to a thin
- * wrapper).
+ * The helper never validates: before the flips the P2 daemon names were not in the contract `PROCESS_ORDER` (§0
+ * rule 3), so `validateCatalog` would have refused every completed model by design. The catalog owner's own tests
+ * validate `defineModel(…, 'P2')`. Since the W4 and W6 flips every delta is in the data and every row in
+ * `CAPABILITY_PROCESSES`, so with the default registry the helper equals the real catalog, model for model
+ * (device.catalog.p2.test.ts checks it; W8 reduces the helper to a thin wrapper).
  *
  * Nothing here is module-level mutable state: every call builds fresh, frozen models (rule 12; several simulations
  * share one realm once replayers exist). Inputs are never mutated.
@@ -38,19 +39,19 @@
 import { expandCapabilities, type Capability, type DefaultsProfile, type VirtualFamilySpec } from '../src/contracts/catalog.js';
 import type { DeviceCatalog, DeviceModel, PortNameSource, PortResolution } from '../src/contracts/device.js';
 import type { ProcessName } from '../src/contracts/ids.js';
-import { SPEED_100M, SPEED_10M, SPEED_1G } from '../src/contracts/port.js';
 import type { ProcessFactory } from '../src/contracts/process.js';
 import type { Simulation, SimulationOptions } from '../src/contracts/simulation.js';
 import { ALL_MODEL_INPUTS, ALL_MODULES } from '../src/device/catalog.js';
 import {
-  MANAGED_SWITCH_VLAN_FAMILY,
+  CAPWAP_TUNNEL_FAMILY as REAL_CAPWAP_TUNNEL_FAMILY,
+  CONTROLLER_VLAN_FAMILY,
   defineModel,
   deriveTables,
   derivePortOwners,
   moduleReachableProcesses,
   type ModelInput,
-  type PortInput,
 } from '../src/device/catalog/define.js';
+import { NF_WLC_9800_INPUT } from '../src/device/catalog/wireless.js';
 import { resolvePortName } from '../src/device/catalog/names.js';
 import { PROCESS_FACTORIES } from '../src/protocols/index.js';
 import { createSimulation } from '../src/sim/simulation.js';
@@ -111,8 +112,8 @@ export const P2_DAEMONS: readonly ProcessName[] = Object.freeze([
 /**
  * The §2.1 `CAPABILITY_PROCESSES` rows the later catalog items add (all `since: 'P2'`), approved items only: W4
  * catalog (managed-switch, routing incl. hsrp [S2], host, nat-gateway) and W6 catalog (lightweight-ap,
- * wireless-controller). No model carries the two wireless capabilities before the W6 model deltas, so their rows are
- * inert until then.
+ * wireless-controller). Since both flips every row is in the contract `CAPABILITY_PROCESSES`, so completing a model's
+ * list adds nothing to the real derivation (the rows keep their use for registries that remove a P2 daemon).
  */
 export const P2_CAPABILITY_PROCESS_ROWS: Readonly<Partial<Record<Capability, readonly ProcessName[]>>> = Object.freeze({
   'managed-switch': Object.freeze(['vlan', 'dtp', 'etherchannel', 'stp']),
@@ -149,10 +150,11 @@ export const P2_MODEL_DELTAS: Readonly<Record<string, P2ModelDelta>> = Object.fr
 });
 
 /**
- * The W6 wireless model deltas (§7 W6 catalog, §9.2 item 23) as TEST-ONLY data for W5, by type id: NF-AP-1832 gains
- * `lightweight-ap` (define.ts then derives `profileConfig.P2` = `capwap enable`, `interface Vlan1` / ` ip address dhcp`
- * / ` no shutdown`, and the `lightweight-ap` row brings `capwap-wtp`, `udp`, `dhcp-client` — `capwap-wtp` only once
- * its W5 factory exists). Kept apart from `P2_MODEL_DELTAS` so that the W4 list stays exactly the managed switches.
+ * The W6 wireless model deltas (§7 W6 catalog, §9.2 item 23), by type id: NF-AP-1832 gains `lightweight-ap` (define.ts
+ * then derives `profileConfig.P2` = `capwap enable`, `interface Vlan1` / ` ip address dhcp` / ` no shutdown`, and the
+ * `lightweight-ap` row brings `capwap-wtp`, `udp`, `dhcp-client`). TEST-ONLY data for W5; since the W6 catalog item
+ * the real input carries the capability, so applying the delta changes nothing. Kept apart from `P2_MODEL_DELTAS` so
+ * that the W4 list stays exactly the managed switches.
  */
 export const P2_WIRELESS_MODEL_DELTAS: Readonly<Record<string, P2ModelDelta>> = Object.freeze({
   'ap.nfap-lw': Object.freeze({ addCapabilities: Object.freeze(['lightweight-ap'] as const) }),
@@ -171,67 +173,30 @@ export function p2ModelDeltaFor(type: string): P2ModelDelta | undefined {
 
 /**
  * The controller's CAPWAP tunnel family (§2.1 `VirtualFamilySpec.role` 'wlan-tunnel', §3.12 step 7): one auto
- * instance `Capwap0`, bridged and hairpin, egress owned by `capwap-ac`. TEST-ONLY until the W6 catalog item.
+ * instance `Capwap0`, bridged and hairpin, egress owned by `capwap-ac`. TEST-ONLY data for W5; since the W6 catalog
+ * item it is define.ts's `CAPWAP_TUNNEL_FAMILY`, which `defineModel` derives for a `wireless-controller` model.
  */
-export const CAPWAP_TUNNEL_FAMILY: VirtualFamilySpec = Object.freeze({
-  family: 'Capwap',
-  short: 'Ca',
-  role: 'wlan-tunnel',
-  min: 0,
-  max: 0,
-  defaultAdminUp: true,
-  auto: Object.freeze([0]),
-});
-
-/** The controller's SVI family: `interface Vlan<v>` for every VLAN a `wlc-interface` names (§3.12); no auto instance. */
-export const WLC_VLAN_FAMILY: VirtualFamilySpec = Object.freeze({
-  family: MANAGED_SWITCH_VLAN_FAMILY.family,
-  short: MANAGED_SWITCH_VLAN_FAMILY.short,
-  role: MANAGED_SWITCH_VLAN_FAMILY.role,
-  min: MANAGED_SWITCH_VLAN_FAMILY.min,
-  max: MANAGED_SWITCH_VLAN_FAMILY.max,
-  defaultAdminUp: MANAGED_SWITCH_VLAN_FAMILY.defaultAdminUp,
-});
-
-/** An auto-MDIX gigabit copper distribution port of the controller. */
-function controllerPort(name: string): PortInput {
-  return { name, kind: 'ethernet', speedBps: SPEED_1G, speeds: [SPEED_1G, SPEED_100M, SPEED_10M], autoMdix: true };
-}
-
-/** The controller's console port (the same literal as the real controller inputs; typed so that `Object.freeze` keeps `kind` narrow). */
-const CONTROLLER_CONSOLE: PortInput = { name: 'Console', kind: 'console', speedBps: 9_600 };
+export const CAPWAP_TUNNEL_FAMILY: VirtualFamilySpec = REAL_CAPWAP_TUNNEL_FAMILY;
 
 /**
- * NF-WLC-9800 (`wlc.nfwlc9800`, §7 W6 catalog, §9.2 item 23, D17) as TEST-ONLY model data for W5: `wireless-controller`
- * (its closure adds `switching`, so the daemons derive as eth-switch, vlan, arp, ipv4, icmpv4, host, udp, capwap-ac —
- * the P2 ones only with a factory), shell `none` with the `nfos` grammar (a GUI appliance; headless `configure`
- * works), the `wlc.controller` panel (derived from the capability), the auto `Capwap0` tunnel port, four
- * GigabitEthernet0/x distribution ports and a console, no `defaultConfig`, original description. The W6 catalog item
- * authors the real input; this one exists so that W5 wireless tests can build controllers on `createP2Simulation`.
+ * The controller's SVI family: `interface Vlan<v>` for every VLAN a `wlc-interface` names (§3.12); no auto instance.
+ * Since the W6 catalog item it is define.ts's `CONTROLLER_VLAN_FAMILY`.
  */
-export const NF_WLC_9800_TEST_INPUT: ModelInput = Object.freeze({
-  type: 'wlc.nfwlc9800',
-  model: 'NF-WLC-9800',
-  description: 'Wireless LAN controller appliance: lightweight access points join it over CAPWAP and it switches their client traffic into VLANs',
-  category: 'wireless',
-  icon: 'wlc',
-  tags: Object.freeze(['wifi', 'controller', 'wlan', 'appliance', 'capwap', 'lightweight']),
-  capabilities: Object.freeze(['wireless-controller'] as const),
-  ports: Object.freeze([
-    controllerPort('GigabitEthernet0/1'),
-    controllerPort('GigabitEthernet0/2'),
-    controllerPort('GigabitEthernet0/3'),
-    controllerPort('GigabitEthernet0/4'),
-    CONTROLLER_CONSOLE,
-  ]),
-  virtualFamilies: Object.freeze([WLC_VLAN_FAMILY, CAPWAP_TUNNEL_FAMILY]),
-  cli: Object.freeze({ shell: 'none', grammar: 'nfos', initialPrivilege: 1, consoleVia: Object.freeze([]) }),
-});
+export const WLC_VLAN_FAMILY: VirtualFamilySpec = CONTROLLER_VLAN_FAMILY;
 
 /**
- * Every model input the P2-stage catalog is built from, in palette order: the real inputs with the test-only
- * NF-WLC-9800 inserted before NF-WLC-3504 (its palette slot once the W6 item moves the 3504 to Legacy). A fresh array
- * every call; the inputs themselves are never copied or mutated.
+ * NF-WLC-9800 (`wlc.nfwlc9800`, §7 W6 catalog, §9.2 item 23, D17): TEST-ONLY model data for W5, which the W6 catalog
+ * item replaced by the real input — this name now IS `NF_WLC_9800_INPUT` of device/catalog/wireless.ts
+ * (`wireless-controller`; eth-switch, vlan, arp, ipv4, icmpv4, host, udp, capwap-ac; shell `none` with the `nfos`
+ * grammar; the `wlc.controller` panel; the auto `Capwap0`; four GigabitEthernet0/x ports and a console; no
+ * `defaultConfig`), so the W5 tests that name it build the real controller.
+ */
+export const NF_WLC_9800_TEST_INPUT: ModelInput = NF_WLC_9800_INPUT;
+
+/**
+ * Every model input the P2-stage catalog is built from, in palette order: the real inputs, with NF-WLC-9800 inserted
+ * before NF-WLC-3504 when the real catalog does not carry it (before the W6 catalog item; since then nothing is
+ * inserted). A fresh array every call; the inputs themselves are never copied or mutated.
  */
 export function p2ModelInputs(): readonly ModelInput[] {
   const out = [...ALL_MODEL_INPUTS];
@@ -332,7 +297,7 @@ export function defineP2Model(input: ModelInput, registry: P2Registry = PROCESS_
   });
 }
 
-/** Every P2-stage model in palette order (the real catalog order, plus the test-only NF-WLC-9800), built for `registry`. */
+/** Every P2-stage model in palette order (the real catalog order; see `p2ModelInputs`), built for `registry`. */
 export function p2Models(registry: P2Registry = PROCESS_FACTORIES): readonly DeviceModel[] {
   return Object.freeze(p2ModelInputs().map((input) => defineP2Model(input, registry)));
 }

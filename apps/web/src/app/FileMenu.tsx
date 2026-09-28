@@ -13,6 +13,10 @@
  * (`profileForCourse(learn.lastCourse)`: classic defaults after a CCNA 1 lesson, current ones otherwise), and
  * "Use current defaults" (`engine.useCurrentDefaults`) moves a classic world — a template, a saved file, a CCNA 1
  * lab — to the current defaults in place, keeping every device, cable and configuration.
+ *
+ * P2 (W6 web-shell, ARCHITECTURE-P2 §6, §11.2): the CCNA 2 labs (`ccna2-lab`) get their own group after the CCNA 1
+ * labs, and every course-lab category (`<course>-lab`) takes the generic label "Labs: <course>" from the course its
+ * labs name.
  */
 import { useRef, useState } from 'react';
 import {
@@ -218,17 +222,26 @@ export interface ScenarioGroup {
   readonly items: readonly ScenarioMeta[];
 }
 
-const CATEGORY_ORDER: readonly string[] = ['template', 'ccna1-lab'];
+/** Categories with a fixed place, in menu order; any other category follows them alphabetically. */
+export const CATEGORY_ORDER: readonly string[] = Object.freeze(['template', 'ccna1-lab', 'ccna2-lab']);
+
+/** A course-lab category (`ccna1-lab`, `ccna2-lab`, …): its group is labelled by the course its labs name. */
+const COURSE_LAB = /-lab$/;
 
 function categoryLabel(category: string, items: readonly ScenarioMeta[]): string {
   if (category === 'template') return 'Templates';
-  const course = items.find((m) => m.course !== undefined)?.course;
-  if (category === 'ccna1-lab') return course !== undefined ? `Labs: ${course}` : 'Course labs';
+  if (COURSE_LAB.test(category)) {
+    const course = items.find((m) => m.course !== undefined && m.course.trim() !== '')?.course;
+    return course !== undefined ? `Labs: ${course}` : 'Course labs';
+  }
   const words = category.replace(/[-_]+/g, ' ').trim();
   return words === '' ? 'Other' : words.charAt(0).toUpperCase() + words.slice(1);
 }
 
-/** Group scenarios by category: templates, course labs, then other categories alphabetically; list order kept inside. */
+/**
+ * Group scenarios by category: templates, the CCNA 1 labs, the CCNA 2 labs, then other categories alphabetically;
+ * list order kept inside. Pure.
+ */
 export function groupScenarios(list: readonly ScenarioMeta[]): ScenarioGroup[] {
   const byCategory = new Map<string, ScenarioMeta[]>();
   for (const m of list) {

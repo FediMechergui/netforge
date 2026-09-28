@@ -2,9 +2,10 @@
  * test/p2.world.ts (ARCHITECTURE-P2 §0 rule 13, §7 W1 qa): P2-stage worlds from the real model inputs, the flips'
  * model-data deltas, `defineModel(…, 'P2')` and the later `CAPABILITY_PROCESSES` rows filtered to the registry.
  *
- * Every assertion here holds before AND after the W4/W6 catalog flips: the registries are spelled out with
- * `onlyP2(...)`, which removes every P2 daemon that is not named, so a daemon the flip registers later cannot change
- * the expected lists.
+ * The registries are spelled out with `onlyP2(...)`, which removes every P2 daemon that is not named, so a daemon a
+ * flip registers cannot change the expected lists. The W6 catalog item made the helper's wireless data the real data;
+ * the pins that described the data before it (NF-AP-1832's real capabilities, NF-WLC-9800 inserted by the helper)
+ * moved to their W6 values with the same strength (§9.2 W6 item 23).
  */
 import { describe, expect, it } from 'vitest';
 import { PROCESS_ORDER, expandCapabilities, isVlanAware } from '../src/contracts/catalog.js';
@@ -17,7 +18,7 @@ import { defineModel, deriveTables } from '../src/device/catalog/define.js';
 import { NF_C2960_INPUT } from '../src/device/catalog/switches.js';
 import { PROCESS_FACTORIES } from '../src/protocols/index.js';
 import { pcConfig } from '../src/sim/scenarios/templates.js';
-import { NF_AP_1832_INPUT } from '../src/device/catalog/wireless.js';
+import { NF_AP_1832_INPUT, NF_WLC_9800_INPUT } from '../src/device/catalog/wireless.js';
 import {
   CAPWAP_TUNNEL_FAMILY,
   NF_WLC_9800_TEST_INPUT,
@@ -69,6 +70,8 @@ describe('p2.world data', () => {
     expect(P2_PROCESS_ORDER).not.toContain('vtp');
     expect(P2_PROCESS_ORDER).not.toContain('radius-server');
     for (const rows of Object.values(P2_CAPABILITY_PROCESS_ROWS)) for (const p of rows ?? []) expect(P2_PROCESS_ORDER).toContain(p);
+    // since the W6 catalog item registered capwap-wtp and capwap-ac, the contract order IS the final order
+    expect(P2_PROCESS_ORDER).toEqual(PROCESS_ORDER);
   });
 
   it('the W4 deltas make exactly the nine managed switches managed, and are idempotent', () => {
@@ -224,7 +227,7 @@ describe('createP2Simulation', () => {
   });
 });
 
-describe('p2.world wireless deltas (W6 model data, test-only for W5)', () => {
+describe('p2.world wireless deltas (W6 model data: test-only for W5, the real data since the W6 catalog item)', () => {
   it('NF-AP-1832 gains lightweight-ap (idempotently) while the W4 delta list stays the nine managed switches', () => {
     expect(Object.keys(P2_WIRELESS_MODEL_DELTAS)).toEqual(['ap.nfap-lw']);
     expect(P2_MODEL_DELTAS).not.toHaveProperty('ap.nfap-lw');
@@ -237,7 +240,9 @@ describe('p2.world wireless deltas (W6 model data, test-only for W5)', () => {
     expect(once.capabilities).toEqual(['wifi-ap', 'poe-powered', 'lightweight-ap']);
     expect(expandCapabilities(once.capabilities)).toEqual(['wifi-ap', 'poe-powered', 'lightweight-ap']);
     expect(applyP2ModelDelta(once)).toEqual(once);
-    expect(NF_AP_1832_INPUT.capabilities).toEqual(['wifi-ap', 'poe-powered']);
+    // §9.2 W6 item 23: the real input carries `lightweight-ap` since the W6 catalog item, so the delta resolves to it
+    expect(NF_AP_1832_INPUT.capabilities).toEqual(['wifi-ap', 'poe-powered', 'lightweight-ap']);
+    expect(once).toEqual(NF_AP_1832_INPUT);
   });
 
   it('the lightweight AP model derives its P2 profile lines and its daemons, capwap-wtp only with a factory', () => {
@@ -259,12 +264,15 @@ describe('p2.world wireless deltas (W6 model data, test-only for W5)', () => {
     }
   });
 
-  it('NF-WLC-9800 is a test-only wireless-controller model before NF-WLC-3504 in palette order', () => {
+  it('NF-WLC-9800 is the real wireless-controller model: the helper inserts nothing and its test input is the real one', () => {
+    // §9.2 W6 item 23: the real catalog carries NF-WLC-9800 at the end of the Wireless category and shows NF-WLC-3504
+    // at the end of the Legacy category, so the helper's inputs are exactly the real inputs
     const types = p2ModelInputs().map((i) => i.type);
-    expect(types.indexOf('wlc.nfwlc9800')).toBe(types.indexOf('wlc.nfwlc3504') - 1);
-    expect(types.filter((t) => t !== 'wlc.nfwlc9800')).toEqual(ALL_MODEL_INPUTS.map((i) => i.type));
-    expect(ALL_MODEL_INPUTS.some((i) => i.type === 'wlc.nfwlc9800')).toBe(false);
-    expect(Object.isFrozen(NF_WLC_9800_TEST_INPUT)).toBe(true);
+    expect(types).toEqual(ALL_MODEL_INPUTS.map((i) => i.type));
+    expect(ALL_MODEL_INPUTS.filter((i) => i.type === 'wlc.nfwlc9800')).toEqual([NF_WLC_9800_INPUT]);
+    expect(NF_WLC_9800_TEST_INPUT).toBe(NF_WLC_9800_INPUT);
+    expect(types.indexOf('wlc.nfwlc9800')).toBe(types.indexOf('ap.nfap-ax') + 1);
+    expect(types.indexOf('wlc.nfwlc3504')).toBe(types.indexOf('bridge.nfbr4') + 1);
 
     const model = createP2Catalog(onlyP2('vlan')).get('wlc.nfwlc9800')!;
     expect(model.kind).toBe('wlc');

@@ -648,12 +648,13 @@ export function ipDefaultsFor(caps: readonly Capability[]): IpDefaults {
  * P2 (ARCHITECTURE-P2 §2.1, §0 rule 3): a name enters this list only in the change that registers its factory. The
  * W4 catalog flip inserted `vlan`, `dtp`, `etherchannel`, `stp` (after eth-switch: the link-change fan-out flushes
  * the CAM first), `nat` (after ipv4), `hsrp` [S2] and `dhcpv6-client`, `dhcpv6-server` (after udp, which they use).
- * The W6 catalog item inserts `capwap-wtp` (after wlan-client) and `capwap-ac` (last). The relative order of every
- * earlier name is unchanged.
+ * The W6 catalog item inserted `capwap-wtp` (after wlan-ap, so an EAPOL frame that ties at score 2 goes to wlan-ap)
+ * and `capwap-ac` (last: after udp, whose sockets it uses). The relative order of every earlier name is unchanged.
  */
 export const PROCESS_ORDER: readonly ProcessName[] = Object.freeze([
   'wlan-ap',
   'wlan-client',
+  'capwap-wtp',
   'cell-client',
   'hdlc',
   'eth-switch',
@@ -681,6 +682,7 @@ export const PROCESS_ORDER: readonly ProcessName[] = Object.freeze([
   'http-client',
   'http-server',
   'traceroute',
+  'capwap-ac',
 ]);
 
 export interface CapabilityProcess {
@@ -732,16 +734,17 @@ export const CAPABILITY_PROCESSES: Readonly<Record<Capability, readonly Capabili
   // ── P2 ── A daemon name enters PROCESS_ORDER, CAPABILITY_PROCESSES and the registry only in the change that
   // registers its factory (ARCHITECTURE-P2 §0 rule 3; §2.1 table). The W4 catalog flip added vlan, dtp, etherchannel,
   // stp to managed-switch (and nat, dhcpv6-client, dhcpv6-server, hsrp to routing; dhcpv6-client to host; nat to
-  // nat-gateway, above). The W6 catalog item adds capwap-wtp, udp, dhcp-client to lightweight-ap and vlan, udp,
-  // capwap-ac to wireless-controller; every P2 row is `since: 'P2'`, so a P0.5/P1-stage model never derives them.
+  // nat-gateway, above). The W6 catalog item added capwap-wtp, udp, dhcp-client to lightweight-ap (the AP's DHCP on
+  // Vlan1 and its CAPWAP sockets) and vlan, udp, capwap-ac to wireless-controller (VLAN-aware bridging, D5, and the
+  // controller's sockets); every P2 row is `since: 'P2'`, so a P0.5/P1-stage model never derives them.
   'managed-switch': [cp('vlan', 'P2'), cp('dtp', 'P2'), cp('etherchannel', 'P2'), cp('stp', 'P2')],
-  'lightweight-ap': [],
-  'wireless-controller': [],
+  'lightweight-ap': [cp('capwap-wtp', 'P2'), cp('udp', 'P2'), cp('dhcp-client', 'P2')],
+  'wireless-controller': [cp('vlan', 'P2'), cp('udp', 'P2'), cp('capwap-ac', 'P2')],
 });
 
 /**
  * @since P0.5 Capabilities that run eth-switch and own a CAM (scope of `show mac address-table` / `clear mac address-table`).
- * `wireless-controller` @since P2 (no model carries it before the W6 catalog item).
+ * `wireless-controller` @since P2 (the NF-WLC-9800, from the W6 catalog item).
  */
 export const BRIDGING_CAPABILITIES: readonly Capability[] = Object.freeze(['switching', 'wifi-ap', 'radio-bridge', 'cellular-cell', 'modem', 'cloud', 'wireless-controller']);
 

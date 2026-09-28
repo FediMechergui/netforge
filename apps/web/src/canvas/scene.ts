@@ -7,7 +7,8 @@
  * underlays: VLAN tints and trunk rails, the active spanning tree, controller
  * tunnels; ARCHITECTURE-P2 §6) → cables → air (association lines, radio beams)
  * → packets → markers → devices → labels (signal bars, dBm text, phase badges,
- * channel labels, VLAN chips, spanning-tree letters and crowns) → overlay
+ * channel labels, VLAN chips, spanning-tree letters and crowns, controller-tunnel
+ * badges) → overlay
  * (cable preview, keyboard focus ring). Devices sit above packets so their
  * ports stay clickable; the overlay underlays sit below the cables so a trunk
  * rail or the active tree reads as a track the cable runs on, never as a dash
@@ -236,7 +237,10 @@ export interface SceneLayers {
   vlan: Container;
   /** @since P2 Spanning-tree overlay underlay: the active tree (letters, crowns and crosses go to `labels`). */
   stp: Container;
-  /** @since P2 Controller-tunnel overlay underlay (W6). */
+  /**
+   * @since P2 Controller-tunnel overlay underlay (W6, `capwap.ts`): the tube from each lightweight access point to its
+   * controller and its join-progress fill (badges, padlocks and discovery arcs go to `labels`).
+   */
   capwap: Container;
   cables: Container;
   /** Association lines and point-to-point radio beams. */

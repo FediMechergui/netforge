@@ -117,7 +117,9 @@ describe('inspector tabs from gui + capabilities', () => {
       expect(order).toEqual([...order].sort((a, b) => a - b));
       expect(tabs).toContain('physical');
       expect(tabs.includes('desktop')).toBe((m.capabilities ?? []).includes('host'));
-      expect(tabs.includes('wireless')).toBe((m.gui ?? []).some((g) => ['wireless.ap', 'home-router.setup', 'radio.link', 'cell.tower', 'modem.status'].includes(g)));
+      // ARCHITECTURE-P2 §9.2 W6 item 23: the NF-WLC-9800 brings the `wlc.controller` panel, which the Wireless tab hosts
+      // (PANEL_TAB, §9.2 W0 item 1)
+      expect(tabs.includes('wireless')).toBe((m.gui ?? []).some((g) => ['wireless.ap', 'home-router.setup', 'radio.link', 'cell.tower', 'modem.status', 'wlc.controller'].includes(g)));
       // P1: server models offer the Services panel (§6 'the Services panel builds them').
       expect(tabs.includes('services')).toBe((m.gui ?? []).includes('services'));
     }

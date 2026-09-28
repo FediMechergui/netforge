@@ -153,10 +153,12 @@ export interface TopoOverlayState {
 /**
  * @since P2 [SHOULD S1] Timeline and review state. `review` and `head` mirror the worker (batches are the only write
  * path); `reviewEvents` holds at most 2000 events of the reviewed instant and never mixes with `events`.
+ * `head.lanesRevision` (W6 fix, §9.2 item 25a) is the worker's lane-index revision: it grows when an event joins a
+ * lane even while sim time stands still (a configuration change while paused), so the strip keys its queries on it.
  */
 export interface TimelineUiState {
   review: ReviewInfo | null;
-  head: { t: SimTime; at: JournalPosition } | null;
+  head: { t: SimTime; at: JournalPosition; lanesRevision: number } | null;
   lanes: LaneId[];
   seeking: boolean;
   reviewEvents: TraceEvent[];
@@ -210,6 +212,12 @@ export interface LabUiState {
   active: ScenarioMeta | null;
   status: LabStatus | null;
   browserOpen: boolean;
+  /**
+   * @since P2 (W6 fix, §9.2 item 22c; optional by meaning: absent = no check running) True while a lab check runs,
+   * whichever control started it — the Labs panel's button or Simulation → "Check the lab now" — so the panel, the
+   * status bar and the menu all show the same busy state and a long check never looks like a hang.
+   */
+  checking?: boolean;
 }
 
 /** @since P0.5 A floating non-modal GUI window (Desktop apps, pop-out settings panels). */

@@ -3,22 +3,27 @@
  * `subinterfaces`, the managed-switch Vlan and Port-channel families, `stpDefaultMode`, `profileConfig` and the two
  * new egress owners. They are made at build stage P2 ONLY, so every model and fixture defined at P0.5 or P1 is
  * byte-for-byte what it was (§9.1: `device.catalog.define.test.ts:136-152` stays green). No model data changes here:
- * the capabilities that switch the derivations on reach the catalog in W4 (wired) and W6 (wireless).
+ * the capabilities that switch the derivations on reach the catalog in W4 (wired) and W6 (wireless). The W6 catalog
+ * item adds the wireless controller's derivations (its Vlan and tunnel families, its GUI-appliance CLI rule).
  */
 import { describe, expect, it } from 'vitest';
 import type { DeviceModel } from '../src/contracts/device.js';
 import { SPEED_1G } from '../src/contracts/port.js';
 import {
+  CAPWAP_TUNNEL_FAMILY,
+  CONTROLLER_VLAN_FAMILY,
   DEFAULT_STP_MODE,
   MANAGED_SWITCH_VLAN_FAMILY,
   PORT_CHANNEL_FAMILY,
   ROLE_EGRESS_OWNER,
   SUBINTERFACE_MAX,
   defineModel,
+  deriveCliSpec,
   derivePortOwners,
   deriveProfileConfig,
   deriveStpDefaultMode,
   deriveSubinterfaces,
+  withControllerFamilies,
   withManagedSwitchFamilies,
   L3_SWITCH_VLAN_FAMILY,
   LOOPBACK_FAMILY,
@@ -26,6 +31,8 @@ import {
   type ModelInput,
 } from '../src/device/catalog/define.js';
 import { ALL_MODEL_INPUTS, CATALOG_STAGE } from '../src/device/catalog/index.js';
+import { formatCatalogIssues, validateCatalog } from '../src/device/catalog/validate.js';
+import { NF_WLC_9800_INPUT } from '../src/device/catalog/wireless.js';
 import { NF_2911_INPUT, NF_C2960_INPUT, ethInput } from './device.catalog.p0-inputs.js';
 
 /** The L2 access switch as W4 will declare it (capabilities only; the data edit belongs to W4). */
@@ -69,23 +76,31 @@ describe('the P2 derivations are made at stage P2 only', () => {
   });
 
   it('the live catalog (stage P2 since the W4 flip) carries the P2 members exactly where the derivations put them', () => {
-    // W4 catalog: the flip made the stage 'P2'; a model gains a P2 member only through `routing` (subinterfaces) or
-    // `managed-switch` (stpDefaultMode, profileConfig), and no other model gets one.
+    // W4 catalog: the flip made the stage 'P2'; a model gains a P2 member only through `routing` (subinterfaces),
+    // `managed-switch` (stpDefaultMode, profileConfig) or — since the W6 catalog item, §9.2 item 23 — `lightweight-ap`
+    // (profileConfig: the NF-AP-1832), and no other model gets one.
     expect(CATALOG_STAGE).toBe('P2');
     for (const input of ALL_MODEL_INPUTS) {
       const model = defineModel(input, CATALOG_STAGE);
       const caps = model.capabilities ?? [];
       const routing = caps.includes('routing');
       const managed = caps.includes('managed-switch');
+      const lightweight = caps.includes('lightweight-ap');
       const mode = managed ? (input.stpDefaultMode ?? DEFAULT_STP_MODE) : undefined;
       expect([model.type, model.subinterfaces, model.profileConfig, model.stpDefaultMode]).toEqual([
         model.type,
         routing ? { roles: ['routed'], max: SUBINTERFACE_MAX } : undefined,
-        managed ? { P2: [`spanning-tree mode ${mode}`, 'spanning-tree extend system-id', ...(caps.includes('layer3-switch') ? ['no ip routing'] : [])] } : undefined,
+        managed
+          ? { P2: [`spanning-tree mode ${mode}`, 'spanning-tree extend system-id', ...(caps.includes('layer3-switch') ? ['no ip routing'] : [])] }
+          : lightweight
+            ? { P2: ['capwap enable', 'interface Vlan1', ' ip address dhcp', ' no shutdown'] }
+            : undefined,
         mode,
       ]);
-      if (!routing && !managed) for (const k of ['subinterfaces', 'profileConfig', 'stpDefaultMode']) expect(Object.keys(model), model.type).not.toContain(k);
+      if (!routing && !managed && !lightweight) for (const k of ['subinterfaces', 'profileConfig', 'stpDefaultMode']) expect(Object.keys(model), model.type).not.toContain(k);
     }
+    // exactly one model of the live catalog is a lightweight access point
+    expect(ALL_MODEL_INPUTS.filter((i) => defineModel(i, CATALOG_STAGE).capabilities?.includes('lightweight-ap')).map((i) => i.type)).toEqual(['ap.nfap-lw']);
   });
 });
 
@@ -176,5 +191,40 @@ describe('egress owners of the new roles (D10, D17)', () => {
     });
     // a daemon list without etherchannel derives no owner for the family
     expect(derivePortOwners(sw.ports, sw.virtualFamilies ?? [], ['eth-switch', 'vlan', 'dtp', 'stp'])).toEqual({ svi: 'eth-switch' });
+  });
+});
+
+describe('the wireless controller appliance (D17, §7 W6 catalog)', () => {
+  it('a wireless-controller model derives the controller Vlan family and the tunnel family with Capwap0, at stage P2 only', () => {
+    const wlc = defineModel(NF_WLC_9800_INPUT, 'P2');
+    expect(wlc.virtualFamilies).toEqual([CONTROLLER_VLAN_FAMILY, CAPWAP_TUNNEL_FAMILY]);
+    expect(CONTROLLER_VLAN_FAMILY).toEqual({ family: 'Vlan', short: 'Vl', role: 'svi', min: 1, max: 4094, defaultAdminUp: false });
+    expect(CAPWAP_TUNNEL_FAMILY).toEqual({ family: 'Capwap', short: 'Ca', role: 'wlan-tunnel', min: 0, max: 0, defaultAdminUp: true, auto: [0] });
+    expect(wlc.portOwners).toEqual({ svi: 'eth-switch', 'wlan-tunnel': 'capwap-ac' });
+    expect(formatCatalogIssues(validateCatalog([wlc], [], { stage: 'P2' }))).toBe('');
+    // at P0.5 and P1 the capability derives none of its P2 daemons, so the model has no tunnel to own (it still validates)
+    for (const stage of ['P0.5', 'P1'] as const) {
+      const early = defineModel(NF_WLC_9800_INPUT, stage);
+      expect([stage, early.virtualFamilies, early.portOwners]).toEqual([stage, [], {}]);
+      expect(early.processes).not.toContain('capwap-ac');
+      expect(early.gui).toEqual(['physical']);
+      expect(formatCatalogIssues(validateCatalog([early], [], { stage }))).toBe('');
+    }
+  });
+
+  it('withControllerFamilies is idempotent, keeps a Vlan family the input names and touches no other model', () => {
+    const once = withControllerFamilies(['switching', 'wireless-controller'], []);
+    expect(once).toEqual([CONTROLLER_VLAN_FAMILY, CAPWAP_TUNNEL_FAMILY]);
+    expect(withControllerFamilies(['switching', 'wireless-controller'], once)).toEqual(once);
+    expect(withControllerFamilies(['switching', 'wireless-controller'], [MANAGED_SWITCH_VLAN_FAMILY])).toEqual([MANAGED_SWITCH_VLAN_FAMILY, CAPWAP_TUNNEL_FAMILY]);
+    expect(withControllerFamilies(['switching'], [MANAGEMENT_VLAN_FAMILY])).toEqual([MANAGEMENT_VLAN_FAMILY]);
+    expect(familiesOf(defineModel(NF_C2960_INPUT, 'P2'))).toEqual([]);
+  });
+
+  it('a wireless controller is a GUI appliance at every stage: no shell, the NFOS grammar, the controller panel from P2', () => {
+    expect(deriveCliSpec(['switching', 'wireless-controller'])).toEqual({ shell: 'none', grammar: 'nfos', initialPrivilege: 1, consoleVia: [] });
+    expect(defineModel(NF_WLC_9800_INPUT, 'P2').gui).toEqual(['physical', 'wlc.controller']);
+    // the rule is the controller's only: a plain switch keeps its console
+    expect(deriveCliSpec(['switching'])).toEqual({ shell: 'nfos', grammar: 'nfos', initialPrivilege: 1, consoleVia: ['console', 'vty'] });
   });
 });

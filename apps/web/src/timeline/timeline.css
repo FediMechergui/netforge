@@ -1,0 +1,399 @@
+/*
+ * Timeline strip [SHOULD S1] (ARCHITECTURE-P2 §6): its grid row, the review look, the slider and the lanes.
+ * Colour is never the only channel: the badge and banner say "Past"/"Live" in words, the handle changes shape,
+ * lane bars carry their lane's glyph (row label, and on wide bars) and show intensity by height. No dash patterns.
+ */
+
+/* ── the grid row (App.tsx adds `with-timeline`; the base grid lives in styles.css) ─────────────────── */
+
+/* the row sizes to the strip, but never below its header and slider: a short window squeezes the lanes, not the way
+   back to now */
+.app.with-timeline {
+  --timeline-min-h: 64px;
+  grid-template-rows: var(--topbar-h) minmax(120px, 1fr) minmax(var(--timeline-min-h), auto) var(--dock-h, 260px) var(--statusbar-h);
+  grid-template-areas:
+    'top top top'
+    'palette canvas inspector'
+    'timeline timeline timeline'
+    'dock dock dock'
+    'status status status';
+}
+.app.with-timeline.dock-collapsed {
+  grid-template-rows: var(--topbar-h) minmax(120px, 1fr) minmax(var(--timeline-min-h), auto) 30px var(--statusbar-h);
+}
+.app-timeline {
+  grid-area: timeline;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+}
+
+/* the canvas while the past is shown: a frame and the words, over the scene, never catching the pointer */
+.app[data-review='true'] .app-canvas::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 3px solid var(--warn);
+  pointer-events: none;
+  z-index: 20;
+}
+.app[data-review='true'] .app-canvas::after {
+  content: 'Viewing the past';
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 2px 10px;
+  border-radius: 10px;
+  background: var(--warn);
+  color: #1a1200;
+  font-size: 12px;
+  font-weight: 600;
+  pointer-events: none;
+  z-index: 20;
+}
+
+/* ── the strip ───────────────────────────────────────────────────────────────────────────────────────── */
+
+.tl {
+  --tl-label-w: 180px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 0 6px;
+  font-size: 12px;
+}
+.tl.tl-review {
+  background: linear-gradient(to bottom, rgba(230, 159, 0, 0.1), transparent 60px);
+  box-shadow: inset 0 3px 0 var(--warn);
+}
+
+.tl-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.tl-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  min-height: 26px;
+}
+.tl-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+}
+.tl-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 8px;
+  border-radius: 9px;
+  border: 1px solid currentColor;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.tl-badge.is-live {
+  color: var(--ok);
+}
+.tl-badge.is-past {
+  color: var(--warn);
+  background: rgba(230, 159, 0, 0.14);
+}
+.tl-readout {
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tl-spacer {
+  flex: 1;
+}
+.tl-small {
+  height: 22px;
+  font-size: 12px;
+}
+.tl-small.btn-icon {
+  width: 22px;
+}
+
+.tl-banner {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 2px 12px;
+  padding: 4px 8px;
+  border: 1px solid var(--warn);
+  border-radius: var(--radius);
+  background: rgba(230, 159, 0, 0.12);
+}
+.tl-banner-title {
+  color: var(--text);
+}
+.tl-banner-hint {
+  color: var(--text-dim);
+}
+
+.tl-note {
+  margin: 2px 12px;
+  color: var(--text-dim);
+}
+.tl-disabled-note {
+  color: var(--warn);
+}
+.tl-empty {
+  margin: 2px 12px 2px calc(var(--tl-label-w) + 12px);
+  color: var(--text-faint);
+}
+
+/* rows share one two-column layout so the slider and the lane bars line up */
+.tl-row {
+  display: grid;
+  grid-template-columns: var(--tl-label-w) minmax(0, 1fr);
+  align-items: stretch;
+}
+.tl-row-label {
+  padding: 0 8px 0 12px;
+  align-self: center;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+/* ── the slider ──────────────────────────────────────────────────────────────────────────────────────── */
+
+.tl-track {
+  position: relative;
+  height: 30px;
+  margin-right: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-2);
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+}
+.tl-track:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.tl-track[aria-disabled='true'] {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.tl-played {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  background: var(--sel);
+}
+.tl-ahead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: rgba(230, 159, 0, 0.16);
+}
+.tl-tick {
+  position: absolute;
+  bottom: 0;
+  height: 6px;
+  border-left: 1px solid var(--border-strong);
+}
+.tl-tick-label {
+  position: absolute;
+  bottom: 7px;
+  left: 0;
+  transform: translateX(-50%);
+  color: var(--text-faint);
+  font-size: 10px;
+  font-family: var(--mono);
+  white-space: nowrap;
+}
+.tl-now {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-left: 2px solid var(--ok);
+}
+.tl-now-label {
+  position: absolute;
+  top: 1px;
+  right: 3px;
+  color: var(--ok);
+  font-size: 10px;
+  font-weight: 600;
+}
+.tl-handle {
+  position: absolute;
+  top: 4px;
+  width: 10px;
+  height: 20px;
+  margin-left: -5px;
+  border: 2px solid var(--bg);
+  border-radius: 5px;
+  background: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.tl-handle.is-past {
+  top: 8px;
+  width: 12px;
+  height: 12px;
+  margin-left: -6px;
+  border-radius: 1px;
+  background: var(--warn);
+  box-shadow: 0 0 0 1px var(--warn);
+  transform: rotate(45deg);
+}
+
+/* ── the lanes ───────────────────────────────────────────────────────────────────────────────────────── */
+
+.tl-lanes-wrap {
+  max-height: 116px;
+  overflow-y: auto;
+}
+.tl-lanes {
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.tl-lane {
+  height: 16px;
+}
+.tl-lane-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 0 8px 0 12px;
+  border: 0;
+  background: none;
+  color: var(--text-dim);
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.tl-lane-name:hover,
+.tl-lane-name.is-open {
+  color: var(--text);
+}
+.tl-lane-name:focus-visible,
+.tl-mark:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.tl-glyph {
+  min-width: 18px;
+  color: var(--lane, var(--text));
+  font-family: var(--mono);
+  font-weight: 700;
+}
+.tl-lane-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tl-count {
+  margin-left: auto;
+  font-family: var(--mono);
+  color: var(--text-faint);
+}
+.tl-cells {
+  position: relative;
+  margin-right: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.tl-cell {
+  position: absolute;
+  bottom: 0;
+  min-width: 2px;
+  padding: 0;
+  border: 0;
+  background: var(--lane, var(--accent));
+  color: var(--bg);
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  overflow: hidden;
+  cursor: pointer;
+}
+.tl-cell:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+.tl-cell.l1 {
+  height: 25%;
+}
+.tl-cell.l2 {
+  height: 50%;
+}
+.tl-cell.l3 {
+  height: 75%;
+}
+.tl-cell.l4 {
+  height: 100%;
+}
+.tl-quiet {
+  margin: 2px 0 0 12px;
+}
+
+.tl-marks {
+  margin: 4px 12px 0;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--lane, var(--border-strong));
+  border-radius: var(--radius-sm);
+  background: var(--bg-2);
+}
+.tl-marks-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+.tl-marks-head .btn {
+  margin-left: auto;
+}
+.tl-marks-list {
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.tl-mark {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+  padding: 1px 4px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.tl-mark:hover {
+  background: var(--panel-2);
+}
+.tl-mark:disabled {
+  cursor: not-allowed;
+  color: var(--text-dim);
+}
+.tl-mark-time {
+  color: var(--text-dim);
+}

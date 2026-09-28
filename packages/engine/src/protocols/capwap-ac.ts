@@ -21,19 +21,26 @@
  * 0 for an open WLAN) — never the passphrase — and the radio selection in the header `radioId` (0 all, 1 2.4 GHz,
  * 2 5 GHz, 3 6 GHz); a removed or shut WLAN is pushed as `<id>::open:0:0` (an empty SSID = remove, see capwap-wtp).
  *
- * Per access point (the AP's session is keyed by its address; its `capwap-aps` row by its MAC, the Ethernet source of
- * its Join Request; every change is one `ctx.transition('capwap', …)` of machine 'capwap-ac', subject
- * `access point <mac>`), in RFC 5415 order:
+ * Per access point. An AP is known by its IDENTITY, the WTP MAC (`wtpMac`, NF vendor element 3 — the role RFC 5415's
+ * WTP Board Data element plays) its Discovery and Join Requests carry: its session and its `capwap-aps` row are keyed
+ * by it, never by the Ethernet source of a request (for an AP behind a router that is the router's MAC, shared by
+ * every AP behind it; §9.2 item 22b). The later control messages carry no identity: they find their session by the
+ * endpoint of its control channel (the AP's address and port), which a Join Request claims for its session. Every
+ * change is one `ctx.transition('capwap', …)` of machine 'capwap-ac', subject `access point <wtpMac>`, in RFC 5415
+ * order:
  *   Discovery Request (1) → Discovery Response (2) {acName, result 0} (stateless, not protected);
  *   Join Request (3) → the simulated DTLS step (idle → dtls, cause 'secure session established (simulated)') → join →
- *     Join Response (4, result 0); from here every message carries `meta.protected`; `ap-age:<mac>` armed;
+ *     Join Response (4, result 0); from here every message carries `meta.protected`; `ap-age:<wtpMac>` armed. A Join
+ *     Request with no WTP MAC is refused (Join Response, result 1). A join under a known identity replaces that AP's
+ *     session (`it joined again`, or `… from <address>` when it moved); a join from the endpoint of ANOTHER AP's
+ *     session replaces that session (the address now belongs to the newcomer);
  *   Configuration Status Request (5) → configure, Response (6);
  *   Change State Event Request (11) → data-check, Response (12) → run; then one IEEE 802.11 WLAN Configuration
  *     Request (3398913) per pushed WLAN (answered by 3398914), and again for every later WLAN change;
  *   WTP Event Request (9): each station report writes (`add`: ssid, VLAN and interface NAME from the WLAN, state
  *     'associated') or deletes (`del`, reason 'cleared', only when the row still names this AP) the `wlan-clients` row —
  *     this daemon is its ONLY writer — then Response (10); the AP row's `clients` follows;
- *   Echo Request (13) → Echo Response (14, `meta.background`) and `ap-age:<mac>` re-armed (90 s, PERIODIC). When it
+ *   Echo Request (13) → Echo Response (14, `meta.background`) and `ap-age:<wtpMac>` re-armed (90 s, PERIODIC). When it
  *     fires the AP is gone: its station rows and its row are deleted (an AP leaving run deletes its stations' rows).
  * A repeated request (the WTP re-sent it) is answered again without a new transition.
  *
@@ -65,14 +72,11 @@
  *     tunnelledDown } }   (never a passphrase or a key tag)
  *
  * ponytail: association stays at the AP (local MAC, deviation (14)); no DHCP proxy (deviation (15)); no AP groups,
- * no FlexConnect, no roaming hand-off; an AP joining through a router is recorded under the router-facing MAC. Two
- * APs behind one router therefore share that MAC: while one of them is joined, the other one's Discovery and Join
- * Requests are answered with result 1 and a debug line naming the conflict, so the joined AP stays up instead of the
- * two evicting each other for ever (W5 fix). The same AP re-joining from a new address (the same device, told by the
- * request's `PduMeta.origin`) still replaces its old session. Giving each AP its own identity needs an AP MAC element
- * in the requests (a contract change left to the architect).
+ * no FlexConnect, no roaming hand-off. APs behind one router each join under their own WTP MAC (W6, §9.2 item 22b; the
+ * W5 interim refusal of a second AP behind the same Ethernet source is gone). The data channel finds its AP by
+ * address (the WTP sends no data keep-alives, so no data port is learnt).
  */
-import { MAC_BROADCAST, broadcastOf, isIpv4, isIpv4Broadcast, isMulticastMac, type Ipv4Address, type MacAddress } from '../contracts/addr.js';
+import { MAC_ZERO, broadcastOf, isIpv4, isIpv4Broadcast, isMulticastMac, type Ipv4Address, type MacAddress } from '../contracts/addr.js';
 import type { ConfigAst, ConfigDelta } from '../contracts/config.js';
 import type { DeviceId, PduId, PortId } from '../contracts/ids.js';
 import { CAPWAP_MSG, ETHERTYPE_VLAN, IPPROTO_UDP, UDP_PORT_CAPWAP_CONTROL, UDP_PORT_CAPWAP_DATA, type FieldValue, type LayerSpec, type LayerView, type Pdu } from '../contracts/pdu.js';
@@ -267,6 +271,7 @@ export function capwapAcManagementOf(ctx: Pick<ProcessCtx, 'config' | 'ownAddres
 /** One joined (or joining) access point. */
 interface Session {
   readonly apIp: Ipv4Address;
+  /** The AP's identity: the WTP MAC of its Join Request (the key of the session and of its `capwap-aps` row). */
   readonly apMac: MacAddress;
   /** The AP's device (the origin of its Join Request): the fan-out order of group frames (§4.5). */
   readonly deviceId: DeviceId;
@@ -287,8 +292,8 @@ export function createCapwapAc(): Process {
   const ring: DebugEvent[] = [];
   let active = false;
   let mgmt: CapwapAcManagement | undefined;
-  /** Sessions by AP address (insertion order; every list is sorted where order matters). */
-  const sessions = new Map<Ipv4Address, Session>();
+  /** Sessions by AP identity, the WTP MAC (insertion order; every list is sorted where order matters). */
+  const sessions = new Map<MacAddress, Session>();
   /** Radio id the AP last used per BSSID (uplink frames), reused on the downlink. */
   const radioByBssid = new Map<MacAddress, number>();
   /** The WLAN list as last read (StateView; no passphrase). */
@@ -352,25 +357,22 @@ export function createCapwapAc(): Process {
     if (row.clients !== s.clients) t.set({ ...row, clients: s.clients, updatedAt: ctx.now });
   }
 
-  function sessionByMac(apMac: MacAddress): Session | undefined {
-    for (const s of sessions.values()) if (s.apMac === apMac) return s;
+  /** The session whose control channel is this endpoint (an AP's address and control port), if any. */
+  function sessionAt(apIp: Ipv4Address, port: number): Session | undefined {
+    for (const s of sessions.values()) if (s.apIp === apIp && s.port === port) return s;
     return undefined;
   }
 
-  /** The identity a request's AP is recorded under: the Ethernet source of the frame (file header). */
-  function sourceMacOf(pdu: Pdu): MacAddress {
-    const eth = pdu.layers[0];
-    return eth !== undefined && eth.proto === 'ethernet' && typeof eth.fields.src === 'string' ? eth.fields.src : MAC_BROADCAST;
+  /** A session in run at this address: the data channel's AP (the WTP learns no data port, file header). */
+  function runningAt(apIp: Ipv4Address): Session | undefined {
+    for (const s of sessions.values()) if (s.apIp === apIp && s.state === 'run') return s;
+    return undefined;
   }
 
-  /**
-   * The joined session of ANOTHER access point that the request's identity already stands for: the same MAC, another
-   * address and another device — two APs behind one router (file header). Undefined when the identity is free, or
-   * when it is this AP's own older session (the same device at a new address), which the request replaces.
-   */
-  function identityTakenBy(pdu: Pdu, from: Ipv4Address): Session | undefined {
-    const s = sessionByMac(sourceMacOf(pdu));
-    return s !== undefined && s.apIp !== from && s.deviceId !== pdu.meta.origin ? s : undefined;
+  /** The identity a request names: its WTP MAC element (§9.2 item 22b), when it is a unicast, non-zero MAC. */
+  function wtpMacOf(cap: LayerView): MacAddress | undefined {
+    const mac = cap.fields.wtpMac;
+    return typeof mac === 'string' && mac !== MAC_ZERO && !isMulticastMac(mac) ? mac : undefined;
   }
 
   function openSockets(): Action[] {
@@ -416,7 +418,7 @@ export function createCapwapAc(): Process {
     for (const row of clients?.find((r) => r.ap === s.apMac) ?? []) clients?.delete(row.key, 'cleared');
     if (apTable(ctx)?.has(s.apMac) === true) apTable(ctx)?.delete(s.apMac, 'cleared');
     transition(ctx, s, 'idle', cause);
-    sessions.delete(s.apIp);
+    sessions.delete(s.apMac);
     debug(ctx, `access point ${s.name} (${s.apIp}) left: ${cause}`, { ap: s.apMac, address: s.apIp });
     return [{ type: 'cancelTimer', key: `${AGE_PREFIX}${s.apMac}` }];
   }
@@ -460,7 +462,7 @@ export function createCapwapAc(): Process {
       }
     }
     for (const mac of touched) {
-      const s = sessionByMac(mac);
+      const s = sessions.get(mac);
       if (s !== undefined) touchApRow(ctx, s);
     }
     const out: Action[] = [];
@@ -516,17 +518,15 @@ export function createCapwapAc(): Process {
     const rseq = typeof cap.fields.seq === 'number' ? cap.fields.seq : 0;
     const at = { apIp: ev.from, port: ev.fromPort };
     if (type === CAPWAP_MSG.discoveryReq) {
+      // stateless (RFC 5415): every AP is answered; the WTP MAC, when named, is only reported
       const name = typeof cap.fields.wtpName === 'string' ? cap.fields.wtpName : ev.from;
-      const taken = identityTakenBy(pdu, ev.from);
-      if (taken !== undefined) {
-        debug(ctx, `discovery request from ${name} (${ev.from}) refused: ${taken.apMac} already identifies ${taken.name} (${taken.apIp})`, { address: ev.from, ap: taken.apMac });
-        return reply(ctx, at, CAPWAP_MSG.discoveryResp, rseq, { acName: capwapText(ctx.hostname), resultCode: CAPWAP_RESULT_FAILURE }, { protect: false, triggeredBy: pdu.id });
-      }
-      debug(ctx, `discovery request from ${name} (${ev.from})`, { address: ev.from });
+      const mac = wtpMacOf(cap);
+      if (mac === undefined) debug(ctx, `discovery request from ${name} (${ev.from})`, { address: ev.from });
+      else debug(ctx, `discovery request from ${name} (${ev.from}, ${mac})`, { address: ev.from, ap: mac });
       return reply(ctx, at, CAPWAP_MSG.discoveryResp, rseq, { acName: capwapText(ctx.hostname), resultCode: CAPWAP_RESULT_SUCCESS }, { protect: false, triggeredBy: pdu.id });
     }
     if (type === CAPWAP_MSG.joinReq) return onJoin(ctx, ev, cap, rseq);
-    const s = sessions.get(ev.from);
+    const s = sessionAt(ev.from, ev.fromPort);
     if (s === undefined) {
       debug(ctx, `ignoring message ${type} from ${ev.from}: that access point has not joined`, { address: ev.from, type });
       return [];
@@ -582,27 +582,32 @@ export function createCapwapAc(): Process {
     return l3 === undefined ? undefined : broadcastOf(l3.address, l3.prefixLen);
   }
 
-  /** Join Request: a new session (the simulated DTLS step first), or the same answer again for a repeated request. */
+  /**
+   * Join Request: a new session keyed by the request's WTP MAC (the simulated DTLS step first), or the same answer
+   * again for a repeated request. A request that names no WTP MAC is refused (result 1): the controller never falls
+   * back to the Ethernet source, which is a router's MAC for an AP behind one (file header).
+   */
   function onJoin(ctx: ProcessCtx, ev: Extract<ProcessEvent, { kind: 'sock.datagram' }>, cap: LayerView, rseq: number): Action[] {
     const pdu = ev.pdu;
-    const out: Action[] = [];
-    const existing = sessions.get(ev.from);
-    if (existing !== undefined && existing.state === 'join') {
-      return reply(ctx, existing, CAPWAP_MSG.joinResp, rseq, { resultCode: CAPWAP_RESULT_SUCCESS, acName: capwapText(ctx.hostname) }, { protect: true, triggeredBy: pdu.id });
-    }
-    const apMac = sourceMacOf(pdu);
     const name = typeof cap.fields.wtpName === 'string' && cap.fields.wtpName !== '' ? cap.fields.wtpName : ev.from;
-    const taken = identityTakenBy(pdu, ev.from);
-    if (taken !== undefined) {
-      // another AP is joined under this identity: refuse the newcomer rather than evict the joined one (file header)
-      debug(ctx, `join request from ${name} (${ev.from}) refused: ${apMac} already identifies ${taken.name} (${taken.apIp})`, { address: ev.from, ap: apMac });
+    const apMac = wtpMacOf(cap);
+    if (apMac === undefined) {
+      debug(ctx, `join request from ${name} (${ev.from}) refused: it names no access point MAC`, { address: ev.from });
       return reply(ctx, { apIp: ev.from, port: ev.fromPort }, CAPWAP_MSG.joinResp, rseq, { resultCode: CAPWAP_RESULT_FAILURE, acName: capwapText(ctx.hostname) }, { protect: true, triggeredBy: pdu.id });
     }
-    if (existing !== undefined) out.push(...dropSession(ctx, existing, 'it joined again'));
-    const sameMac = sessionByMac(apMac);
-    if (sameMac !== undefined) out.push(...dropSession(ctx, sameMac, `it joined again from ${ev.from}`));
+    const existing = sessions.get(apMac);
+    if (existing !== undefined && existing.state === 'join' && existing.apIp === ev.from && existing.port === ev.fromPort) {
+      // the WTP re-sent its Join Request: the same answer again, no new transition
+      return reply(ctx, existing, CAPWAP_MSG.joinResp, rseq, { resultCode: CAPWAP_RESULT_SUCCESS, acName: capwapText(ctx.hostname) }, { protect: true, triggeredBy: pdu.id });
+    }
+    const out: Action[] = [];
+    // the same AP joining again (after a reboot, or from a new address) replaces its own session
+    if (existing !== undefined) out.push(...dropSession(ctx, existing, existing.apIp === ev.from ? 'it joined again' : `it joined again from ${ev.from}`));
+    // ANOTHER AP's session at this endpoint ends: the address now belongs to the newcomer
+    const displaced = sessionAt(ev.from, ev.fromPort);
+    if (displaced !== undefined) out.push(...dropSession(ctx, displaced, `access point ${apMac} joined from ${ev.from}`));
     const s: Session = { apIp: ev.from, apMac, deviceId: pdu.meta.origin, name, port: ev.fromPort, state: 'idle', clients: 0, seq: 0, pushed: new Map() };
-    sessions.set(s.apIp, s);
+    sessions.set(apMac, s);
     transition(ctx, s, 'dtls', CAPWAP_DTLS_CAUSE, pdu.id);
     writeApRow(ctx, s);
     transition(ctx, s, 'join', 'join request accepted');
@@ -635,7 +640,7 @@ export function createCapwapAc(): Process {
     debug(ctx, `station ${r.station} joined "${w.ssid}" on ${s.name} (VLAN ${w.vlan})`, { station: r.station, ap: s.apMac, vlan: w.vlan });
     touchApRow(ctx, s);
     if (before !== undefined && before.ap !== s.apMac) {
-      const old = sessionByMac(before.ap);
+      const old = sessions.get(before.ap);
       if (old !== undefined) touchApRow(ctx, old);
     }
   }
@@ -664,8 +669,7 @@ export function createCapwapAc(): Process {
     const cap = i < 0 ? undefined : pdu.layers[i];
     if (cap === undefined) return [{ type: 'drop', pdu, reason: 'other', detail: 'not a CAPWAP data message', port: ev.iface }];
     if (cap.fields.keepAlive === true) return [{ type: 'consume', pdu }];
-    const s = sessions.get(ev.from);
-    if (!accepted(ctx, ev, false) || s === undefined || s.state !== 'run') {
+    if (!accepted(ctx, ev, false) || runningAt(ev.from) === undefined) {
       return [{ type: 'drop', pdu, reason: 'other', detail: `no access point has joined from ${ev.from}`, port: ev.iface }];
     }
     const d = pdu.layers[i + 1];
@@ -709,7 +713,7 @@ export function createCapwapAc(): Process {
       const candidates: { s: Session; bssid: MacAddress }[] = [];
       for (const r of rows) {
         if (r.vlan !== vlan || r.station === src) continue;
-        const s = sessionByMac(r.ap);
+        const s = sessions.get(r.ap);
         if (s === undefined || s.state !== 'run' || seen.has(`${r.ap}|${r.bssid}`)) continue;
         seen.add(`${r.ap}|${r.bssid}`);
         candidates.push({ s, bssid: r.bssid });
@@ -721,7 +725,7 @@ export function createCapwapAc(): Process {
       // the station's row IN THE FRAME'S VLAN: a frame of another VLAN (flooded to Capwap0, which carries every VLAN)
       // never reaches a station of this one
       const row = rows.find((r) => r.station === dst);
-      const s = row === undefined || row.vlan !== vlan ? undefined : sessionByMac(row.ap);
+      const s = row === undefined || row.vlan !== vlan ? undefined : sessions.get(row.ap);
       if (row === undefined || s === undefined || s.state !== 'run') return [{ type: 'drop', pdu, reason: 'other', detail: `no access point serves ${dst}`, port }];
       targets.push({ s, bssid: row.bssid });
     }
@@ -774,7 +778,7 @@ export function createCapwapAc(): Process {
 
     onTimer(ctx: ProcessCtx, key: string): Action[] {
       if (!key.startsWith(AGE_PREFIX)) return [];
-      const s = sessionByMac(key.slice(AGE_PREFIX.length));
+      const s = sessions.get(key.slice(AGE_PREFIX.length));
       if (s === undefined) return [];
       return dropSession(ctx, s, 'no echo request for 90 s');
     },

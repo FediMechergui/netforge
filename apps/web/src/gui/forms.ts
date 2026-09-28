@@ -16,8 +16,14 @@
  * the property names of the form interfaces; nested forms use dotted keys (`radios.0.ssid`). Passphrases and
  * peer keys never appear in snapshots: forms carry `hasPassphrase` / `hasPeerKey` from the config line's
  * presence, and an empty input means "keep the stored secret". All wording is original (§1.6).
+ *
+ * P2 (ARCHITECTURE-P2 §3.12, §5.3, §5.5; W6 web-inspector): the wireless controller panel's two forms — a controller
+ * interface (`wlc-interface <name>`: VLAN, address, mask, gateway, DHCP server) and a WLAN (`wlan <id> <profile>
+ * <ssid>`: security, passphrase, interface, radios, offered or not) — with their readers (the `wlc-interface` and
+ * `wlan` sections of the rendered running config) and their checks, which mirror the controller grammar's limits
+ * (`WLC_ARG_LIMITS`, read at call time: ARCHITECTURE-P2 §0 rule 12).
  */
-import { CHANNELS, isIpv4Multicast, maskToPrefixLen, parseIpv4, prefixLenToMask, prefixLenToMaskU32, walkConfigText } from '@netforge/engine';
+import { CHANNELS, WLC_ARG_LIMITS, isIpv4Multicast, maskToPrefixLen, parseIpv4, prefixLenToMask, prefixLenToMaskU32, walkConfigText } from '@netforge/engine';
 import type { CliGrammar, ConfigureResult, DeviceSnapshot, PortId, PortSnapshot, RadioPortSpec, RfBand, WifiSecurity } from '@netforge/engine';
 import type { CommandPlan } from './commands.js';
 
@@ -558,6 +564,281 @@ export function validateHomeRouterForm(form: HomeRouterForm, previous?: HomeRout
     const before = previous?.radios.find((r) => r.port === radio.port);
     for (const [k, v] of Object.entries(validateWirelessApForm(radio, before, specs[radio.port], `radios.${i}.`))) put(errors, k, v);
   });
+  return errors;
+}
+
+// ── P2: wireless controller interfaces and WLANs (ARCHITECTURE-P2 §3.12, §5.3, §5.5) ────────────────────────────
+
+/**
+ * @since P2 One controller interface (`wlc-interface <name>`): the VLAN, address and gateway through which the WLANs
+ * that name it reach the wired network, and the DHCP server recorded for their clients. Every value is the text of its
+ * input; an empty address, gateway or DHCP server means "none".
+ */
+export interface WlcInterfaceForm {
+  name: string;
+  vlan: string;
+  address: string;
+  /** Dotted mask, `/24` or `24`. */
+  mask: string;
+  gateway: string;
+  dhcpServer: string;
+}
+
+/** @since P2 The radios a WLAN is offered on (`radio 2.4|5|all`; no line = every radio). */
+export type WlanRadio = 'all' | '2.4' | '5';
+
+/**
+ * @since P2 One WLAN (`wlan <id> <profile> <ssid>`). The number, profile name and network name are the WLAN's identity:
+ * changing any of them replaces the WLAN (`sameWlanIdentity`). The passphrase follows the secret rule of the other
+ * wireless forms: it never comes back from the snapshot (`hasPassphrase` says one is stored) and an empty input keeps
+ * the stored one.
+ */
+export interface WlanForm {
+  id: string;
+  profile: string;
+  ssid: string;
+  security: WifiSecurity;
+  /** Empty = keep the stored passphrase. */
+  passphrase: string;
+  /** A passphrase line is configured. */
+  hasPassphrase: boolean;
+  /** Controller interface name (`management` when the WLAN names none). */
+  iface: string;
+  radio: WlanRadio;
+  /** Offered to clients (`no shutdown`) when true. */
+  enabled: boolean;
+}
+
+/** @since P2 Radio choices of a WLAN in display order. */
+export const WLAN_RADIOS: readonly WlanRadio[] = Object.freeze(['all', '2.4', '5']);
+
+/** @since P2 Display names of the WLAN radio choices. */
+export const WLAN_RADIO_LABELS: Readonly<Record<WlanRadio, string>> = Object.freeze({
+  all: 'Every radio',
+  '2.4': '2.4 GHz only',
+  '5': '5 GHz only',
+});
+
+/** @since P2 Name of the predefined management interface (read from the controller grammar at call time). */
+export function wlcManagementInterface(): string {
+  return WLC_ARG_LIMITS.managementInterface;
+}
+
+/** @since P2 A controller interface form with nothing filled in (`name` preset, for the management row). */
+export function emptyWlcInterfaceForm(name = ''): WlcInterfaceForm {
+  return { name, vlan: '', address: '', mask: '', gateway: '', dhcpServer: '' };
+}
+
+/** @since P2 A new WLAN form: WPA2 personal, on the management interface, every radio, offered. */
+export function emptyWlanForm(id = ''): WlanForm {
+  return { id, profile: '', ssid: '', security: 'wpa2-psk', passphrase: '', hasPassphrase: false, iface: wlcManagementInterface(), radio: 'all', enabled: true };
+}
+
+/** Top-level sections of a rendered config whose header starts with `key`: header tokens and their direct lines. */
+function sectionsOf(runningConfig: string, key: string): { header: readonly string[]; lines: ConfigLineView[] }[] {
+  const out: { header: readonly string[]; lines: ConfigLineView[] }[] = [];
+  const byHeader = new Map<string, { header: readonly string[]; lines: ConfigLineView[] }>();
+  for (const l of walkConfigText(runningConfig)) {
+    if (l.context.length === 0) {
+      if (l.negate || l.tokens[0] !== key) continue;
+      const entry = { header: Object.freeze([...l.tokens]), lines: [] as ConfigLineView[] };
+      byHeader.set(l.tokens.join(' '), entry);
+      out.push(entry);
+      continue;
+    }
+    if (l.context.length !== 1) continue;
+    const head = l.context[0] as readonly string[];
+    if (head[0] !== key) continue;
+    byHeader.get(head.join(' '))?.lines.push(Object.freeze({ tokens: Object.freeze([...l.tokens]), negate: l.negate }));
+  }
+  return out;
+}
+
+/** The form of one `wlc-interface` section's lines. */
+function wlcInterfaceFormOf(name: string, lines: readonly ConfigLineView[]): WlcInterfaceForm {
+  const [address, mask] = (configValue(lines, ['address']) ?? '').split(' ');
+  return {
+    name,
+    vlan: configValue(lines, ['vlan']) ?? '',
+    address: address ?? '',
+    mask: mask ?? '',
+    gateway: configValue(lines, ['gateway']) ?? '',
+    dhcpServer: configValue(lines, ['dhcp-server']) ?? '',
+  };
+}
+
+/**
+ * @since P2 The controller interfaces of a rendered running config: the management interface first (an empty form when
+ * its section is not configured yet: it is predefined, §5.3), then every other `wlc-interface` section in config order.
+ */
+export function wlcInterfaceFormsFrom(runningConfig: string): readonly WlcInterfaceForm[] {
+  const management = wlcManagementInterface();
+  const sections = sectionsOf(runningConfig, 'wlc-interface').filter((s) => s.header.length === 2);
+  const forms = sections.map((s) => wlcInterfaceFormOf(s.header[1] as string, s.lines));
+  const first = forms.find((f) => f.name === management) ?? emptyWlcInterfaceForm(management);
+  return Object.freeze([first, ...forms.filter((f) => f.name !== management)]);
+}
+
+function toWlanRadio(v: string | undefined): WlanRadio {
+  return v === '2.4' || v === '5' ? v : 'all';
+}
+
+/** @since P2 The WLANs of a rendered running config, by WLAN number. Passphrases are never read (only their presence). */
+export function wlanFormsFrom(runningConfig: string): readonly WlanForm[] {
+  const forms = sectionsOf(runningConfig, 'wlan')
+    .filter((s) => s.header.length === 4)
+    .map(({ header, lines }): WlanForm => ({
+      id: header[1] as string,
+      profile: header[2] as string,
+      ssid: header[3] as string,
+      security: toSecurity(configValue(lines, ['security'])),
+      passphrase: '',
+      hasPassphrase: hasConfigLine(lines, ['passphrase']),
+      iface: configValue(lines, ['interface']) ?? wlcManagementInterface(),
+      radio: toWlanRadio(configValue(lines, ['radio'])),
+      enabled: !hasConfigLine(lines, ['shutdown']),
+    }));
+  return Object.freeze(forms.sort((a, b) => Number(a.id) - Number(b.id)));
+}
+
+/** @since P2 The lowest WLAN number no WLAN of `wlans` uses (as text; empty when every number is taken). */
+export function nextFreeWlanId(wlans: readonly Pick<WlanForm, 'id'>[]): string {
+  const { wlanIdMin, wlanIdMax } = WLC_ARG_LIMITS;
+  const used = new Set(wlans.map((w) => Number(w.id.trim())));
+  for (let id = wlanIdMin; id <= wlanIdMax; id++) if (!used.has(id)) return String(id);
+  return '';
+}
+
+/** @since P2 Whether two WLAN forms name the same WLAN (number, profile and network name). */
+export function sameWlanIdentity(a: Pick<WlanForm, 'id' | 'profile' | 'ssid'>, b: Pick<WlanForm, 'id' | 'profile' | 'ssid'>): boolean {
+  return Number(a.id.trim()) === Number(b.id.trim()) && a.profile.trim() === b.profile.trim() && a.ssid.trim() === b.ssid.trim();
+}
+
+/** @since P2 Error for a controller interface or WLAN profile name, undefined when valid. */
+export function checkWlcName(text: string, what: 'interface' | 'profile'): string | undefined {
+  const t = text.trim();
+  if (t === '') return what === 'interface' ? 'Give the interface a name.' : 'Give the WLAN a profile name.';
+  if (!new RegExp(`^(?:${WLC_ARG_LIMITS.namePattern})$`).test(t)) {
+    return 'A name has up to 32 letters, digits, dots, dashes or underscores, and starts with a letter or digit.';
+  }
+  return undefined;
+}
+
+/** @since P2 Error for the VLAN of a controller interface, undefined when valid. */
+export function checkWlcVlan(text: string): string | undefined {
+  const t = text.trim();
+  if (t === '') return 'Every controller interface needs a VLAN.';
+  if (!/^\d+$/.test(t) || Number(t) < 1 || Number(t) > 4094) return 'Enter a VLAN number from 1 to 4094.';
+  if (Number(t) >= 1002 && Number(t) <= 1005) return 'VLANs 1002 to 1005 are reserved; choose another VLAN.';
+  return undefined;
+}
+
+/** @since P2 Error for a WLAN number, undefined when valid. */
+export function checkWlanId(text: string): string | undefined {
+  const { wlanIdMin, wlanIdMax } = WLC_ARG_LIMITS;
+  const t = text.trim();
+  if (!/^\d+$/.test(t) || Number(t) < wlanIdMin || Number(t) > wlanIdMax) return `Enter a WLAN number from ${wlanIdMin} to ${wlanIdMax}.`;
+  return undefined;
+}
+
+/** @since P2 Error for a WLAN network name (one word: clients see it, and the controller protocol separates fields with colons). */
+export function checkWlanSsid(text: string): string | undefined {
+  if (text.trim() === '') return 'Enter the network name clients will see.';
+  if (!new RegExp(`^(?:${WLC_ARG_LIMITS.ssidPattern})$`).test(text)) return 'A network name has 1 to 32 characters, without spaces or colons.';
+  return undefined;
+}
+
+/** A unicast IPv4 address error (undefined when the text names one host). */
+function checkUnicast(text: string, what: string): string | undefined {
+  const bad = checkIpv4(text);
+  if (bad !== undefined) return bad;
+  const v = parseIpv4(normalizeIpv4(text) as string) as number;
+  if (v === 0 || v === 0xffffffff || v >>> 24 === 127 || v >>> 28 >= 0xe) return `That address cannot be a ${what}.`;
+  return undefined;
+}
+
+/** @since P2 What a controller interface form is checked against. */
+export interface WlcInterfaceContext {
+  /** Every OTHER controller interface as configured (VLANs and subnets are not shared). */
+  readonly others: readonly WlcInterfaceForm[];
+  /** The interface does not exist yet (its name must be new; the management row counts as existing). */
+  readonly isNew: boolean;
+}
+
+/**
+ * @since P2 Validate a controller interface: a name (new names must be unused), a VLAN that no other interface holds,
+ * an address and mask together or neither (a host address whose subnet overlaps no other interface), an optional
+ * gateway in that subnet and an optional DHCP server.
+ */
+export function validateWlcInterfaceForm(form: WlcInterfaceForm, ctx: WlcInterfaceContext): FormErrors {
+  const errors: FormErrors = {};
+  const name = form.name.trim();
+  put(errors, 'name', checkWlcName(name, 'interface'));
+  if (ctx.isNew && errors['name'] === undefined && (name === wlcManagementInterface() || ctx.others.some((o) => o.name === name))) {
+    put(errors, 'name', `There is already an interface named ${name}; pick it in the list to edit it.`);
+  }
+  put(errors, 'vlan', checkWlcVlan(form.vlan));
+  if (errors['vlan'] === undefined) {
+    const owner = ctx.others.find((o) => o.vlan.trim() !== '' && Number(o.vlan) === Number(form.vlan.trim()));
+    if (owner !== undefined) put(errors, 'vlan', `VLAN ${Number(form.vlan.trim())} already belongs to the interface ${owner.name}.`);
+  }
+  const address = form.address.trim();
+  const mask = form.mask.trim();
+  if (address !== '' || mask !== '') {
+    put(errors, 'address', address === '' ? 'Enter an address, or clear the mask too to leave the interface without one.' : checkInterfaceAddress(address, mask));
+    put(errors, 'mask', checkMask(mask));
+    if (errors['address'] === undefined && errors['mask'] === undefined) {
+      const a = parseIpv4(normalizeIpv4(address) as string) as number;
+      const len = maskToPrefixLen(normalizeMask(mask) as string) as number;
+      for (const o of ctx.others) {
+        const oa = normalizeIpv4(o.address);
+        const om = normalizeMask(o.mask);
+        if (oa === undefined || om === undefined) continue;
+        const shared = prefixLenToMaskU32(Math.min(len, maskToPrefixLen(om) as number));
+        if (((a & shared) >>> 0) === (((parseIpv4(oa) as number) & shared) >>> 0)) {
+          put(errors, 'address', `This subnet overlaps with the interface ${o.name}.`);
+          break;
+        }
+      }
+    }
+  }
+  const gateway = form.gateway.trim();
+  if (gateway !== '') put(errors, 'gateway', address === '' ? checkUnicast(gateway, 'gateway') : checkGateway(gateway, address, mask));
+  const dhcp = form.dhcpServer.trim();
+  if (dhcp !== '') put(errors, 'dhcpServer', checkUnicast(dhcp, 'DHCP server'));
+  return errors;
+}
+
+/** @since P2 What a WLAN form is checked against. */
+export interface WlanContext {
+  /** Every OTHER WLAN as configured (numbers are unique). */
+  readonly others: readonly Pick<WlanForm, 'id' | 'profile' | 'ssid'>[];
+  /** Names of the controller interfaces a WLAN may name (the management interface always may). */
+  readonly interfaces: readonly string[];
+}
+
+/**
+ * @since P2 Validate a WLAN. `previous` is the WLAN as configured (undefined for a new one). A secured WLAN needs a
+ * passphrase typed when none can be kept: a new WLAN, a replaced one (its identity changed), no stored passphrase, or
+ * the security changing from open.
+ */
+export function validateWlanForm(form: WlanForm, previous: WlanForm | undefined, ctx: WlanContext): FormErrors {
+  const errors: FormErrors = {};
+  put(errors, 'id', checkWlanId(form.id));
+  if (errors['id'] === undefined && ctx.others.some((o) => Number(o.id) === Number(form.id.trim()))) {
+    put(errors, 'id', `WLAN ${Number(form.id.trim())} already exists; choose another number.`);
+  }
+  put(errors, 'profile', checkWlcName(form.profile, 'profile'));
+  put(errors, 'ssid', checkWlanSsid(form.ssid));
+  if (!(WLC_ARG_LIMITS.securityModes as readonly string[]).includes(form.security)) put(errors, 'security', 'Choose how clients of this WLAN are secured.');
+  const replaced = previous === undefined || !sameWlanIdentity(form, previous);
+  const required = replaced || !form.hasPassphrase || previous.security === 'open';
+  put(errors, 'passphrase', checkPassphrase(form.security, form.passphrase, required));
+  const iface = form.iface.trim();
+  if (iface !== wlcManagementInterface() && !ctx.interfaces.includes(iface)) {
+    put(errors, 'iface', iface === '' ? 'Choose the interface this WLAN\'s clients use.' : `There is no controller interface named ${iface}; create it on the Interfaces page first.`);
+  }
+  if (!WLAN_RADIOS.includes(form.radio)) put(errors, 'radio', 'Choose the radios that offer this WLAN.');
   return errors;
 }
 

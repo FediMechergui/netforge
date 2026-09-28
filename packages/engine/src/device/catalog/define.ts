@@ -19,17 +19,21 @@
  * Input values win over derivations where the input type allows them. `defineModel` never throws: the output is
  * checked by `validateCatalog` (validate.ts). Output objects are deeply frozen and structured-clone safe.
  *
- * P2 derivations (ARCHITECTURE-P2 D2, D10, D11, §7 W1 catalog), made ONLY at build stage P2 so that a model or fixture
- * defined at stage P0.5 or P1 is byte-for-byte what it was (no new key, no changed family):
+ * P2 derivations (ARCHITECTURE-P2 D2, D10, D11, D17, §7 W1 and W6 catalog), made ONLY at build stage P2 so that a
+ * model or fixture defined at stage P0.5 or P1 is byte-for-byte what it was (no new key, no changed family):
  *   subinterfaces   = {roles: ['routed'], max: 65535} for a model with `routing` (`deriveSubinterfaces`);
  *   virtualFamilies = with `managed-switch`: the Vlan family widened to VLANs 1–4094 (added when absent) and the
- *                     Port-channel family (1–48) after it (`withManagedSwitchFamilies`);
+ *                     Port-channel family (1–48) after it (`withManagedSwitchFamilies`); with `wireless-controller`:
+ *                     the controller's Vlan family (1–4094, no automatic instance: the `wlc-interface` handlers
+ *                     create the SVIs) and the tunnel family with its automatic `Capwap0` (`withControllerFamilies`);
  *   stpDefaultMode  = input, else 'pvst', for a model with `managed-switch`;
  *   profileConfig   = input, else `deriveProfileConfig`: P2 lines `spanning-tree mode <stpDefaultMode>` and
  *                     `spanning-tree extend system-id` for `managed-switch` (plus `no ip routing` with
  *                     `layer3-switch`), `capwap enable` and `interface Vlan1` / ` ip address dhcp` / ` no shutdown`
  *                     for `lightweight-ap`;
  *   portOwners      : ROLE_EGRESS_OWNER also names `etherchannel` for `channel` and `capwap-ac` for `wlan-tunnel`.
+ * The CLI rule of `wireless-controller` (a GUI appliance: no shell, the NFOS grammar for headless configure) holds at
+ * every stage, like the home router's; no model carried the capability before the W6 catalog item.
  */
 import type { DeviceKind, DeviceModel } from '../../contracts/device.js';
 import type { PortId, ProcessName } from '../../contracts/ids.js';
@@ -246,6 +250,34 @@ export const PORT_CHANNEL_FAMILY: VirtualFamilySpec = Object.freeze({
   defaultAdminUp: true,
 });
 
+/**
+ * @since P2 SVI family of a wireless controller (D17, §3.12): `interface Vlan<v>` for every VLAN a `wlc-interface`
+ * names, VLANs 1–4094, administratively down when created. No automatic instance: the `wlc-interface` handlers create
+ * (and `no shutdown`) the SVI that carries each interface's address.
+ */
+export const CONTROLLER_VLAN_FAMILY: VirtualFamilySpec = Object.freeze({
+  family: 'Vlan',
+  short: 'Vl',
+  role: 'svi',
+  min: 1,
+  max: 4094,
+  defaultAdminUp: false,
+});
+
+/**
+ * @since P2 The controller's CAPWAP tunnel (§2.1 role `wlan-tunnel`, §3.12 step 7): one automatic instance `Capwap0`,
+ * short `Ca`, created up; bridged and hairpin, carrying every VLAN tagged, its egress owned by `capwap-ac`.
+ */
+export const CAPWAP_TUNNEL_FAMILY: VirtualFamilySpec = Object.freeze({
+  family: 'Capwap',
+  short: 'Ca',
+  role: 'wlan-tunnel',
+  min: 0,
+  max: 0,
+  defaultAdminUp: true,
+  auto: Object.freeze([0]),
+});
+
 /** @since P2 Highest subinterface number (`<parent>.<n>`, D11). */
 export const SUBINTERFACE_MAX = 65535;
 
@@ -335,14 +367,14 @@ export function deriveTables(processes: readonly ProcessName[]): readonly TableN
 
 /**
  * CLI spec from EXPANDED capabilities:
- *  nat-gateway (home router)                      → shell none, grammar nfos (GUI-only appliance, headless configure works)
+ *  nat-gateway (home router), wireless-controller → shell none, grammar nfos (GUI-only appliance, headless configure works)
  *  host without routing                           → host shell, privilege 15, console
  *  routing | switching | wifi-ap                  → nfos shell, privilege 1, console + vty
  *  otherwise (repeater, modem, cloud, radio, tower)→ shell none, grammar nfos
  */
 export function deriveCliSpec(caps: readonly Capability[]): CliSpec {
   const has = (c: Capability): boolean => caps.includes(c);
-  if (has('nat-gateway')) return { shell: 'none', grammar: 'nfos', initialPrivilege: 1, consoleVia: [] };
+  if (has('nat-gateway') || has('wireless-controller')) return { shell: 'none', grammar: 'nfos', initialPrivilege: 1, consoleVia: [] };
   if (has('host') && !has('routing')) return { shell: 'host', grammar: 'host', initialPrivilege: 15, consoleVia: ['console'] };
   if (has('routing') || has('switching') || has('wifi-ap')) {
     return { shell: 'nfos', grammar: 'nfos', initialPrivilege: 1, consoleVia: ['console', 'vty'] };
@@ -424,6 +456,18 @@ export function withManagedSwitchFamilies(caps: readonly Capability[], families:
     vlanAt = 0;
   }
   if (!out.some((f) => f.family === PORT_CHANNEL_FAMILY.family)) out.splice(vlanAt + 1, 0, PORT_CHANNEL_FAMILY);
+  return out;
+}
+
+/**
+ * @since P2 Virtual families of a `wireless-controller` model (other models: `families` unchanged): CONTROLLER_VLAN_FAMILY
+ * first when the list has no Vlan family, and CAPWAP_TUNNEL_FAMILY last when it has no tunnel family. Idempotent.
+ */
+export function withControllerFamilies(caps: readonly Capability[], families: readonly VirtualFamilySpec[]): readonly VirtualFamilySpec[] {
+  if (!caps.includes('wireless-controller')) return families;
+  const out = [...families];
+  if (!out.some((f) => f.family === CONTROLLER_VLAN_FAMILY.family)) out.unshift(CONTROLLER_VLAN_FAMILY);
+  if (!out.some((f) => f.family === CAPWAP_TUNNEL_FAMILY.family)) out.push(CAPWAP_TUNNEL_FAMILY);
   return out;
 }
 
@@ -607,7 +651,7 @@ export function defineModel(input: ModelInput, stage: BuildStage, modules: reado
   const slots: SlotSpec[] = (input.slots ?? []).map((s, i) => ({ ...s, slotIndex: s.slotIndex ?? i }));
   const p2 = stageIncluded('P2', stage);
   const baseFamilies = input.virtualFamilies ?? withModuleSwitchFamilies(capabilities, slots, deriveVirtualFamilies(capabilities), modules);
-  const virtualFamilies = p2 ? withManagedSwitchFamilies(capabilities, baseFamilies) : baseFamilies;
+  const virtualFamilies = p2 ? withControllerFamilies(capabilities, withManagedSwitchFamilies(capabilities, baseFamilies)) : baseFamilies;
   const moduleProcesses = moduleReachableProcesses(capabilities, slots, processes, stage, modules);
   const cli = input.cli ?? deriveCliSpec(capabilities);
   const tags: string[] = [];

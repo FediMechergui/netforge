@@ -21,6 +21,7 @@ import { DOCK_MIN_HEIGHT, DOCK_OPEN_HEIGHT, DOCK_TABS, INSPECTOR_HIDDEN_BELOW, I
 import { showDockTab } from '../shared/openDeviceSurface';
 import { store, useStore } from '../store/store';
 import type { ConceptTool, WirelessOverlayState } from '../store/types';
+import { LAB_CHECK_ANNOUNCEMENT } from '../labs/LabBrowser';
 import { FileMenu } from './FileMenu';
 import { HOTKEYS } from './hotkeys';
 import { Menu, MenuHeading, MenuItem, MenuSeparator } from './Menu';
@@ -210,14 +211,25 @@ export async function stepToNextEvent(): Promise<void> {
   }
 }
 
-/** @since P1 Grade the loaded lab now (§4.13); the Labs panel shows the task detail. */
+/**
+ * @since P1 Grade the loaded lab now (§4.13); the Labs panel shows the task detail.
+ * @since P2 (W6 fix, §9.2 item 22c) While the check runs the store's `lab.checking` is set, as the Labs panel's own
+ * check sets it: the start is announced once, the status bar and the Labs panel say a check is running, and the menu
+ * item waits for it. One check at a time: a second request while one runs does nothing.
+ */
 export async function checkLabNow(): Promise<void> {
+  const s = store.getState();
+  if (s.lab?.checking === true) return;
+  s.setLab?.({ checking: true });
+  s.toast(LAB_CHECK_ANNOUNCEMENT);
   try {
     const status = await engine.checkLab();
     if (status === null) store.getState().toast('No lab is loaded; open one from the Labs tab.', 'warn');
     else store.getState().toast(`Lab check: ${status.score} of ${status.total} points.`);
   } catch (err) {
     reportError(err);
+  } finally {
+    store.getState().setLab?.({ checking: false });
   }
 }
 
@@ -417,6 +429,7 @@ function ViewMenu() {
 function SimulateMenu() {
   const playing = useStore((s) => s.playing);
   const ready = useStore((s) => s.ready);
+  const checking = useStore((s) => s.lab?.checking === true);
   const mode = useStore((s) => s.simMode.mode);
   const simulation = mode === 'simulation';
   return (
@@ -479,13 +492,13 @@ function SimulateMenu() {
             Step to the next matching event
           </MenuItem>
           <MenuItem
-            disabled={!ready}
+            disabled={!ready || checking}
             onSelect={() => {
               close();
               void checkLabNow();
             }}
           >
-            Check the lab now
+            {checking ? 'Checking the lab…' : 'Check the lab now'}
           </MenuItem>
           <MenuSeparator />
           <MenuItem

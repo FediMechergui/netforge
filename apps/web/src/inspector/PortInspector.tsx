@@ -9,6 +9,9 @@
  * section (`SwitchportSection`): mode, VLANs, trunk facts, spanning-tree role and state per VLAN, channel membership,
  * port-security state and the access-port quick action. Whether it applies follows the port role and the device's
  * catalog entry (or the tables it declares), never the device kind.
+ *
+ * P2 [S14] (§6, W6 web-inspector): under it, the state-machine history strip of the port (`FsmStrip`): spanning-tree,
+ * trunk negotiation, bundle and port-security transitions, oldest first with their causes; hidden while there are none.
  */
 import { Fragment, useState } from 'react';
 import type { DeviceSnapshot, PortCounters, PortId, PortRef, PortSnapshot } from '@netforge/engine';
@@ -20,6 +23,7 @@ import { portKindLabel, portRoleLabel } from '../vocab/categories';
 import { formatBps, formatSignal } from '../vocab/fields';
 import { lineProtocolText } from '../vocab/media';
 import { assocStateVocab } from '../vocab/trace-kinds';
+import { FsmStrip } from './FsmStrip';
 import { toastError, useDeviceIndex } from './PacketInspector';
 import { SwitchportSection, switchportSectionApplies } from './SwitchportSection';
 import { useTickNow } from './TablesView';
@@ -360,6 +364,8 @@ function PortDetails({ device, port }: { device: DeviceSnapshot; port: PortSnaps
           </dl>
         </section>
         {switching && <SwitchportSection device={device} port={port} now={now} />}
+        {/* [S14] the state changes of this port (a Port-channel shows its members'); nothing while there are none */}
+        <FsmStrip device={device.id} port={port.id} hideWhenEmpty />
         {radio !== undefined && (
           <section className="insp-section" aria-label="Radio">
             <div className="panel-title">Radio</div>

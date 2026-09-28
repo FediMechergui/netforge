@@ -1832,6 +1832,32 @@
       "shutdown"
     ]
   },
+  "wlc.nfwlc3504": {
+    "user-exec": [
+      "adapter",
+      "arp",
+      "exit",
+      "ip",
+      "ipconfig",
+      "ipv6",
+      "ipv6config",
+      "netstat",
+      "no",
+      "nslookup",
+      "ping",
+      "show",
+      "tracert"
+    ],
+    "user-exec show": [
+      "arp",
+      "history",
+      "hosts",
+      "interfaces",
+      "ip",
+      "running-config",
+      "version"
+    ]
+  },
   "firewall.nfasa5506": {
     "user-exec": [
       "enable",
@@ -2157,6 +2183,7 @@
     ],
     "priv-exec show": [
       "arp",
+      "capwap",
       "history",
       "interfaces",
       "ip",
@@ -2169,12 +2196,16 @@
     "priv-exec debug": [
       "all",
       "arp",
+      "capwap",
+      "dhcp",
       "ethernet",
       "ip",
+      "udp",
       "wireless"
     ],
     "config": [
       "banner",
+      "capwap",
       "do",
       "enable",
       "end",
@@ -2416,30 +2447,81 @@
       "shutdown"
     ]
   },
-  "wlc.nfwlc3504": {
+  "wlc.nfwlc9800": {
     "user-exec": [
-      "adapter",
-      "arp",
+      "enable",
       "exit",
-      "ip",
-      "ipconfig",
-      "ipv6",
-      "ipv6config",
-      "netstat",
-      "no",
-      "nslookup",
+      "logout",
       "ping",
       "show",
-      "tracert"
+      "traceroute"
     ],
-    "user-exec show": [
+    "priv-exec": [
+      "clear",
+      "configure",
+      "copy",
+      "debug",
+      "disable",
+      "enable",
+      "erase",
+      "exit",
+      "logout",
+      "no",
+      "ping",
+      "reload",
+      "show",
+      "traceroute",
+      "undebug",
+      "write"
+    ],
+    "priv-exec show": [
       "arp",
+      "capwap",
       "history",
-      "hosts",
       "interfaces",
       "ip",
+      "mac",
       "running-config",
+      "startup-config",
       "version"
+    ],
+    "priv-exec debug": [
+      "all",
+      "arp",
+      "capwap",
+      "ethernet",
+      "ip",
+      "port-security",
+      "sw-vlan",
+      "udp"
+    ],
+    "config": [
+      "banner",
+      "do",
+      "enable",
+      "end",
+      "exit",
+      "hostname",
+      "interface",
+      "ip",
+      "line",
+      "no",
+      "service",
+      "username",
+      "wlan",
+      "wlc-interface"
+    ],
+    "config-if ethernet/switched": [
+      "description",
+      "do",
+      "duplex",
+      "end",
+      "exit",
+      "mac-address",
+      "no",
+      "shutdown",
+      "speed",
+      "switchport"
     ]
   },
   "wrouter.nfhome": {

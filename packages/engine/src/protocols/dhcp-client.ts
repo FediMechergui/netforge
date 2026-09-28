@@ -180,8 +180,10 @@ export function createDhcpClient(): Process {
   function leaseEvent(ctx: ProcessCtx, c: Client, op: 'bound' | 'renewed' | 'lost'): Action[] {
     const ev: ProcessEvent = { kind: 'dhcp.lease', iface: c.iface, op, dnsServers: c.lease?.dns ?? [] };
     if (c.lease?.domain !== undefined) ev.domainName = c.lease.domain;
-    const out: Action[] = [{ type: 'event', to: 'dns-client', ev }];
-    // P2 W5: only a model that runs capwap-wtp gets the second copy (a missing target would log a runtime debug line)
+    // Only the daemons the model runs get a copy: a missing target would log a runtime debug line. P2 W6: the
+    // lightweight access point runs dhcp-client without dns-client; every other dhcp-client model runs both.
+    const out: Action[] = ctx.model.processes.includes('dns-client') ? [{ type: 'event', to: 'dns-client', ev }] : [];
+    // P2 W5: only a model that runs capwap-wtp gets the second copy
     if (ctx.model.processes.includes(CAPWAP_WTP_PROCESS)) out.push({ type: 'event', to: CAPWAP_WTP_PROCESS, ev: { ...ev } });
     return out;
   }

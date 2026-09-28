@@ -352,7 +352,10 @@ export const useStore = create<Store>()(
         s.rate = batch.rate;
         s.effectiveRate = batch.effectiveRate;
         const timeline = timelineOf(s);
-        if (batch.timelineHead !== undefined) timeline.head = { t: batch.timelineHead.t, at: batch.timelineHead.at };
+        if (batch.timelineHead !== undefined) {
+          const h = batch.timelineHead;
+          timeline.head = { t: h.t, at: h.at, lanesRevision: h.lanesRevision };
+        }
 
         if (reviewing) {
           // [S1] the reviewed instant: its events are context of the past, never the live stream's

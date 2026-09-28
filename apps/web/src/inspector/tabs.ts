@@ -97,7 +97,8 @@ export const PANEL_TAB: Readonly<Record<GuiPanelId, InspectorTab>> = Object.free
   'radio.link': 'wireless',
   'cell.tower': 'wireless',
   'modem.status': 'wireless',
-  // P2 (wave 0 stub): the controller panel is a settings panel of a network appliance.
+  // P2 (ARCHITECTURE-P2 §5.5, W6): the controller panel (inspector/WlcPanel.tsx) is the settings panel of the
+  // NF-WLC-9800, a GUI-only appliance (shell 'none'), so its tab is labelled "Controller" (`inspectorTabLabel`).
   'wlc.controller': 'wireless',
 });
 

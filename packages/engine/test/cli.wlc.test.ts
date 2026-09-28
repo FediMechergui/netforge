@@ -5,7 +5,8 @@
  * `capwap controller`, and `show capwap`.
  *
  * Built on p2.world's TEST-ONLY wireless models (§7 W4 qa): NF-WLC-9800 (`NF_WLC_9800_TEST_INPUT`) and NF-AP-1832 with
- * `lightweight-ap` (`P2_WIRELESS_MODEL_DELTAS`). The capwap daemons are the W5 wireless item's (same wave, rule 9):
+ * `lightweight-ap` (`P2_WIRELESS_MODEL_DELTAS`) — since the W6 catalog item both resolve to the real catalog data.
+ * The capwap daemons are the W5 wireless item's (same wave, rule 9):
  * the worlds here are built without them (the registry overlay removes both names), so only the grammar, the handlers,
  * the config store and the runtime are under test; `show capwap` reads fake tables in the §2.6 row shapes.
  */
@@ -184,9 +185,17 @@ describe('grammar and scope', () => {
       unrecognized(model, 'config', 'capwap enable');
       unrecognized(model, 'user-exec', 'show capwap');
     }
-    // the live catalog's NF-AP-1832 is still autonomous: `lightweight-ap` arrives with the W6 catalog item
-    unrecognized(catalogModel('ap.nfap-lw'), 'config', 'capwap enable');
-    unrecognized(catalogModel('ap.nfap-lw'), 'user-exec', 'show capwap');
+    // §9.2 W6 item 23: since the W6 catalog item the live NF-AP-1832 is the lightweight AP and takes the capwap lines;
+    // an autonomous access point of the live catalog (NF-AP-2600) still does not
+    const recognized = (model: Parameters<typeof matchContextFor>[0], mode: string, line: string) =>
+      expect(matchCommand(BUILTIN_GRAMMAR, matchContextFor(model, mode), line), `${model.type}: ${line}`).toMatchObject({ ok: true });
+    recognized(catalogModel('ap.nfap-lw'), 'config', 'capwap enable');
+    recognized(catalogModel('ap.nfap-lw'), 'user-exec', 'show capwap');
+    unrecognized(catalogModel('ap.nfap-auto'), 'config', 'capwap enable');
+    unrecognized(catalogModel('ap.nfap-auto'), 'user-exec', 'show capwap');
+    // and the live NF-WLC-9800 takes the controller lines
+    recognized(catalogModel('wlc.nfwlc9800'), 'config', 'wlc-interface management');
+    unrecognized(catalogModel('wlc.nfwlc3504'), 'user-exec', 'show capwap');
   });
 
   it('lists exactly the section lines in the two new modes, and the new globals in config', () => {

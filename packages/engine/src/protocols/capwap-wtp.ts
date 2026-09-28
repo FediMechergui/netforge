@@ -13,15 +13,15 @@
  *               management interface arrives as the `dhcp.lease` event from dhcp-client and starts discovery at once,
  *               so a leased AP joins during `runToIdle` too — W5 fix; `lost` goes back to idle);
  *   discovery   sockets `capwap-wtp#ctl` (UDP 5246) and `capwap-wtp#data` (UDP 5247, a TUNNEL socket, §2.4) open; a
- *               Discovery Request (1) {wtpName} to every `capwap controller <ip>` line, else to the management subnet's
- *               broadcast, every 10 s (`discovery`, PERIODIC, so an unanswered AP never holds runToIdle); one row and
- *               one lane (transition subject) per target. A changed target list (a `capwap controller` line, a new
- *               management subnet) ends the lanes of the targets that left and starts the new ones; a tick that finds
- *               no management address goes back to idle. The first Discovery Response (2) with result 0 picks the
- *               controller;
+ *               Discovery Request (1) {wtpName, wtpMac} to every `capwap controller <ip>` line, else to the management
+ *               subnet's broadcast, every 10 s (`discovery`, PERIODIC, so an unanswered AP never holds runToIdle); one
+ *               row and one lane (transition subject) per target. A changed target list (a `capwap controller` line,
+ *               a new management subnet) ends the lanes of the targets that left and starts the new ones; a tick that
+ *               finds no management address goes back to idle. The first Discovery Response (2) with result 0 picks
+ *               the controller;
  *   dtls        simulated (D8, deviation (16)): one transition with cause 'secure session established (simulated)', no
  *               record on the wire; every later control message in both directions carries `meta.protected`;
- *   join        Join Request (3) → Join Response (4, result 0);
+ *   join        Join Request (3) {wtpName, wtpMac} → Join Response (4, result 0);
  *   configure   Configuration Status Request (5) → Response (6);
  *   data-check  Change State Event Request (11) → Response (12);
  *   run         Echo Request (13) every 30 s (`echo`, PERIODIC, `meta.background`); three unanswered echoes → back to
@@ -49,9 +49,13 @@
  *   • a tunnelled uplink frame larger than the management interface's MTU is dropped 'giant', detail 'too large for the
  *     controller tunnel' (there is no IPv4 fragmentation; the controller clamps the TCP MSS, §3.12 step 9).
  *
+ * Identity (§9.2 item 22b, W6): the Discovery and Join Requests carry the AP's base MAC (`wtpMac`, NF vendor element 3 —
+ * the role RFC 5415's WTP Board Data element plays; `capwapBaseMac`, the D8 ordinal-0 MAC its Vlan1 carries), so the
+ * controller knows each AP by it, never by the Ethernet source of a request (a router's MAC for an AP behind one).
+ *
  * No randomness (§4.1): fixed ports, sequence numbers from a counter. Debug category 'capwap' (§5.4).
  *
- * Shared with capwap-ac (both files are the W5 wireless item's): the control-PDU builder, the WLAN and station-report
+ * Shared with capwap-ac (both files are the wireless item's): the control-PDU builder, the WLAN and station-report
  * encodings, the radio ids and the timing constants below. Everything is read at call time (rule 12).
  *
  * stateSnapshot():
@@ -60,8 +64,8 @@
  *     joins, reports, echoesMissed, tunnelledUp, tunnelledDown } }   (never a passphrase or a key tag)
  *
  * ponytail: the WTP joins the first controller that answers (no AC preference lists, no primary/secondary); no image
- * download, no reset, no data-channel keep-alives; the WTP's radios and MAC are not described in the Join Request
- * (the controller takes the AP's MAC from the Ethernet source, so an AP is expected on the management subnet).
+ * download, no reset, no data-channel keep-alives; the Join Request names the WTP and its base MAC but does not
+ * describe its radios.
  */
 import { broadcastOf, isIpv4, type Ipv4Address, type MacAddress, bssidFor } from '../contracts/addr.js';
 import { ROLE_TRAITS } from '../contracts/catalog.js';
@@ -269,6 +273,21 @@ export function capwapText(s: string): string {
     out += c >= 0x20 && c <= 0x7e ? s[i] : '?';
   }
   return out;
+}
+
+/**
+ * The device's base MAC (D8: `portMac(base, 0)`, the MAC its SVIs and loopbacks carry): the identity an access point
+ * reports in the WTP MAC element of its Discovery and Join Requests (§9.2 item 22b). The MAC of a port with ordinal 0
+ * (the NF-AP-1832's Vlan1); on a device without one, any port's MAC with its ordinal octet cleared (a D8 MAC differs
+ * from the base only in its last octet). Undefined for a device without ports.
+ */
+export function capwapBaseMac(ctx: Pick<ProcessCtx, 'ports'>): MacAddress | undefined {
+  let first: MacAddress | undefined;
+  for (const view of ctx.ports.values()) {
+    if (view.ordinal === 0) return view.mac;
+    first ??= view.mac;
+  }
+  return first === undefined ? undefined : `${first.slice(0, first.lastIndexOf(':') + 1)}00`;
 }
 
 /** Transition message wording shared by both daemons: `<subject>: <from> -> <to> (<cause>)`. */
@@ -494,11 +513,17 @@ export function createCapwapWtp(): Process {
     return mgmt === undefined ? [] : [broadcastOf(mgmt.address, mgmt.prefixLen)];
   }
 
+  /** The elements that name this access point in its Discovery and Join Requests: WTP Name and WTP MAC (§9.2 item 22b). */
+  function identity(ctx: ProcessCtx): Record<string, FieldValue> {
+    const mac = capwapBaseMac(ctx);
+    return mac === undefined ? { wtpName: capwapText(ctx.hostname) } : { wtpName: capwapText(ctx.hostname), wtpMac: mac };
+  }
+
   function sendDiscovery(ctx: ProcessCtx): Action[] {
     const out: Action[] = [];
     for (const t of targets) {
       discoveries++;
-      out.push(...control(ctx, t, CAPWAP_MSG.discoveryReq, { wtpName: capwapText(ctx.hostname) }, { seq: nextSeq(), protect: false }));
+      out.push(...control(ctx, t, CAPWAP_MSG.discoveryReq, identity(ctx), { seq: nextSeq(), protect: false }));
     }
     if (targets.length > 0) debug(ctx, `looking for a controller at ${targets.join(', ')}`, { targets: [...targets] });
     return out;
@@ -735,7 +760,7 @@ export function createCapwapWtp(): Process {
     setRow(ctx, address, 'join');
     const out: Action[] = [];
     if (discoveryArmed) out.push(cancel(TIMER_DISCOVERY));
-    out.push(...request(ctx, CAPWAP_MSG.joinReq, { wtpName: capwapText(ctx.hostname) }, pdu));
+    out.push(...request(ctx, CAPWAP_MSG.joinReq, identity(ctx), pdu));
     return out;
   }
 

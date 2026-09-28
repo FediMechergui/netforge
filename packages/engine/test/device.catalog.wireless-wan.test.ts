@@ -52,12 +52,15 @@ describe('wireless and WAN catalog data', () => {
   });
 
   it('lists every CATALOG.md model of the four categories in table order', () => {
+    // ARCHITECTURE-P2 §9.2 W6 item 23: the NF-WLC-9800 controller closes the Wireless category; the NF-WLC-3504 input
+    // stays in this file but the palette shows it in the Legacy category
     expect(WIRELESS_MODELS.map((m) => [m.type, m.model, m.category, m.icon])).toEqual([
       ['ap.nfap-auto', 'NF-AP-2600', 'wireless', 'ap'],
       ['ap.nfap-lw', 'NF-AP-1832', 'wireless', 'ap'],
       ['ap.nfap-mesh', 'NF-AP-1562', 'wireless', 'ap-outdoor'],
       ['ap.nfap-ax', 'NF-AP-9120', 'wireless', 'ap'],
-      ['wlc.nfwlc3504', 'NF-WLC-3504', 'wireless', 'wlc'],
+      ['wlc.nfwlc9800', 'NF-WLC-9800', 'wireless', 'wlc'],
+      ['wlc.nfwlc3504', 'NF-WLC-3504', 'legacy', 'wlc'],
     ]);
     expect(HOME_MODELS.map((m) => [m.type, m.model, m.category, m.icon])).toEqual([
       ['wrouter.nfhome', 'NF-HOMEROUTER', 'home-soho', 'home-router'],

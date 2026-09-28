@@ -11,7 +11,8 @@
  *    `traceroute`;
  *  - P2 daemons (ARCHITECTURE-P2 §2.1, §7 W4 catalog — the flip registers them): the L2 control plane `vlan`, `dtp`,
  *    `etherchannel`, `stp`, the address translator `nat`, the first-hop redundancy daemon `hsrp` [S2] and
- *    `dhcpv6-client`, `dhcpv6-server`. The W6 catalog item adds `capwap-wtp` and `capwap-ac`.
+ *    `dhcpv6-client`, `dhcpv6-server`; and (§7 W6 catalog, with the wireless models) the lightweight access point's
+ *    `capwap-wtp` and the wireless controller's `capwap-ac`.
  * Keys follow the canonical daemon order (`PROCESS_ORDER` in contracts/catalog.ts), so this object lists every
  * name that order does. Every factory is re-exported for direct use. Each daemon is silent without configuration
  * or a request (ARCHITECTURE-P1 §5.3), so registering them never changes P0 scenario traffic.
@@ -20,6 +21,7 @@ import type { ProcessName } from '../contracts/ids.js';
 import type { ProcessFactory } from '../contracts/process.js';
 import { createWlanAp } from './wlan-ap.js';
 import { createWlanClient } from './wlan-client.js';
+import { createCapwapWtp } from './capwap-wtp.js';
 import { createCellClient } from './cell-client.js';
 import { createHdlc } from './hdlc.js';
 import { createEthSwitch } from './eth-switch.js';
@@ -47,9 +49,11 @@ import { createDnsServer } from './dns-server.js';
 import { createHttpClient } from './http-client.js';
 import { createHttpServer } from './http-server.js';
 import { createTraceroute } from './traceroute.js';
+import { createCapwapAc } from './capwap-ac.js';
 
 export { createWlanAp } from './wlan-ap.js';
 export { createWlanClient } from './wlan-client.js';
+export { createCapwapWtp } from './capwap-wtp.js';
 export { createCellClient } from './cell-client.js';
 export { createHdlc } from './hdlc.js';
 export { createEthSwitch } from './eth-switch.js';
@@ -77,11 +81,13 @@ export { createDnsServer } from './dns-server.js';
 export { createHttpClient } from './http-client.js';
 export { createHttpServer } from './http-server.js';
 export { createTraceroute } from './traceroute.js';
+export { createCapwapAc } from './capwap-ac.js';
 
 /** Daemon name → factory, in canonical daemon order (`PROCESS_ORDER`). Frozen: the registry is static data. */
 export const PROCESS_FACTORIES: Readonly<Record<ProcessName, ProcessFactory>> = Object.freeze({
   'wlan-ap': createWlanAp,
   'wlan-client': createWlanClient,
+  'capwap-wtp': createCapwapWtp,
   'cell-client': createCellClient,
   hdlc: createHdlc,
   'eth-switch': createEthSwitch,
@@ -109,6 +115,7 @@ export const PROCESS_FACTORIES: Readonly<Record<ProcessName, ProcessFactory>> = 
   'http-client': createHttpClient,
   'http-server': createHttpServer,
   traceroute: createTraceroute,
+  'capwap-ac': createCapwapAc,
 });
 
 /** Registered daemon names, in registry (canonical daemon) order. */

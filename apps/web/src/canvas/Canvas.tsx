@@ -7,9 +7,9 @@
  * Everything drawn on the canvas is driven by `runCanvas`, a requestAnimationFrame loop that reads
  * `store.getState()` directly — React never re-renders per frame.
  *
- * Paint order: range rings → topology overlay underlays (VLAN tints and trunk rails, the active spanning tree;
- * ARCHITECTURE-P2 §6) → cables → association lines and radio beams → packets → drop markers and collision bursts →
- * devices → signal/phase/channel labels, VLAN chips, spanning-tree letters and crowns → cable preview. Layers cull
+ * Paint order: range rings → topology overlay underlays (VLAN tints and trunk rails, the active spanning tree,
+ * controller tunnels; ARCHITECTURE-P2 §6) → cables → association lines and radio beams → packets → drop markers and collision bursts →
+ * devices → signal/phase/channel labels, VLAN chips, spanning-tree letters and crowns, tunnel badges → cable preview. Layers cull
  * against the visible world rectangle (re-culled only when the coarse view key changes) and draw at a level of
  * detail chosen from the zoom, so topologies with hundreds of devices stay responsive.
  *
@@ -18,6 +18,11 @@
  * (memoised per device object) and hands it to its layer (`l2.ts`, `stp.ts`). A spanning-tree model with a port in
  * a timed phase is rebuilt every frame so its draining bars run; mismatch pulses and topology-change waves animate
  * on wall time. Packets take their VLAN colour and `Q` badge from the same models (`packets.ts`).
+ *
+ * @since P2 (W6 web-canvas) The controller-tunnel overlay ("Controller tunnels", `topoOverlays.capwap`) joins it the
+ * same way: `CAPWAP_OVERLAY.sync` gives the access points' tunnel rows and the layer (`capwap.ts`) draws a tube from
+ * each lightweight access point to its controller, filled as far as the join has got, with the controller's own
+ * sessions read from the same snapshot. It is redrawn in the style pass only (nothing on it animates).
  *
  * Keyboard bridge: `registerCanvasA11y(api)` is the pinned hook the a11y layer calls to hand the canvas its
  * `focusDevice` / `screenPoint` / `beginCable` functions; it returns the unregister function.
@@ -40,12 +45,13 @@ import { GUI_PANEL_VOCAB } from '../vocab/categories';
 import { MEDIA_VOCAB } from '../vocab/media';
 import { AirLayer, CANVAS_OVERLAY_DEFAULTS, legGeometry } from './air';
 import { CableLayer } from './cables';
+import { CapwapLayer } from './capwap';
 import { DeviceLayer } from './devices';
 import { attachInteraction, deleteDevice, setDevicePower, type ContextMenuRequest, type InteractionA11y } from './interaction';
 import { L2Layer, untaggedVlanOf } from './l2';
 import { MarkerLayer } from './markers';
 import type { DeviceL2, L2OverlayModel } from './overlays/l2-model';
-import { STP_OVERLAY, TOPO_OVERLAY_DEFAULTS, VLAN_OVERLAY } from './overlays/registry';
+import { CAPWAP_OVERLAY, STP_OVERLAY, TOPO_OVERLAY_DEFAULTS, VLAN_OVERLAY } from './overlays/registry';
 import type { StpOverlayModel } from './overlays/stp-model';
 import { PacketLayer } from './packets';
 import { computeLayout, deviceBounds, emptyLayout, snapshotReplaced, type Layout, type Position } from './ports';
@@ -311,6 +317,7 @@ function runCanvas(scene: Scene, tip: HTMLElement, openMenu: (m: ContextMenuRequ
   // P2 topology overlays: underlays in their own containers (below the cables), chips and letters among the labels.
   const l2 = new L2Layer(scene.topoLayer(VLAN_OVERLAY.id), scene.layers.labels);
   const stp = new StpLayer(scene.topoLayer(STP_OVERLAY.id), scene.layers.labels);
+  const capwap = new CapwapLayer(scene.topoLayer(CAPWAP_OVERLAY.id), scene.layers.labels);
 
   let layout: Layout = emptyLayout();
   let layoutDirty = true;
@@ -583,6 +590,18 @@ function runCanvas(scene: Scene, tip: HTMLElement, openMenu: (m: ContextMenuRequ
       stpModel = STP_OVERLAY.sync({ state: topo, snapshot: snap, now });
       l2.sync({ model: l2Model, layout, theme, zoom, lod, view, textResolution: res, cableGeometry });
       stp.sync({ model: stpModel, layout, theme, zoom, lod, view, textResolution: res, wall, cableGeometry });
+      capwap.sync({
+        model: CAPWAP_OVERLAY.sync({ state: topo, snapshot: snap, now }),
+        snapshot: snap,
+        layout,
+        theme,
+        zoom,
+        lod,
+        view,
+        textResolution: res,
+        selection: st.selection,
+        hover: st.hover,
+      });
       interaction.refresh();
       scene.dirty = true;
     } else if (stpModel !== null && modelNeedsClock(stpModel)) {
@@ -651,6 +670,7 @@ function runCanvas(scene: Scene, tip: HTMLElement, openMenu: (m: ContextMenuRequ
     markers.destroy();
     l2.destroy();
     stp.destroy();
+    capwap.destroy();
     air.destroy();
     rf.destroy();
     cables.destroy();

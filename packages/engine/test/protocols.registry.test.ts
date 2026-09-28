@@ -1,14 +1,17 @@
 /**
- * Process registry (protocols/index.ts, ARCHITECTURE-P1 §8.1 W4 l2l3, §8.2 W5 l2l3; ARCHITECTURE-P2 §7 W4 catalog,
- * §9.2 W4 item 14): every daemon of PROCESS_ORDER — the P0 five, the four P0.5 ones, the twelve P1 ones and the
- * eight P2 ones the W4 flip registered — is registered in canonical daemon order, each factory builds a fresh process whose name matches its key, and every daemon a catalog model lists
- * at CATALOG_STAGE resolves to a factory.
+ * Process registry (protocols/index.ts, ARCHITECTURE-P1 §8.1 W4 l2l3, §8.2 W5 l2l3; ARCHITECTURE-P2 §7 W4 and W6
+ * catalog, §9.2 W4 item 14 and W6 item 24): every daemon of PROCESS_ORDER — the P0 five, the four P0.5 ones, the
+ * twelve P1 ones, the eight P2 ones the W4 flip registered and the two CAPWAP daemons of the W6 catalog item — is
+ * registered in canonical daemon order, each factory builds a fresh process whose name matches its key, and every
+ * daemon a catalog model lists at CATALOG_STAGE resolves to a factory.
  */
 import { describe, expect, it } from 'vitest';
 import {
   PROCESS_FACTORIES,
   REGISTERED_PROCESSES,
   createArp,
+  createCapwapAc,
+  createCapwapWtp,
   createCellClient,
   createDhcpClient,
   createDhcpServer,
@@ -63,6 +66,8 @@ describe('protocols registry', () => {
     expect(PROCESS_FACTORIES).toEqual({
       'wlan-ap': createWlanAp,
       'wlan-client': createWlanClient,
+      // ARCHITECTURE-P2 §9.2 W6 item 24: the two CAPWAP daemons at their §2.1 positions
+      'capwap-wtp': createCapwapWtp,
       'cell-client': createCellClient,
       hdlc: createHdlc,
       'eth-switch': createEthSwitch,
@@ -91,6 +96,7 @@ describe('protocols registry', () => {
       'http-client': createHttpClient,
       'http-server': createHttpServer,
       traceroute: createTraceroute,
+      'capwap-ac': createCapwapAc,
     });
     expect([HDLC_PROCESS, WLAN_AP_PROCESS, WLAN_CLIENT_PROCESS, CELL_CLIENT].every((n) => REGISTERED_PROCESSES.includes(n))).toBe(true);
   });
@@ -143,5 +149,8 @@ describe('protocols registry', () => {
     for (const name of ['ipv6', 'nd', 'icmpv6', 'udp', 'tcp', 'dhcp-client', 'dhcp-server', 'dns-client', 'dns-server', 'http-client', 'http-server', 'traceroute']) {
       expect(using(name), name).toBeGreaterThan(0);
     }
+    // W6 catalog: exactly one model runs each CAPWAP daemon (the NF-AP-1832 and the NF-WLC-9800)
+    expect(ALL_MODELS.filter((m) => m.processes.includes('capwap-wtp')).map((m) => m.type)).toEqual(['ap.nfap-lw']);
+    expect(ALL_MODELS.filter((m) => m.processes.includes('capwap-ac')).map((m) => m.type)).toEqual(['wlc.nfwlc9800']);
   });
 });

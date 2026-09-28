@@ -18,7 +18,11 @@
  *     lane and starts the controller's; without a management address discovery stops, and it starts again with one;
  *   • silence: no `capwap enable` (a P1 world, even with a static address) → no CAPWAP at all; a controller without
  *     a management interface opens no socket; an unanswered AP never holds runToIdle;
- *   • the same seed gives the same trace.
+ *   • the same seed gives the same trace;
+ *   • W6 (§9.2 item 22b) the AP identity: the Discovery and Join Requests carry the AP's base MAC (`wtpMac`, NF vendor
+ *     element 3), the controller keys its sessions and `capwap-aps` rows by it — two APs behind one router both join
+ *     and stay in run; a rebooted AP replaces its own session; a newcomer at a joined AP's address takes the endpoint
+ *     over; a Join Request without the element is refused — and the element's wire form is pinned byte for byte.
  */
 import { describe, expect, it } from 'vitest';
 import { CAPWAP_MSG } from '../src/contracts/pdu.js';
@@ -31,8 +35,10 @@ import { passphraseTag } from '../src/link/rewrap80211.js';
 import { CAPWAP_DTLS_CAUSE, capwapText, formatCapwapWlan, formatCapwapWlanRemoval, formatCapwapStationReport, parseCapwapWlan, parseCapwapStationReports } from '../src/protocols/capwap-wtp.js';
 import { evaluateLab } from '../src/sim/lab-checks.js';
 import { configText, section } from '../src/sim/scenarios/kit.js';
+import { capwapCodec } from '../src/pdu/codecs/capwap.js';
 import {
   AP_ADDR,
+  AP_GW,
   LAPTOP_ADDR,
   M24,
   PASSPHRASE,
@@ -98,7 +104,7 @@ describe('W5 wireless — a lightweight AP joins its controller (§3.12 steps 1�
       expect.objectContaining({ key: WLC_MGMT, controller: WLC_MGMT, state: 'run', wlans: 1 }),
     ]);
 
-    // the controller side, keyed by the AP's MAC
+    // the controller side, keyed by the AP's MAC (the WTP MAC of its requests: its base MAC, which its Vlan1 carries)
     const ac = transitions(evs, 'wlc1', 'capwap-ac');
     expect(ac.map((t) => [t.subject, t.from, t.to])).toEqual([
       [`access point ${apMac}`, 'idle', 'dtls'],
@@ -138,6 +144,12 @@ describe('W5 wireless — a lightweight AP joins its controller (§3.12 steps 1�
     expect(joinResp.get('capwap.resultCode')).toBe(0);
     expect(joinResp.get('capwap.acName')).toBe('WLC1');
     expect(join.get('capwap.wtpName')).toBe('LAP1');
+    // W6 (§9.2 item 22b): the Discovery and Join Requests carry the AP's base MAC, the identity the controller keys by;
+    // the later requests do not
+    expect(sim.pdu(msgs[0]!.id)!.get('capwap.wtpMac')).toBe(apMac);
+    expect(join.get('capwap.wtpMac')).toBe(apMac);
+    expect(sim.pdu(msgs[4]!.id)!.get('capwap.wtpMac')).toBeUndefined();
+    expect(sim.pdu(msgs[2]!.id)!.summary()).toBe(`CAPWAP Join Request from LAP1 (${apMac}) seq ${String(join.get('capwap.seq'))}`);
 
     // the sockets: control 5246 and the TUNNEL data socket 5247 on both sides
     for (const [device, owner] of [['lap1', 'capwap-wtp'], ['wlc1', 'capwap-ac']] as const) {
@@ -488,10 +500,18 @@ describe('W5 wireless — configuration changes while running', () => {
   });
 });
 
-describe('W5 wireless — two access points behind one router (W5 fix)', () => {
-  it('keeps the first AP joined and refuses the second, which shares the router’s MAC, instead of letting them evict each other', () => {
-    // LAP1 and LAP2 sit in VLAN 20 behind R1 (192.168.20.1) and reach the controller's VLAN 99 through it: every request
-    // reaches the controller with R1's MAC as the Ethernet source, the identity the controller records (capwap-ac header)
+/**
+ * W6 wireless (§9.2 item 22b, W5 review finding #13): the controller knows an AP by the WTP MAC its Discovery and Join
+ * Requests carry (NF vendor element 3, the AP's base MAC), never by the Ethernet source. The W5 interim (a second AP
+ * behind the same Ethernet source was refused while the first was joined) is replaced by the proper fix: two APs
+ * behind one router both join and stay in run.
+ */
+describe('W6 wireless — the CAPWAP AP identity: two access points behind one router (§9.2 item 22b)', () => {
+  /**
+   * LAP1 and LAP2 sit in VLAN 20 behind R1 (192.168.20.1) and reach the controller's VLAN 99 through it: every request
+   * reaches the controller with R1's MAC as its Ethernet source.
+   */
+  function routedApsWorld(): Simulation {
     const sim = createP2Simulation({ seed: 5, profile: 'P2', factories: capwapFactories() });
     const routedAp = (name: string, address: string): string =>
       configText([[`hostname ${name}`], [`capwap controller ${WLC_MGMT}`], section('interface Vlan1', [`ip address ${address} ${M24}`, 'no shutdown']), [`ip default-gateway ${GW20}`]]);
@@ -515,22 +535,132 @@ describe('W5 wireless — two access points behind one router (W5 fix)', () => {
     sim.addLink({ id: 'l_r1_99', a: { device: 'r1', port: 'GigabitEthernet0/1' }, b: { device: 'sw1', port: 'FastEthernet0/4' } });
     sim.addLink({ id: 'l_lap1', a: { device: 'lap1', port: 'GigabitEthernet0' }, b: { device: 'sw1', port: 'FastEthernet0/6' } });
     sim.addLink({ id: 'l_lap2', a: { device: 'lap2', port: 'GigabitEthernet0' }, b: { device: 'sw1', port: 'FastEthernet0/7' } });
+    return sim;
+  }
+
+  it('both APs join under their own WTP MAC and stay in run, although every request reaches the controller from the router’s MAC', () => {
+    const sim = routedApsWorld();
     sim.runFor(600 * SEC);
     const evs = events(sim);
     const router = macOf(sim, 'r1', 'GigabitEthernet0/1');
-    // one session, never evicted: no "joined again" anywhere, and the controller's one row is in run under R1's MAC
-    expect(transitions(evs, 'wlc1', 'capwap-ac').filter((t) => (t.cause ?? '').includes('joined again'))).toEqual([]);
+    const lap1 = macOf(sim, 'lap1', 'Vlan1');
+    const lap2 = macOf(sim, 'lap2', 'Vlan1');
+    expect(new Set([router, lap1, lap2]).size).toBe(3);
+
+    // every Discovery and Join Request names its AP's base MAC; each AP sent one Join Request (the discoveries repeat
+    // every 10 s until R1 routes), and every request the controller answered reached it from R1's MAC
+    const messages = controlMessages(sim, evs);
+    const requests = messages.filter((m) => m.type === CAPWAP_MSG.discoveryReq || m.type === CAPWAP_MSG.joinReq);
+    for (const ap of ['lap1', 'lap2']) {
+      expect(requests.filter((m) => m.device === ap && m.type === CAPWAP_MSG.joinReq)).toHaveLength(1);
+      expect(requests.filter((m) => m.device === ap && m.type === CAPWAP_MSG.discoveryReq).length).toBeGreaterThanOrEqual(1);
+    }
+    const answered = new Set(messages.filter((m) => m.device === 'wlc1').map((m) => sim.pdu(m.id)!.meta.triggeredBy));
+    let reached = 0;
+    for (const m of requests) {
+      const pdu = sim.pdu(m.id)!;
+      expect([m.device, m.type, pdu.get('capwap.wtpMac')]).toEqual([m.device, m.type, m.device === 'lap1' ? lap1 : lap2]);
+      if (!answered.has(m.id)) continue;
+      reached++;
+      expect([m.device, m.type, pdu.get('ethernet.src')]).toEqual([m.device, m.type, router]);
+    }
+    expect(reached).toBeGreaterThanOrEqual(4);
+
+    // the controller keeps one session and one row per AP, keyed by the WTP MAC, both in run
     const rows = sim.device('wlc1')!.tables.get<CapwapApRow>('capwap-aps')!.rows();
-    expect(rows.map((r) => [r.apMac, r.state])).toEqual([[router, 'run']]);
-    const joined = rows[0]!.name === 'LAP1' ? 'lap1' : 'lap2';
-    const refused = joined === 'lap1' ? 'lap2' : 'lap1';
-    expect(sim.device(joined)!.tables.get<CapwapRow>('capwap')!.get(WLC_MGMT)!.state).toBe('run');
-    expect(sim.device(refused)!.tables.get<CapwapRow>('capwap')!.get(WLC_MGMT)?.state).toBe('discovery');
-    expect(transitions(evs, joined, 'capwap-wtp').filter((t) => t.from === 'run')).toEqual([]);
-    const refusals = ofKind(evs, 'debug').filter((e) => e.event.device === 'wlc1' && e.event.message.includes('refused') && e.event.message.includes(router));
-    expect(refusals.length).toBeGreaterThan(0);
-    // the refused AP waits for its periodic discovery tick: nothing holds runToIdle
+    const byKey = (a: readonly unknown[], b: readonly unknown[]): number => (String(a[0]) < String(b[0]) ? -1 : String(a[0]) > String(b[0]) ? 1 : 0);
+    expect(rows.map((r) => [r.key, r.apMac, r.apIp, r.name, r.state]).sort(byKey)).toEqual(
+      [[lap1, lap1, '192.168.20.20', 'LAP1', 'run'], [lap2, lap2, '192.168.20.21', 'LAP2', 'run']].sort(byKey),
+    );
+    const ac = transitions(evs, 'wlc1', 'capwap-ac');
+    for (const mac of [lap1, lap2]) {
+      expect(ac.filter((t) => t.subject === `access point ${mac}`).map((t) => [t.from, t.to])).toEqual([
+        ['idle', 'dtls'], ['dtls', 'join'], ['join', 'configure'], ['configure', 'data-check'], ['data-check', 'run'],
+      ]);
+    }
+    // nobody was evicted, refused or aged out: no lane ever went back to idle, and no refusal was logged
+    expect(ac.filter((t) => t.to === 'idle')).toEqual([]);
+    expect(ofKind(evs, 'debug').filter((e) => e.event.device === 'wlc1' && e.event.message.includes('refused'))).toEqual([]);
+    expect(controlMessages(sim, evs).filter((m) => m.device === 'wlc1' && sim.pdu(m.id)!.get('capwap.resultCode') === 1)).toEqual([]);
+
+    // both APs are in run with the controller and stayed there, echoing every 30 s
+    for (const ap of ['lap1', 'lap2']) {
+      expect(sim.device(ap)!.tables.get<CapwapRow>('capwap')!.rows().map((r) => [r.controller, r.state])).toEqual([[WLC_MGMT, 'run']]);
+      expect(transitions(evs, ap, 'capwap-wtp').filter((t) => t.from === 'run')).toEqual([]);
+      expect(ofKind(evs, 'pduCreated').filter((e) => e.device === ap && e.pdu.tag === 'capwap-echo').length).toBeGreaterThanOrEqual(15);
+    }
+    const state = sim.device('wlc1')!.processes.get('capwap-ac')!.stateSnapshot().state as { aps: { apMac: string; state: string }[] };
+    expect(state.aps.map((a) => [a.apMac, a.state])).toEqual([[lap1, 'run'], [lap2, 'run']].sort(byKey));
+    // echoes are periodic: nothing holds runToIdle
     expect(sim.runToIdle(50_000).events).toBeLessThan(50_000);
+  });
+
+  it('an AP that reboots and joins again replaces its own session under the same WTP MAC', () => {
+    const sim = capwapWorld({ ap: 'static', laptop: false });
+    sim.runFor(SETTLE);
+    const apMac = macOf(sim, 'lap1', 'Vlan1');
+    sim.setPower('lap1', false);
+    sim.runFor(1 * SEC);
+    const cursor = sim.trace(0).next;
+    sim.setPower('lap1', true);
+    sim.runFor(60 * SEC);
+    const ac = transitions(sim.trace(cursor).events, 'wlc1', 'capwap-ac');
+    expect(ac.map((t) => [t.subject, t.from, t.to, t.cause])).toEqual([
+      [`access point ${apMac}`, 'run', 'idle', 'it joined again'],
+      [`access point ${apMac}`, 'idle', 'dtls', CAPWAP_DTLS_CAUSE],
+      [`access point ${apMac}`, 'dtls', 'join', 'join request accepted'],
+      [`access point ${apMac}`, 'join', 'configure', 'configuration status received'],
+      [`access point ${apMac}`, 'configure', 'data-check', 'change state event received'],
+      [`access point ${apMac}`, 'data-check', 'run', 'access point joined'],
+    ]);
+    expect(sim.device('wlc1')!.tables.get<CapwapApRow>('capwap-aps')!.rows().map((r) => [r.key, r.apIp, r.state])).toEqual([[apMac, AP_ADDR, 'run']]);
+  });
+
+  it('a new AP that joins from the address of a joined one takes that endpoint over: the old session ends', () => {
+    const sim = capwapWorld({ ap: 'static', laptop: false });
+    sim.runFor(SETTLE);
+    const old = macOf(sim, 'lap1', 'Vlan1');
+    sim.setPower('lap1', false);
+    // LAP3 takes LAP1's address (192.168.99.20) on SW1 Fa0/5 (VLAN 99) before the controller ages LAP1 out
+    const cursor = sim.trace(0).next;
+    sim.addDevice({
+      id: 'lap3', type: 'ap.nfap-lw', name: 'LAP3', position: { x: 500, y: 200 },
+      startupConfig: configText([['hostname LAP3'], section('interface Vlan1', [`ip address ${AP_ADDR} ${M24}`, 'no shutdown']), [`ip default-gateway ${AP_GW}`]]),
+    });
+    sim.addLink({ id: 'l_lap3', a: { device: 'lap3', port: 'GigabitEthernet0' }, b: { device: 'sw1', port: 'FastEthernet0/5' } });
+    sim.runFor(60 * SEC);
+    const fresh = macOf(sim, 'lap3', 'Vlan1');
+    expect(fresh).not.toBe(old);
+    const ac = transitions(sim.trace(cursor).events, 'wlc1', 'capwap-ac');
+    expect(ac[0]).toMatchObject({ subject: `access point ${old}`, from: 'run', to: 'idle', cause: `access point ${fresh} joined from ${AP_ADDR}` });
+    expect(ac.slice(1).map((t) => [t.subject, t.to])).toEqual([
+      [`access point ${fresh}`, 'dtls'], [`access point ${fresh}`, 'join'], [`access point ${fresh}`, 'configure'],
+      [`access point ${fresh}`, 'data-check'], [`access point ${fresh}`, 'run'],
+    ]);
+    expect(sim.device('wlc1')!.tables.get<CapwapApRow>('capwap-aps')!.rows().map((r) => [r.key, r.name, r.apIp, r.state])).toEqual([[fresh, 'LAP3', AP_ADDR, 'run']]);
+  });
+
+  it('refuses a Join Request that names no WTP MAC (result 1) and keeps no session for it', () => {
+    const sim = capwapWorld({ ap: 'static', laptop: false });
+    sim.runFor(SETTLE);
+    const cursor = sim.trace(0).next;
+    // R1 (192.168.99.1, the AP subnet's gateway) sends a hand-built Join Request without the WTP MAC element
+    const join = capwapCodec.encode({ messageType: CAPWAP_MSG.joinReq, seq: 9, wtpName: 'ROGUE' }, new Uint8Array(0));
+    sim.device('r1')!.applyActions('dns-client', [
+      { type: 'request', to: 'udp', req: { kind: 'udp.open', owner: 'dns-client', socket: 'probe#1', family: 4, localPort: 40001 } },
+      { type: 'request', to: 'udp', req: { kind: 'udp.send', socket: 'probe#1', dst: WLC_MGMT, dstPort: 5246, src: AP_GW, data: join } },
+    ], sim.now);
+    sim.runFor(2 * SEC);
+    const evs = sim.trace(cursor).events;
+    const answers = controlMessages(sim, evs).filter((m) => m.device === 'wlc1' && m.type === CAPWAP_MSG.joinResp);
+    expect(answers.map((m) => {
+      const pdu = sim.pdu(m.id)!;
+      return [pdu.get('capwap.resultCode'), pdu.get('ipv4.dst'), pdu.get('udp.dstPort')];
+    })).toEqual([[1, AP_GW, 40001]]);
+    expect(ofKind(evs, 'debug').filter((e) => e.event.device === 'wlc1' && e.event.message === `join request from ROGUE (${AP_GW}) refused: it names no access point MAC`)).toHaveLength(1);
+    // no session, no row, no lane for it; the joined AP is untouched
+    expect(transitions(evs, 'wlc1', 'capwap-ac')).toEqual([]);
+    expect(sim.device('wlc1')!.tables.get<CapwapApRow>('capwap-aps')!.rows().map((r) => [r.apIp, r.state])).toEqual([[AP_ADDR, 'run']]);
   });
 });
 
@@ -553,6 +683,30 @@ describe('W5 wireless — the NF encodings of the WLAN and station elements', ()
     expect(parseCapwapStationReports(text)).toEqual([add, del]);
   });
 
+  it('carries the WTP MAC as NF vendor element 3 (six octets, §9.2 item 22b) and refuses any other size', () => {
+    const b = capwapCodec.encode({ messageType: CAPWAP_MSG.joinReq, seq: 3, wtpName: 'LAP1', wtpMac: '02:4e:59:e8:af:00' }, new Uint8Array(0));
+    const hex = (bytes: Uint8Array): string => [...bytes].map((x) => x.toString(16).padStart(2, '0')).join(' ');
+    expect(hex(b)).toBe([
+      '00 10 02 00 00 00 00 00', // preamble, HLEN 2 / RID 0 / WBID 1, no flags, no fragmentation
+      '00 00 00 03', // message type 3 (Join Request)
+      '03', // sequence
+      '00 1b', // element length = 24 + 3
+      '00', // flags
+      '00 2d 00 04 4c 41 50 31', // WTP Name "LAP1"
+      '00 25 00 0c 00 02 4e 46 00 03 02 4e 59 e8 af 00', // Vendor Specific (37): NF OUI, NF element 3, the six octets
+    ].join(' '));
+    const decoded = capwapCodec.decode(b, 0, b.length);
+    expect(decoded.error).toBeUndefined();
+    expect(decoded.fields).toEqual({ radioId: 0, wbid: 1, tbit: false, messageType: 3, seq: 3, wtpName: 'LAP1', wtpMac: '02:4e:59:e8:af:00' });
+    expect(decoded.fieldRanges?.wtpMac).toEqual([24, 16]);
+    expect(capwapCodec.summarize(decoded.fields)).toBe('CAPWAP Join Request from LAP1 (02:4e:59:e8:af:00) seq 3');
+    expect(capwapCodec.summarize({ messageType: CAPWAP_MSG.discoveryReq, seq: 1, wtpMac: '02:4e:59:e8:af:00' })).toBe('CAPWAP Discovery Request from 02:4e:59:e8:af:00 seq 1');
+    // a WTP MAC element of five octets is an error; an unparseable MAC is refused on encode
+    const short = Uint8Array.from([0x00, 0x10, 0x02, 0x00, 0, 0, 0, 0, 0, 0, 0, 0x03, 0x01, 0x00, 0x12, 0x00, 0x00, 0x25, 0x00, 0x0b, 0x00, 0x02, 0x4e, 0x46, 0x00, 0x03, 0xaa, 0xbb, 0xcc, 0xdd, 0xee]);
+    expect(capwapCodec.decode(short, 0, short.length).error).toBe('CAPWAP WTP MAC element carries 5 octets, not 6');
+    expect(() => capwapCodec.encode({ messageType: CAPWAP_MSG.joinReq, wtpMac: 'not-a-mac' }, new Uint8Array(0))).toThrow(/capwap\.wtpMac must be a MAC address/);
+  });
+
   it('keeps CAPWAP name elements printable', () => {
     expect(capwapText('AP-Hall 2')).toBe('AP-Hall 2');
     expect(capwapText('Accès 1')).toBe('Acc?s?1');
@@ -567,5 +721,20 @@ describe('W5 wireless — determinism', () => {
       return JSON.stringify({ trace: events(sim), snapshot: sim.snapshot() });
     };
     expect(run()).toBe(run());
+  });
+});
+
+describe('W6 fix — the lease event reaches only the daemons the access point runs', () => {
+  it('a DHCP-addressed NF-AP-1832 (dhcp-client without dns-client) logs no "no process" runtime line on its lease', () => {
+    const sim = capwapWorld({ seed: 12, ap: 'dhcp', laptop: false });
+    sim.runFor(SETTLE);
+    const evs = events(sim);
+    expect(sim.device('lap1')!.model.processes).toContain('dhcp-client');
+    expect(sim.device('lap1')!.model.processes).not.toContain('dns-client');
+    // the lease happened (so the event was built), and capwap-wtp still got its copy: the AP reached run
+    expect(sim.device('lap1')!.port('Vlan1')!.l3.ipv4).toMatchObject({ address: AP_ADDR, origin: 'dhcp' });
+    expect(sim.device('lap1')!.tables.get<CapwapRow>('capwap')!.get(WLC_MGMT)!.state).toBe('run');
+    const stray = ofKind(evs, 'debug').filter((e) => e.event.device === 'lap1' && e.event.message.includes('no process'));
+    expect(stray.map((e) => e.event.message)).toEqual([]);
   });
 });

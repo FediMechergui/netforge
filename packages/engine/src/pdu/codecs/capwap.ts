@@ -12,7 +12,9 @@
  *     4 AC Name → acName     33 Result Code → resultCode (u32)     45 WTP Name → wtpName
  *     37 Vendor Specific Payload, vendor id NF_OUI: element 1 → wlans (one WLAN per IEEE 802.11 WLAN Configuration
  *        Request: '<id>:<ssid>:<security>:<vlan>:<keyTag>', never a passphrase); element 2 → stations (WTP Event
- *        station reports '<add|del>:<station mac>:<bssid>:<wlanId>' joined by ';').
+ *        station reports '<add|del>:<station mac>:<bssid>:<wlanId>' joined by ';'); element 3 → wtpMac (the access
+ *        point's base MAC as six octets, in its Discovery and Join Requests — the role RFC 5415's WTP Board Data
+ *        element plays: the controller knows an AP by it, never by the Ethernet source; ARCHITECTURE-P2 §9.2 item 22b).
  *     Encode writes the present ones in that order; decode skips other elements.
  *   data: header, then the tunnelled frame — a native 802.11 frame when T is set (`dot11`), an 802.3 frame otherwise
  *         (`ethernet`); neither carries an FCS inside the tunnel (the ethernet and dot11 codecs see `capwap` as their
@@ -20,8 +22,10 @@
  *         frame.
  *  • The DTLS session is simulated (§3.12): records are never on the wire; control messages after the DTLS step carry
  *    `PduMeta.protected`. A header whose preamble type is 1 (a DTLS record) decodes with an error and stops.
- *  • Decode errors: truncation, a preamble other than 0, an element running past the message.
+ *  • Decode errors: truncation, a preamble other than 0, an element running past the message, a WTP MAC element
+ *    whose value is not six octets.
  */
+import { bytesToMac, macToBytes } from '../../contracts/addr.js';
 import type { Codec, CodecContext, DecodedLayer, FieldValue, ProtoName } from '../../contracts/pdu.js';
 import { CAPWAP_MSG, NF_OUI, UDP_PORT_CAPWAP_CONTROL, UDP_PORT_CAPWAP_DATA } from '../../contracts/pdu.js';
 import { numField, readU16, readU32, strField, writeU16, writeU32 } from '../checksum.js';
@@ -32,8 +36,12 @@ export const CAPWAP_HEADER = 8;
 export const CAPWAP_CONTROL_HEADER = 8;
 /** Message element types used (RFC 5415 §4.6). */
 export const CAPWAP_ELEMENT = Object.freeze({ acName: 4, resultCode: 33, vendorSpecific: 37, wtpName: 45 });
-/** NF vendor-specific element ids (under NF_OUI). */
-export const CAPWAP_NF_ELEMENT = Object.freeze({ wlans: 1, stations: 2 });
+/** NF vendor-specific element ids (under NF_OUI). `wtpMac` (3) from the W6 wireless item (ARCHITECTURE-P2 §9.2 item 22b). */
+export const CAPWAP_NF_ELEMENT = Object.freeze({ wlans: 1, stations: 2, wtpMac: 3 });
+/** Octets of a MAC address (the value of the WTP MAC element after the vendor id and element id). */
+const MAC_OCTETS = 6;
+/** Vendor id (4) and NF element id (2) that open every NF vendor-specific element value. */
+const NF_VENDOR_HEADER = 6;
 /** Wireless binding id of IEEE 802.11. */
 export const CAPWAP_WBID_IEEE80211 = 1;
 
@@ -125,14 +133,18 @@ function decodeElements(
     } else if (type === CAPWAP_ELEMENT.resultCode && len >= 4) {
       fields.resultCode = readU32(bytes, v);
       fieldRanges.resultCode = range;
-    } else if (type === CAPWAP_ELEMENT.vendorSpecific && len >= 6 && readU32(bytes, v) === NF_OUI) {
+    } else if (type === CAPWAP_ELEMENT.vendorSpecific && len >= NF_VENDOR_HEADER && readU32(bytes, v) === NF_OUI) {
       const id = readU16(bytes, v + 4);
       if (id === CAPWAP_NF_ELEMENT.wlans) {
-        fields.wlans = text(bytes, v + 6, v + len);
+        fields.wlans = text(bytes, v + NF_VENDOR_HEADER, v + len);
         fieldRanges.wlans = range;
       } else if (id === CAPWAP_NF_ELEMENT.stations) {
-        fields.stations = text(bytes, v + 6, v + len);
+        fields.stations = text(bytes, v + NF_VENDOR_HEADER, v + len);
         fieldRanges.stations = range;
+      } else if (id === CAPWAP_NF_ELEMENT.wtpMac) {
+        if (len - NF_VENDOR_HEADER !== MAC_OCTETS) return `CAPWAP WTP MAC element carries ${len - NF_VENDOR_HEADER} octets, not ${MAC_OCTETS}`;
+        fields.wtpMac = bytesToMac(bytes, v + NF_VENDOR_HEADER);
+        fieldRanges.wtpMac = range;
       }
     }
     i = v + len;
@@ -259,11 +271,19 @@ function encode(fields: Record<string, FieldValue>, payload: Uint8Array, ctx?: C
     element(elements, CAPWAP_ELEMENT.resultCode, [(rc >>> 24) & 0xff, (rc >>> 16) & 0xff, (rc >>> 8) & 0xff, rc & 0xff]);
   }
   if (present(fields, 'wtpName')) element(elements, CAPWAP_ELEMENT.wtpName, textBytes(strField(p, fields, 'wtpName', null), 'wtpName'));
+  const vendor = (id: number): number[] => [(NF_OUI >>> 24) & 0xff, (NF_OUI >>> 16) & 0xff, (NF_OUI >>> 8) & 0xff, NF_OUI & 0xff, (id >>> 8) & 0xff, id & 0xff];
   for (const key of ['wlans', 'stations'] as const) {
     if (!present(fields, key)) continue;
-    const id = CAPWAP_NF_ELEMENT[key];
-    const vendor = [(NF_OUI >>> 24) & 0xff, (NF_OUI >>> 16) & 0xff, (NF_OUI >>> 8) & 0xff, NF_OUI & 0xff, (id >>> 8) & 0xff, id & 0xff];
-    element(elements, CAPWAP_ELEMENT.vendorSpecific, [...vendor, ...textBytes(strField(p, fields, key, null), key)]);
+    element(elements, CAPWAP_ELEMENT.vendorSpecific, [...vendor(CAPWAP_NF_ELEMENT[key]), ...textBytes(strField(p, fields, key, null), key)]);
+  }
+  if (present(fields, 'wtpMac')) {
+    let mac: Uint8Array;
+    try {
+      mac = macToBytes(strField(p, fields, 'wtpMac', null));
+    } catch {
+      throw new Error('capwap.wtpMac must be a MAC address');
+    }
+    element(elements, CAPWAP_ELEMENT.vendorSpecific, [...vendor(CAPWAP_NF_ELEMENT.wtpMac), ...mac]);
   }
   const elementLength = elements.length + 3;
   if (elementLength > 0xffff) throw new Error('capwap: message elements are too long');
@@ -280,7 +300,9 @@ function encode(fields: Record<string, FieldValue>, payload: Uint8Array, ctx?: C
 function summarize(fields: Readonly<Record<string, FieldValue>>): string {
   if (typeof fields.messageType === 'number') {
     const parts: string[] = [`CAPWAP ${capwapMessageName(fields.messageType)}`];
-    if (typeof fields.wtpName === 'string') parts.push(`from ${fields.wtpName}`);
+    const mac = typeof fields.wtpMac === 'string' ? fields.wtpMac : undefined;
+    if (typeof fields.wtpName === 'string') parts.push(mac === undefined ? `from ${fields.wtpName}` : `from ${fields.wtpName} (${mac})`);
+    else if (mac !== undefined) parts.push(`from ${mac}`);
     if (typeof fields.acName === 'string') parts.push(`controller ${fields.acName}`);
     if (typeof fields.resultCode === 'number') parts.push(`result ${fields.resultCode}`);
     if (typeof fields.wlans === 'string') parts.push(`WLAN ${fields.wlans.split(':')[1] ?? fields.wlans}`);
