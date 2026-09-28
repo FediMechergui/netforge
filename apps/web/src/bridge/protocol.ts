@@ -47,7 +47,10 @@
  * (`EngineError`), so `problems` survives the worker boundary.
  *
  * P0.5/P1 members are OPTIONAL in these types only until the web-shell wave that implements them removes the `?`
- * (engine contracts/port.ts TRANSITION RULE). Everything crossing this boundary is structured-clone safe.
+ * (engine contracts/port.ts TRANSITION RULE). P2 members (ARCHITECTURE-P2 §0 rule 2) are required since the W8 exit
+ * gate, except the ones tagged `@since P2 (optional by meaning)` (§2.15: `init`/`reset` `profile`, `EngineBatch.review`
+ * and `.timelineHead`), whose absence is what they mean; test/protocol.optional-by-meaning.test.ts pins both sets.
+ * Everything crossing this boundary is structured-clone safe.
  */
 import type {
   AddDeviceSpec,
@@ -252,7 +255,7 @@ export type BatchListener = (batch: EngineBatch) => void;
 
 export interface EngineApi {
   /**
-   * `profile` @since P2 (optional by meaning; default 'P1'). The CALLER chooses it from the course context (D2): the
+   * `profile` @since P2 (optional by meaning): absent = 'P1'. The CALLER chooses it from the course context (D2): the
    * web shell passes profileForCourse(lastCourse) (learn/course-profile.ts: 'P1' for CCNA 1, else 'P2').
    */
   init(opts: { seed: number; profile?: DefaultsProfile }): Promise<InitResult>;
@@ -343,7 +346,7 @@ export interface EngineApi {
   /** Register the batch listener (Comlink.proxy). Only one listener; later calls replace it. `opts` @since P0.5. */
   subscribe(listener: BatchListener, opts?: SubscribeOptions): Promise<void>;
   /**
-   * Reset to an empty simulation with a new seed. `profile` @since P2 (optional by meaning; default 'P1'): File → New
+   * Reset to an empty simulation with a new seed. `profile` @since P2 (optional by meaning): absent = 'P1'. File → New
    * passes the course context's profile; entering the sandbox from a lesson while the world has no devices passes that
    * lesson's course profile (D2).
    */
@@ -356,17 +359,17 @@ export interface EngineApi {
    */
   useCurrentDefaults(): Promise<SimSnapshot>;
 
-  // time travel — P2 [SHOULD S1]; optional in the type until the W4 web-shell item implements them
+  // time travel — P2 [SHOULD S1]; implemented by the worker since W4/W6, required since the W8 exit gate
   /** @since P2 Enter (or move within) review at `target`; the replayed events are counted, not timed. */
-  seek?(target: SeekTarget): Promise<{ snapshot: SimSnapshot; review: ReviewInfo; replayedEvents: number }>;
+  seek(target: SeekTarget): Promise<{ snapshot: SimSnapshot; review: ReviewInfo; replayedEvents: number }>;
   /** @since P2 End review; resolves with the live snapshot. */
-  leaveReview?(): Promise<SimSnapshot>;
+  leaveReview(): Promise<SimSnapshot>;
   /** @since P2 Bucketed lane activity for the timeline strip. */
-  timelineBuckets?(q: TimelineQuery): Promise<LaneBucket[]>;
+  timelineBuckets(q: TimelineQuery): Promise<LaneBucket[]>;
   /** @since P2 Individual marks of one lane. */
-  timelineMarks?(q: TimelineMarkQuery): Promise<{ cursor: number; t: SimTime; lane: LaneId; event: TraceEvent }[]>;
+  timelineMarks(q: TimelineMarkQuery): Promise<{ cursor: number; t: SimTime; lane: LaneId; event: TraceEvent }[]>;
   /** @since P2 Change the time machine's memory budget ("history off" = no replayers). */
-  setTimeTravelBudget?(b: Partial<TimeTravelBudget>): Promise<void>;
+  setTimeTravelBudget(b: Partial<TimeTravelBudget>): Promise<void>;
   /** @since P1 Page the trace ring (sim-events list; the store's 5000-event ring is never used for it). */
   traceQuery(q: TraceQuery): Promise<TraceQueryResult>;
   /** @since P0.5 */

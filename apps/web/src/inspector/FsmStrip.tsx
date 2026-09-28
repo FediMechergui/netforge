@@ -287,7 +287,7 @@ export function FsmStrip({
   limit?: number;
 }) {
   const ring = useStore((s) => s.events);
-  const reviewAt = useStore((s) => s.timeline?.review?.t);
+  const reviewAt = useStore((s) => s.timeline.review?.t);
   const source = events ?? ring;
   const machineKey = machines?.join(',') ?? '';
   const histories = useMemo(

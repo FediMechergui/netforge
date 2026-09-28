@@ -327,9 +327,9 @@ export type Action =
       ipv6?: readonly Ipv6PortAddress[] | null;
       ipv6Enabled?: boolean | null;
       groups6?: readonly Ipv6Address[] | null;
-      /** @since P2 Same merge rules; written only by ipv4 (D15). */
+      /** @since P2 (optional by meaning) Same merge rules (absent = unchanged); written only by ipv4 (D15). */
       virtual4?: readonly VirtualIpv4[] | null;
-      /** @since P2 [SHOULD S2] Same merge rules; written only by ipv4 (D15). */
+      /** @since P2 (optional by meaning) [SHOULD S2] Same merge rules (absent = unchanged); written only by ipv4 (D15). */
       groups4?: readonly Ipv4Address[] | null;
     }
   /** Syslog line (original wording). */

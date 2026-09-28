@@ -80,11 +80,16 @@ export const TIMELINE_ZOOM_STEP = 2;
 
 // ── the controller: seeks, return to now, queries ───────────────────────────
 
-/** The part of the engine the strip uses (every member optional, as in EngineApi). */
-export type TimelineEngine = Pick<EngineApi, 'seek' | 'leaveReview' | 'timelineBuckets' | 'timelineMarks'>;
+/**
+ * The part of the engine the strip uses. The worker implements all four (EngineApi requires them since the W8 exit
+ * gate); they stay optional HERE because the controller also runs over an engine without a time machine and then says
+ * so (TIMELINE_UNAVAILABLE_TEXT) instead of throwing — the file header's last disabled state, pinned by
+ * test/timeline.strip.test.ts "says so when the engine has no time machine".
+ */
+export type TimelineEngine = Partial<Pick<EngineApi, 'seek' | 'leaveReview' | 'timelineBuckets' | 'timelineMarks'>>;
 
 /** What a seek resolves with. */
-export type SeekReply = Awaited<ReturnType<NonNullable<EngineApi['seek']>>>;
+export type SeekReply = Awaited<ReturnType<EngineApi['seek']>>;
 
 /** What the controller tells the strip. */
 export interface TimelineControllerHooks {
@@ -294,7 +299,7 @@ const sameWindow = (a: TimelineWindow, b: TimelineWindow): boolean => a.from ===
 /** The store's `timeline.seeking`, written as the strip's own UI state (batches never touch it). */
 export function writeTimelineSeeking(busy: boolean): void {
   const tl = store.getState().timeline;
-  if (tl === undefined || tl.seeking === busy) return;
+  if (tl.seeking === busy) return;
   store.setState({ timeline: { ...tl, seeking: busy } });
 }
 
@@ -454,10 +459,10 @@ export function reviewAnnouncement(past: boolean, everPast: boolean): string {
 export function TimelineStrip() {
   const ready = useStore((s) => s.ready);
   const epoch = useStore((s) => s.epoch);
-  const head = useStore((s) => s.timeline?.head ?? null);
-  const review = useStore((s) => s.timeline?.review ?? null);
-  const seeking = useStore((s) => s.timeline?.seeking ?? false);
-  const storeLanes = useStore((s) => s.timeline?.lanes);
+  const head = useStore((s) => s.timeline.head);
+  const review = useStore((s) => s.timeline.review);
+  const seeking = useStore((s) => s.timeline.seeking);
+  const storeLanes = useStore((s) => s.timeline.lanes);
   const devices = useStore((s) => s.snapshot?.devices);
 
   const headT = head?.t ?? 0;
@@ -487,7 +492,7 @@ export function TimelineStrip() {
         setPreview: setPreviewT,
         historyOff: setOff,
         report: (message) => store.getState().toast(message, 'error'),
-        isReviewing: () => isReviewing(store.getState().timeline?.review),
+        isReviewing: () => isReviewing(store.getState().timeline.review),
       }),
     [],
   );
@@ -500,8 +505,8 @@ export function TimelineStrip() {
 
   /** Ask for the buckets of the window on screen when something moved (at most one query in flight). */
   const refresh = useCallback((): void => {
-    const h = store.getState().timeline?.head;
-    if (h === undefined || h === null) return;
+    const h = store.getState().timeline.head;
+    if (h === null) return;
     void requestLaneBuckets(controller, h, winRef.current, widthRef.current, lanesRef.current).then((buckets) => {
       if (buckets !== undefined) setAnswer(buckets);
     });
@@ -515,7 +520,7 @@ export function TimelineStrip() {
     setPreviewT(null);
     setOpenLane(null);
     setMarks(null);
-    const h = store.getState().timeline?.head?.t ?? 0;
+    const h = store.getState().timeline.head?.t ?? 0;
     headRef.current = h;
     applyWindow(liveWindow(h, windowSpan(winRef.current)));
   }, [epoch, controller, applyWindow]);
@@ -523,8 +528,8 @@ export function TimelineStrip() {
   // the window follows the live head (when it shows it) and the lanes refresh, at most every TIMELINE_QUERY_MS
   useEffect(() => {
     const tick = (): void => {
-      const h = store.getState().timeline?.head;
-      if (h === undefined || h === null) return;
+      const h = store.getState().timeline.head;
+      if (h === null) return;
       const prev = headRef.current;
       headRef.current = h.t;
       applyWindow(advanceWindow(winRef.current, prev, h.t));

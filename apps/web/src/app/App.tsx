@@ -66,7 +66,7 @@ export function App() {
   const dockHeight = useStore((s) => s.dockHeight);
   const view = useStore((s) => s.view);
   // [S1] the past is on screen: the grid says so (timeline.css frames the canvas)
-  const reviewing = useStore((s) => isReviewing(s.timeline?.review));
+  const reviewing = useStore((s) => isReviewing(s.timeline.review));
 
   const style = {
     '--inspector-w': `${inspectorWidth}px`,

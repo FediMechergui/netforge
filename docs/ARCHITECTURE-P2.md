@@ -1308,7 +1308,9 @@ member, that the type still accepts an object without it.
 |---|---|
 | port.ts | `PortSpec.parent`, `PortState.dot1q`, `PortL3.virtual4`, [S2] `PortL3.groups4` |
 | pdu.ts | `RewrapOp.as`, `PduMeta.protected` |
-| process.ts | `DebugEvent.fsm`, `DemuxSelector.frame`, `ProcessCtx.radioSettings`, widened `arp.gratuitous` `address`/`mac`, `udp.open` `tunnel`, action `radio-profile` `controller` |
+| process.ts | `DebugEvent.fsm`, `DemuxSelector.frame`, `ProcessCtx.radioSettings`, widened `arp.gratuitous` `address`/`mac`, `udp.open` `tunnel`, action `radio-profile` `controller`, action `setPortL3` `virtual4` / [S2] `groups4` (W8) |
+| cli.ts | `CommandSpec.excludesAny` (W7, §9.2 item 29b), `CliRuntimeDeps.resume` [S1] (absent: session counters start at 0) (W8) |
+| config.ts | `ConfigLineRule.bothForms`, `ConfigLineRule.negationRestoresDefault` (absent: P1 storage) (W8) |
 | transport.ts | `LeaseEvent.family` |
 | tables.ts | `CamRow.secure`, `RouteRow.paths` / `Route6Row.paths` [S6] |
 | events.ts | `frameArrival.central` |
@@ -1320,6 +1322,7 @@ member, that the type still accepts an object without it.
 | scenario.ts | `connectivity.after`, `.settleMs`, `.then` |
 | rf.ts / medium.ts | `RadioSettings.bss`, `.controller`, `RadioPortView.bss`, the `BssSnapshot` additions |
 | web protocol.ts | `EngineApi.init` `profile`, `EngineApi.reset` `profile`, [S1] `EngineBatch.review`, `.timelineHead` |
+| web store/types.ts | `LabUiState.checking` (W6 fix, §9.2 item 25a) |
 
 Members that DO become required at the exit gate (or earlier, in the item that implements them): `ProcessCtx.profile`,
 `ProcessCtx.transition`, `DeviceRuntime.profile`, `DeviceRuntime.errDisablePort`, `Simulation.profile`,
@@ -2393,6 +2396,11 @@ number of leading tokens that name the slot (a later line with the same identity
 `show ipv6 dhcp pool|binding|interface`, `show capwap` (AP), `clear mac address-table dynamic [vlan <v>|interface <if>]`,
 `clear ip nat translation *`, `clear spanning-tree detected-protocols [interface <if>]` (§3.6 Mixed modes),
 `clear errdisable interface <if>` [S5]. All output wording is original.
+
+**Scope on the controller (W7, §9.2 items 29a–29b).** The NF-WLC-9800 runs `vlan` but its VLAN list is written only by its
+`wlc-interface` handler and it has no console, so `debug sw-vlan` and `debug port-security` are offered on managed switches
+only (`requiresAny: ['managed-switch']`), and its intrinsic trunk ports accept no `switchport` line at all
+(`CommandSpec.excludesAny: ['wireless-controller']` on the bare `switchport` spec).
 
 **Debug categories (binding across the daemon and cli seam).** The CLI prints a debug event only when its `category`
 is in the device's debug set (cli/runtime.ts:1131), so each daemon passes exactly this string to `ctx.debug` and
@@ -3663,3 +3671,65 @@ reported the same defect are merged (#3 = #35, #9 = #39, #12 = #41).
 recommended plan from ≈ 62 to ≈ 65 ew. The wave list (§7) and the cut lines (§8) agree: every MUST row names only
 unbracketed items, every SHOULD row names exactly its bracketed items, and the wired acceptance suite moved from W5 to
 W4 in both places.
+
+---
+
+## 14. P2 exit gate record (W8, 2026-09-28)
+
+**Checks, run one at a time after the gate.** Engine `tsc` clean and `vitest` 300 files / 4215 tests, none skipped
+(149 s); web `tsc` clean and `vitest` 74 files / 1084 tests (`--minWorkers=1 --maxWorkers=4`, §9.2 item 22e);
+`vite build` green. `accept.p2.p1-digests` 27/27, `accept.p05.determinism` 2/2 and `accept.p1.silence` 11/11 with
+`test/goldens/p1-profile-digests.json` untouched since the §9.3(a) re-record of 2026-09-21. No `skip`, `only` or
+`todo` in either suite; no `zz-*` file left. Every row of the §10.1 table exists and passes (25 files, checked by
+`accept.p2.coverage`); every §10.2 file exists and passes.
+
+**Scope list (§8.5 P10), item by item.** Shipped, each with its acceptance evidence: M1 profile
+(`accept.p2.profile`), M2–M3 802.1Q and VLANs (`accept.p2.vlan-access`, `accept.p2.trunk`), M4 DTP
+(`accept.p2.dtp`), M5 inter-VLAN routing (`accept.p2.router-on-a-stick`, `accept.p2.svi-routing`), M6 spanning tree
+(`accept.p2.stp-pvst`, `-rapid`, `-guards`, `-scale`, `accept.p2.loop-storm-bounded`), M7 EtherChannel
+(`accept.p2.etherchannel`), M8 port security (`accept.p2.port-security`), M9 static routing
+(`accept.p2.static-routing`), M10 DHCPv6 (`accept.p2.dhcpv6`), M11 NAT (`accept.p2.nat`), M12 wireless controller
+(`accept.p2.wlc`), M13 overlays (§10.2 overlay tests), M14 the CCNA 2 course — 34 lessons with theory, 34 verified
+videos, 20 labs (`accept.p2.labs`, `labs.ccna2.solutions`, `curriculum.ccna2*`), status `available` — M15 the suite
+itself; S1 time travel (`accept.p2.replay-exact`, `accept.p2.seek`, the worker time machine and timeline tests), S2
+HSRP with its lab (`accept.p2.hsrp`), S3 PAgP, S4 voice VLAN, S6 ECMP, S7 proxy ARP, S9 NAT port forwarding and ICMP
+error translation, S14 the state-history strip. Not built, as approved: S5, S8, S10–S13, S15 and every COULD item
+(C1–C11), each recorded with its stage in §12.1; VTP, MST, loop guard, WPA-Enterprise, RF overlap and roaming are taught
+as theory (§11.4).
+
+**`?` removed and kept.** No transition-only `@since P2` member was left: every wave removed the `?` in the change that
+implemented it (the web [S1] `EngineApi` methods `seek`, `leaveReview`, `timelineBuckets`, `timelineMarks`,
+`setTimeTravelBudget` and the store's `timeline` slice lost theirs at this gate). Kept on purpose and tagged
+"@since P2 (optional by meaning)": the §2.15 table, which gained the rows the waves added — `CommandSpec.excludesAny`,
+`CliRuntimeDeps.resume`, `ConfigLineRule.bothForms` / `.negationRestoresDefault`, the `setPortL3` `virtual4` /
+`groups4` members, `LabUiState.checking`. `contracts.optional-by-meaning.test.ts` (108 checks over 53 engine members)
+and `apps/web/test/protocol.optional-by-meaning.test.ts` (15) fail when a listed member loses its `?` or its tag, or
+when an untagged optional P2 member appears.
+
+**Reconciled.** `packages/engine/src/index.ts`: no export added or removed — every public P2 module was already
+exported once, the 247 names apps/web imports resolve, nothing test-only is exported. `test/p2.world.ts` reduced from
+339 to 211 lines: the process order, capability rows and model deltas are now read from the real catalog (the helper
+equals it model for model, `device.catalog.p2.test.ts`); only the factory overlay remains its own logic; the old data
+names stay as `@deprecated` aliases for the tests that pin them. Docs: `docs/CATALOG.md` (NF-AP-1832 lightweight,
+NF-WLC-9800 added, NF-WLC-3504 in Legacy), §2.15, §5.4 (controller command scope), §9.2 items 20a–29d, §9.3 row (c).
+
+**Gate G (§10.3 W7/W8), built bundle.** Landing → "Start CCNA 2" → lesson 27 "WLANs on a controller" (five sections,
+its video) → "Open the lab" (WLC1, SW1, LAP1, LAPTOP1, R1) → "Check my work": 0 of 100 on the unsolved world; every
+overlay of the View menu toggled once; no console error.
+
+**Known and accepted, for P3.**
+- `apps/web/tsconfig.json` type-checks `src/**` only, so web test files are not type-checked by the five checks (they
+  hold 8 type errors that predate P2 and do not affect runs). A test tsconfig is a P3 chore.
+- Suite time: `accept.p2.loop-storm-bounded` (one simulated second at line rate on five links, §10.1) runs 2–5 minutes
+  alone and is kept as specified (§9.2 item 22e); `accept.p2.replay-exact` runs about 100 s under load. The two
+  "always-post while paused" cases of `worker.delta` need `--maxWorkers=4` on a loaded machine.
+- `TimelineStrip` keeps its guards for an engine without the [S1] methods, for the test that pins that message.
+- Grader limits (§9.2 item 22d) and the EtherChannel wrong answer that never idles (item 22c).
+
+**Process incident.** During W6 a workflow agent pushed commit 7776923 to GitHub `master` although only the `p2`
+branch was authorised, so the live site served the W5 build from 2026-09-24 until the product owner chose, on
+2026-09-28, to move it to the verified W6 build. Every later wave forbade all git commands to agents and the lead
+checked the remote after each run; no further push happened. P2 goes live after this gate, by the product owner's
+decision.
+
+P2 (CCNA 2) is complete.

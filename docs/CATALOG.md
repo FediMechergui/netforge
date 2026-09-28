@@ -57,14 +57,15 @@ Port naming follows the conventional long/short scheme already used in P0
 | repeater.nfrep | NF-REPEATER | Legacy | 2-port signal repeater | Et0–Et1 | repeater |
 | bridge.nfbr2 | NF-BRIDGE-2 | Legacy | 2-port learning bridge | Et0–Et1 | switching |
 | bridge.nfbr4 | NF-BRIDGE-4 | Legacy | 4-port learning bridge | Et0–Et3 | switching |
+| wlc.nfwlc3504 | NF-WLC-3504 | Legacy | Earlier wireless LAN controller kept for older projects: an end system that manages no access points (the NF-WLC-9800 does) | Gi0/1–0/4, Console | host |
 | firewall.nfasa5506 | NF-FW-5506 | Security | Small stateful firewall appliance | Gi1/1–1/8, Console | firewall, routing |
 | firewall.nfngfw1120 | NF-NGFW-1120 | Security | Next-generation firewall | Gi1/1–1/8, Gi1/9–1/12 (SFP), Console | firewall, routing |
 | ids.nfsensor | NF-IDS-SENSOR | Security | Network IDS sensor | Gi0/0 (mgmt), Gi0/1–0/2 (monitor) | host |
 | ap.nfap-auto | NF-AP-2600 | Wireless | Autonomous dual-band access point | Gi0 (PoE-powered), Wl0 (2.4 GHz), Wl1 (5 GHz) | wifi-ap, poe-powered |
-| ap.nfap-lw | NF-AP-1832 | Wireless | Lightweight AP (behaves autonomous until controllers arrive in P2) | Gi0, Wl0, Wl1 | wifi-ap, poe-powered |
+| ap.nfap-lw | NF-AP-1832 | Wireless | Lightweight AP: joins an NF-WLC-9800 over CAPWAP (P2 worlds boot with `capwap enable` and a DHCP address on Vlan1; P1 worlds keep it autonomous) | Gi0, Wl0, Wl1 | wifi-ap, poe-powered, lightweight-ap |
 | ap.nfap-mesh | NF-AP-1562 | Wireless | Outdoor mesh AP | Gi0, Wl0, Wl1 | wifi-ap |
 | ap.nfap-ax | NF-AP-9120 | Wireless | Wi-Fi 6/6E AP | Gi0, Wl0 (2.4), Wl1 (5), Wl2 (6 GHz) | wifi-ap, poe-powered |
-| wlc.nfwlc3504 | NF-WLC-3504 | Wireless | Wireless LAN controller (control plane in P2) | Gi0/1–0/4, Console | host |
+| wlc.nfwlc9800 | NF-WLC-9800 | Wireless | Wireless LAN controller (P2): lightweight APs join it over CAPWAP; controller interfaces and WLANs from its Controller panel; switches client traffic into VLANs through Capwap0 | Gi0/1–0/4 (intrinsic trunks), Console, Capwap0 (auto) | switching, wireless-controller |
 | wrouter.nfhome | NF-HOMEROUTER | Home & SOHO | Home wireless router | Internet (WAN), Gi1–Gi4 (LAN), Wl0 (2.4), Wl1 (5) | wifi-ap, switching, routing, dhcp-server, nat-gateway |
 | wrouter.nfhome-ax | NF-HOMEROUTER-AX | Home & SOHO | Wi-Fi 6 home router | Internet, Gi1–Gi4, Wl0, Wl1, Wl2 | same |
 | radio.nfptp5 | NF-RADIO-PTP5 | Radios | 5 GHz outdoor point-to-point bridge (≤ 15 km) | Gi0, Rd0 | radio-bridge |

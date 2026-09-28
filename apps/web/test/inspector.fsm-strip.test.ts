@@ -10,7 +10,9 @@ import type { FsmTransition, SimTime, TraceEvent } from '@netforge/engine';
 
 vi.mock('../src/bridge/client', () => ({ engine: {}, fmtSimTime: (t: number) => `${t / 1_000_000_000} s` }));
 vi.mock('../src/store/store', () => {
-  const state: Record<string, unknown> = { catalog: [], snapshot: null, snapshotIndex: undefined, epoch: 0, events: [], timeline: undefined, select: vi.fn() };
+  // the store's live timeline slice (no review): `UiState.timeline` is required since the W8 exit gate
+  const timeline = { review: null, head: null, lanes: [], seeking: false, reviewEvents: [] };
+  const state: Record<string, unknown> = { catalog: [], snapshot: null, snapshotIndex: undefined, epoch: 0, events: [], timeline, select: vi.fn() };
   const useStore = Object.assign((selector: (s: Record<string, unknown>) => unknown) => selector(state), {
     getState: () => state,
     setState: (patch: Record<string, unknown>) => Object.assign(state, patch),
@@ -137,7 +139,7 @@ describe('FsmStrip', () => {
     const t = text(renderToStaticMarkup(createElement(FsmStrip, { device: 'sw1', machines: ['stp-port'] })));
     expect(t).toContain('Now learning');
     expect(t).not.toContain('Trunk negotiation');
-    store.setState({ timeline: undefined });
+    store.setState({ timeline: { review: null, head: null, lanes: [], seeking: false, reviewEvents: [] } });
     expect(text(renderToStaticMarkup(createElement(FsmStrip, { device: 'sw1', machines: ['stp-port'] })))).toContain('Now forwarding');
     store.setState({ events: [] });
   });

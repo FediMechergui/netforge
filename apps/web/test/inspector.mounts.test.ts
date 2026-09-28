@@ -14,7 +14,9 @@ vi.mock('../src/desktop/DesktopTab', () => ({ DesktopTab: () => null }));
 vi.mock('../src/bridge/client', () => ({ engine: {}, fmtSimTime: (t: number) => `${t / 1_000_000_000} s` }));
 vi.mock('../src/store/store', () => {
   const state: Record<string, unknown> = {
-    catalog: [], snapshot: null, snapshotIndex: undefined, epoch: 0, events: [], timeline: undefined, select: vi.fn(), toast: vi.fn(), announce: vi.fn(),
+    // `timeline` is the store's live slice (no review): `UiState.timeline` is required since the W8 exit gate
+    catalog: [], snapshot: null, snapshotIndex: undefined, epoch: 0, events: [], select: vi.fn(), toast: vi.fn(), announce: vi.fn(),
+    timeline: { review: null, head: null, lanes: [], seeking: false, reviewEvents: [] },
   };
   const useStore = Object.assign((selector: (s: Record<string, unknown>) => unknown) => selector(state), {
     getState: () => state,

@@ -71,7 +71,7 @@
  * the world builds gets it as `DeviceSpec.profile` — written only when it is not 'P1' (absent means 'P1', so a P1
  * device spec keeps its P1 shape). `SimulationOptions.catalog` (tests and tooling only; never passed by apps/web)
  * replaces `createCatalog(PROCESS_FACTORIES)` everywhere the facade needs a catalog: device creation, media wiring,
- * the CLI runtime and the load gate. test/p2.world.ts builds P2-stage worlds through it before the catalog flips.
+ * the CLI runtime and the load gate. test/p2.world.ts passes a catalog built with a factory overlay through it.
  *
  * P2 W2 sim (§2.9, §3.8 step 7): `loadTopology` gives the new world the profile of the document, `t.profile ?? 'P1'`
  * (a 1.1 document never carries one: io/schema.ts strips the 1.2 key, so it loads as P1). `exportTopology` writes

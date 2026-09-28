@@ -351,7 +351,7 @@ export const useStore = create<Store>()(
         s.playing = batch.playing;
         s.rate = batch.rate;
         s.effectiveRate = batch.effectiveRate;
-        const timeline = timelineOf(s);
+        const timeline = s.timeline;
         if (batch.timelineHead !== undefined) {
           const h = batch.timelineHead;
           timeline.head = { t: h.t, at: h.at, lanesRevision: h.lanesRevision };
@@ -799,17 +799,11 @@ function clearHistory(s: Draft<Store>, epoch: number): void {
   // reports a lab on a batch (loadScenario, or a reopened project carrying one — §4.13).
   s.lab = castDraft({ active: null, status: null, browserOpen: true });
   // [S1] the past of the previous world is gone with it; the strip keeps its lane choice
-  const timeline = timelineOf(s);
+  const timeline = s.timeline;
   timeline.review = null;
   timeline.head = null;
   timeline.seeking = false;
   timeline.reviewEvents = [];
-}
-
-/** [S1] The timeline slice of a draft (created when a state predating the slice lacks it). */
-function timelineOf(s: Draft<Store>): Draft<TimelineUiState> {
-  if (s.timeline === undefined) s.timeline = castDraft(defaultTimelineUi());
-  return s.timeline;
 }
 
 /**

@@ -160,8 +160,8 @@ export interface CommandSpec {
   /** @since P0.5 At least one of these effective capabilities is required. */
   requiresAny?: readonly Capability[];
   /**
-   * @since P2 (optional by meaning: absent = no exclusion; W7 fix, ARCHITECTURE-P2 §9.2 W7 item 29b) None of these
-   * effective capabilities may be present. The only negative gate: the wireless controller's capabilities are a
+   * @since P2 (optional by meaning) Absent = no exclusion (W7 fix, ARCHITECTURE-P2 §9.2 W7 item 29b, §2.15). None of
+   * these effective capabilities may be present. The only negative gate: the wireless controller's capabilities are a
    * superset of a plain bridge's (`switching`), so the bare `switchport` line, which a bridge keeps, is scoped off the
    * controller (§2.2 `CONTROLLER_PORT_SWITCHPORT`: "the grammar accepts no switchport line there") only this way.
    */
@@ -277,9 +277,10 @@ export interface CliRuntimeDeps {
   /** @since P0.5 RF view of a device's radios (the link model's `airView`); feeds `CommandCtx.air`. */
   airView(device: DeviceId): AirView;
   /**
-   * @since P2 [S1] The session counters to resume from (ARCHITECTURE-P2 §2.13 `FacadeCounters`): the next console
-   * or vty session is `s_<sessions + 1>` and the next headless run `h_<headless + 1>`, so a replay built from a
-   * journal's origin numbers its sessions exactly as the live world did. Absent: both start at 0.
+   * @since P2 (optional by meaning) [S1] The session counters to resume from (ARCHITECTURE-P2 §2.13
+   * `FacadeCounters`): the next console or vty session is `s_<sessions + 1>` and the next headless run
+   * `h_<headless + 1>`, so a replay built from a journal's origin numbers its sessions exactly as the live world did.
+   * Absent: both start at 0.
    */
   resume?: { sessions: number; headless: number };
 }

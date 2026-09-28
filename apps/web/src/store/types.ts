@@ -5,9 +5,11 @@
  * only through `EngineBatch`es: `applyBatch` is the single write path for
  * `snapshot`, `now`, `inflight` and `events`.
  *
- * P0.5/P1 members, and P2 members tagged `@since P2` (ARCHITECTURE-P2 §0 rule 2), are optional in the type until the
- * web wave that implements them removes the `?` (engine contracts/port.ts TRANSITION RULE). Course-layer members are
- * tagged `@since course`: they are delivered and required, and the P2 transition sweep never touches them. Epoch change additionally clears: simMode.stoppedAt,
+ * P0.5/P1 members are optional in the type until the web wave that implements them removes the `?` (engine
+ * contracts/port.ts TRANSITION RULE). P2 members tagged `@since P2` (ARCHITECTURE-P2 §0 rule 2) are required since the
+ * W8 exit gate, except the ones tagged `@since P2 (optional by meaning)` (`LabUiState.checking`). Course-layer
+ * members are tagged `@since course`: they are delivered and required, and the P2 transition sweep never touches
+ * them. Epoch change additionally clears: simMode.stoppedAt,
  * netscope live captures (keeps i_*), lab.status, desktopWindows, a11y.canvasFocus, eventsTruncated.
  * Persisted to localStorage (try/catch): theme, palette.collapsed/recent, cable.media, overlays, dock layout,
  * (P2 W2 web-shell) `topoOverlays` and `learn.lastCourse`, and (P2, store/store.ts `rememberEntryView`) whether the
@@ -213,9 +215,9 @@ export interface LabUiState {
   status: LabStatus | null;
   browserOpen: boolean;
   /**
-   * @since P2 (W6 fix, §9.2 item 22c; optional by meaning: absent = no check running) True while a lab check runs,
-   * whichever control started it — the Labs panel's button or Simulation → "Check the lab now" — so the panel, the
-   * status bar and the menu all show the same busy state and a long check never looks like a hang.
+   * @since P2 (optional by meaning) absent = no check running (W6 fix, §9.2 items 22c and 25a). True while a lab check
+   * runs, whichever control started it — the Labs panel's button or Simulation → "Check the lab now" — so the panel,
+   * the status bar and the menu all show the same busy state and a long check never looks like a hang.
    */
   checking?: boolean;
 }
@@ -310,11 +312,14 @@ export interface UiState {
   desktopWindows: DesktopWindow[];
   a11y: A11yState;
 
-  // ── P2 (optional in the type until the web wave that implements each removes the `?`) ──
+  // ── P2 ──
   /** @since P2 Switching overlay toggles and VLAN selectors (persisted). Required since W2 web-shell. */
   topoOverlays: TopoOverlayState;
-  /** @since P2 [SHOULD S1] Timeline and review (W4 web-shell). */
-  timeline?: TimelineUiState;
+  /**
+   * @since P2 [SHOULD S1] Timeline and review (W4 web-shell; required since the W8 exit gate). Not persisted: the
+   * store's initial state holds `defaultTimelineUi()` and a new epoch resets it in place, so the slice always exists.
+   */
+  timeline: TimelineUiState;
 }
 
 export interface UiActions {

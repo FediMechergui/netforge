@@ -671,13 +671,11 @@ vi.mock('comlink', () => ({
 
 const WORKER = '../src/bridge/worker/index.ts';
 
-type TimeTravelApi = Required<Pick<EngineApi, 'seek' | 'leaveReview' | 'timelineBuckets' | 'timelineMarks' | 'setTimeTravelBudget'>>;
-
-async function booted(): Promise<{ api: EngineApi & TimeTravelApi; batches: EngineBatch[] }> {
+async function booted(): Promise<{ api: EngineApi; batches: EngineBatch[] }> {
   vi.resetModules();
   exposed = undefined;
   await import(WORKER);
-  const api = exposed as unknown as EngineApi & TimeTravelApi;
+  const api = exposed as unknown as EngineApi;
   const batches: EngineBatch[] = [];
   await api.subscribe((b) => {
     batches.push(b);

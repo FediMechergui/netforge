@@ -158,13 +158,14 @@ export interface ConfigLineRule {
   /** `no <line>` that removes nothing persists as a `no …` node in its context (`no switchport`, `no keepalive`, `no ip domain-lookup`). */
   storeNegation?: boolean;
   /**
-   * @since P2 (ARCHITECTURE-P2 §5, D2) The line and its `no` form share one slot and each is stored as typed, replacing
-   * the other (`ip routing` / `no ip routing`). A P1 world that typed `ip routing` stores exactly what it stores today.
+   * @since P2 (optional by meaning) (ARCHITECTURE-P2 §5, D2; absent = P1 storage) The line and its `no` form share
+   * one slot and each is stored as typed, replacing the other (`ip routing` / `no ip routing`). A P1 world that typed
+   * `ip routing` stores exactly what it stores today.
    */
   bothForms?: boolean;
   /**
-   * @since P2 (ARCHITECTURE-P2 §5, D2) With default slots, the `no` form stores the slot's default line (or clears the
-   * slot when it is not a default slot). Only `spanning-tree mode`.
+   * @since P2 (optional by meaning) (ARCHITECTURE-P2 §5, D2; absent = P1 storage) With default slots, the `no` form
+   * stores the slot's default line (or clears the slot when it is not a default slot). Only `spanning-tree mode`.
    */
   negationRestoresDefault?: boolean;
   /** Section rules only: child implied when absent (interface: `shutdown` absent ⇒ `no shutdown`; SVIs on multilayer switches: shutdown implied). */

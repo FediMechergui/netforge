@@ -1,18 +1,22 @@
 /**
  * @netforge/engine — public entry point.
  *
- * Contracts are always exported. Implementation modules append their exports
- * below as they land (keep this list alphabetical by module).
+ * Contracts are always exported. Implementation modules are grouped by area below; the line order is module
+ * evaluation order, so a line moves only with a reason.
  *
  * Name clashes between modules are resolved here with explicit re-exports, which take precedence over the
  * `export *` lines: the canvas default scale is the contract constant, and the medium-specific helpers that share
  * a name with another module are published under a medium-qualified alias.
  *
- * P2 (docs/ARCHITECTURE-P2.md §0 rule 1): this file is architect-owned and append-only. A wave item adds only its own
- * `export * from './<its files>.js'` lines, in the change that creates those files; the architect reconciles the list
- * at the exit gate (W8). The P2 contracts (including contracts/journal.ts and contracts/timeline.ts, [S1]) are
- * exported through contracts/index.js. A module must not redeclare a name a contract exports (`DefaultSlots`,
- * `schemaIdFor`, …): two `export *` lines that export different declarations under one name do not compile.
+ * P2 (docs/ARCHITECTURE-P2.md §0 rule 1): this file is architect-owned; the W8 exit gate reconciled it. Every public
+ * P2 module is exported exactly once: the P2 contracts (including contracts/journal.ts and contracts/timeline.ts,
+ * [S1]) through contracts/index.js; each P2 codec, daemon and daemon helper by its own line; the P2 CLI grammar
+ * through cli/grammar.js; the CCNA 2 labs through sim/scenarios.js (`CCNA2_LABS`, `SCENARIOS`); the CCNA 2 course
+ * through curriculum/index.js (`COURSES`); the time machine through sim/journal.js, sim/replay.js and
+ * timeline/lanes.js. Per-lab files, lesson data and command handlers stay internal (reached through `SCENARIOS`,
+ * `COURSES` and the handler registry), and nothing test-only is exported. A module must not redeclare a name a
+ * contract exports (`DefaultSlots`, `schemaIdFor`, …): two `export *` lines that export different declarations under
+ * one name do not compile.
  */
 export * from './contracts/index.js';
 export { DEFAULT_METRES_PER_UNIT } from './contracts/topology.js';
@@ -153,7 +157,7 @@ export * from './protocols/stp/guards.js';
 export * from './protocols/stp/mixed.js';
 export * from './protocols/stp/pvst.js';
 export * from './protocols/stp/rstp.js';
-// protocols — P2 wireless (W5 wireless)
+// protocols — wireless controller and lightweight access point
 export * from './protocols/capwap-wtp.js';
 export * from './protocols/capwap-ac.js';
 
@@ -200,7 +204,7 @@ export * from './sim/lab-checks.js';
 export * from './sim/simulation.js';
 export * from './sim/scenarios.js';
 export * from './sim/snapshot-cache.js';
-// sim — P2 [SHOULD S1] (W2 sim [S1])
+// sim — time travel [S1]: the input journal and replays
 export * from './sim/journal.js';
 export * from './sim/replay.js';
 
@@ -208,5 +212,5 @@ export * from './sim/replay.js';
 export * from './contracts/curriculum.js';
 export * from './curriculum/index.js';
 
-// timeline — P2 [SHOULD S1] (W1 timeline)
+// timeline — time travel [S1]: lanes
 export * from './timeline/lanes.js';

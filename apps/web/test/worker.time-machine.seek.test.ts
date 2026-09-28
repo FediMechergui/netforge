@@ -360,8 +360,6 @@ describe('the time machine: 50 seeded targets, forward and backward (§3.13 step
 
 const WORKER = '../src/bridge/worker/index.ts';
 
-type Api = EngineApi & Required<Pick<EngineApi, 'seek' | 'leaveReview' | 'timelineBuckets' | 'timelineMarks' | 'setTimeTravelBudget'>>;
-
 /**
  * Every method of the worker API, by what it does in review. A method missing here (or listed here but gone) fails
  * the classification case, so "every mutator" stays every mutator.
@@ -425,11 +423,11 @@ const TIME_TRAVEL = ['seek', 'leaveReview'] as const;
 /** The one-time handshake that builds the worker's first world (bridge/client.ts `initEngine`, idempotent). */
 const HANDSHAKE = ['init'] as const;
 
-async function booted(): Promise<{ api: Api; batches: EngineBatch[]; ids: Map<string, DeviceId>; session: SessionId; links: LinkId[] }> {
+async function booted(): Promise<{ api: EngineApi; batches: EngineBatch[]; ids: Map<string, DeviceId>; session: SessionId; links: LinkId[] }> {
   vi.resetModules();
   exposed = undefined;
   await import(WORKER);
-  const api = exposed as unknown as Api;
+  const api = exposed as unknown as EngineApi;
   const batches: EngineBatch[] = [];
   await api.subscribe((b) => {
     batches.push(b);
