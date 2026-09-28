@@ -13,7 +13,8 @@
  *
  * The L2 control-plane debug categories of §5.4 that no earlier fragment registered (`sw-vlan`, `dtp`,
  * `spanning-tree events`) are declared here; their `debug` specs are keyed on the daemon's capability rows, so they
- * appear exactly when the W4 catalog registers the daemons (§2.1). Help strings are original wording (spec §1.6).
+ * appear exactly when the W4 catalog registers the daemons (§2.1) — `sw-vlan` on the managed switches only (W7: not
+ * on the wireless controller). Help strings are original wording (spec §1.6).
  */
 import type { CommandSpec } from '../../contracts/cli.js';
 import { STP_COST_MAX, STP_COST_MIN } from '../../protocols/stp/cost.js';
@@ -60,10 +61,13 @@ const STP_DEBUG_CATEGORY = 'spanning-tree events';
 
 /**
  * The L2 control-plane debug categories of §5.4: the VLAN database (`sw-vlan`), trunk negotiation (`dtp`) and
- * spanning tree. Each is offered on the capabilities whose daemon list holds its daemon (§2.1 rows, filled by W4).
+ * spanning tree. Each is offered on the capabilities whose daemon list holds its daemon (§2.1 rows, filled by W4) —
+ * except `sw-vlan`, which is offered on the managed switches only (W7): the wireless controller also runs the `vlan`
+ * daemon, but its VLAN list is kept by its `wlc-interface` handler (it has no `vlan` line to trace) and it has no
+ * console, so `debug sw-vlan` is scoped off it like every other VLAN-database line.
  */
 export const L2_CONTROL_DEBUG_CATEGORIES: readonly GrammarDebugCategory[] = Object.freeze([
-  { category: 'sw-vlan', help: 'Trace VLAN database changes', requiresAny: capabilitiesRunning('vlan'), since: 'P2' },
+  { category: 'sw-vlan', help: 'Trace VLAN database changes', requiresAny: VLAN_AWARE_CAPABILITIES, since: 'P2' },
   { category: 'dtp', help: 'Trace trunk negotiation frames and mode changes', requiresAny: capabilitiesRunning('dtp'), since: 'P2' },
   { category: STP_DEBUG_CATEGORY, help: 'Trace spanning-tree role and state changes, elections and topology changes', requiresAny: capabilitiesRunning('stp'), since: 'P2' },
 ]);

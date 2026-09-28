@@ -22,10 +22,19 @@
  * way); one whose description says it was generated from a textbook chapter; and a run of numbered uploads ("114 …",
  * "115 …") scattered over unrelated channels, which look like pieces of a paid course posted by someone else.
  *
- * Scope: the non-wireless lessons, 01-24 and 29-34, all of which have an entry. The wireless lessons 25-28 are
- * written in W7 and have no entry here yet, so they run theory-only until theirs are checked the same way.
+ * Scope: every lesson, 01-34. The non-wireless lessons 01-24 and 29-34 were checked in W6; the wireless lessons 25-28
+ * were checked in W7 with the same three calls, on the date written above their block. Wireless candidates add their
+ * own traps: most controller and WLAN videos name the controller's maker or a vendor simulator in the title; two runs
+ * of short uploads with no description, or with the exact titles of a course's own videos, looked like pieces of a
+ * paid course posted by someone else; one CAPWAP video linked to an exam-answers site; and a well-known complete
+ * course runs its WLAN configuration episode for 46 minutes, over the cap, and opens its lab episode with a
+ * four-minute introduction. All of them were turned away.
  *
- * Length: the shortest video runs 3:55 and the longest 15:00, so no lesson comes near the 45-minute cap of §11.1.
+ * Length: the shortest video runs 3:55 and the longest 37:38 (lesson 27, a full walk-through of the lab's task in
+ * another simulator; its chapters let a learner skip the switch and router set-up of its first 18 minutes). Each
+ * lesson's minutes cover its video plus its theory read at 238 words a minute, and none passes the 45-minute cap of
+ * §11.1 (pinned by `curriculum.ccna2.accuracy.test.ts` for the lessons measured in W6 and by `curriculum.test.ts` for
+ * 25-28).
  *
  * The titles are UI text — the lesson view shows one as the caption and gives it to the player as its accessible
  * name — so the no-vendor rule reaches them, and a title that names a vendor disqualifies the video rather than
@@ -33,9 +42,10 @@
  */
 import type { LessonVideoMap } from '../../contracts/curriculum.js';
 
-/** Checked on 2026-09-27: every entry answered oEmbed 200 with the title and channel recorded below, reported
- * `playableInEmbed` true on its watch page, had no sponsor or self-promotion segment on record, and carried no
- * sponsor read in its description or chapters. 30 of the 30 non-wireless lessons have one. */
+/** Checked on 2026-09-27 (lessons 01-24 and 29-34) and 2026-09-28 (lessons 25-28): every entry answered oEmbed 200
+ * with the title and channel recorded below, reported `playableInEmbed` true on its watch page, had no sponsor or
+ * self-promotion segment on record, and carried no sponsor read in its description or chapters. 34 of the 34 lessons
+ * have one. */
 export const CCNA2_VIDEOS: LessonVideoMap = {
   'ccna2-01-how-a-switch-forwards': {
     youtubeId: 'sdYDLip2ANI',
@@ -185,7 +195,41 @@ export const CCNA2_VIDEOS: LessonVideoMap = {
     channel: 'TechKnowSurge',
     url: 'https://www.youtube.com/watch?v=a6yVV6dD6F0',
   },
-  // Lessons 25-28 (wireless at scale) are written in W7 and have no entry yet: see the scope note in the header.
+  // Lessons 25-28 (wireless at scale), checked on 2026-09-28 with the same three calls: oEmbed 200 with the title and
+  // channel below, `playableInEmbed` true, no sponsor or self-promotion segment on record (404), and no sponsor read in
+  // the description or chapters. Lengths from the watch page (`lengthSeconds`): 887, 558, 2258 and 654 s.
+  // Lesson 25: the chapters run through controllers, joining and management, roaming, CAPWAP and split MAC, traffic
+  // flow and local switching, which is the lesson's outcome plus the roaming theory NetForge does not build (§11.4).
+  'ccna2-25-controllers-and-lightweight-aps': {
+    youtubeId: 'ttdjSSmfLDI',
+    title: 'Free CCNA 200-301 Course 37-04: Wireless LAN Controllers and CAPWAP',
+    channel: 'Flackbox',
+    url: 'https://www.youtube.com/watch?v=ttdjSSmfLDI',
+  },
+  // Lesson 26: why a channel is a range of frequencies, channel widths, then the non-overlapping channels; the lesson
+  // adds the 6 GHz band, which the video does not reach.
+  'ccna2-26-channels-and-overlap': {
+    youtubeId: 'uZyrJTfetNg',
+    title: 'Wi-Fi Channels Explained: 2.4GHz, 5GHz & Overlap | CCNA Prep',
+    channel: 'CBT Nuggets',
+    url: 'https://www.youtube.com/watch?v=uZyrJTfetNg',
+  },
+  // Lesson 27: the lab's own task in another simulator: management and client VLANs, one controller interface per
+  // VLAN, WLANs mapped to them, a lightweight access point, and a laptop joining each WLAN.
+  'ccna2-27-wlans-on-a-controller': {
+    youtubeId: 'XJaw7PkzEvA',
+    title: 'WLAN Configuration with VLANs using Wireless LAN Controller and Lightweight Access Point | Lab 46',
+    channel: 'Tech Acad',
+    url: 'https://www.youtube.com/watch?v=XJaw7PkzEvA',
+  },
+  // Lesson 28: the encryption generations, then personal and enterprise authentication with 802.1X, EAP and RADIUS;
+  // a certification-course title, like the CCNA 1 entries of the same channel.
+  'ccna2-28-securing-a-wlan': {
+    youtubeId: 'KaqKoKNEKnE',
+    title: 'Wireless Security Settings - CompTIA Security+ SY0-701 - 4.1',
+    channel: 'Professor Messer',
+    url: 'https://www.youtube.com/watch?v=KaqKoKNEKnE',
+  },
   'ccna2-29-how-a-router-chooses': {
     youtubeId: 'PDcwijVC4XE',
     title: 'Route Precedence -- How does a Router choose a path when multiple paths exist?',

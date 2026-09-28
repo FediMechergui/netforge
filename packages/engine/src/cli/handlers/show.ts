@@ -21,7 +21,7 @@
  *   show.running            running-config text; show.startup: startup-config text (secrets masked below 15)
  *   show.history            the session's command history
  *   show.controllers        serial cable end, clock, framing and line state
- *   show.wireless           radio settings, networks and associations
+ *   show.wireless           radio settings, networks (a lightweight AP: the WLAN its controller pushed) and associations
  *   show.inventory          chassis, slots, modules and transceivers
  */
 import type { CommandCtx, CommandHandler } from '../../contracts/cli.js';
@@ -549,6 +549,65 @@ function stationJoinLine(st: StationStateEntry | undefined): string {
   return `  Joining "${ssid}": ${st.state}${rejected}`;
 }
 
+/** @since P2 (wireless) The lightweight access point's CAPWAP daemon, whose state view names the WLAN it pushed per radio. */
+const CAPWAP_WTP_PROCESS = 'capwap-wtp';
+
+/** @since P2 (wireless) `show wireless`: an access point radio whose controller profile serves no WLAN (§3.12 step 4). */
+export const MSG_CONTROLLER_NO_WLAN = 'none, the controller serves no WLAN on this radio';
+
+/** @since P2 (wireless) The WLAN a controller pushed to one radio, as the CAPWAP daemon's state view reports it. */
+interface PushedWlan {
+  readonly id: number;
+  readonly ssid: string;
+  readonly security: string;
+  readonly vlan?: number;
+}
+
+/** @since P2 (wireless) A controller profile of one radio: the controller's name when known, and the WLAN it serves. */
+interface PushedProfile {
+  readonly controller?: string;
+  readonly wlan?: PushedWlan;
+}
+
+/** A plain object's field (undefined for anything else). */
+function fieldOf(value: unknown, key: string): unknown {
+  return typeof value === 'object' && value !== null ? (value as Record<string, unknown>)[key] : undefined;
+}
+
+/**
+ * @since P2 (wireless; W7 fix) The controller profile of radio `port`, read from the capwap-wtp state view (its `radios`
+ * and `wlans`, §3.12 step 4 — the assignment the daemon pushed through `radio-profile`, which the runtime overlays on
+ * the radio's own lines): `undefined` when no profile is pushed (the radio runs on its own lines), `wlan` absent when
+ * the profile serves no WLAN. Never a passphrase or a key tag (the view carries neither).
+ */
+function controllerProfileOf(ctx: CommandCtx, port: PortId): PushedProfile | undefined {
+  const state = ctx.processState(CAPWAP_WTP_PROCESS)?.state;
+  const radios = state?.['radios'];
+  if (!Array.isArray(radios)) return undefined;
+  const entry: unknown = radios.find((r) => fieldOf(r, 'port') === port);
+  if (entry === undefined) return undefined;
+  const acName = state?.['acName'];
+  const controller = typeof acName === 'string' ? acName : undefined;
+  const id = fieldOf(entry, 'wlanId');
+  const wlans = state?.['wlans'];
+  const w: unknown = typeof id === 'number' && Array.isArray(wlans) ? wlans.find((x) => fieldOf(x, 'id') === id) : undefined;
+  const ssid = fieldOf(w, 'ssid');
+  const security = fieldOf(w, 'security');
+  if (typeof id !== 'number' || typeof ssid !== 'string' || typeof security !== 'string') return controller === undefined ? {} : { controller };
+  const vlan = fieldOf(w, 'vlan');
+  const wlan: PushedWlan = typeof vlan === 'number' ? { id, ssid, security, vlan } : { id, ssid, security };
+  return controller === undefined ? { wlan } : { controller, wlan };
+}
+
+/** @since P2 (wireless) The `Network:` line of an access point radio that serves a controller profile. */
+function pushedNetworkLine(profile: PushedProfile): string {
+  const w = profile.wlan;
+  if (w === undefined) return `  Network: ${MSG_CONTROLLER_NO_WLAN}`;
+  const from = profile.controller === undefined ? 'the controller' : `controller ${profile.controller}`;
+  const vlan = w.vlan === undefined ? '' : `, VLAN ${w.vlan}`;
+  return `  Network: "${w.ssid}", security ${w.security} (WLAN ${w.id} from ${from}${vlan})`;
+}
+
 /** One `show wireless` block. */
 function radioBlock(ctx: CommandCtx, p: PortView): string {
   const role = roleOf(ctx, p);
@@ -582,9 +641,15 @@ function radioBlock(ctx: CommandCtx, p: PortView): string {
   }
 
   if (p.spec.kind === 'wlan') {
-    const ssid = sectionArgs(section, ['ssid'])?.join(' ');
-    const security = sectionArgs(section, ['security'])?.[0] ?? 'open';
-    lines.push(`  Network: ${ssid === undefined ? 'none configured' : `"${ssid}"`}, security ${security}`);
+    // P2 (wireless): a lightweight access point's radio serves what its controller pushed, not its own lines
+    const pushed = mode === 'ap' ? controllerProfileOf(ctx, p.id) : undefined;
+    if (pushed !== undefined) {
+      lines.push(pushedNetworkLine(pushed));
+    } else {
+      const ssid = sectionArgs(section, ['ssid'])?.join(' ');
+      const security = sectionArgs(section, ['security'])?.[0] ?? 'open';
+      lines.push(`  Network: ${ssid === undefined ? 'none configured' : `"${ssid}"`}, security ${security}`);
+    }
     if (mode === 'ap' && sectionArgs(section, ['beacons']) !== undefined) lines.push('  Beacons: on');
   }
   if (p.spec.kind === 'radio') {

@@ -3,11 +3,10 @@
  *
  * Skeleton only, exactly like `ccna1/lessons.ts`: id, title, outcome, topic, minutes and, where one of the CCNA 2
  * labs practises exactly this lesson, the `name` of that lab. `theory` is empty and no lesson carries a video: the
- * bodies arrive in W6/W7 (`ccna2/theory-*.ts`, `ccna2/videos.ts`) and are joined in `curriculum/index.ts`.
+ * bodies (`ccna2/theory-*.ts`) and the videos (`ccna2/videos.ts`) are joined onto it in `curriculum/index.ts`.
  *
- * DETACHED until W7 (§7 W1 course, §11.3): `curriculum/index.ts` does not import this file, so the CCNA 2 course keeps
- * status `planned` with no modules and the planned-course pins of `curriculum.test.ts` stay green. The W7 course item
- * attaches it. `test/curriculum.ccna2.test.ts` imports the skeleton directly.
+ * Attached in W7 (§7 W7 course, §11.3): `curriculum/index.ts` joins it with the theory and the videos and lists the
+ * CCNA 2 course as `available`. `test/curriculum.ccna2.test.ts` still imports the skeleton directly.
  *
  * Content decisions (§8.5, §11.1):
  * - A lab is attached only when its lab exists in the approved scope: the 19 MUST labs plus `ccna2-hsrp-gateway`
@@ -17,6 +16,8 @@
  * - `topic` is the module title (§11.2: a CCNA 2 lab's `topic` is its module title), so a lesson and its lab file
  *   under the same heading.
  * - Lesson minutes cover reading and watching only; a lab adds its own `estimatedMinutes`. None exceeds 45 (§11.1).
+ *   The wireless lessons were re-timed in W7 once their videos were chosen (25: 18, 27: 40, 28: 14): each covers its
+ *   video plus its theory at 238 words a minute (`curriculum.test.ts`).
  *
  * All wording is original and names no vendor (§0 rule 6); protocol names that are CCNA vocabulary (VTP, HSRP, CAPWAP,
  * LACP) appear as names only.
@@ -297,7 +298,7 @@ export const CCNA2_MODULES: readonly CourseModule[] = [
         title: 'Controllers and lightweight access points',
         outcome: 'Describe how a lightweight access point joins a controller over CAPWAP, what split MAC and central switching mean, and which parts NetForge simplifies.',
         theory: '',
-        estimatedMinutes: 14,
+        estimatedMinutes: 18,
         topic: 'Wireless at scale',
       },
       {
@@ -314,7 +315,7 @@ export const CCNA2_MODULES: readonly CourseModule[] = [
         outcome: 'Create a controller interface and a WLAN on it, then connect a client through a lightweight access point.',
         theory: '',
         lab: 'ccna2-wlc-wlan',
-        estimatedMinutes: 18,
+        estimatedMinutes: 40,
         topic: 'Wireless at scale',
       },
       {
@@ -322,7 +323,7 @@ export const CCNA2_MODULES: readonly CourseModule[] = [
         title: 'Securing a WLAN',
         outcome: 'Choose between personal and enterprise security for a WLAN and explain what each one checks before a client may send.',
         theory: '',
-        estimatedMinutes: 12,
+        estimatedMinutes: 14,
         topic: 'Wireless at scale',
       },
     ],

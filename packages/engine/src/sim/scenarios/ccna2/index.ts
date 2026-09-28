@@ -3,15 +3,16 @@
  *
  * The arc follows the CCNA 2 lessons: manage a switch, split it into VLANs, carry them over trunks and negotiate
  * those, route between VLANs on a stick and on a multilayer switch, repair a broken VLAN design, elect and tune the
- * spanning tree, bundle links, hand out IPv6 addresses, share a gateway, lock down access ports, route statically
- * (forms, floating routes, IPv6), translate addresses and, last, find faults in a routed network.
+ * spanning tree, bundle links, hand out IPv6 addresses, share a gateway, lock down access ports, put a WLAN on a
+ * wireless controller, route statically (forms, floating routes, IPv6), translate addresses and, last, find faults in
+ * a routed network.
  *
- * Eleven files hold the labs, each exporting one array under a fixed name (vlans, trunks, intervlan, stp, etherchannel,
- * dhcpv6, [S2] fhrp, security, routing, nat, troubleshooting). `CCNA2_LAB_ORDER` is the course order of the lab
- * NAMES — the `ScenarioInfo.name` the lesson skeleton (curriculum/ccna2/lessons.ts) points at — and `CCNA2_LABS` is
- * every lab of the eleven arrays sorted by it: a name whose lab has not landed yet is simply absent, and a lab whose
- * name the order does not know sorts last (test/labs.ccna2.solutions.test.ts refuses that). The wireless lab
- * `ccna2-wlc-wlan` (lesson 27) arrives with W7 (`ccna2/wireless.ts`), which adds its name here at its lesson position.
+ * Twelve files hold the labs, each exporting one array under a fixed name (vlans, trunks, intervlan, stp,
+ * etherchannel, dhcpv6, [S2] fhrp, security, wireless, routing, nat, troubleshooting). `CCNA2_LAB_ORDER` is the course
+ * order of the lab NAMES — the `ScenarioInfo.name` the lesson skeleton (curriculum/ccna2/lessons.ts) points at — and
+ * `CCNA2_LABS` is every lab of the twelve arrays sorted by it: a name whose lab has not landed yet is simply absent,
+ * and a lab whose name the order does not know sorts last (test/labs.ccna2.solutions.test.ts refuses that). The
+ * wireless lab `ccna2-wlc-wlan` (lesson 27, `ccna2/wireless.ts`) joined in W7, after the port-security lab of lesson 23.
  *
  * Every entry is a `ScenarioInfo` with `category: 'ccna2-lab'`, `course: 'CCNA 2'`, `topic` = the title of the
  * module that holds its lesson, a fixed seed, a P2-profile topology (`topology(…, { profile: 'P2' })`, schema 1.2),
@@ -34,6 +35,7 @@ import { CCNA2_STP_LABS } from './stp.js';
 import { CCNA2_TROUBLESHOOTING_LABS } from './troubleshooting.js';
 import { CCNA2_TRUNK_LABS } from './trunks.js';
 import { CCNA2_VLAN_LABS } from './vlans.js';
+import { CCNA2_WIRELESS_LABS } from './wireless.js';
 
 export * from './vlans.js';
 export * from './trunks.js';
@@ -43,6 +45,7 @@ export * from './etherchannel.js';
 export * from './dhcpv6.js';
 export * from './fhrp.js';
 export * from './security.js';
+export * from './wireless.js';
 export * from './routing.js';
 export * from './nat.js';
 export * from './troubleshooting.js';
@@ -63,6 +66,7 @@ export const CCNA2_LAB_ORDER: readonly string[] = Object.freeze([
   'ccna2-dhcpv6', // 19
   'ccna2-hsrp-gateway', // 21 [S2]
   'ccna2-port-security', // 23 (with the lesson 24 hardening tasks)
+  'ccna2-wlc-wlan', // 27
   'ccna2-static-routes', // 30
   'ccna2-floating-static', // 31
   'ccna2-ipv6-static', // 32
@@ -96,6 +100,7 @@ export const CCNA2_LABS: readonly ScenarioInfo[] = inCourseOrder(
     CCNA2_DHCPV6_LABS,
     CCNA2_FHRP_LABS,
     CCNA2_SECURITY_LABS,
+    CCNA2_WIRELESS_LABS,
     CCNA2_ROUTING_LABS,
     CCNA2_NAT_LABS,
     CCNA2_TROUBLESHOOTING_LABS,

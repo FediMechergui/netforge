@@ -5,7 +5,8 @@
  * `no switchport` asks for the routed role and `switchport` for the switched role; a port whose `allowedRoles`
  * lack the target answers `CLI_MESSAGES.roleLocked` (an NF-C2960 port). The line is stored as a stored negation
  * (`no switchport`), so the routed role survives save and reload; the device runtime performs the role change
- * (address withdrawal, link bounce, `portsVersion`). Help strings are original wording (spec §1.6).
+ * (address withdrawal, link bounce, `portsVersion`). Help strings are original wording (spec §1.6). From P2 the line
+ * is not offered on the wireless controller (`excludesAny`), whose distribution ports take no switchport line (§2.2).
  *
  * P2 (`SWITCHPORT_P2_GRAMMAR`, scoped to `managed-switch`): `switchport mode access|trunk|dynamic auto|dynamic
  * desirable`, `switchport access vlan <v>` (the handler creates a missing VLAN), `switchport trunk native vlan <v>`,
@@ -34,6 +35,10 @@ export const SWITCHPORT_GRAMMAR: readonly CommandSpec[] = Object.freeze<CommandS
     allowNo: true,
     grammars: NFOS_ONLY,
     requiresAny: ['switching'],
+    // P2 (W7 fix, §9.2 W7 item 29b): the controller's distribution ports are fixed trunks (§2.2
+    // CONTROLLER_PORT_SWITCHPORT) and "the grammar accepts no switchport line there"; its capabilities are a superset
+    // of a plain bridge's, so only a negative gate can tell them apart
+    excludesAny: ['wireless-controller'],
     portRequires: { kinds: ['ethernet'], roles: ['switched', 'routed'] },
     since: 'P0.5',
     objectives: ['CCNA2.4.1'],

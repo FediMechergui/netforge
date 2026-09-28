@@ -39,6 +39,10 @@ export const SMARTPHONE = 'phone.nfsmartphone';
 export const SERVER = 'server.nfserver';
 /** @since P2 NF-C9300-48U: a multilayer switch whose spanning tree defaults to rapid-pvst in a P2 world. */
 export const MLSWITCH_RAPID = 'mlswitch.nfc9300-48';
+/** @since P2 NF-WLC-9800: the wireless LAN controller appliance (no console; configured through its panel, D17). */
+export const WLC = 'wlc.nfwlc9800';
+/** @since P2 NF-AP-1832: the lightweight access point (in a P2 world it boots with `capwap enable` and DHCP on Vlan1). */
+export const LIGHTWEIGHT_AP = 'ap.nfap-lw';
 
 /** Masks the scenarios write out. */
 export const MASK24 = '255.255.255.0';

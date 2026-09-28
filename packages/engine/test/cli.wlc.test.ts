@@ -30,11 +30,15 @@ import {
   LITERAL_HELP,
   P2_GRAMMAR_FRAGMENTS,
   P2_HANDLERS,
+  SWITCHPORT_GRAMMAR,
+  SWITCHPORT_HANDLERS,
   WLC_ARG_LIMITS,
   WLC_GRAMMAR,
   WLC_HANDLERS,
 } from '../src/cli/grammar/index.js';
 import { HANDLER_REGISTRY, P2_HANDLER_REGISTRY } from '../src/cli/handlers/index.js';
+import { capabilitiesAllow } from '../src/cli/scope.js';
+import { MSG_CONTROLLER_NO_WLAN } from '../src/cli/handlers/show.js';
 import * as wlcMessages from '../src/cli/handlers/wlc.js';
 import {
   MSG_BAD_CAPWAP_CONTROLLER,
@@ -196,6 +200,66 @@ describe('grammar and scope', () => {
     // and the live NF-WLC-9800 takes the controller lines
     recognized(catalogModel('wlc.nfwlc9800'), 'config', 'wlc-interface management');
     unrecognized(catalogModel('wlc.nfwlc3504'), 'user-exec', 'show capwap');
+  });
+
+  it('refuses the VLAN-database and port-security debug categories on the controller (W7), and keeps them on a managed switch', () => {
+    // the controller keeps its VLAN list through `wlc-interface` and takes no port-security line (§2.2, D17), so
+    // neither category has anything to trace there; every other model keeps its listing (cli-help.p05.json)
+    const exec = matchContextFor(catalogModel('wlc.nfwlc9800'), 'priv-exec');
+    for (const line of ['debug sw-vlan', 'debug port-security', 'no debug sw-vlan', 'no debug port-security']) {
+      expect(matchCommand(BUILTIN_GRAMMAR, exec, line), line).toMatchObject({ ok: false, kind: 'unrecognized' });
+    }
+    expect(tokens(help(BUILTIN_GRAMMAR, exec, 'debug ').items)).toEqual(['all', 'arp', 'capwap', 'ethernet', 'ip', 'udp']);
+    expect(ok(matchCommand(BUILTIN_GRAMMAR, exec, 'debug capwap'))).toMatchObject({ spec: { handler: HANDLERS.execDebug }, args: { category: 'capwap' } });
+    const sw = matchContextFor(catalogModel('switch.nfc2960'), 'priv-exec');
+    for (const [line, category] of [['debug sw-vlan', 'sw-vlan'], ['debug port-security', 'port-security']] as const) {
+      expect(ok(matchCommand(BUILTIN_GRAMMAR, sw, line)), line).toMatchObject({ spec: { handler: HANDLERS.execDebug }, args: { category } });
+    }
+    for (const category of ['sw-vlan', 'port-security']) {
+      expect(DEBUG_CATEGORY_DEFS.find((d) => d.category === category)?.requiresAny, category).toEqual(['managed-switch']);
+    }
+    // headless, as the controller panel runs its lines: refused with the unrecognised-input message, nothing enabled
+    const sim = world();
+    const r = sim.configure('wlc', ['do debug sw-vlan', 'do debug port-security', 'do debug capwap'], { stopOnError: false });
+    expect(r.lines.map((l) => l.ok)).toEqual([false, false, true]);
+    expect(r.lines[0]!.error?.message).toBe(r.lines[1]!.error?.message);
+  });
+
+  it('offers no switchport line on the controller\'s distribution ports (W7 fix, §2.2), and keeps the bare line on bridges and switches', () => {
+    // §2.2 CONTROLLER_PORT_SWITCHPORT: "the grammar accepts no switchport line there" — before the fix the bare
+    // `switchport` was accepted as a silent no-op and `no switchport` refused as role-locked, because the controller's
+    // capabilities are a superset of a plain bridge's; the spec's `excludesAny: ['wireless-controller']` scopes it off
+    const switchedPort = (model: Parameters<typeof matchContextFor>[0]): string =>
+      [...commandCtxFor(model).ports.values()].find((p) => p.spec.kind === 'ethernet' && p.role === 'switched')!.id;
+    const controller = catalogModel('wlc.nfwlc9800');
+    const onController = matchContextFor(controller, 'config-if', { iface: switchedPort(controller) });
+    for (const line of ['switchport', 'no switchport']) {
+      expect(matchCommand(BUILTIN_GRAMMAR, onController, line), line).toMatchObject({ ok: false, kind: 'unrecognized' });
+    }
+    expect(tokens(help(BUILTIN_GRAMMAR, onController, '').items)).not.toContain('switchport');
+    expect(SWITCHPORT_GRAMMAR[0]).toMatchObject({ path: ['switchport'], requiresAny: ['switching'], excludesAny: ['wireless-controller'] });
+    for (const type of ['bridge.nfbr2', 'switch.nfc2960']) {
+      const model = catalogModel(type);
+      const c = matchContextFor(model, 'config-if', { iface: switchedPort(model) });
+      for (const line of ['switchport', 'no switchport']) {
+        expect(ok(matchCommand(BUILTIN_GRAMMAR, c, line)), `${type}: ${line}`).toMatchObject({ spec: { handler: SWITCHPORT_HANDLERS.ifSwitchport } });
+      }
+    }
+    // headless, as the controller panel runs its lines: both refused with the unrecognised-input message, nothing stored
+    const sim = world();
+    const before = running(sim, 'wlc');
+    const r = sim.configure('wlc', ['interface GigabitEthernet0/1', 'switchport', 'no switchport', 'description uplink'], { stopOnError: false });
+    expect(r.lines.map((l) => l.ok)).toEqual([true, false, false, true]);
+    expect(r.lines[1]!.error?.message).toBe(r.lines[2]!.error?.message);
+    expect(running(sim, 'wlc')).not.toContain('switchport');
+    expect(before).not.toContain('switchport');
+  });
+
+  it('the negative capability gate: excludesAny rejects a spec when any listed capability is present', () => {
+    expect(capabilitiesAllow({ requiresAny: ['switching'] }, ['switching', 'wireless-controller'])).toBe(true);
+    expect(capabilitiesAllow({ requiresAny: ['switching'], excludesAny: ['wireless-controller'] }, ['switching', 'wireless-controller'])).toBe(false);
+    expect(capabilitiesAllow({ requiresAny: ['switching'], excludesAny: ['wireless-controller'] }, ['switching'])).toBe(true);
+    expect(capabilitiesAllow({ excludesAny: ['wireless-controller'] }, undefined)).toBe(true);
   });
 
   it('lists exactly the section lines in the two new modes, and the new globals in config', () => {
@@ -579,6 +643,34 @@ describe('show capwap against the §2.6 row shapes', () => {
       'Client             Access point  BSSID              WLAN  SSID    VLAN  Interface  State',
       '02:4e:00:40:00:07  LAP1          02:4e:00:20:00:02  1     LabNet  20    STAFF-IF   associated',
     ]);
+  });
+});
+
+describe('show wireless on the lightweight access point (W7 fix)', () => {
+  // the radio serves the WLAN its controller pushed (§3.12 step 4: the profile overlays the radio's own lines), so
+  // `show wireless` names that network, read from the capwap-wtp state view — before the fix it printed the radio's
+  // own (empty) lines, "none configured, security open", while a laptop was associated to LabNet through it
+  const network = (out: string | undefined): string[] => lines(out).filter((l) => l.startsWith('  Network:'));
+
+  it('names the WLAN the controller pushed per radio, and falls back to the radio lines without a profile', () => {
+    const ast = createConfigAst();
+    ast.set([['interface', 'Wlan0']], ['ssid', 'LocalNet']);
+    const state = {
+      enabled: true,
+      state: 'run',
+      acName: 'WLC1',
+      wlans: [{ id: 1, ssid: 'LabNet', security: 'wpa2-psk', vlan: 20, radio: 0 }],
+      radios: [{ port: 'Wlan0', wlanId: 1 }, { port: 'Wlan1' }],
+    };
+    const joined = commandCtxFor(AP, { mode: 'priv-exec', running: ast, processStates: { 'capwap-wtp': { process: 'capwap-wtp', state } } });
+    const out = run(joined, HANDLERS.showWireless).output;
+    expect(network(out)).toEqual(['  Network: "LabNet", security wpa2-psk (WLAN 1 from controller WLC1, VLAN 20)', `  Network: ${MSG_CONTROLLER_NO_WLAN}`]);
+    expect(out).not.toContain('LocalNet');
+    // no profile pushed (CAPWAP off, or not in run yet): the radio's own lines, exactly as before
+    const idle = commandCtxFor(AP, { mode: 'priv-exec', running: ast, processStates: { 'capwap-wtp': { process: 'capwap-wtp', state: { enabled: false, state: 'idle', wlans: [], radios: [] } } } });
+    expect(network(run(idle, HANDLERS.showWireless).output)).toEqual(['  Network: "LocalNet", security open', '  Network: none configured, security open']);
+    const none = commandCtxFor(AP, { mode: 'priv-exec', running: ast });
+    expect(network(run(none, HANDLERS.showWireless).output)).toEqual(['  Network: "LocalNet", security open', '  Network: none configured, security open']);
   });
 });
 

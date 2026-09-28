@@ -2491,8 +2491,6 @@
       "capwap",
       "ethernet",
       "ip",
-      "port-security",
-      "sw-vlan",
       "udp"
     ],
     "config": [
@@ -2520,8 +2518,7 @@
       "mac-address",
       "no",
       "shutdown",
-      "speed",
-      "switchport"
+      "speed"
     ]
   },
   "wrouter.nfhome": {

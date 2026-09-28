@@ -2,7 +2,7 @@
  * P2 W5 sim: the CCNA 2 lab catalogue, every lab's reference solution and its tasks (ARCHITECTURE-P2 §7 W5, §10.1
  * `accept.p2.labs`, §11.1, §11.2; the twin of labs.solutions.test.ts).
  *
- * GENERIC over `CCNA2_LABS` (all nineteen labs, pinned in course order). For each lab the test checks:
+ * GENERIC over `CCNA2_LABS` (all twenty labs, pinned in course order). For each lab the test checks:
  *   • its metadata: category `ccna2-lab`, course `CCNA 2`, `topic` = the title of the module that holds its lesson in
  *     curriculum/ccna2/lessons.ts, a fixed seed, structured-clone safe `scenarioMeta`, `requires` = exactly the catalog
  *     types the topology uses (all in the real catalog), tasks with unique ids, real points and existing dependencies,
@@ -14,7 +14,7 @@
  *     lab and is reported in full), the world runs to idle, and every task passes — full marks;
  *   • grading is read-only (same clock, trace head and PDU count) and repeatable (two evaluations are equal).
  *
- * Static cases: every lab of the eleven files is named in `CCNA2_LAB_ORDER` exactly once, sits in the file its lesson
+ * Static cases: every lab of the twelve files is named in `CCNA2_LAB_ORDER` exactly once, sits in the file its lesson
  * belongs to, and `CCNA2_LABS` follows that order; the order itself follows the lesson skeleton; `SCENARIOS` is the
  * templates, then `CCNA1_LABS`, then `CCNA2_LABS`; the kit writes P2 topologies with the 1.2 schema and leaves every
  * P1 caller's topology unchanged, writes the canonical switching lines, and its three fault helpers (err-disable,
@@ -55,6 +55,7 @@ import {
   CCNA2_TROUBLESHOOTING_LABS,
   CCNA2_TRUNK_LABS,
   CCNA2_VLAN_LABS,
+  CCNA2_WIRELESS_LABS,
 } from '../src/sim/scenarios/ccna2/index.js';
 import { ccna2EtherchannelLacp } from '../src/sim/scenarios/ccna2/etherchannel.js';
 import { ccna2HsrpGateway } from '../src/sim/scenarios/ccna2/fhrp.js';
@@ -86,7 +87,7 @@ const LAB_TEST_TIMEOUT_MS = 60_000;
 
 const catalog = createCatalog(PROCESS_FACTORIES);
 
-/** The eleven lab files, by file name, with their fixed export and the labs their lessons give them (§11.1). */
+/** The twelve lab files, by file name, with their fixed export and the labs their lessons give them (§11.1). */
 const FILES: readonly { file: string; labs: readonly ScenarioInfo[]; names: readonly string[] }[] = [
   { file: 'vlans', labs: CCNA2_VLAN_LABS, names: ['ccna2-switch-management', 'ccna2-vlan-access-ports'] },
   { file: 'trunks', labs: CCNA2_TRUNK_LABS, names: ['ccna2-trunk-native-allowed', 'ccna2-dtp-modes'] },
@@ -96,12 +97,13 @@ const FILES: readonly { file: string; labs: readonly ScenarioInfo[]; names: read
   { file: 'dhcpv6', labs: CCNA2_DHCPV6_LABS, names: ['ccna2-dhcpv6'] },
   { file: 'fhrp', labs: CCNA2_FHRP_LABS, names: ['ccna2-hsrp-gateway'] },
   { file: 'security', labs: CCNA2_SECURITY_LABS, names: ['ccna2-port-security'] },
+  { file: 'wireless', labs: CCNA2_WIRELESS_LABS, names: ['ccna2-wlc-wlan'] },
   { file: 'routing', labs: CCNA2_ROUTING_LABS, names: ['ccna2-static-routes', 'ccna2-floating-static', 'ccna2-ipv6-static'] },
   { file: 'nat', labs: CCNA2_NAT_LABS, names: ['ccna2-nat-pat'] },
   { file: 'troubleshooting', labs: CCNA2_TROUBLESHOOTING_LABS, names: ['ccna2-troubleshoot-vlans', 'ccna2-troubleshoot-routing'] },
 ];
 
-/** Every lab of the eleven files, in file order. */
+/** Every lab of the twelve files, in file order. */
 const ALL_FILE_LABS: readonly ScenarioInfo[] = FILES.flatMap((f) => f.labs);
 
 /** The lessons of the skeleton in teaching order, with the title of the module that holds each. */
@@ -149,12 +151,12 @@ function failures(sim: Simulation, lab: ScenarioInfo): string[] {
 }
 
 describe('CCNA2 labs: the catalogue', () => {
-  it('holds all nineteen labs of the course, in course order', () => {
-    expect(CCNA2_LAB_ORDER).toHaveLength(19);
+  it('holds all twenty labs of the course, in course order', () => {
+    expect(CCNA2_LAB_ORDER).toHaveLength(20);
     expect(CCNA2_LABS.map((l) => l.name)).toEqual([...CCNA2_LAB_ORDER]);
   });
 
-  it('names every lab of the eleven files in CCNA2_LAB_ORDER exactly once, and CCNA2_LABS follows that order', () => {
+  it('names every lab of the twelve files in CCNA2_LAB_ORDER exactly once, and CCNA2_LABS follows that order', () => {
     expect(new Set(CCNA2_LAB_ORDER).size).toBe(CCNA2_LAB_ORDER.length);
     const names = ALL_FILE_LABS.map((l) => l.name);
     // no lab twice, in one file or across two

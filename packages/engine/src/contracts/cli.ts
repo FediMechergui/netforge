@@ -14,7 +14,8 @@
  *
  * SCOPING (P0.5, D2): a spec is available iff its mode and privilege allow it AND the device's
  * `cli.grammar` ∈ `grammars` (default DEFAULT_GRAMMARS) AND every `requires` capability and at least
- * one `requiresAny` capability is in the device's EFFECTIVE capabilities (`DeviceRuntime.capabilities`).
+ * one `requiresAny` capability is in the device's EFFECTIVE capabilities (`DeviceRuntime.capabilities`)
+ * AND (P2) no `excludesAny` capability is.
  * `portRequires` is evaluated against the session's selected interface: failing specs are hidden from
  * `?` and Tab, and a line typed in full returns `portRequires.mismatch ?? CLI_MESSAGES.portUnsupported`
  * at the column of the spec's first literal. (The P0 `kinds` gate was deleted at the P0.5 exit gate.)
@@ -158,6 +159,13 @@ export interface CommandSpec {
   requires?: readonly Capability[];
   /** @since P0.5 At least one of these effective capabilities is required. */
   requiresAny?: readonly Capability[];
+  /**
+   * @since P2 (optional by meaning: absent = no exclusion; W7 fix, ARCHITECTURE-P2 §9.2 W7 item 29b) None of these
+   * effective capabilities may be present. The only negative gate: the wireless controller's capabilities are a
+   * superset of a plain bridge's (`switching`), so the bare `switchport` line, which a bridge keeps, is scoped off the
+   * controller (§2.2 `CONTROLLER_PORT_SWITCHPORT`: "the grammar accepts no switchport line there") only this way.
+   */
+  excludesAny?: readonly Capability[];
   /** @since P0.5 Selected-interface requirement (config-if family). */
   portRequires?: PortRequirement;
   /** @since P0.5 Starts a blocking job (ping, tracert, nslookup, renew); refused in headless configure. */

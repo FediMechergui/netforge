@@ -3,14 +3,18 @@
  * of the CCNA 1 labs is reachable from a lesson, and a planned level pretends nothing.
  *
  * The skeleton (`ccna1/lessons.ts`) is checked through the assembled `COURSES`, so a merge that dropped a lesson
- * or a content map keyed by a typo fails here too.
+ * or a content map keyed by a typo fails here too. Since P2 W7 the same holds for CCNA 2 (`ccna2/lessons.ts`,
+ * attached in `curriculum/index.ts`, ARCHITECTURE-P2 §9.2 item 28): its pins are the last describe block below.
  */
 import { describe, expect, it } from 'vitest';
 import type { Course, Lesson } from '../src/contracts/curriculum.js';
 import { labLessonMap, lessonsOf } from '../src/contracts/curriculum.js';
 import { COURSES, courseById, lessonById, withContent } from '../src/curriculum/index.js';
 import { CCNA1_MODULES } from '../src/curriculum/ccna1/lessons.js';
+import { CCNA2_MODULES } from '../src/curriculum/ccna2/lessons.js';
+import { CCNA2_VIDEOS } from '../src/curriculum/ccna2/videos.js';
 import { CCNA1_LABS } from '../src/sim/scenarios/ccna1/index.js';
+import { CCNA2_LABS } from '../src/sim/scenarios/ccna2/index.js';
 import { SCENARIOS } from '../src/sim/scenarios/index.js';
 import { GRAMMAR } from '../src/cli/grammar/index.js';
 import { matchCommand } from '../src/cli/parser.js';
@@ -67,7 +71,7 @@ const CCNA1_ORDER = [
 ];
 
 describe('curriculum catalogue', () => {
-  it('lists CCNA 1 as available with modules, and the later levels as planned with none', () => {
+  it('lists CCNA 1 and CCNA 2 as available with modules, and CCNA 3 as planned with none', () => {
     expect(COURSES.map((c) => c.id)).toEqual(['ccna1', 'ccna2', 'ccna3']);
     for (const course of COURSES) {
       expect(course.level.length).toBeGreaterThan(0);
@@ -82,6 +86,8 @@ describe('curriculum catalogue', () => {
       }
     }
     expect(ccna1().status).toBe('available');
+    expect(courseById('ccna2')?.status).toBe('available');
+    expect(courseById('ccna3')?.status).toBe('planned');
   });
 
   it('keeps ids unique and kebab-case', () => {
@@ -227,5 +233,139 @@ describe('curriculum helpers', () => {
     expect(untouched?.theory).toBe('');
     expect(untouched?.video).toBeUndefined();
     expect(first.theory, 'the skeleton was mutated').toBe('');
+  });
+});
+
+
+/**
+ * CCNA 2, attached in P2 W7 (ARCHITECTURE-P2 §7 W7 course, §9.2 item 28, §11.3). The skeleton, the four theory parts
+ * and the videos have tests of their own (curriculum.ccna2*.test.ts); these pins are about what reaches the reader
+ * once `curriculum/index.ts` joins them: the order, the labs, the rules of §11.3 that the CCNA 1 bodies are held to
+ * (the five sections, the markdown subset, no vendor), the minutes of the wireless lessons, and the course text.
+ */
+describe('the CCNA 2 course, attached', () => {
+  const ccna2 = (): Course => {
+    const course = courseById('ccna2');
+    if (course === undefined) throw new Error('no ccna2 course in COURSES');
+    return course;
+  };
+  const body = (id: string): string => lessonById(id)?.theory ?? '';
+
+  /** The five sections of every body, in this order (the CCNA 1 theory tests hold the same list). */
+  const SECTIONS = ['## The idea in one breath', '## Why it exists', '## How it actually works', '## What trips people up', '## See it in NetForge'];
+  /** Link targets the lab markdown parser turns into links (apps/web/src/labs/markdown.ts). */
+  const ALLOWED_LINK = /^(?:concept:subnetting|concept:ipv6|https:\/\/[^\s<>"'`\\]+)$/;
+  const LINK = /\[[^\]\n]*\]\(([^()\s]*)\)/g;
+  /** Names the course never prints (§0 rule 6), the union of the CCNA 1 and CCNA 2 guards. */
+  const VENDORS = /\b(?:cisco|ios|packet\s*tracer|netacad|juniper|huawei|catalyst|meraki|aruba|mikrotik)\b/i;
+  /** A word as the lesson-minute rule counts it (curriculum.ccna2.accuracy.test.ts). */
+  const words = (text: string): number => text.split(/\s+/).filter((w) => w.length > 0).length;
+
+  it('is the skeleton in teaching order: 11 modules, 34 lessons, each with a written body', () => {
+    const course = ccna2();
+    expect(course.modules.map((m) => m.id)).toEqual(CCNA2_MODULES.map((m) => m.id));
+    expect(lessonsOf(course).map((l) => l.id)).toEqual(CCNA2_MODULES.flatMap((m) => m.lessons.map((l) => l.id)));
+    expect(course.modules).toHaveLength(11);
+    expect(lessonsOf(course)).toHaveLength(34);
+    for (const lesson of lessonsOf(course)) expect(lesson.theory.trim().length, lesson.id).toBeGreaterThan(0);
+  });
+
+  it('reaches every CCNA 2 lab from exactly one lesson, the wireless lab of lesson 27 included', () => {
+    const placed = labLessonMap(ccna2());
+    const missing = CCNA2_LABS.filter((lab) => !placed.has(lab.name)).map((lab) => lab.name);
+    expect(missing, `CCNA 2 labs no lesson opens: ${missing.join(', ')}`).toEqual([]);
+    expect(placed.size).toBe(CCNA2_LABS.length);
+    expect(placed.size).toBe(20);
+    expect(placed.get('ccna2-wlc-wlan')?.id).toBe('ccna2-27-wlans-on-a-controller');
+    const used = lessonsOf(ccna2()).flatMap((l) => (l.lab === undefined ? [] : [l.lab]));
+    expect(new Set(used).size, `a lab is attached twice: ${used.join(', ')}`).toBe(used.length);
+  });
+
+  it('gives every body the five sections in order and no other heading', () => {
+    for (const lesson of lessonsOf(ccna2())) {
+      const headings = lesson.theory.split('\n').filter((line) => line.startsWith('#'));
+      expect(headings, lesson.id).toEqual(SECTIONS);
+      expect(lesson.theory.startsWith(SECTIONS[0]!), lesson.id).toBe(true);
+      expect(lesson.theory, lesson.id).toBe(lesson.theory.trim());
+    }
+  });
+
+  it('keeps every body inside the markdown subset, with no vendor name and a sane length', () => {
+    for (const lesson of lessonsOf(ccna2())) {
+      const text = lesson.theory;
+      expect(text, lesson.id).not.toMatch(/[<>]/);
+      expect(text, lesson.id).not.toMatch(/http:\/\//i);
+      expect(text, lesson.id).not.toMatch(/!\[/);
+      expect(text, lesson.id).not.toMatch(/&[a-z]+;/i);
+      for (const m of text.matchAll(LINK)) expect(m[1], `${lesson.id}: ${m[0]}`).toMatch(ALLOWED_LINK);
+      expect(text, lesson.id).not.toMatch(VENDORS);
+      const n = text.split(/\s+/).filter((w) => /[A-Za-z0-9]/.test(w)).length;
+      expect(n, `${lesson.id}: ${n} words`).toBeGreaterThanOrEqual(250);
+      expect(n, `${lesson.id}: ${n} words`).toBeLessThanOrEqual(500);
+    }
+  });
+
+  it('carries the video recorded for each lesson, and no lesson runs over 45 minutes', () => {
+    for (const lesson of lessonsOf(ccna2())) {
+      expect(lesson.video, lesson.id).toEqual(CCNA2_VIDEOS[lesson.id]);
+      expect(lesson.estimatedMinutes, lesson.id).toBeLessThanOrEqual(45);
+    }
+  });
+
+  /** The wireless videos, with the length each watch page gave (`lengthSeconds`) when they were checked in W7. */
+  const WIRELESS_VIDEOS: Readonly<Record<string, { readonly youtubeId: string; readonly seconds: number }>> = {
+    'ccna2-25-controllers-and-lightweight-aps': { youtubeId: 'ttdjSSmfLDI', seconds: 887 },
+    'ccna2-26-channels-and-overlap': { youtubeId: 'uZyrJTfetNg', seconds: 558 },
+    'ccna2-27-wlans-on-a-controller': { youtubeId: 'XJaw7PkzEvA', seconds: 2258 },
+    'ccna2-28-securing-a-wlan': { youtubeId: 'KaqKoKNEKnE', seconds: 654 },
+  };
+
+  it('gives each wireless lesson the minutes its video and its theory need (238 words a minute)', () => {
+    for (const [id, video] of Object.entries(WIRELESS_VIDEOS)) {
+      const lesson = lessonById(id);
+      expect(lesson?.video?.youtubeId, `${id} still shows the measured video`).toBe(video.youtubeId);
+      const needed = video.seconds / 60 + words(body(id)) / 238;
+      expect(lesson?.estimatedMinutes, `${id}: ${needed.toFixed(1)} min needed`).toBeGreaterThanOrEqual(needed);
+    }
+  });
+
+  it('prints for lesson 27 only controller lines its lab types (address, gateway and DHCP server)', () => {
+    const solution = SCENARIOS.find((s) => s.name === 'ccna2-wlc-wlan')?.solution;
+    if (solution === undefined) throw new Error('ccna2-wlc-wlan has no reference solution');
+    const lines = new Set(Object.values(solution).flat().map((l) => l.trim()));
+    const printed = [...body('ccna2-27-wlans-on-a-controller').matchAll(/^ ?((?:address|gateway|dhcp-server) \d[^`\n]*)$/gm)].map((m) => (m[1] ?? '').trim());
+    expect(printed.length, 'lesson 27 no longer shows the controller interface lines').toBeGreaterThanOrEqual(3);
+    expect(printed.filter((l) => !lines.has(l))).toEqual([]);
+  });
+
+  it('says plainly what NetForge simplifies in the wireless lessons (§11.1, D17)', () => {
+    const l25 = body('ccna2-25-controllers-and-lightweight-aps');
+    expect(l25).toMatch(/answers association and the key handshake itself, then reports the client to the controller/);
+    expect(l25).toMatch(/encryption is shown, not computed/);
+    // §11.4: the Roaming objective is taught as theory in lesson 25 (C5 not built), so the body explains it — who
+    // decides, where the client goes, why it keeps its address — and then says it is theory only (W7 review fix)
+    const roaming = l25.split('\n').find((line) => line.startsWith('**Roaming.**')) ?? '';
+    expect(roaming, 'lesson 25 has no Roaming paragraph under How it actually works').not.toBe('');
+    expect(l25.indexOf(roaming)).toBeGreaterThan(l25.indexOf('## How it actually works'));
+    expect(l25.indexOf(roaming)).toBeLessThan(l25.indexOf('## What trips people up'));
+    expect(roaming).toMatch(/client, not the network, decides/);
+    expect(roaming).toMatch(/same network name/);
+    expect(roaming).toMatch(/keeps its address/);
+    expect(roaming).toMatch(/mobility group/);
+    expect(l25).toMatch(/Roaming is theory only\./);
+    expect(body('ccna2-26-channels-and-overlap')).toMatch(/NetForge compares radios by main channel only/);
+    expect(body('ccna2-28-securing-a-wlan')).toMatch(/enterprise security is theory here/);
+    for (const id of ['ccna2-26-channels-and-overlap', 'ccna2-28-securing-a-wlan']) expect(lessonById(id)?.lab, id).toBeUndefined();
+  });
+
+  it('describes CCNA 2 in its own words, without promising the routing protocols of CCNA 3', () => {
+    const course = ccna2();
+    for (const text of [course.title, course.subtitle, course.description]) {
+      expect(text).not.toMatch(/learn their routes|dynamic routing|not written yet/i);
+      expect(text).not.toMatch(VENDORS);
+    }
+    expect(course.description).toMatch(/VLANs/);
+    expect(course.description).toMatch(/spanning tree/);
+    expect(course.description).toMatch(/controller/);
   });
 });

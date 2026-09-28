@@ -10,7 +10,7 @@
  */
 import type { CommandSpec } from '../../contracts/cli.js';
 import { PORT_SECURITY_DEBUG_CATEGORY, PORT_SECURITY_MAX_LIMIT } from '../../protocols/l2/port-security.js';
-import { capabilitiesRunning, choiceArg, type GrammarDebugCategory, ifaceArg, intArg, kindsPort, NFOS_ONLY } from './core-exec.js';
+import { choiceArg, type GrammarDebugCategory, ifaceArg, intArg, kindsPort, NFOS_ONLY } from './core-exec.js';
 import { SWITCHPORT_LINE_PORT } from './switchport.js';
 import { VLAN_AWARE_CAPABILITIES } from './vlan.js';
 
@@ -30,9 +30,12 @@ export const PSEC_SHOW_FORM_ARG = 'form';
 /** Violation modes in help order. */
 export const PSEC_VIOLATION_MODES = Object.freeze(['protect', 'restrict', 'shutdown'] as const);
 
-/** The port-security debug category (eth-switch's messages; offered where the VLAN-aware bridge runs, §2.6). */
+/**
+ * The port-security debug category (eth-switch's messages), offered where the port-security lines are: on the
+ * managed switches (W7: not on the wireless controller, whose VLAN-aware bridge takes no port-security line, §2.2).
+ */
 export const PORT_SECURITY_DEBUG_CATEGORIES: readonly GrammarDebugCategory[] = Object.freeze([
-  { category: PORT_SECURITY_DEBUG_CATEGORY, help: 'Trace secure address learning and violations', requiresAny: capabilitiesRunning('vlan'), since: 'P2' },
+  { category: PORT_SECURITY_DEBUG_CATEGORY, help: 'Trace secure address learning and violations', requiresAny: VLAN_AWARE_CAPABILITIES, since: 'P2' },
 ]);
 
 /** Objectives of the port-security debug category. */

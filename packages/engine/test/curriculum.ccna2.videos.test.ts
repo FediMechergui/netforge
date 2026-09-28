@@ -76,8 +76,8 @@ describe('ccna2 videos', () => {
     }
   });
 
-  // The CCNA 2 skeleton is detached until W7 (§11.3), so today the course has no lessons and this loop is empty.
-  // Once it is attached, a lesson whose video went missing in the join fails here.
+  // The CCNA 2 skeleton is attached since W7 (§11.3), so this loop walks all 34 lessons: a lesson whose video went
+  // missing in the join fails here.
   it('reaches the assembled course once the skeleton is attached', () => {
     const course = courseById('ccna2');
     if (course === undefined) throw new Error('no ccna2 course in COURSES');

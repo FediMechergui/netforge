@@ -59,17 +59,27 @@ describe('the landing page', () => {
     expect(t).toContain(`${lessonsOf(CCNA1).filter((l) => l.lab !== undefined).length} of them with a lab`);
   });
 
-  it('starts the available level and marks the planned ones as not available', () => {
+  it('starts the available levels and marks the planned one as not available', () => {
     const t = text(renderToStaticMarkup(createElement(Landing, { onOpenCourse: noop, onOpenSandbox: noop })));
     expect(t).toContain('Start CCNA 1');
-    expect(t).not.toContain('Start CCNA 2');
+    expect(t).toContain('Start CCNA 2');
     expect(t).not.toContain('Start CCNA 3');
     expect(t).toContain('Not available yet');
     // The state is a word, not a colour, and the glyph is decoration beside it.
     expect(t).toContain('available');
     expect(t).toContain('planned');
     expect(courseMark(CCNA1)).toEqual({ glyph: '▣', label: 'available' });
-    expect(courseMark(COURSES.find((c) => c.status === 'planned') as Course).label).toBe('planned');
+    expect(courseMark(courseById('ccna3') as Course).label).toBe('planned');
+  });
+
+  // P2 W7 (ARCHITECTURE-P2 §11.3): the CCNA 2 course is attached, so the landing page counts it like CCNA 1.
+  it('lists CCNA 2 as available with the counts of its lessons', () => {
+    const ccna2 = courseById('ccna2') as Course;
+    expect(courseMark(ccna2)).toEqual({ glyph: '▣', label: 'available' });
+    expect(courseFacts(ccna2)).toMatchObject({ modules: 11, lessons: 34, labs: 20 });
+    const t = text(renderToStaticMarkup(createElement(Landing, { onOpenCourse: noop, onOpenSandbox: noop })));
+    expect(t).toContain(courseFactsText(ccna2));
+    expect(t).toContain(ccna2.description);
   });
 
   it('offers no control at all for a level that has nothing to open', () => {

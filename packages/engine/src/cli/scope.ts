@@ -7,7 +7,7 @@
  *   • `spec.privilege <= privilege`;
  *   • the device grammar is in `spec.grammars ?? DEFAULT_GRAMMARS`;
  *   • every `requires` capability and at least one `requiresAny` capability is in the device's EFFECTIVE
- *     capabilities (`DeviceRuntime.capabilities`);
+ *     capabilities (`DeviceRuntime.capabilities`), and (P2) no `excludesAny` capability is;
  *
  * `portRequires` is NOT part of the cached scope: it is evaluated per call against the session's selected
  * interface (`portRequirementMet`). A spec failing it is hidden from `?` and Tab; a line typed in full gets
@@ -77,9 +77,13 @@ export function grammarAllows(spec: Pick<CommandSpec, 'grammars'>, grammar: CliG
   return (spec.grammars ?? DEFAULT_GRAMMARS).includes(grammar);
 }
 
-/** Whether the capability gates pass: `requires` ⊆ capabilities and `requiresAny` ∩ capabilities ≠ ∅ (when present). */
-export function capabilitiesAllow(spec: Pick<CommandSpec, 'requires' | 'requiresAny'>, caps: CapabilityInput | undefined): boolean {
+/**
+ * Whether the capability gates pass: `requires` ⊆ capabilities, `requiresAny` ∩ capabilities ≠ ∅ (when present) and
+ * (P2) `excludesAny` ∩ capabilities = ∅.
+ */
+export function capabilitiesAllow(spec: Pick<CommandSpec, 'requires' | 'requiresAny' | 'excludesAny'>, caps: CapabilityInput | undefined): boolean {
   for (const c of spec.requires ?? []) if (!hasCap(caps, c)) return false;
+  for (const c of spec.excludesAny ?? []) if (hasCap(caps, c)) return false;
   if (spec.requiresAny !== undefined) {
     let any = false;
     for (const c of spec.requiresAny) {

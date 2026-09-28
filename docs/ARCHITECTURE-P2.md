@@ -3159,6 +3159,43 @@ unless stated**
 29. `apps/web/test/learn.landing.test.ts:62-72`: `not.toContain('Start CCNA 2')` becomes `toContain`; the "planned"
     fixture becomes CCNA 3.
 
+**W7 fix (the W7 review, applied by the fix agent)**
+29a. `goldens/cli-help.p05.json`: the `wlc.nfwlc9800` "priv-exec debug" listing loses `port-security` and `sw-vlan`
+     (`[all, arp, capwap, ethernet, ip, udp]`). Both categories are now scoped to `managed-switch`
+     (`VLAN_AWARE_CAPABILITIES`, cli/grammar/spanning-tree.ts and port-security.ts) instead of "wherever the `vlan`
+     daemon runs": the controller keeps its VLAN list through `wlc-interface` (it has no `vlan` line to trace) and takes
+     no port-security line (§2.2 `CONTROLLER_PORT_SWITCHPORT`), so neither category has anything to show there. Every
+     other model's listing is unchanged. Scope note for the §5.4 debug-category table: `sw-vlan` and `port-security`
+     are offered on the managed switches only, not on the wireless controller. Item 25's "nothing disappears" is about
+     the P1 superset guard (`cli-help.p1.json` has no `wlc.nfwlc9800` entry, so `cli.help-superset` still holds); this
+     item is the one deliberate removal inside the P2 listing. Pin: `cli.wlc.test.ts` "refuses the VLAN-database and
+     port-security debug categories on the controller (W7) …".
+29b. `goldens/cli-help.p05.json`: the `wlc.nfwlc9800` "config-if ethernet/switched" listing loses `switchport`
+     (`[description, do, duplex, end, exit, mac-address, no, shutdown, speed]`). §2.2 says of the controller's
+     distribution ports that "the grammar accepts no switchport line there", but the bare `switchport` / `no switchport`
+     spec (`requiresAny: ['switching']`) was still in scope: headless `switchport` was accepted as a silent no-op and
+     `no switchport` refused as role-locked. The controller's capabilities (`switching, wireless-controller`) are a
+     superset of a plain bridge's (`switching`, NF-BR2/NF-BR4, which keep the line) and its ports have the same kind and
+     role, so no positive gate can separate them. **Contract change (rule 3, minimal additive):**
+     `CommandSpec.excludesAny?: readonly Capability[]` in `contracts/cli.ts` — none of these effective capabilities may
+     be present; `@since P2`, **optional by meaning** (absent = no exclusion; the W8 gate adds it to §2.15 and does not
+     remove its `?`). `cli/scope.ts` `capabilitiesAllow` honours it (the scope cache key already carries the capability
+     set), and the bare spec in `cli/grammar/switchport.ts` gains `excludesAny: ['wireless-controller']`. Every other
+     model's listing is unchanged. Pins: `cli.wlc.test.ts` "offers no switchport line on the controller's distribution
+     ports (W7 fix, §2.2) …" and "the negative capability gate …".
+29c. The lab count pins move with the wireless lab (`sim/scenarios/ccna2/wireless.ts`, §7 W7 sim), a completeness
+     move that adds a lab and loosens nothing: `labs.ccna2.solutions.test.ts` `CCNA2_LAB_ORDER` `toHaveLength(19)` →
+     `20`, its `FILES` list gains `{ file: 'wireless', labs: CCNA2_WIRELESS_LABS, names: ['ccna2-wlc-wlan'] }`;
+     `curriculum.ccna2.test.ts` "names only labs that exist in SCENARIOS …" no longer filters out `ccna2-wlc-wlan`,
+     `named.length` 19 → 20 and gains `toContain('ccna2-wlc-wlan')`.
+29d. **Architect rulings on the W7 close-out (2026-09-28).** (1) `init` is not a review mutator: it is the worker's
+     one-time, idempotent handshake (`bridge/client.ts` `initEngine`), so the `accept.p2.seek` "every mutator is
+     rejected in review" clause covers `reset` (File → New) and the journaled inputs, not `init`; the worker is right
+     as built. (2) Owed to the W8 gate: `CommandSpec.excludesAny` (item 29b) joins the §2.15 optional-by-meaning list,
+     and §5.4 gains the scope notes of items 29a and 29b (`debug port-security` / `debug sw-vlan` on managed switches
+     only; no `switchport` line on the controller); `docs/CATALOG.md` gains NF-WLC-9800, moves NF-WLC-3504 to Legacy
+     and drops "autonomous until P2" from NF-AP-1832.
+
 ### 9.2b Acceptance cases deferred to W5 (architect, 2026-09-23)
 
 Two §10 acceptance cases are skipped in W4 because the item that makes them possible belongs to W5, not because of an
