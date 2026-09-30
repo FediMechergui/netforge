@@ -4334,6 +4334,9 @@ brief. Where a ruling and an earlier line of this document differ, the ruling wi
   the constant `false` (only `snapshot` / `snapshotParts` may move) is an architect action that needs the product
   owner's permission in this environment; until then the P2 golden does not see transmit-queue changes (the P1
   golden, which keeps `txQueue`, still does). It must be done before the W2 items that touch transmit accounting.
+  **Done 2026-09-30** with the product owner's authorisation: the four shards were re-recorded with the constant
+  `false`; only `snapshot` / `snapshotParts` moved in the 32 worlds (every event, window, count and typed result
+  byte-identical); the constant and its branches are deleted.
 
 **W1**
 

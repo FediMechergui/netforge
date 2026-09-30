@@ -62,8 +62,8 @@
  * the P2 vocabulary; and every port's `txBacklog` (the P3 FIFO view, D16, named by the W0 ruling R6; absent at
  * 5263f16, so on the unchanged engine the rule removes nothing). The P0 frame count `txQueue` is NOT part of the rule:
  * it is live engine data (`p.tx.queue`, shown by `show interfaces` and the port inspector; 22 of the 32 worlds end with
- * a count above 0). PENDING THE LEAD'S RE-RECORDING: the golden's snapshot hashes were recorded by an earlier reading
- * that also deleted `txQueue`, so `GOLDEN_STRIPS_TX_QUEUE` keeps that deletion until they are re-recorded (see there).
+ * a count above 0). The snapshot hashes were re-recorded with `txQueue` kept on 2026-09-30 (ruling R13): only
+ * `snapshot` / `snapshotParts` moved in the 32 worlds; every event, window, count and typed result stayed identical.
  * The P2 guard (every shard) proves that everything outside `p2Vocabulary` is of a later stage, and a synthetic case
  * proves the per-device rule.
  *
@@ -592,25 +592,12 @@ function realContracts(): NormalisationContracts {
 }
 
 /**
- * TRANSITIONAL (W0 review of this harness; ruling R6). `true` while the recorded `snapshot` / `snapshotParts` of
- * goldens/p2-profile-digests.json are those of the first W0 recording, made by a reading of §4.6 that also deleted each
- * port's P0 frame count `txQueue`. That deletion is not the rule: `txQueue` is live engine data, so while it is stripped
- * the golden cannot see a change to the transmit-queue accounting. The fix agent may not re-record a golden, so the
- * lead (only) sets this to `false` and, in the same change, re-records every world's snapshot hashes with
- * `NF_RECORD_P2_DIGESTS=all`, one shard at a time (the W0 engine is behaviour-neutral; a 5263f16 worktree holding only
- * this harness is the literal-D3 option). The printed report must show only `snapshot` / `snapshotParts` moving:
- * events, windows, counts and typed results stay byte-identical, because this constant touches only the normaliser.
- * The constant and its branch are then deleted.
- */
-const GOLDEN_STRIPS_TX_QUEUE = true;
-
-/**
  * THE rule of §4.6 item 2: a JSON copy of `snapshot` where each device loses the StateViews and owned tables of the
  * processes it runs outside `vocab.processes` or derives only through capability rows of a stage the golden did not
  * have, every extra table outside `vocab.tables` or whose descriptor is of such a stage (a list left empty is
  * dropped), the members of `capabilities`, `gui` and `allowedRoles` outside the vocabulary, and every port's P3
- * display member `txBacklog` (the FIFO view, D16, ruling R6). The P0 frame count `txQueue` is kept (it is deleted
- * only while `GOLDEN_STRIPS_TX_QUEUE` holds). Nothing else is touched.
+ * display member `txBacklog` (the FIFO view, D16, ruling R6). The P0 frame count `txQueue` is kept. Nothing else
+ * is touched.
  */
 export function normaliseSnapshot(snapshot: SimSnapshot, vocab: P2Vocabulary, contracts: NormalisationContracts = realContracts()): Record<string, unknown> {
   const stages = new Set(vocab.stages);
@@ -648,7 +635,6 @@ export function normaliseSnapshot(snapshot: SimSnapshot, vocab: P2Vocabulary, co
     for (const p of listOf(d['ports']).map(recordOf)) {
       if (Array.isArray(p['allowedRoles'])) p['allowedRoles'] = listOf(p['allowedRoles']).filter((r) => portRoles.has(String(r)));
       delete p['txBacklog'];
-      if (GOLDEN_STRIPS_TX_QUEUE) delete p['txQueue'];
     }
   }
   return copy;
@@ -1142,12 +1128,8 @@ function normalisationCase(): { input: SimSnapshot; vocab: P2Vocabulary; contrac
       },
     ],
   } as unknown as SimSnapshot;
-  // The P3 display member `txBacklog` goes; the P0 frame count `txQueue` stays with its value (except while the
-  // transitional GOLDEN_STRIPS_TX_QUEUE holds).
-  const kept = (txQueue: number): Record<string, unknown> =>
-    GOLDEN_STRIPS_TX_QUEUE
-      ? { id: 'Gi0/1', allowedRoles: ['switchport', 'l3'], mac: '02:00:00:00:00:01' }
-      : { id: 'Gi0/1', allowedRoles: ['switchport', 'l3'], txQueue, mac: '02:00:00:00:00:01' };
+  // The P3 display member `txBacklog` goes; the P0 frame count `txQueue` stays with its value.
+  const kept = (txQueue: number): Record<string, unknown> => ({ id: 'Gi0/1', allowedRoles: ['switchport', 'l3'], txQueue, mac: '02:00:00:00:00:01' });
   const expected = {
     now: 1,
     devices: [
