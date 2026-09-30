@@ -1,9 +1,24 @@
 /**
- * P2 acceptance [SHOULD S1] — exact replay of the input journal (ARCHITECTURE-P2 D18, §2.13, §3.13 steps 1–4, §10.1
- * row `accept.p2.replay-exact`).
+ * test/replay-exact.harness.ts — the script, the checks and the shard map of the replay-exact acceptance row. Not a
+ * test file.
  *
- * For EVERY `SCENARIOS` entry (templates, CCNA 1 labs, CCNA 2 labs — read at run time, so a lab appended later is
- * covered without touching this file) a seeded input script drives the live world through every way the row names:
+ * P2 acceptance [SHOULD S1] — exact replay of the input journal (ARCHITECTURE-P2 D18, §2.13, §3.13 steps 1–4, §10.1
+ * row `accept.p2.replay-exact`). ARCHITECTURE-P3 §7 W0 qa and §9.2 W0 item 8 split that one file by scenario category
+ * into three shards, so the slow project can run them in parallel: `accept.p2.replay-exact-templates`, `-ccna1` and
+ * `-ccna2`. Everything below is the unsplit file's code, moved here unchanged: the seeded script, the comparisons,
+ * the catalogue case (`expectCatalogueCovered`) and the per-scenario case (`replayExactCase`), whose assertions are
+ * exactly the unsplit file's. Each shard registers the catalogue case, the partition case (`expectShardPartition`)
+ * and one per-scenario case for every scenario of its categories (`scenariosOfShard`).
+ *
+ * Coverage. The unsplit file covered EVERY `SCENARIOS` entry, read at run time. `REPLAY_EXACT_SHARD_OF_CATEGORY` maps
+ * each category to exactly one shard file, and every shard asserts that every scenario's category has a shard, that
+ * the shards' scenario lists together are `SCENARIOS` with each scenario exactly once, and that every shard file
+ * exists. A scenario of a category no shard takes (the CCNA 3 labs of P3 W5, before their shard
+ * `accept.p3.replay-exact-ccna3` joins this map, §9.2 W5 item 40) therefore fails every shard instead of escaping the
+ * replay check.
+ *
+ * For EVERY scenario of a shard (read at run time, so a lab appended later is covered without touching the shards) a
+ * seeded input script drives the live world through every way the row names:
  *
  *   prelude  work BEFORE the document is opened (a scratch PC, a console, a line typed, one second run), so the
  *            journal's origin resumes non-zero facade counters (trace head, sessions, headless, topology version);
@@ -35,9 +50,12 @@
  *     end byte-identical to the live world (trace and snapshot) and to each other.
  *
  * Cost: every scenario is run once live and three times replayed, over a script of about eight minutes of sim time;
- * nothing is sub-sampled (the whole file takes about a minute).
+ * nothing is sub-sampled (the unsplit file took about a minute; each shard takes its share).
  */
-import { assert, describe, expect, it } from 'vitest';
+import { readdirSync } from 'node:fs';
+import { dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { assert, expect } from 'vitest';
 import type { DeviceId, LinkId, SessionId } from '../src/contracts/ids.js';
 import type { JournalOp, SimJournal } from '../src/contracts/journal.js';
 import type { ScenarioInfo } from '../src/contracts/scenario.js';
@@ -48,6 +66,58 @@ import type { TraceEvent } from '../src/contracts/trace.js';
 import { createReplay } from '../src/sim/replay.js';
 import { SCENARIOS, SCENARIO_SEED } from '../src/sim/scenarios.js';
 import { createSimulation } from '../src/sim/simulation.js';
+
+// ── the shards ──────────────────────────────────────────────────────────────
+
+/** The engine's test directory (the shard files live directly in it). */
+const HERE = dirname(fileURLToPath(import.meta.url));
+
+/**
+ * The shard file that replays each scenario category (ARCHITECTURE-P3 §9.2 W0 item 8). Every category of `SCENARIOS`
+ * must be a key: a category without a shard fails `expectShardPartition`. P3 W5 adds `'ccna3-lab'` with its shard
+ * `accept.p3.replay-exact-ccna3.test.ts` (§9.2 W5 item 40).
+ */
+export const REPLAY_EXACT_SHARD_OF_CATEGORY: Readonly<Record<string, string>> = Object.freeze({
+  template: 'accept.p2.replay-exact-templates.test.ts',
+  'ccna1-lab': 'accept.p2.replay-exact-ccna1.test.ts',
+  'ccna2-lab': 'accept.p2.replay-exact-ccna2.test.ts',
+});
+
+/** The shard file of a category, or undefined when no shard takes it. */
+function shardOfCategory(category: string): string | undefined {
+  return Object.prototype.hasOwnProperty.call(REPLAY_EXACT_SHARD_OF_CATEGORY, category) ? REPLAY_EXACT_SHARD_OF_CATEGORY[category] : undefined;
+}
+
+/** The shard files, each once, in map order. */
+export function replayExactShardFiles(): readonly string[] {
+  const out: string[] = [];
+  for (const file of Object.values(REPLAY_EXACT_SHARD_OF_CATEGORY)) if (file !== undefined && !out.includes(file)) out.push(file);
+  return out;
+}
+
+/** The scenarios a shard replays: every `SCENARIOS` entry whose category maps to `file`, in `SCENARIOS` order. */
+export function scenariosOfShard(file: string): readonly ScenarioInfo[] {
+  return SCENARIOS.filter((sc) => shardOfCategory(sc.category) === file);
+}
+
+/**
+ * The partition case of a shard: `file` is a shard; every scenario's category has a shard; the shards' scenario
+ * lists together are `SCENARIOS`, each scenario exactly once; this shard is not empty; every shard file exists.
+ */
+export function expectShardPartition(file: string): void {
+  const files = replayExactShardFiles();
+  expect(files, 'the file is one of the replay-exact shards').toContain(file);
+  expect(
+    SCENARIOS.filter((sc) => shardOfCategory(sc.category) === undefined).map((sc) => `${sc.name} (${sc.category})`),
+    'scenarios whose category no replay-exact shard takes',
+  ).toEqual([]);
+  const covered = files.flatMap((f) => scenariosOfShard(f).map((sc) => sc.name));
+  expect(new Set(covered).size, 'no scenario is replayed by two shards').toBe(covered.length);
+  expect([...covered].sort()).toEqual(SCENARIOS.map((sc) => sc.name).sort());
+  expect(scenariosOfShard(file).length, `${file} replays at least one scenario`).toBeGreaterThan(0);
+  const present = new Set(readdirSync(HERE));
+  expect(files.filter((f) => !present.has(f)), 'replay-exact shard files that do not exist').toEqual([]);
+}
 
 // ── the seeded script ───────────────────────────────────────────────────────
 
@@ -61,7 +131,7 @@ const TRACE_CAPACITY = 1_000_000;
 const CHUNK_PER_ENTRY = 97;
 const CHUNK_TWIN = 151;
 /** Wall-clock budget of one scenario (one live run, three replays). */
-const SCENARIO_TIMEOUT_MS = 120_000;
+export const SCENARIO_TIMEOUT_MS = 120_000;
 
 /** 32-bit FNV-1a of a string: the script seed of a scenario. */
 function fnv1a(text: string): number {
@@ -328,91 +398,85 @@ function expectSameSnapshot(what: string, actual: string, expected: string): voi
   assert.fail(`${what}: the snapshot differs in ${diffs.join('; ')}`);
 }
 
-// ── the acceptance cases ────────────────────────────────────────────────────
+// ── the acceptance cases (the unsplit file's, unchanged) ────────────────────
 
-describe('accept.p2.replay-exact: every scenario, replayed from its journal', () => {
-  it('covers every scenario of the catalogue (templates, CCNA 1 labs, CCNA 2 labs)', () => {
-    const categories = new Set(SCENARIOS.map((s) => s.category));
-    expect(SCENARIOS.length).toBeGreaterThanOrEqual(43);
-    for (const c of ['template', 'ccna1-lab', 'ccna2-lab']) expect(categories.has(c as never), c).toBe(true);
-    expect(new Set(SCENARIOS.map((s) => s.name)).size).toBe(SCENARIOS.length);
-  });
+/** The catalogue case: every scenario of the catalogue (templates, CCNA 1 labs, CCNA 2 labs) is there to replay. */
+export function expectCatalogueCovered(): void {
+  const categories = new Set(SCENARIOS.map((s) => s.category));
+  expect(SCENARIOS.length).toBeGreaterThanOrEqual(43);
+  for (const c of ['template', 'ccna1-lab', 'ccna2-lab']) expect(categories.has(c as never), c).toBe(true);
+  expect(new Set(SCENARIOS.map((s) => s.name)).size).toBe(SCENARIOS.length);
+}
 
-  for (const sc of SCENARIOS) {
-    it(
-      `${sc.name}: to position(), to every entry, and interleaved`,
-      () => {
-        const live = runLive(sc);
-        const { journal, sim } = live;
-        const origin = journal.origin;
-        const end = sim.position();
-        const n = journal.entries.length;
+/** The per-scenario case: to position(), to every entry, and interleaved. */
+export function replayExactCase(sc: ScenarioInfo): void {
+  const live = runLive(sc);
+  const { journal, sim } = live;
+  const origin = journal.origin;
+  const end = sim.position();
+  const n = journal.entries.length;
 
-        // the script really exercised what the row names
-        expect(origin.topology).not.toBeNull();
-        expect(origin.counters.traceHead, 'the origin resumes the prelude trace head').toBeGreaterThan(0);
-        expect(origin.counters.sessions, 'the origin resumes the prelude session counter').toBeGreaterThan(0);
-        for (const k of ['cliOpen', 'cliExec', 'cliClose', 'configure', 'hostRequest', 'injectFault', 'moveDevice', 'setPower', 'renameDevice'] as const) {
-          expect(live.kinds.has(k), `${sc.name} journals ${k}`).toBe(true);
-        }
-        expect(journal.entries.some((e) => e.threw === true)).toBe(true);
-        expect(live.runs.stepped).toBe(2);
-        expect(live.runs.firstStop.stopped, 'the boot breakpoint stopped the run').toBe(true);
-        expect(live.runs.firstStop.at).toBeLessThan(BOOT_NS);
-        expect(live.runs.pinged, 'a ping was typed').toBe(true);
-        expect(live.afterEntry).toHaveLength(n);
-        expect(end.dispatched).toBeGreaterThan(0);
-
-        // (1) one replay straight to position(): byte-identical trace JSON from the origin head, and snapshot JSON
-        const whole = createReplay(journal, { traceCapacity: TRACE_CAPACITY });
-        const r = whole.advance(end);
-        expect(r.reached).toBe(true);
-        expect(r.events).toBe(end.dispatched);
-        expect(whole.applied).toBe(n);
-        expect(whole.position()).toEqual(end);
-        expect(head(whole.sim)).toBe(head(sim));
-        expectSameTrace(`${sc.name} (to position())`, whole.sim, sim, origin.counters.traceHead);
-        expectSameSnapshot(`${sc.name} (to position())`, snap(whole.sim), snap(sim));
-
-        // (2) every entry, in chunks, interleaved with (3) a chunked twin in the same realm
-        const perEntry = createReplay(journal);
-        const twin = createReplay(journal, { traceCapacity: TRACE_CAPACITY });
-        let twinDone = false;
-        const nudgeTwin = (): void => {
-          if (!twinDone) twinDone = twin.advance(end, { maxEvents: CHUNK_TWIN }).reached;
-        };
-        for (let i = 0; i < n; i++) {
-          let guard = 0;
-          while (!perEntry.advanceToEntry(i, { maxEvents: CHUNK_PER_ENTRY }).reached) {
-            nudgeTwin();
-            if (++guard > 1_000_000) throw new Error('the per-entry replay never reached its entry');
-          }
-          nudgeTwin();
-          expect(perEntry.applied).toBe(i + 1);
-          expect(perEntry.position()).toEqual(journal.entries[i]!.at);
-          expectSameSnapshot(`${sc.name} after entry ${i} (${journal.entries[i]!.op.op})`, snap(perEntry.sim), live.afterEntry[i]!);
-        }
-        let guard = 0;
-        while (!perEntry.advance(end, { maxEvents: CHUNK_PER_ENTRY }).reached) {
-          nudgeTwin();
-          if (++guard > 1_000_000) throw new Error('the per-entry replay never reached the end');
-        }
-        while (!twinDone) {
-          nudgeTwin();
-          if (++guard > 2_000_000) throw new Error('the twin replay never reached the end');
-        }
-        expect(perEntry.position()).toEqual(end);
-        expect(twin.position()).toEqual(end);
-        const a = snap(perEntry.sim);
-        const b = snap(twin.sim);
-        expect(a === b, `${sc.name}: the two interleaved replays are identical`).toBe(true);
-        expectSameSnapshot(`${sc.name} (interleaved)`, b, snap(sim));
-        expectSameTrace(`${sc.name} (interleaved twin)`, twin.sim, sim, origin.counters.traceHead);
-        // replays journal nothing of their own
-        expect(whole.sim.journal().entries).toEqual([]);
-        expect(twin.sim.journal().entries).toEqual([]);
-      },
-      SCENARIO_TIMEOUT_MS,
-    );
+  // the script really exercised what the row names
+  expect(origin.topology).not.toBeNull();
+  expect(origin.counters.traceHead, 'the origin resumes the prelude trace head').toBeGreaterThan(0);
+  expect(origin.counters.sessions, 'the origin resumes the prelude session counter').toBeGreaterThan(0);
+  for (const k of ['cliOpen', 'cliExec', 'cliClose', 'configure', 'hostRequest', 'injectFault', 'moveDevice', 'setPower', 'renameDevice'] as const) {
+    expect(live.kinds.has(k), `${sc.name} journals ${k}`).toBe(true);
   }
-});
+  expect(journal.entries.some((e) => e.threw === true)).toBe(true);
+  expect(live.runs.stepped).toBe(2);
+  expect(live.runs.firstStop.stopped, 'the boot breakpoint stopped the run').toBe(true);
+  expect(live.runs.firstStop.at).toBeLessThan(BOOT_NS);
+  expect(live.runs.pinged, 'a ping was typed').toBe(true);
+  expect(live.afterEntry).toHaveLength(n);
+  expect(end.dispatched).toBeGreaterThan(0);
+
+  // (1) one replay straight to position(): byte-identical trace JSON from the origin head, and snapshot JSON
+  const whole = createReplay(journal, { traceCapacity: TRACE_CAPACITY });
+  const r = whole.advance(end);
+  expect(r.reached).toBe(true);
+  expect(r.events).toBe(end.dispatched);
+  expect(whole.applied).toBe(n);
+  expect(whole.position()).toEqual(end);
+  expect(head(whole.sim)).toBe(head(sim));
+  expectSameTrace(`${sc.name} (to position())`, whole.sim, sim, origin.counters.traceHead);
+  expectSameSnapshot(`${sc.name} (to position())`, snap(whole.sim), snap(sim));
+
+  // (2) every entry, in chunks, interleaved with (3) a chunked twin in the same realm
+  const perEntry = createReplay(journal);
+  const twin = createReplay(journal, { traceCapacity: TRACE_CAPACITY });
+  let twinDone = false;
+  const nudgeTwin = (): void => {
+    if (!twinDone) twinDone = twin.advance(end, { maxEvents: CHUNK_TWIN }).reached;
+  };
+  for (let i = 0; i < n; i++) {
+    let guard = 0;
+    while (!perEntry.advanceToEntry(i, { maxEvents: CHUNK_PER_ENTRY }).reached) {
+      nudgeTwin();
+      if (++guard > 1_000_000) throw new Error('the per-entry replay never reached its entry');
+    }
+    nudgeTwin();
+    expect(perEntry.applied).toBe(i + 1);
+    expect(perEntry.position()).toEqual(journal.entries[i]!.at);
+    expectSameSnapshot(`${sc.name} after entry ${i} (${journal.entries[i]!.op.op})`, snap(perEntry.sim), live.afterEntry[i]!);
+  }
+  let guard = 0;
+  while (!perEntry.advance(end, { maxEvents: CHUNK_PER_ENTRY }).reached) {
+    nudgeTwin();
+    if (++guard > 1_000_000) throw new Error('the per-entry replay never reached the end');
+  }
+  while (!twinDone) {
+    nudgeTwin();
+    if (++guard > 2_000_000) throw new Error('the twin replay never reached the end');
+  }
+  expect(perEntry.position()).toEqual(end);
+  expect(twin.position()).toEqual(end);
+  const a = snap(perEntry.sim);
+  const b = snap(twin.sim);
+  expect(a === b, `${sc.name}: the two interleaved replays are identical`).toBe(true);
+  expectSameSnapshot(`${sc.name} (interleaved)`, b, snap(sim));
+  expectSameTrace(`${sc.name} (interleaved twin)`, twin.sim, sim, origin.counters.traceHead);
+  // replays journal nothing of their own
+  expect(whole.sim.journal().entries).toEqual([]);
+  expect(twin.sim.journal().entries).toEqual([]);
+}

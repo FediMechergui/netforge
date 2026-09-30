@@ -26,3 +26,7 @@ export * from './scenario.js';
 // P2 [SHOULD S1] time travel
 export * from './journal.js';
 export * from './timeline.js';
+// P3 (ARCHITECTURE-P3 §2.9, §2.13): device clocks; [S32] the hosts' file store; [S37] labs as data
+export * from './clock.js';
+export * from './storage.js';
+export * from './lab-document.js';

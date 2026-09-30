@@ -150,6 +150,10 @@ export const GUI_PANEL_SINCE: Readonly<Record<GuiPanelId, BuildStage>> = Object.
   'modem.status': 'P0.5',
   // P2 (ARCHITECTURE-P2 §2.1, D17): the wireless controller appliance's panel.
   'wlc.controller': 'P2',
+  // P3 (ARCHITECTURE-P3 §2.1, §5.9; the architect's W0 compile stub, final values): the Traffic generator app (M13)
+  // and the [S32] automation workspace. Stage P3 only, so no P2-stage derivation changes.
+  'desktop.traffic': 'P3',
+  'desktop.automation': 'P3',
 });
 
 /** Loopback family derived for routing devices (except home routers). */
@@ -387,7 +391,8 @@ export function deriveCliSpec(caps: readonly Capability[]): CliSpec {
  *  physical always; desktop.ip-config and desktop.web-browser for host; desktop.wifi for wifi-client;
  *  desktop.cellular for cellular-client; desktop.command-prompt for a host shell; services for server;
  *  wireless.ap for wifi-ap without nat-gateway; home-router.setup for nat-gateway; radio.link for radio-bridge;
- *  cell.tower for cellular-cell; modem.status for modem; wlc.controller (P2) for wireless-controller.
+ *  cell.tower for cellular-cell; modem.status for modem; wlc.controller (P2) for wireless-controller;
+ *  desktop.traffic (P3) for host; desktop.automation (P3, [S32]) for programmable.
  */
 export function deriveGui(caps: readonly Capability[], cli: CliSpec, stage: BuildStage): readonly GuiPanelId[] {
   const has = (c: Capability): boolean => caps.includes(c);
@@ -405,6 +410,10 @@ export function deriveGui(caps: readonly Capability[], cli: CliSpec, stage: Buil
     'cell.tower': has('cellular-cell'),
     'modem.status': has('modem'),
     'wlc.controller': has('wireless-controller'),
+    // P3 (W0 stub, final values): the traffic generator on every host (the `traffic` daemon is a host row, §2.1);
+    // the [S32] automation workspace on `programmable` hosts.
+    'desktop.traffic': has('host'),
+    'desktop.automation': has('programmable'),
   };
   return GUI_PANELS.filter((id) => want[id] && stageIncluded(GUI_PANEL_SINCE[id], stage));
 }

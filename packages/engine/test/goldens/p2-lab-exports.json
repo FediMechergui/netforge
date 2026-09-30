@@ -1,0 +1,3550 @@
+{
+  "about": "P2 lab exports (ARCHITECTURE-P3 D3, §9.4, §10.1 accept.p3.p2-exports), recorded from the unchanged engine at commit 5263f16 before any P3 code: the topology document every CCNA 2 lab exports right after the worker loads it (lab seed, lab stamp, scheduled faults). Change it only as §9.4 allows, by re-recording with NF_RECORD_P2_EXPORTS.",
+  "labs": {
+    "ccna2-switch-management": {
+      "schema": "netforge.topology/1.2",
+      "seed": 202,
+      "devices": [
+        {
+          "id": "admin1",
+          "type": "pc.nfpc",
+          "name": "ADMIN1",
+          "position": {
+            "logical": [
+              100,
+              320
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname ADMIN1\n!\ninterface GigabitEthernet0\n ip address 192.168.50.10 255.255.255.0\n!\nip default-gateway 192.168.50.1\n!\nend\n",
+          "modules": []
+        },
+        {
+          "id": "r1",
+          "type": "router.nf2911",
+          "name": "R1",
+          "position": {
+            "logical": [
+              300,
+              160
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname R1\n!\ninterface GigabitEthernet0/0\n ip address 192.168.99.1 255.255.255.0\n!\ninterface GigabitEthernet0/1\n ip address 192.168.50.1 255.255.255.0\n!\nend\n"
+        },
+        {
+          "id": "sw1",
+          "type": "switch.nfc2960",
+          "name": "SW1",
+          "position": {
+            "logical": [
+              520,
+              160
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname SW1\n!\nvlan 99\n name MGMT\n!\ninterface GigabitEthernet0/1\n switchport mode access\n switchport access vlan 99\n spanning-tree portfast\n!\ninterface FastEthernet0/24\n switchport mode access\n switchport access vlan 99\n spanning-tree portfast\n!\nend\n"
+        },
+        {
+          "id": "tech1",
+          "type": "pc.nfpc",
+          "name": "TECH1",
+          "position": {
+            "logical": [
+              700,
+              320
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname TECH1\n!\ninterface GigabitEthernet0\n ip address 192.168.99.20 255.255.255.0\n!\nip default-gateway 192.168.99.1\n!\nend\n",
+          "modules": []
+        }
+      ],
+      "links": [
+        {
+          "id": "l_admin1_r1",
+          "a": {
+            "device": "admin1",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "r1",
+            "port": "GigabitEthernet0/1"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_r1_sw1",
+          "a": {
+            "device": "r1",
+            "port": "GigabitEthernet0/0"
+          },
+          "b": {
+            "device": "sw1",
+            "port": "GigabitEthernet0/1"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_tech1_sw1",
+          "a": {
+            "device": "tech1",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "sw1",
+            "port": "FastEthernet0/24"
+          },
+          "media": "auto",
+          "length_m": 3
+        }
+      ],
+      "objectives": [
+        "Address the management interface of SW1",
+        "Give SW1 a default gateway",
+        "Reach SW1 from both subnets",
+        "Protect the remote lines"
+      ],
+      "notes": "SW1 is managed through interface Vlan99; like any host, it needs a gateway to answer anyone outside its own subnet.",
+      "lab": {
+        "name": "ccna2-switch-management",
+        "version": 1
+      },
+      "profile": "P2"
+    },
+    "ccna2-vlan-access-ports": {
+      "schema": "netforge.topology/1.2",
+      "seed": 205,
+      "devices": [
+        {
+          "id": "sw1",
+          "type": "switch.nfc2960",
+          "name": "SW1",
+          "position": {
+            "logical": [
+              400,
+              140
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname SW1\n!\nvlan 30\n name PROJECT\n!\ninterface FastEthernet0/1\n spanning-tree portfast\n!\ninterface FastEthernet0/2\n spanning-tree portfast\n!\ninterface FastEthernet0/3\n spanning-tree portfast\n!\ninterface FastEthernet0/4\n spanning-tree portfast\n!\ninterface FastEthernet0/5\n switchport mode access\n switchport access vlan 30\n spanning-tree portfast\n!\nend\n"
+        },
+        {
+          "id": "pc1",
+          "type": "pc.nfpc",
+          "name": "PC1",
+          "position": {
+            "logical": [
+              100,
+              330
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC1\n!\ninterface GigabitEthernet0\n ip address 192.168.10.11 255.255.255.0\n!\nend\n",
+          "modules": []
+        },
+        {
+          "id": "pc2",
+          "type": "pc.nfpc",
+          "name": "PC2",
+          "position": {
+            "logical": [
+              250,
+              380
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC2\n!\ninterface GigabitEthernet0\n ip address 192.168.10.12 255.255.255.0\n!\nend\n",
+          "modules": []
+        },
+        {
+          "id": "pc3",
+          "type": "pc.nfpc",
+          "name": "PC3",
+          "position": {
+            "logical": [
+              400,
+              400
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC3\n!\ninterface GigabitEthernet0\n ip address 192.168.20.13 255.255.255.0\n!\nend\n",
+          "modules": []
+        },
+        {
+          "id": "pc4",
+          "type": "pc.nfpc",
+          "name": "PC4",
+          "position": {
+            "logical": [
+              550,
+              380
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC4\n!\ninterface GigabitEthernet0\n ip address 192.168.20.14 255.255.255.0\n!\nend\n",
+          "modules": []
+        },
+        {
+          "id": "pc5",
+          "type": "pc.nfpc",
+          "name": "PC5",
+          "position": {
+            "logical": [
+              700,
+              330
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC5\n!\ninterface GigabitEthernet0\n ip address 192.168.20.15 255.255.255.0\n!\nend\n",
+          "modules": []
+        }
+      ],
+      "links": [
+        {
+          "id": "l_pc1_sw1",
+          "a": {
+            "device": "pc1",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "sw1",
+            "port": "FastEthernet0/1"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_pc2_sw1",
+          "a": {
+            "device": "pc2",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "sw1",
+            "port": "FastEthernet0/2"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_pc3_sw1",
+          "a": {
+            "device": "pc3",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "sw1",
+            "port": "FastEthernet0/3"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_pc4_sw1",
+          "a": {
+            "device": "pc4",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "sw1",
+            "port": "FastEthernet0/4"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_pc5_sw1",
+          "a": {
+            "device": "pc5",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "sw1",
+            "port": "FastEthernet0/5"
+          },
+          "media": "auto",
+          "length_m": 3
+        }
+      ],
+      "objectives": [
+        "Create and name the sales and staff VLANs",
+        "Put every PC in its VLAN",
+        "Retire the project VLAN"
+      ],
+      "notes": "Each VLAN is its own broadcast domain and its own subnet: a port belongs to exactly one VLAN, and a VLAN that is deleted takes nothing with it but its name.",
+      "lab": {
+        "name": "ccna2-vlan-access-ports",
+        "version": 1
+      },
+      "profile": "P2"
+    },
+    "ccna2-trunk-native-allowed": {
+      "schema": "netforge.topology/1.2",
+      "seed": 206,
+      "devices": [
+        {
+          "id": "sw1",
+          "type": "switch.nfc2960",
+          "name": "SW1",
+          "position": {
+            "logical": [
+              260,
+              150
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname SW1\n!\nvlan 10\n name SALES\n!\nvlan 20\n name STAFF\n!\nvlan 30\n name BENCH\n!\nvlan 99\n name NATIVE\n!\ninterface FastEthernet0/1\n switchport mode access\n switchport access vlan 10\n spanning-tree portfast\n!\ninterface FastEthernet0/2\n switchport mode access\n switchport access vlan 20\n spanning-tree portfast\n!\ninterface FastEthernet0/3\n switchport mode access\n switchport access vlan 30\n spanning-tree portfast\n!\ninterface Vlan99\n ip address 192.168.99.11 255.255.255.0\n!\nend\n"
+        },
+        {
+          "id": "sw2",
+          "type": "switch.nfc2960",
+          "name": "SW2",
+          "position": {
+            "logical": [
+              620,
+              150
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname SW2\n!\nvlan 10\n name SALES\n!\nvlan 20\n name STAFF\n!\nvlan 30\n name BENCH\n!\nvlan 99\n name NATIVE\n!\ninterface FastEthernet0/1\n switchport mode access\n switchport access vlan 10\n spanning-tree portfast\n!\ninterface FastEthernet0/2\n switchport mode access\n switchport access vlan 20\n spanning-tree portfast\n!\ninterface FastEthernet0/3\n switchport mode access\n switchport access vlan 30\n spanning-tree portfast\n!\ninterface Vlan99\n ip address 192.168.99.12 255.255.255.0\n!\nend\n"
+        },
+        {
+          "id": "pc1",
+          "type": "pc.nfpc",
+          "name": "PC1",
+          "position": {
+            "logical": [
+              100,
+              340
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC1\n!\ninterface GigabitEthernet0\n ip address 192.168.10.11 255.255.255.0\n!\nend\n",
+          "modules": []
+        },
+        {
+          "id": "pc2",
+          "type": "pc.nfpc",
+          "name": "PC2",
+          "position": {
+            "logical": [
+              230,
+              380
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC2\n!\ninterface GigabitEthernet0\n ip address 192.168.20.12 255.255.255.0\n!\nend\n",
+          "modules": []
+        },
+        {
+          "id": "pc5",
+          "type": "pc.nfpc",
+          "name": "PC5",
+          "position": {
+            "logical": [
+              360,
+              340
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC5\n!\ninterface GigabitEthernet0\n ip address 192.168.30.15 255.255.255.0\n!\nend\n",
+          "modules": []
+        },
+        {
+          "id": "pc3",
+          "type": "pc.nfpc",
+          "name": "PC3",
+          "position": {
+            "logical": [
+              520,
+              340
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC3\n!\ninterface GigabitEthernet0\n ip address 192.168.10.13 255.255.255.0\n!\nend\n",
+          "modules": []
+        },
+        {
+          "id": "pc4",
+          "type": "pc.nfpc",
+          "name": "PC4",
+          "position": {
+            "logical": [
+              650,
+              380
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC4\n!\ninterface GigabitEthernet0\n ip address 192.168.20.14 255.255.255.0\n!\nend\n",
+          "modules": []
+        },
+        {
+          "id": "pc6",
+          "type": "pc.nfpc",
+          "name": "PC6",
+          "position": {
+            "logical": [
+              780,
+              340
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC6\n!\ninterface GigabitEthernet0\n ip address 192.168.30.16 255.255.255.0\n!\nend\n",
+          "modules": []
+        }
+      ],
+      "links": [
+        {
+          "id": "l_sw1_sw2",
+          "a": {
+            "device": "sw1",
+            "port": "GigabitEthernet0/1"
+          },
+          "b": {
+            "device": "sw2",
+            "port": "GigabitEthernet0/1"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_pc1_sw1",
+          "a": {
+            "device": "pc1",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "sw1",
+            "port": "FastEthernet0/1"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_pc2_sw1",
+          "a": {
+            "device": "pc2",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "sw1",
+            "port": "FastEthernet0/2"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_pc5_sw1",
+          "a": {
+            "device": "pc5",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "sw1",
+            "port": "FastEthernet0/3"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_pc3_sw2",
+          "a": {
+            "device": "pc3",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "sw2",
+            "port": "FastEthernet0/1"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_pc4_sw2",
+          "a": {
+            "device": "pc4",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "sw2",
+            "port": "FastEthernet0/2"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_pc6_sw2",
+          "a": {
+            "device": "pc6",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "sw2",
+            "port": "FastEthernet0/3"
+          },
+          "media": "auto",
+          "length_m": 3
+        }
+      ],
+      "objectives": [
+        "Trunk the link between the switches",
+        "Move the native VLAN to 99",
+        "Allow only VLANs 10, 20 and 99",
+        "Read the tag of a crossing frame"
+      ],
+      "notes": "On a trunk every VLAN but the native one travels with an 802.1Q tag naming its VLAN; the native VLAN travels untagged, so both ends must agree on it.",
+      "lab": {
+        "name": "ccna2-trunk-native-allowed",
+        "version": 1
+      },
+      "profile": "P2"
+    },
+    "ccna2-dtp-modes": {
+      "schema": "netforge.topology/1.2",
+      "seed": 207,
+      "devices": [
+        {
+          "id": "sw1",
+          "type": "switch.nfc2960",
+          "name": "SW1",
+          "position": {
+            "logical": [
+              420,
+              120
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname SW1\n!\nvlan 10\n name SALES\n!\ninterface FastEthernet0/1\n switchport mode access\n switchport access vlan 10\n spanning-tree portfast\n!\nend\n"
+        },
+        {
+          "id": "sw2",
+          "type": "switch.nfc2960",
+          "name": "SW2",
+          "position": {
+            "logical": [
+              160,
+              260
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname SW2\n!\nvlan 10\n name SALES\n!\ninterface FastEthernet0/1\n switchport mode access\n switchport access vlan 10\n spanning-tree portfast\n!\nend\n"
+        },
+        {
+          "id": "sw3",
+          "type": "switch.nfc2960",
+          "name": "SW3",
+          "position": {
+            "logical": [
+              420,
+              300
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname SW3\n!\nvlan 10\n name SALES\n!\ninterface FastEthernet0/1\n switchport mode access\n switchport access vlan 10\n spanning-tree portfast\n!\nend\n"
+        },
+        {
+          "id": "sw4",
+          "type": "switch.nfc2960",
+          "name": "SW4",
+          "position": {
+            "logical": [
+              680,
+              260
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname SW4\n!\nvlan 10\n name SALES\n!\ninterface FastEthernet0/1\n switchport mode access\n switchport access vlan 10\n spanning-tree portfast\n!\ninterface GigabitEthernet0/1\n switchport mode dynamic desirable\n!\nend\n"
+        },
+        {
+          "id": "pc1",
+          "type": "pc.nfpc",
+          "name": "PC1",
+          "position": {
+            "logical": [
+              560,
+              40
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC1\n!\ninterface GigabitEthernet0\n ip address 192.168.10.11 255.255.255.0\n!\nend\n",
+          "modules": []
+        },
+        {
+          "id": "pc2",
+          "type": "pc.nfpc",
+          "name": "PC2",
+          "position": {
+            "logical": [
+              100,
+              420
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC2\n!\ninterface GigabitEthernet0\n ip address 192.168.10.12 255.255.255.0\n!\nend\n",
+          "modules": []
+        },
+        {
+          "id": "pc3",
+          "type": "pc.nfpc",
+          "name": "PC3",
+          "position": {
+            "logical": [
+              420,
+              460
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC3\n!\ninterface GigabitEthernet0\n ip address 192.168.10.13 255.255.255.0\n!\nend\n",
+          "modules": []
+        },
+        {
+          "id": "pc4",
+          "type": "pc.nfpc",
+          "name": "PC4",
+          "position": {
+            "logical": [
+              740,
+              420
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC4\n!\ninterface GigabitEthernet0\n ip address 192.168.10.14 255.255.255.0\n!\nend\n",
+          "modules": []
+        }
+      ],
+      "links": [
+        {
+          "id": "l_sw1_sw2",
+          "a": {
+            "device": "sw1",
+            "port": "GigabitEthernet0/1"
+          },
+          "b": {
+            "device": "sw2",
+            "port": "GigabitEthernet0/1"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_sw1_sw3",
+          "a": {
+            "device": "sw1",
+            "port": "GigabitEthernet0/2"
+          },
+          "b": {
+            "device": "sw3",
+            "port": "GigabitEthernet0/1"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_sw1_sw4",
+          "a": {
+            "device": "sw1",
+            "port": "FastEthernet0/24"
+          },
+          "b": {
+            "device": "sw4",
+            "port": "GigabitEthernet0/1"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_pc1_sw1",
+          "a": {
+            "device": "pc1",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "sw1",
+            "port": "FastEthernet0/1"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_pc2_sw2",
+          "a": {
+            "device": "pc2",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "sw2",
+            "port": "FastEthernet0/1"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_pc3_sw3",
+          "a": {
+            "device": "pc3",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "sw3",
+            "port": "FastEthernet0/1"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_pc4_sw4",
+          "a": {
+            "device": "pc4",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "sw4",
+            "port": "FastEthernet0/1"
+          },
+          "media": "auto",
+          "length_m": 3
+        }
+      ],
+      "objectives": [
+        "Negotiate a trunk to SW2",
+        "Fix a trunk to SW3 with negotiation off",
+        "Refuse the trunk SW4 asks for"
+      ],
+      "notes": "A trunk forms by negotiation only when one end asks for it (desirable, or a fixed trunk that still negotiates) and the other end is willing (auto or desirable); an end fixed as access never trunks, and a port with negotiation off neither asks nor answers.",
+      "lab": {
+        "name": "ccna2-dtp-modes",
+        "version": 1
+      },
+      "profile": "P2"
+    },
+    "ccna2-router-on-a-stick": {
+      "schema": "netforge.topology/1.2",
+      "seed": 209,
+      "devices": [
+        {
+          "id": "pc1",
+          "type": "pc.nfpc",
+          "name": "PC1",
+          "position": {
+            "logical": [
+              100,
+              340
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC1\n!\ninterface GigabitEthernet0\n ip address 192.168.10.10 255.255.255.0\n!\nip default-gateway 192.168.10.1\n!\nend\n",
+          "modules": []
+        },
+        {
+          "id": "pc2",
+          "type": "pc.nfpc",
+          "name": "PC2",
+          "position": {
+            "logical": [
+              320,
+              380
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC2\n!\ninterface GigabitEthernet0\n ip address 192.168.20.10 255.255.255.0\n!\nip default-gateway 192.168.20.1\n!\nend\n",
+          "modules": []
+        },
+        {
+          "id": "sw1",
+          "type": "switch.nfc2960",
+          "name": "SW1",
+          "position": {
+            "logical": [
+              210,
+              180
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname SW1\n!\nvlan 10\n name SALES\n!\nvlan 20\n name STAFF\n!\nvlan 99\n name MGMT\n!\ninterface FastEthernet0/1\n switchport mode access\n switchport access vlan 10\n spanning-tree portfast\n!\ninterface FastEthernet0/2\n switchport mode access\n switchport access vlan 20\n spanning-tree portfast\n!\ninterface Vlan99\n ip address 192.168.99.2 255.255.255.0\n!\nip default-gateway 192.168.99.1\n!\nend\n"
+        },
+        {
+          "id": "r1",
+          "type": "router.nf2911",
+          "name": "R1",
+          "position": {
+            "logical": [
+              480,
+              120
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname R1\n!\ninterface GigabitEthernet0/1\n ip address 172.16.1.1 255.255.255.0\n!\nend\n"
+        },
+        {
+          "id": "srv1",
+          "type": "server.nfserver",
+          "name": "SRV1",
+          "position": {
+            "logical": [
+              740,
+              180
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname SRV1\n!\ninterface GigabitEthernet0\n ip address 172.16.1.10 255.255.255.0\n!\nip default-gateway 172.16.1.1\n!\nend\n",
+          "modules": []
+        }
+      ],
+      "links": [
+        {
+          "id": "l_pc1_sw1",
+          "a": {
+            "device": "pc1",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "sw1",
+            "port": "FastEthernet0/1"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_pc2_sw1",
+          "a": {
+            "device": "pc2",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "sw1",
+            "port": "FastEthernet0/2"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_sw1_r1",
+          "a": {
+            "device": "sw1",
+            "port": "GigabitEthernet0/1"
+          },
+          "b": {
+            "device": "r1",
+            "port": "GigabitEthernet0/0"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_r1_srv1",
+          "a": {
+            "device": "r1",
+            "port": "GigabitEthernet0/1"
+          },
+          "b": {
+            "device": "srv1",
+            "port": "GigabitEthernet0"
+          },
+          "media": "auto",
+          "length_m": 3
+        }
+      ],
+      "objectives": [
+        "Trunk the switch port facing the router",
+        "Build one subinterface per VLAN",
+        "Carry the native VLAN on its own subinterface",
+        "Route between the VLANs and to the server"
+      ],
+      "notes": "Each subinterface is the gateway of one VLAN: frames of that VLAN arrive tagged on the shared port, lose their tag at the subinterface, are routed, and leave tagged with the VLAN of the next hop.",
+      "lab": {
+        "name": "ccna2-router-on-a-stick",
+        "version": 1
+      },
+      "profile": "P2"
+    },
+    "ccna2-l3-switch-svis": {
+      "schema": "netforge.topology/1.2",
+      "seed": 210,
+      "devices": [
+        {
+          "id": "pc1",
+          "type": "pc.nfpc",
+          "name": "PC1",
+          "position": {
+            "logical": [
+              100,
+              340
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC1\n!\nend\n",
+          "modules": []
+        },
+        {
+          "id": "pc2",
+          "type": "pc.nfpc",
+          "name": "PC2",
+          "position": {
+            "logical": [
+              320,
+              380
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC2\n!\nend\n",
+          "modules": []
+        },
+        {
+          "id": "mls1",
+          "type": "mlswitch.nfc3650-24",
+          "name": "MLS1",
+          "position": {
+            "logical": [
+              220,
+              170
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname MLS1\n!\nvlan 10\n name SALES\n!\nvlan 20\n name STAFF\n!\ninterface GigabitEthernet1/0/1\n switchport mode access\n switchport access vlan 10\n spanning-tree portfast\n!\ninterface GigabitEthernet1/0/2\n switchport mode access\n switchport access vlan 20\n spanning-tree portfast\n!\nend\n",
+          "modules": []
+        },
+        {
+          "id": "r1",
+          "type": "router.nf2911",
+          "name": "R1",
+          "position": {
+            "logical": [
+              480,
+              120
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname R1\n!\nip dhcp excluded-address 192.168.10.1 192.168.10.10\nip dhcp excluded-address 192.168.20.1 192.168.20.10\n!\nip dhcp pool SALES\n network 192.168.10.0 255.255.255.0\n default-router 192.168.10.1\n!\nip dhcp pool STAFF\n network 192.168.20.0 255.255.255.0\n default-router 192.168.20.1\n!\ninterface GigabitEthernet0/0\n ip address 10.0.0.2 255.255.255.252\n!\ninterface GigabitEthernet0/1\n ip address 172.16.1.1 255.255.255.0\n!\nip route 192.168.10.0 255.255.255.0 10.0.0.1\nip route 192.168.20.0 255.255.255.0 10.0.0.1\n!\nend\n"
+        },
+        {
+          "id": "srv1",
+          "type": "server.nfserver",
+          "name": "SRV1",
+          "position": {
+            "logical": [
+              740,
+              180
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname SRV1\n!\ninterface GigabitEthernet0\n ip address 172.16.1.10 255.255.255.0\n!\nip default-gateway 172.16.1.1\n!\nend\n",
+          "modules": []
+        }
+      ],
+      "links": [
+        {
+          "id": "l_pc1_mls1",
+          "a": {
+            "device": "pc1",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "mls1",
+            "port": "GigabitEthernet1/0/1"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_pc2_mls1",
+          "a": {
+            "device": "pc2",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "mls1",
+            "port": "GigabitEthernet1/0/2"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_mls1_r1",
+          "a": {
+            "device": "mls1",
+            "port": "GigabitEthernet1/0/24"
+          },
+          "b": {
+            "device": "r1",
+            "port": "GigabitEthernet0/0"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_r1_srv1",
+          "a": {
+            "device": "r1",
+            "port": "GigabitEthernet0/1"
+          },
+          "b": {
+            "device": "srv1",
+            "port": "GigabitEthernet0"
+          },
+          "media": "auto",
+          "length_m": 3
+        }
+      ],
+      "objectives": [
+        "Give each VLAN a gateway interface",
+        "Switch routing on",
+        "Uplink through a routed port",
+        "Relay address requests from both VLANs"
+      ],
+      "notes": "A multilayer switch routes between its VLAN interfaces once routing is on; a routed port is a switch port turned into a router interface, with an address and no VLAN.",
+      "lab": {
+        "name": "ccna2-l3-switch-svis",
+        "version": 1
+      },
+      "profile": "P2"
+    },
+    "ccna2-troubleshoot-vlans": {
+      "schema": "netforge.topology/1.2",
+      "seed": 211,
+      "devices": [
+        {
+          "id": "r1",
+          "type": "router.nf2911",
+          "name": "R1",
+          "position": {
+            "logical": [
+              410,
+              70
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname R1\n!\ninterface GigabitEthernet0/0\n!\ninterface GigabitEthernet0/0.10\n encapsulation dot1Q 10\n ip address 192.168.10.1 255.255.255.0\n!\ninterface GigabitEthernet0/0.20\n encapsulation dot1Q 20\n ip address 192.168.20.1 255.255.255.0\n!\ninterface GigabitEthernet0/0.30\n encapsulation dot1Q 30\n ip address 192.168.30.1 255.255.255.0\n!\nend\n"
+        },
+        {
+          "id": "sw1",
+          "type": "switch.nfc2960",
+          "name": "SW1",
+          "position": {
+            "logical": [
+              250,
+              230
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname SW1\n!\nvlan 10\n name SALES\n!\nvlan 20\n name STAFF\n!\nvlan 30\n name SERVERS\n!\ninterface GigabitEthernet0/1\n switchport mode trunk\n switchport trunk allowed vlan 10,20,30\n switchport nonegotiate\n!\ninterface GigabitEthernet0/2\n switchport mode trunk\n switchport trunk allowed vlan 10,20,30\n!\ninterface FastEthernet0/1\n switchport mode access\n switchport access vlan 10\n spanning-tree portfast\n!\ninterface FastEthernet0/2\n switchport mode access\n switchport access vlan 20\n spanning-tree portfast\n!\ninterface FastEthernet0/3\n switchport mode access\n switchport access vlan 30\n spanning-tree portfast\n!\nend\n"
+        },
+        {
+          "id": "sw2",
+          "type": "switch.nfc2960",
+          "name": "SW2",
+          "position": {
+            "logical": [
+              590,
+              230
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname SW2\n!\nvlan 10\n name SALES\n!\nvlan 20\n name STAFF\n!\nvlan 30\n name SERVERS\n!\ninterface GigabitEthernet0/1\n switchport mode trunk\n switchport trunk allowed vlan 10,20,30\n!\ninterface FastEthernet0/1\n switchport mode access\n switchport access vlan 10\n spanning-tree portfast\n!\ninterface FastEthernet0/2\n switchport mode access\n switchport access vlan 20\n spanning-tree portfast\n!\nend\n"
+        },
+        {
+          "id": "pc1",
+          "type": "pc.nfpc",
+          "name": "PC1",
+          "position": {
+            "logical": [
+              90,
+              380
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC1\n!\ninterface GigabitEthernet0\n ip address 192.168.10.11 255.255.255.0\n!\nip default-gateway 192.168.10.1\n!\nend\n",
+          "modules": []
+        },
+        {
+          "id": "pc2",
+          "type": "pc.nfpc",
+          "name": "PC2",
+          "position": {
+            "logical": [
+              230,
+              420
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC2\n!\ninterface GigabitEthernet0\n ip address 192.168.20.12 255.255.255.0\n!\nip default-gateway 192.168.20.1\n!\nend\n",
+          "modules": []
+        },
+        {
+          "id": "srv",
+          "type": "server.nfserver",
+          "name": "SRV",
+          "position": {
+            "logical": [
+              70,
+              180
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname SRV\n!\ninterface GigabitEthernet0\n ip address 192.168.30.100 255.255.255.0\n!\nip default-gateway 192.168.30.1\n!\nend\n",
+          "modules": []
+        },
+        {
+          "id": "pc3",
+          "type": "pc.nfpc",
+          "name": "PC3",
+          "position": {
+            "logical": [
+              540,
+              420
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC3\n!\ninterface GigabitEthernet0\n ip address 192.168.10.13 255.255.255.0\n!\nip default-gateway 192.168.10.1\n!\nend\n",
+          "modules": []
+        },
+        {
+          "id": "pc4",
+          "type": "pc.nfpc",
+          "name": "PC4",
+          "position": {
+            "logical": [
+              730,
+              380
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC4\n!\ninterface GigabitEthernet0\n ip address 192.168.20.14 255.255.255.0\n!\nip default-gateway 192.168.20.1\n!\nend\n",
+          "modules": []
+        }
+      ],
+      "links": [
+        {
+          "id": "l_r1_sw1",
+          "a": {
+            "device": "r1",
+            "port": "GigabitEthernet0/0"
+          },
+          "b": {
+            "device": "sw1",
+            "port": "GigabitEthernet0/1"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_sw1_sw2",
+          "a": {
+            "device": "sw1",
+            "port": "GigabitEthernet0/2"
+          },
+          "b": {
+            "device": "sw2",
+            "port": "GigabitEthernet0/1"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_pc1_sw1",
+          "a": {
+            "device": "pc1",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "sw1",
+            "port": "FastEthernet0/1"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_pc2_sw1",
+          "a": {
+            "device": "pc2",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "sw1",
+            "port": "FastEthernet0/2"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_srv_sw1",
+          "a": {
+            "device": "srv",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "sw1",
+            "port": "FastEthernet0/3"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_pc3_sw2",
+          "a": {
+            "device": "pc3",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "sw2",
+            "port": "FastEthernet0/1"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_pc4_sw2",
+          "a": {
+            "device": "pc4",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "sw2",
+            "port": "FastEthernet0/2"
+          },
+          "media": "auto",
+          "length_m": 3
+        }
+      ],
+      "objectives": [
+        "Find the port in the wrong VLAN",
+        "Find the VLAN missing from a trunk",
+        "Find the subinterface that is down",
+        "Route between every VLAN again"
+      ],
+      "notes": "A frame only reaches its gateway when every step agrees on its VLAN: the access port, each trunk on the way, and the subinterface that carries that VLAN on the router.",
+      "lab": {
+        "name": "ccna2-troubleshoot-vlans",
+        "version": 1
+      },
+      "profile": "P2"
+    },
+    "ccna2-stp-root-placement": {
+      "schema": "netforge.topology/1.2",
+      "seed": 213,
+      "devices": [
+        {
+          "id": "dist1",
+          "type": "switch.nfc2960",
+          "name": "DS1",
+          "position": {
+            "logical": [
+              230,
+              130
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname DS1\n!\nvlan 10\n name OFFICE\n!\nvlan 20\n name LAB\n!\ninterface GigabitEthernet0/1\n switchport mode trunk\n switchport trunk allowed vlan 10,20\n!\ninterface GigabitEthernet0/2\n switchport mode trunk\n switchport trunk allowed vlan 10,20\n!\ninterface FastEthernet0/1\n switchport mode access\n switchport access vlan 20\n!\nend\n"
+        },
+        {
+          "id": "dist2",
+          "type": "switch.nfc2960",
+          "name": "DS2",
+          "position": {
+            "logical": [
+              590,
+              130
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname DS2\n!\nvlan 10\n name OFFICE\n!\nvlan 20\n name LAB\n!\ninterface GigabitEthernet0/1\n switchport mode trunk\n switchport trunk allowed vlan 10,20\n!\ninterface GigabitEthernet0/2\n switchport mode trunk\n switchport trunk allowed vlan 10,20\n!\ninterface FastEthernet0/1\n switchport mode access\n switchport access vlan 10\n!\nend\n"
+        },
+        {
+          "id": "acc1",
+          "type": "switch.nfc2960",
+          "name": "AS1",
+          "position": {
+            "logical": [
+              410,
+              320
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname AS1\n!\nvlan 10\n name OFFICE\n!\nvlan 20\n name LAB\n!\ninterface GigabitEthernet0/1\n switchport mode trunk\n switchport trunk allowed vlan 10,20\n!\ninterface GigabitEthernet0/2\n switchport mode trunk\n switchport trunk allowed vlan 10,20\n!\ninterface FastEthernet0/1\n switchport mode access\n switchport access vlan 10\n!\ninterface FastEthernet0/2\n switchport mode access\n switchport access vlan 20\n!\nend\n"
+        },
+        {
+          "id": "pc1",
+          "type": "pc.nfpc",
+          "name": "PC1",
+          "position": {
+            "logical": [
+              300,
+              450
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC1\n!\ninterface GigabitEthernet0\n ip address 192.168.10.11 255.255.255.0\n!\nend\n",
+          "modules": []
+        },
+        {
+          "id": "pc2",
+          "type": "pc.nfpc",
+          "name": "PC2",
+          "position": {
+            "logical": [
+              520,
+              450
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC2\n!\ninterface GigabitEthernet0\n ip address 192.168.20.12 255.255.255.0\n!\nend\n",
+          "modules": []
+        },
+        {
+          "id": "pc3",
+          "type": "pc.nfpc",
+          "name": "PC3",
+          "position": {
+            "logical": [
+              760,
+              60
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC3\n!\ninterface GigabitEthernet0\n ip address 192.168.10.13 255.255.255.0\n!\nend\n",
+          "modules": []
+        },
+        {
+          "id": "pc4",
+          "type": "pc.nfpc",
+          "name": "PC4",
+          "position": {
+            "logical": [
+              60,
+              60
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC4\n!\ninterface GigabitEthernet0\n ip address 192.168.20.14 255.255.255.0\n!\nend\n",
+          "modules": []
+        }
+      ],
+      "links": [
+        {
+          "id": "l_ds1_ds2",
+          "a": {
+            "device": "dist1",
+            "port": "GigabitEthernet0/1"
+          },
+          "b": {
+            "device": "dist2",
+            "port": "GigabitEthernet0/1"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_ds1_as1",
+          "a": {
+            "device": "dist1",
+            "port": "GigabitEthernet0/2"
+          },
+          "b": {
+            "device": "acc1",
+            "port": "GigabitEthernet0/1"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_ds2_as1",
+          "a": {
+            "device": "dist2",
+            "port": "GigabitEthernet0/2"
+          },
+          "b": {
+            "device": "acc1",
+            "port": "GigabitEthernet0/2"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_pc1_as1",
+          "a": {
+            "device": "pc1",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "acc1",
+            "port": "FastEthernet0/1"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_pc2_as1",
+          "a": {
+            "device": "pc2",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "acc1",
+            "port": "FastEthernet0/2"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_pc3_ds2",
+          "a": {
+            "device": "pc3",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "dist2",
+            "port": "FastEthernet0/1"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_pc4_ds1",
+          "a": {
+            "device": "pc4",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "dist1",
+            "port": "FastEthernet0/1"
+          },
+          "media": "auto",
+          "length_m": 3
+        }
+      ],
+      "objectives": [
+        "Find the root of each VLAN",
+        "Move the roots to the distribution switches",
+        "Give each VLAN a backup root",
+        "Read the blocked ports"
+      ],
+      "notes": "Each VLAN elects its own root: the lowest priority wins, and with equal priorities the lowest MAC address. Left alone, that is an accident of manufacturing, not a design.",
+      "lab": {
+        "name": "ccna2-stp-root-placement",
+        "version": 1
+      },
+      "profile": "P2"
+    },
+    "ccna2-rapid-stp": {
+      "schema": "netforge.topology/1.2",
+      "seed": 215,
+      "devices": [
+        {
+          "id": "core1",
+          "type": "mlswitch.nfc9300-48",
+          "name": "CORE1",
+          "position": {
+            "logical": [
+              410,
+              110
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname CORE1\n!\nspanning-tree vlan 1 priority 4096\n!\nend\n",
+          "modules": []
+        },
+        {
+          "id": "sw1",
+          "type": "switch.nfc2960",
+          "name": "SW1",
+          "position": {
+            "logical": [
+              230,
+              290
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname SW1\n!\ninterface FastEthernet0/1\n switchport mode access\n spanning-tree portfast\n!\nend\n"
+        },
+        {
+          "id": "sw2",
+          "type": "switch.nfc2960",
+          "name": "SW2",
+          "position": {
+            "logical": [
+              590,
+              290
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname SW2\n!\ninterface FastEthernet0/1\n switchport mode access\n spanning-tree portfast\n!\nend\n"
+        },
+        {
+          "id": "pc1",
+          "type": "pc.nfpc",
+          "name": "PC1",
+          "position": {
+            "logical": [
+              150,
+              440
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC1\n!\ninterface GigabitEthernet0\n ip address 192.168.15.11 255.255.255.0\n!\nend\n",
+          "modules": []
+        },
+        {
+          "id": "pc2",
+          "type": "pc.nfpc",
+          "name": "PC2",
+          "position": {
+            "logical": [
+              670,
+              440
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC2\n!\ninterface GigabitEthernet0\n ip address 192.168.15.12 255.255.255.0\n!\nend\n",
+          "modules": []
+        }
+      ],
+      "links": [
+        {
+          "id": "l_core1_sw1",
+          "a": {
+            "device": "core1",
+            "port": "GigabitEthernet1/0/1"
+          },
+          "b": {
+            "device": "sw1",
+            "port": "GigabitEthernet0/1"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_core1_sw2",
+          "a": {
+            "device": "core1",
+            "port": "GigabitEthernet1/0/2"
+          },
+          "b": {
+            "device": "sw2",
+            "port": "GigabitEthernet0/1"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_sw1_sw2",
+          "a": {
+            "device": "sw1",
+            "port": "GigabitEthernet0/2"
+          },
+          "b": {
+            "device": "sw2",
+            "port": "GigabitEthernet0/2"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_pc1_sw1",
+          "a": {
+            "device": "pc1",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "sw1",
+            "port": "FastEthernet0/1"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_pc2_sw2",
+          "a": {
+            "device": "pc2",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "sw2",
+            "port": "FastEthernet0/1"
+          },
+          "media": "auto",
+          "length_m": 3
+        }
+      ],
+      "objectives": [
+        "Spot the classic fallback on the core",
+        "Run rapid spanning tree everywhere",
+        "Survive a cut link in about a second"
+      ],
+      "notes": "Rapid spanning tree replaces the listening and learning timers with a handshake between neighbours, but only where both ends speak it; facing a classic switch, a rapid port speaks the classic protocol too.",
+      "lab": {
+        "name": "ccna2-rapid-stp",
+        "version": 1
+      },
+      "profile": "P2"
+    },
+    "ccna2-stp-guards": {
+      "schema": "netforge.topology/1.2",
+      "seed": 216,
+      "devices": [
+        {
+          "id": "dist1",
+          "type": "mlswitch.nfc9300-48",
+          "name": "DS1",
+          "position": {
+            "logical": [
+              410,
+              110
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname DS1\n!\nspanning-tree vlan 1 priority 8192\n!\ninterface GigabitEthernet1/0/1\n switchport mode trunk\n!\ninterface GigabitEthernet1/0/2\n switchport mode trunk\n!\ninterface GigabitEthernet1/0/3\n switchport mode access\n spanning-tree portfast\n!\nend\n",
+          "modules": []
+        },
+        {
+          "id": "acc1",
+          "type": "switch.nfc2960",
+          "name": "AS1",
+          "position": {
+            "logical": [
+              410,
+              290
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname AS1\n!\nspanning-tree mode rapid-pvst\n!\ninterface GigabitEthernet0/1\n switchport mode trunk\n!\ninterface FastEthernet0/1\n switchport mode access\n!\ninterface FastEthernet0/2\n switchport mode access\n!\ninterface FastEthernet0/3\n switchport mode access\n spanning-tree portfast\n spanning-tree bpduguard enable\n!\ninterface FastEthernet0/4\n switchport mode access\n!\nend\n"
+        },
+        {
+          "id": "partner",
+          "type": "switch.nfc2960",
+          "name": "BLDG-B",
+          "position": {
+            "logical": [
+              690,
+              110
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname BLDG-B\n!\nspanning-tree mode rapid-pvst\nspanning-tree vlan 1 priority 4096\n!\ninterface GigabitEthernet0/1\n switchport mode trunk\n!\nend\n"
+        },
+        {
+          "id": "desk",
+          "type": "switch.nfc2960",
+          "name": "DESK-SW",
+          "position": {
+            "logical": [
+              690,
+              400
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname DESK-SW\n!\nspanning-tree mode rapid-pvst\nspanning-tree vlan 1 priority 0\n!\nend\n"
+        },
+        {
+          "id": "srv",
+          "type": "server.nfserver",
+          "name": "SRV",
+          "position": {
+            "logical": [
+              150,
+              110
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname SRV\n!\ninterface GigabitEthernet0\n ip address 192.168.16.100 255.255.255.0\n!\nend\n",
+          "modules": []
+        },
+        {
+          "id": "pc1",
+          "type": "pc.nfpc",
+          "name": "PC1",
+          "position": {
+            "logical": [
+              190,
+              440
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC1\n!\ninterface GigabitEthernet0\n ip address 192.168.16.11 255.255.255.0\n!\nend\n",
+          "modules": []
+        },
+        {
+          "id": "pc2",
+          "type": "pc.nfpc",
+          "name": "PC2",
+          "position": {
+            "logical": [
+              340,
+              460
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC2\n!\ninterface GigabitEthernet0\n ip address 192.168.16.12 255.255.255.0\n!\nend\n",
+          "modules": []
+        },
+        {
+          "id": "pc3",
+          "type": "pc.nfpc",
+          "name": "PC3",
+          "position": {
+            "logical": [
+              490,
+              460
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC3\n!\ninterface GigabitEthernet0\n ip address 192.168.16.13 255.255.255.0\n!\nend\n",
+          "modules": []
+        }
+      ],
+      "links": [
+        {
+          "id": "l_ds1_as1",
+          "a": {
+            "device": "dist1",
+            "port": "GigabitEthernet1/0/1"
+          },
+          "b": {
+            "device": "acc1",
+            "port": "GigabitEthernet0/1"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_ds1_bldgb",
+          "a": {
+            "device": "dist1",
+            "port": "GigabitEthernet1/0/2"
+          },
+          "b": {
+            "device": "partner",
+            "port": "GigabitEthernet0/1"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_srv_ds1",
+          "a": {
+            "device": "srv",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "dist1",
+            "port": "GigabitEthernet1/0/3"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_pc1_as1",
+          "a": {
+            "device": "pc1",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "acc1",
+            "port": "FastEthernet0/1"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_pc2_as1",
+          "a": {
+            "device": "pc2",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "acc1",
+            "port": "FastEthernet0/2"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_pc3_as1",
+          "a": {
+            "device": "pc3",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "acc1",
+            "port": "FastEthernet0/3"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_desk_as1",
+          "a": {
+            "device": "desk",
+            "port": "GigabitEthernet0/1"
+          },
+          "b": {
+            "device": "acc1",
+            "port": "FastEthernet0/4"
+          },
+          "media": "auto",
+          "length_m": 3
+        }
+      ],
+      "objectives": [
+        "Make the host ports edge ports",
+        "Shut out the desk switch",
+        "Keep the root away from building B",
+        "Bring back the port a guard shut down"
+      ],
+      "notes": "BPDU guard belongs on ports where no switch should ever be: one BPDU and the port is error-disabled. Root guard belongs on ports where a switch is welcome but a better root is not: the port blocks while the superior BPDUs keep coming.",
+      "lab": {
+        "name": "ccna2-stp-guards",
+        "version": 1
+      },
+      "profile": "P2"
+    },
+    "ccna2-etherchannel-lacp": {
+      "schema": "netforge.topology/1.2",
+      "seed": 217,
+      "devices": [
+        {
+          "id": "sw1",
+          "type": "switch.nfc2960",
+          "name": "SW1",
+          "position": {
+            "logical": [
+              250,
+              220
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname SW1\n!\nvlan 10\n name STAFF\n!\ninterface FastEthernet0/1\n switchport mode access\n switchport access vlan 10\n spanning-tree portfast\n!\ninterface FastEthernet0/2\n switchport mode access\n switchport access vlan 10\n spanning-tree portfast\n!\nend\n"
+        },
+        {
+          "id": "sw2",
+          "type": "switch.nfc2960",
+          "name": "SW2",
+          "position": {
+            "logical": [
+              570,
+              220
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname SW2\n!\nvlan 10\n name STAFF\n!\ninterface FastEthernet0/1\n switchport mode access\n switchport access vlan 10\n spanning-tree portfast\n!\ninterface FastEthernet0/2\n switchport mode access\n switchport access vlan 10\n spanning-tree portfast\n!\ninterface Port-channel1\n switchport mode trunk\n!\ninterface GigabitEthernet0/1\n switchport mode trunk\n channel-group 1 mode passive\n!\ninterface GigabitEthernet0/2\n switchport mode access\n channel-group 1 mode passive\n!\nend\n"
+        },
+        {
+          "id": "pc1",
+          "type": "pc.nfpc",
+          "name": "PC1",
+          "position": {
+            "logical": [
+              110,
+              90
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC1\n!\ninterface GigabitEthernet0\n ip address 192.168.17.11 255.255.255.0\n!\nend\n",
+          "modules": []
+        },
+        {
+          "id": "pc2",
+          "type": "pc.nfpc",
+          "name": "PC2",
+          "position": {
+            "logical": [
+              110,
+              380
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC2\n!\ninterface GigabitEthernet0\n ip address 192.168.17.12 255.255.255.0\n!\nend\n",
+          "modules": []
+        },
+        {
+          "id": "pc3",
+          "type": "pc.nfpc",
+          "name": "PC3",
+          "position": {
+            "logical": [
+              710,
+              90
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC3\n!\ninterface GigabitEthernet0\n ip address 192.168.17.13 255.255.255.0\n!\nend\n",
+          "modules": []
+        },
+        {
+          "id": "pc4",
+          "type": "pc.nfpc",
+          "name": "PC4",
+          "position": {
+            "logical": [
+              710,
+              380
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC4\n!\ninterface GigabitEthernet0\n ip address 192.168.17.14 255.255.255.0\n!\nend\n",
+          "modules": []
+        }
+      ],
+      "links": [
+        {
+          "id": "l_sw1_sw2_a",
+          "a": {
+            "device": "sw1",
+            "port": "GigabitEthernet0/1"
+          },
+          "b": {
+            "device": "sw2",
+            "port": "GigabitEthernet0/1"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_sw1_sw2_b",
+          "a": {
+            "device": "sw1",
+            "port": "GigabitEthernet0/2"
+          },
+          "b": {
+            "device": "sw2",
+            "port": "GigabitEthernet0/2"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_pc1_sw1",
+          "a": {
+            "device": "pc1",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "sw1",
+            "port": "FastEthernet0/1"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_pc2_sw1",
+          "a": {
+            "device": "pc2",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "sw1",
+            "port": "FastEthernet0/2"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_pc3_sw2",
+          "a": {
+            "device": "pc3",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "sw2",
+            "port": "FastEthernet0/1"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_pc4_sw2",
+          "a": {
+            "device": "pc4",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "sw2",
+            "port": "FastEthernet0/2"
+          },
+          "media": "auto",
+          "length_m": 3
+        }
+      ],
+      "objectives": [
+        "Negotiate an LACP bundle",
+        "Repair the suspended member",
+        "Spread traffic over both members",
+        "Survive the loss of one cable"
+      ],
+      "notes": "A bundle is one port to spanning tree and to the MAC table, so both cables carry traffic at once. Every member must be configured like the bundle, or it is suspended.",
+      "lab": {
+        "name": "ccna2-etherchannel-lacp",
+        "version": 1
+      },
+      "profile": "P2"
+    },
+    "ccna2-dhcpv6": {
+      "schema": "netforge.topology/1.2",
+      "seed": 219,
+      "devices": [
+        {
+          "id": "pc1",
+          "type": "pc.nfpc",
+          "name": "PC1",
+          "position": {
+            "logical": [
+              100,
+              280
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC1\n!\ninterface GigabitEthernet0\n ipv6 address autoconfig\n!\nend\n",
+          "modules": []
+        },
+        {
+          "id": "r1",
+          "type": "router.nf2911",
+          "name": "R1",
+          "position": {
+            "logical": [
+              400,
+              180
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname R1\n!\nipv6 unicast-routing\n!\ninterface GigabitEthernet0/0\n ipv6 address 2001:db8:a::1/64\n!\ninterface GigabitEthernet0/1\n ipv6 address 2001:db8:b::1/64\n!\nend\n"
+        },
+        {
+          "id": "pc2",
+          "type": "pc.nfpc",
+          "name": "PC2",
+          "position": {
+            "logical": [
+              700,
+              280
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC2\n!\ninterface GigabitEthernet0\n ipv6 address autoconfig\n!\nend\n",
+          "modules": []
+        }
+      ],
+      "links": [
+        {
+          "id": "l_pc1_r1",
+          "a": {
+            "device": "pc1",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "r1",
+            "port": "GigabitEthernet0/0"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_r1_pc2",
+          "a": {
+            "device": "r1",
+            "port": "GigabitEthernet0/1"
+          },
+          "b": {
+            "device": "pc2",
+            "port": "GigabitEthernet0"
+          },
+          "media": "auto",
+          "length_m": 3
+        }
+      ],
+      "objectives": [
+        "Serve the office LAN stateless DHCPv6",
+        "Lease the lab LAN its addresses with stateful DHCPv6",
+        "Set the advertisement flag of each LAN"
+      ],
+      "notes": "The router advertisement tells a host how to configure itself: build its own address, ask DHCPv6 for the options, or ask DHCPv6 for everything.",
+      "lab": {
+        "name": "ccna2-dhcpv6",
+        "version": 1
+      },
+      "profile": "P2"
+    },
+    "ccna2-hsrp-gateway": {
+      "schema": "netforge.topology/1.2",
+      "seed": 221,
+      "devices": [
+        {
+          "id": "pc1",
+          "type": "pc.nfpc",
+          "name": "PC1",
+          "position": {
+            "logical": [
+              80,
+              170
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC1\n!\ninterface GigabitEthernet0\n ip address 192.168.10.10 255.255.255.0\n!\nip default-gateway 192.168.10.2\n!\nend\n",
+          "modules": []
+        },
+        {
+          "id": "pc2",
+          "type": "pc.nfpc",
+          "name": "PC2",
+          "position": {
+            "logical": [
+              80,
+              390
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC2\n!\ninterface GigabitEthernet0\n ip address 192.168.10.11 255.255.255.0\n!\nip default-gateway 192.168.10.2\n!\nend\n",
+          "modules": []
+        },
+        {
+          "id": "sw1",
+          "type": "switch.nfc2960",
+          "name": "SW1",
+          "position": {
+            "logical": [
+              260,
+              280
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname SW1\n!\ninterface FastEthernet0/1\n switchport mode access\n spanning-tree portfast\n!\ninterface FastEthernet0/2\n switchport mode access\n spanning-tree portfast\n!\ninterface GigabitEthernet0/1\n switchport mode access\n spanning-tree portfast\n!\ninterface GigabitEthernet0/2\n switchport mode access\n spanning-tree portfast\n!\nend\n"
+        },
+        {
+          "id": "r1",
+          "type": "router.nf2911",
+          "name": "R1",
+          "position": {
+            "logical": [
+              460,
+              170
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname R1\n!\ninterface GigabitEthernet0/0\n ip address 192.168.10.2 255.255.255.0\n!\ninterface GigabitEthernet0/1\n ip address 192.168.20.2 255.255.255.0\n standby version 2\n standby 20 ip 192.168.20.1\n standby 20 priority 110\n standby 20 preempt\n!\nend\n"
+        },
+        {
+          "id": "r2",
+          "type": "router.nf2911",
+          "name": "R2",
+          "position": {
+            "logical": [
+              460,
+              390
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname R2\n!\ninterface GigabitEthernet0/0\n ip address 192.168.10.3 255.255.255.0\n standby version 2\n standby 10 ip 192.168.10.1\n!\ninterface GigabitEthernet0/1\n ip address 192.168.20.3 255.255.255.0\n standby version 2\n standby 20 ip 192.168.20.1\n!\nend\n"
+        },
+        {
+          "id": "sw2",
+          "type": "switch.nfc2960",
+          "name": "SW2",
+          "position": {
+            "logical": [
+              660,
+              280
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname SW2\n!\ninterface FastEthernet0/1\n switchport mode access\n spanning-tree portfast\n!\ninterface GigabitEthernet0/1\n switchport mode access\n spanning-tree portfast\n!\ninterface GigabitEthernet0/2\n switchport mode access\n spanning-tree portfast\n!\nend\n"
+        },
+        {
+          "id": "srv",
+          "type": "server.nfserver",
+          "name": "SRV",
+          "position": {
+            "logical": [
+              850,
+              280
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname SRV\n!\ninterface GigabitEthernet0\n ip address 192.168.20.100 255.255.255.0\n!\nip default-gateway 192.168.20.1\n!\nend\n",
+          "modules": []
+        }
+      ],
+      "links": [
+        {
+          "id": "l_pc1_sw1",
+          "a": {
+            "device": "pc1",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "sw1",
+            "port": "FastEthernet0/1"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_pc2_sw1",
+          "a": {
+            "device": "pc2",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "sw1",
+            "port": "FastEthernet0/2"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_sw1_r1",
+          "a": {
+            "device": "sw1",
+            "port": "GigabitEthernet0/1"
+          },
+          "b": {
+            "device": "r1",
+            "port": "GigabitEthernet0/0"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_sw1_r2",
+          "a": {
+            "device": "sw1",
+            "port": "GigabitEthernet0/2"
+          },
+          "b": {
+            "device": "r2",
+            "port": "GigabitEthernet0/0"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_r1_sw2",
+          "a": {
+            "device": "r1",
+            "port": "GigabitEthernet0/1"
+          },
+          "b": {
+            "device": "sw2",
+            "port": "GigabitEthernet0/1"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_r2_sw2",
+          "a": {
+            "device": "r2",
+            "port": "GigabitEthernet0/1"
+          },
+          "b": {
+            "device": "sw2",
+            "port": "GigabitEthernet0/2"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_srv_sw2",
+          "a": {
+            "device": "srv",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "sw2",
+            "port": "FastEthernet0/1"
+          },
+          "media": "auto",
+          "length_m": 3
+        }
+      ],
+      "objectives": [
+        "Complete the standby group of the user LAN",
+        "Make R1 the preferred active router",
+        "Move the hosts to the virtual gateway",
+        "Survive the loss of R1"
+      ],
+      "notes": "Two routers share one virtual address and a virtual MAC; the active one answers for them, the standby one waits for its hellos to stop.",
+      "lab": {
+        "name": "ccna2-hsrp-gateway",
+        "version": 1
+      },
+      "profile": "P2"
+    },
+    "ccna2-port-security": {
+      "schema": "netforge.topology/1.2",
+      "seed": 223,
+      "devices": [
+        {
+          "id": "sw1",
+          "type": "switch.nfc2960",
+          "name": "SW1",
+          "position": {
+            "logical": [
+              330,
+              230
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname SW1\n!\nvlan 10\n name STAFF\n!\ninterface FastEthernet0/1\n switchport mode access\n switchport access vlan 10\n spanning-tree portfast\n!\ninterface FastEthernet0/2\n switchport mode access\n switchport access vlan 10\n spanning-tree portfast\n!\ninterface FastEthernet0/3\n switchport mode access\n switchport access vlan 10\n switchport port-security\n switchport port-security mac-address 02:00:00:5e:10:04\n spanning-tree portfast\n!\ninterface GigabitEthernet0/1\n switchport mode trunk\n!\nend\n"
+        },
+        {
+          "id": "sw2",
+          "type": "switch.nfc2960",
+          "name": "SW2",
+          "position": {
+            "logical": [
+              620,
+              230
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname SW2\n!\nvlan 10\n name STAFF\n!\ninterface FastEthernet0/1\n switchport mode access\n switchport access vlan 10\n spanning-tree portfast\n!\ninterface GigabitEthernet0/1\n switchport mode trunk\n!\nend\n"
+        },
+        {
+          "id": "hub1",
+          "type": "hub.nfhub4",
+          "name": "HUB1",
+          "position": {
+            "logical": [
+              190,
+              410
+            ]
+          },
+          "power": true
+        },
+        {
+          "id": "pc1",
+          "type": "pc.nfpc",
+          "name": "PC1",
+          "position": {
+            "logical": [
+              150,
+              110
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC1\n!\ninterface GigabitEthernet0\n ip address 192.168.23.11 255.255.255.0\n!\nend\n",
+          "modules": []
+        },
+        {
+          "id": "pc2",
+          "type": "pc.nfpc",
+          "name": "PC2",
+          "position": {
+            "logical": [
+              80,
+              470
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC2\n!\ninterface GigabitEthernet0\n ip address 192.168.23.12 255.255.255.0\n!\nend\n",
+          "modules": []
+        },
+        {
+          "id": "pc3",
+          "type": "pc.nfpc",
+          "name": "PC3",
+          "position": {
+            "logical": [
+              250,
+              520
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC3\n!\ninterface GigabitEthernet0\n ip address 192.168.23.13 255.255.255.0\n!\nend\n",
+          "modules": []
+        },
+        {
+          "id": "pc4",
+          "type": "pc.nfpc",
+          "name": "PC4",
+          "position": {
+            "logical": [
+              420,
+              440
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC4\n!\ninterface GigabitEthernet0\n ip address 192.168.23.14 255.255.255.0\n!\nend\n",
+          "modules": []
+        },
+        {
+          "id": "srv",
+          "type": "server.nfserver",
+          "name": "SRV",
+          "position": {
+            "logical": [
+              760,
+              110
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname SRV\n!\ninterface GigabitEthernet0\n ip address 192.168.23.100 255.255.255.0\n!\nend\n",
+          "modules": []
+        }
+      ],
+      "links": [
+        {
+          "id": "l_sw1_sw2",
+          "a": {
+            "device": "sw1",
+            "port": "GigabitEthernet0/1"
+          },
+          "b": {
+            "device": "sw2",
+            "port": "GigabitEthernet0/1"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_pc1_sw1",
+          "a": {
+            "device": "pc1",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "sw1",
+            "port": "FastEthernet0/1"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_hub1_sw1",
+          "a": {
+            "device": "hub1",
+            "port": "Ethernet1"
+          },
+          "b": {
+            "device": "sw1",
+            "port": "FastEthernet0/2"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_pc2_hub1",
+          "a": {
+            "device": "pc2",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "hub1",
+            "port": "Ethernet2"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_pc3_hub1",
+          "a": {
+            "device": "pc3",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "hub1",
+            "port": "Ethernet3"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_pc4_sw1",
+          "a": {
+            "device": "pc4",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "sw1",
+            "port": "FastEthernet0/3"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_srv_sw2",
+          "a": {
+            "device": "srv",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "sw2",
+            "port": "FastEthernet0/1"
+          },
+          "media": "auto",
+          "length_m": 3
+        }
+      ],
+      "objectives": [
+        "Secure the office ports",
+        "Recover the error-disabled port",
+        "Shut the unused ports",
+        "Harden the trunk"
+      ],
+      "notes": "Port security counts the source addresses a port has seen: under the maximum a new one is learned, at the maximum it is a violation, and the violation mode decides whether frames are dropped quietly, dropped and counted, or the port is error-disabled.",
+      "lab": {
+        "name": "ccna2-port-security",
+        "version": 1
+      },
+      "profile": "P2"
+    },
+    "ccna2-wlc-wlan": {
+      "schema": "netforge.topology/1.2",
+      "seed": 227,
+      "devices": [
+        {
+          "id": "wlc1",
+          "type": "wlc.nfwlc9800",
+          "name": "WLC1",
+          "position": {
+            "logical": [
+              140,
+              120
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname WLC1\n!\nend\n"
+        },
+        {
+          "id": "sw1",
+          "type": "switch.nfc2960",
+          "name": "SW1",
+          "position": {
+            "logical": [
+              380,
+              220
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname SW1\n!\nvlan 20\n name STAFF\n!\nvlan 99\n name AP-MGMT\n!\ninterface GigabitEthernet0/1\n switchport mode trunk\n switchport nonegotiate\n spanning-tree portfast trunk\n!\ninterface FastEthernet0/2\n switchport mode access\n switchport access vlan 99\n spanning-tree portfast\n!\ninterface FastEthernet0/3\n switchport mode access\n switchport access vlan 20\n spanning-tree portfast\n!\ninterface FastEthernet0/4\n switchport mode access\n switchport access vlan 99\n spanning-tree portfast\n!\nend\n"
+        },
+        {
+          "id": "r1",
+          "type": "router.nf2911",
+          "name": "R1",
+          "position": {
+            "logical": [
+              380,
+              420
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname R1\n!\nip dhcp excluded-address 192.168.99.1 192.168.99.19\nip dhcp excluded-address 192.168.20.1 192.168.20.9\n!\nip dhcp pool APS\n network 192.168.99.0 255.255.255.0\n default-router 192.168.99.1\n!\nip dhcp pool STAFF\n network 192.168.20.0 255.255.255.0\n default-router 192.168.20.1\n!\ninterface GigabitEthernet0/0\n ip address 192.168.20.1 255.255.255.0\n!\ninterface GigabitEthernet0/1\n ip address 192.168.99.1 255.255.255.0\n!\nend\n"
+        },
+        {
+          "id": "lap1",
+          "type": "ap.nfap-lw",
+          "name": "LAP1",
+          "position": {
+            "logical": [
+              620,
+              220
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname LAP1\n!\nend\n"
+        },
+        {
+          "id": "laptop1",
+          "type": "laptop.nflaptop",
+          "name": "LAPTOP1",
+          "position": {
+            "logical": [
+              680,
+              220
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname LAPTOP1\n!\nend\n"
+        }
+      ],
+      "links": [
+        {
+          "id": "l_wlc1_sw1",
+          "a": {
+            "device": "wlc1",
+            "port": "GigabitEthernet0/1"
+          },
+          "b": {
+            "device": "sw1",
+            "port": "GigabitEthernet0/1"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_lap1_sw1",
+          "a": {
+            "device": "lap1",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "sw1",
+            "port": "FastEthernet0/2"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_r1_sw1_staff",
+          "a": {
+            "device": "r1",
+            "port": "GigabitEthernet0/0"
+          },
+          "b": {
+            "device": "sw1",
+            "port": "FastEthernet0/3"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_r1_sw1_aps",
+          "a": {
+            "device": "r1",
+            "port": "GigabitEthernet0/1"
+          },
+          "b": {
+            "device": "sw1",
+            "port": "FastEthernet0/4"
+          },
+          "media": "auto",
+          "length_m": 3
+        }
+      ],
+      "objectives": [
+        "Give the controller its management interface",
+        "Create the staff controller interface",
+        "Create the WLAN on it",
+        "Connect a laptop through the access point"
+      ],
+      "notes": "A lightweight access point forwards nothing on its own: it joins a controller over CAPWAP, takes its WLANs from it and tunnels its clients' traffic to it, and the controller bridges each WLAN into the VLAN of its controller interface.",
+      "lab": {
+        "name": "ccna2-wlc-wlan",
+        "version": 1
+      },
+      "profile": "P2"
+    },
+    "ccna2-static-routes": {
+      "schema": "netforge.topology/1.2",
+      "seed": 230,
+      "devices": [
+        {
+          "id": "pc1",
+          "type": "pc.nfpc",
+          "name": "PC1",
+          "position": {
+            "logical": [
+              90,
+              300
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC1\n!\ninterface GigabitEthernet0\n ip address 10.1.0.10 255.255.255.0\n!\nip default-gateway 10.1.0.1\n!\nend\n",
+          "modules": []
+        },
+        {
+          "id": "srv1",
+          "type": "server.nfserver",
+          "name": "SRV1",
+          "position": {
+            "logical": [
+              90,
+              440
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname SRV1\n!\ninterface GigabitEthernet0\n ip address 10.1.0.100 255.255.255.0\n!\nip default-gateway 10.1.0.1\n!\nend\n",
+          "modules": []
+        },
+        {
+          "id": "sw1",
+          "type": "switch.nfc2960",
+          "name": "SW1",
+          "position": {
+            "logical": [
+              240,
+              370
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname SW1\n!\ninterface FastEthernet0/1\n switchport mode access\n spanning-tree portfast\n!\ninterface FastEthernet0/2\n switchport mode access\n spanning-tree portfast\n!\ninterface GigabitEthernet0/1\n switchport mode access\n spanning-tree portfast\n!\nend\n"
+        },
+        {
+          "id": "r1",
+          "type": "router.nf2911",
+          "name": "R1",
+          "position": {
+            "logical": [
+              420,
+              260
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname R1\n!\ninterface GigabitEthernet0/0\n ip address 10.1.0.1 255.255.255.0\n!\ninterface GigabitEthernet0/1\n ip address 10.0.12.1 255.255.255.252\n!\ninterface Serial0/0/0\n clock rate 64000\n ip address 10.0.13.1 255.255.255.252\n!\nend\n"
+        },
+        {
+          "id": "r2",
+          "type": "router.nf2911",
+          "name": "R2",
+          "position": {
+            "logical": [
+              640,
+              130
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname R2\n!\ninterface GigabitEthernet0/0\n ip address 10.0.12.2 255.255.255.252\n!\ninterface GigabitEthernet0/1\n ip address 10.2.0.1 255.255.255.0\n!\nend\n"
+        },
+        {
+          "id": "pc2",
+          "type": "pc.nfpc",
+          "name": "PC2",
+          "position": {
+            "logical": [
+              820,
+              130
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC2\n!\ninterface GigabitEthernet0\n ip address 10.2.0.10 255.255.255.0\n!\nip default-gateway 10.2.0.1\n!\nend\n",
+          "modules": []
+        },
+        {
+          "id": "r3",
+          "type": "router.nf2911",
+          "name": "R3",
+          "position": {
+            "logical": [
+              640,
+              400
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname R3\n!\ninterface Serial0/0/0\n ip address 10.0.13.2 255.255.255.252\n!\ninterface GigabitEthernet0/0\n ip address 10.3.0.1 255.255.255.0\n!\nend\n"
+        },
+        {
+          "id": "pc3",
+          "type": "pc.nfpc",
+          "name": "PC3",
+          "position": {
+            "logical": [
+              820,
+              400
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC3\n!\ninterface GigabitEthernet0\n ip address 10.3.0.10 255.255.255.0\n!\nip default-gateway 10.3.0.1\n!\nend\n",
+          "modules": []
+        }
+      ],
+      "links": [
+        {
+          "id": "l_pc1_sw1",
+          "a": {
+            "device": "pc1",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "sw1",
+            "port": "FastEthernet0/1"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_srv1_sw1",
+          "a": {
+            "device": "srv1",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "sw1",
+            "port": "FastEthernet0/2"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_sw1_r1",
+          "a": {
+            "device": "sw1",
+            "port": "GigabitEthernet0/1"
+          },
+          "b": {
+            "device": "r1",
+            "port": "GigabitEthernet0/0"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_r1_r2",
+          "a": {
+            "device": "r1",
+            "port": "GigabitEthernet0/1"
+          },
+          "b": {
+            "device": "r2",
+            "port": "GigabitEthernet0/0"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_r2_pc2",
+          "a": {
+            "device": "r2",
+            "port": "GigabitEthernet0/1"
+          },
+          "b": {
+            "device": "pc2",
+            "port": "GigabitEthernet0"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_r1_r3",
+          "a": {
+            "device": "r1",
+            "port": "Serial0/0/0"
+          },
+          "b": {
+            "device": "r3",
+            "port": "Serial0/0/0"
+          },
+          "media": "serial-dce",
+          "length_m": 3
+        },
+        {
+          "id": "l_r3_pc3",
+          "a": {
+            "device": "r3",
+            "port": "GigabitEthernet0/0"
+          },
+          "b": {
+            "device": "pc3",
+            "port": "GigabitEthernet0"
+          },
+          "media": "auto",
+          "length_m": 3
+        }
+      ],
+      "objectives": [
+        "Write one static route of each form",
+        "Open exactly one HQ server to the partner site",
+        "Ping across every link that has a route"
+      ],
+      "notes": "A static route names the destination and where to send it: a next-hop address, an exit interface, or both. A /32 route names one host.",
+      "lab": {
+        "name": "ccna2-static-routes",
+        "version": 1
+      },
+      "profile": "P2"
+    },
+    "ccna2-floating-static": {
+      "schema": "netforge.topology/1.2",
+      "seed": 231,
+      "devices": [
+        {
+          "id": "pc1",
+          "type": "pc.nfpc",
+          "name": "PC1",
+          "position": {
+            "logical": [
+              90,
+              300
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC1\n!\ninterface GigabitEthernet0\n ip address 192.168.10.10 255.255.255.0\n!\nip default-gateway 192.168.10.1\n!\nend\n",
+          "modules": []
+        },
+        {
+          "id": "r1",
+          "type": "router.nf2911",
+          "name": "R1",
+          "position": {
+            "logical": [
+              300,
+              260
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname R1\n!\ninterface GigabitEthernet0/0\n ip address 192.168.10.1 255.255.255.0\n!\ninterface GigabitEthernet0/1\n ip address 10.0.0.1 255.255.255.252\n!\ninterface Serial0/0/0\n clock rate 64000\n ip address 10.0.0.5 255.255.255.252\n!\nend\n"
+        },
+        {
+          "id": "r2",
+          "type": "router.nf2911",
+          "name": "R2",
+          "position": {
+            "logical": [
+              560,
+              260
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname R2\n!\ninterface GigabitEthernet0/0\n ip address 10.0.0.2 255.255.255.252\n!\ninterface Serial0/0/0\n ip address 10.0.0.6 255.255.255.252\n!\ninterface GigabitEthernet0/1\n ip address 198.51.100.1 255.255.255.0\n!\nend\n"
+        },
+        {
+          "id": "srv",
+          "type": "server.nfserver",
+          "name": "SRV",
+          "position": {
+            "logical": [
+              770,
+              300
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname SRV\n!\ninterface GigabitEthernet0\n ip address 198.51.100.10 255.255.255.0\n!\nip default-gateway 198.51.100.1\n!\nend\n",
+          "modules": []
+        }
+      ],
+      "links": [
+        {
+          "id": "l_pc1_r1",
+          "a": {
+            "device": "pc1",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "r1",
+            "port": "GigabitEthernet0/0"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_main",
+          "a": {
+            "device": "r1",
+            "port": "GigabitEthernet0/1"
+          },
+          "b": {
+            "device": "r2",
+            "port": "GigabitEthernet0/0"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_backup",
+          "a": {
+            "device": "r1",
+            "port": "Serial0/0/0"
+          },
+          "b": {
+            "device": "r2",
+            "port": "Serial0/0/0"
+          },
+          "media": "serial-dce",
+          "length_m": 3
+        },
+        {
+          "id": "l_r2_srv",
+          "a": {
+            "device": "r2",
+            "port": "GigabitEthernet0/1"
+          },
+          "b": {
+            "device": "srv",
+            "port": "GigabitEthernet0"
+          },
+          "media": "auto",
+          "length_m": 3
+        }
+      ],
+      "objectives": [
+        "Send the branch traffic to HQ with a default route",
+        "Route the replies back to the branch",
+        "Keep a floating backup on both routers"
+      ],
+      "notes": "Two routes to one destination: the router installs the one with the lower administrative distance and keeps the other waiting.",
+      "lab": {
+        "name": "ccna2-floating-static",
+        "version": 1
+      },
+      "profile": "P2"
+    },
+    "ccna2-ipv6-static": {
+      "schema": "netforge.topology/1.2",
+      "seed": 232,
+      "devices": [
+        {
+          "id": "pc1",
+          "type": "pc.nfpc",
+          "name": "PC1",
+          "position": {
+            "logical": [
+              90,
+              300
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC1\n!\ninterface GigabitEthernet0\n ip address 192.168.1.10 255.255.255.0\n ipv6 address autoconfig\n!\nip default-gateway 192.168.1.1\n!\nend\n",
+          "modules": []
+        },
+        {
+          "id": "r1",
+          "type": "router.nf2911",
+          "name": "R1",
+          "position": {
+            "logical": [
+              300,
+              200
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname R1\n!\nipv6 unicast-routing\n!\ninterface GigabitEthernet0/0\n ip address 192.168.1.1 255.255.255.0\n ipv6 address 2001:db8:1::1/64\n!\ninterface GigabitEthernet0/1\n ip address 10.0.12.1 255.255.255.252\n ipv6 address 2001:db8:12::1/64\n ipv6 address fe80::1 link-local\n!\nip route 0.0.0.0 0.0.0.0 10.0.12.2\n!\nend\n"
+        },
+        {
+          "id": "r2",
+          "type": "router.nf2911",
+          "name": "R2",
+          "position": {
+            "logical": [
+              560,
+              200
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname R2\n!\nipv6 unicast-routing\n!\ninterface GigabitEthernet0/0\n ip address 10.0.12.2 255.255.255.252\n ipv6 address 2001:db8:12::2/64\n ipv6 address fe80::2 link-local\n!\ninterface GigabitEthernet0/1\n ip address 192.168.2.1 255.255.255.0\n ipv6 address 2001:db8:2::1/64\n!\nip route 192.168.1.0 255.255.255.0 10.0.12.1\n!\nend\n"
+        },
+        {
+          "id": "pc2",
+          "type": "pc.nfpc",
+          "name": "PC2",
+          "position": {
+            "logical": [
+              770,
+              300
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC2\n!\ninterface GigabitEthernet0\n ip address 192.168.2.10 255.255.255.0\n ipv6 address autoconfig\n!\nip default-gateway 192.168.2.1\n!\nend\n",
+          "modules": []
+        }
+      ],
+      "links": [
+        {
+          "id": "l_pc1_r1",
+          "a": {
+            "device": "pc1",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "r1",
+            "port": "GigabitEthernet0/0"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_r1_r2",
+          "a": {
+            "device": "r1",
+            "port": "GigabitEthernet0/1"
+          },
+          "b": {
+            "device": "r2",
+            "port": "GigabitEthernet0/0"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_r2_pc2",
+          "a": {
+            "device": "r2",
+            "port": "GigabitEthernet0/1"
+          },
+          "b": {
+            "device": "pc2",
+            "port": "GigabitEthernet0"
+          },
+          "media": "auto",
+          "length_m": 3
+        }
+      ],
+      "objectives": [
+        "Give the branch an IPv6 default route",
+        "Route IPv6 back through a link-local next hop",
+        "Ping across in both address families"
+      ],
+      "notes": "An IPv6 static route names a global next hop, or a link-local next hop together with the interface it lives on.",
+      "lab": {
+        "name": "ccna2-ipv6-static",
+        "version": 1
+      },
+      "profile": "P2"
+    },
+    "ccna2-nat-pat": {
+      "schema": "netforge.topology/1.2",
+      "seed": 233,
+      "devices": [
+        {
+          "id": "pc1",
+          "type": "pc.nfpc",
+          "name": "PC1",
+          "position": {
+            "logical": [
+              80,
+              150
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC1\n!\ninterface GigabitEthernet0\n ip address 192.168.1.10 255.255.255.0\n!\nip default-gateway 192.168.1.1\n!\nend\n",
+          "modules": []
+        },
+        {
+          "id": "pc2",
+          "type": "pc.nfpc",
+          "name": "PC2",
+          "position": {
+            "logical": [
+              80,
+              270
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC2\n!\ninterface GigabitEthernet0\n ip address 192.168.1.11 255.255.255.0\n!\nip default-gateway 192.168.1.1\n!\nend\n",
+          "modules": []
+        },
+        {
+          "id": "pc3",
+          "type": "pc.nfpc",
+          "name": "PC3",
+          "position": {
+            "logical": [
+              80,
+              390
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC3\n!\ninterface GigabitEthernet0\n ip address 192.168.1.70 255.255.255.0\n!\nip default-gateway 192.168.1.1\n!\nend\n",
+          "modules": []
+        },
+        {
+          "id": "mail",
+          "type": "server.nfserver",
+          "name": "MAIL",
+          "position": {
+            "logical": [
+              230,
+              470
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname MAIL\n!\ninterface GigabitEthernet0\n ip address 192.168.1.100 255.255.255.0\n!\nip default-gateway 192.168.1.1\n!\nend\n",
+          "modules": []
+        },
+        {
+          "id": "web",
+          "type": "server.nfserver",
+          "name": "WEB",
+          "position": {
+            "logical": [
+              370,
+              470
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname WEB\n!\ninterface GigabitEthernet0\n ip address 192.168.1.80 255.255.255.0\n!\nip default-gateway 192.168.1.1\n!\nend\n",
+          "modules": []
+        },
+        {
+          "id": "sw1",
+          "type": "switch.nfc2960",
+          "name": "SW1",
+          "position": {
+            "logical": [
+              280,
+              280
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname SW1\n!\ninterface FastEthernet0/1\n switchport mode access\n spanning-tree portfast\n!\ninterface FastEthernet0/2\n switchport mode access\n spanning-tree portfast\n!\ninterface FastEthernet0/3\n switchport mode access\n spanning-tree portfast\n!\ninterface FastEthernet0/4\n switchport mode access\n spanning-tree portfast\n!\ninterface FastEthernet0/5\n switchport mode access\n spanning-tree portfast\n!\ninterface GigabitEthernet0/1\n switchport mode access\n spanning-tree portfast\n!\nend\n"
+        },
+        {
+          "id": "r1",
+          "type": "router.nf2911",
+          "name": "R1",
+          "position": {
+            "logical": [
+              480,
+              280
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname R1\n!\ninterface GigabitEthernet0/0\n ip address 192.168.1.1 255.255.255.0\n!\ninterface GigabitEthernet0/1\n ip address 203.0.113.1 255.255.255.0\n!\nip route 0.0.0.0 0.0.0.0 203.0.113.254\n!\nend\n"
+        },
+        {
+          "id": "isp",
+          "type": "router.nf2911",
+          "name": "ISP",
+          "position": {
+            "logical": [
+              680,
+              280
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname ISP\n!\ninterface GigabitEthernet0/0\n ip address 203.0.113.254 255.255.255.0\n!\ninterface GigabitEthernet0/1\n ip address 198.51.100.1 255.255.255.0\n!\nend\n"
+        },
+        {
+          "id": "ext",
+          "type": "server.nfserver",
+          "name": "EXT",
+          "position": {
+            "logical": [
+              860,
+              280
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname EXT\n!\ninterface GigabitEthernet0\n ip address 198.51.100.10 255.255.255.0\n!\nip default-gateway 198.51.100.1\n!\nend\n",
+          "modules": []
+        }
+      ],
+      "links": [
+        {
+          "id": "l_pc1_sw1",
+          "a": {
+            "device": "pc1",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "sw1",
+            "port": "FastEthernet0/1"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_pc2_sw1",
+          "a": {
+            "device": "pc2",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "sw1",
+            "port": "FastEthernet0/2"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_pc3_sw1",
+          "a": {
+            "device": "pc3",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "sw1",
+            "port": "FastEthernet0/3"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_mail_sw1",
+          "a": {
+            "device": "mail",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "sw1",
+            "port": "FastEthernet0/4"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_web_sw1",
+          "a": {
+            "device": "web",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "sw1",
+            "port": "FastEthernet0/5"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_sw1_r1",
+          "a": {
+            "device": "sw1",
+            "port": "GigabitEthernet0/1"
+          },
+          "b": {
+            "device": "r1",
+            "port": "GigabitEthernet0/0"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_r1_isp",
+          "a": {
+            "device": "r1",
+            "port": "GigabitEthernet0/1"
+          },
+          "b": {
+            "device": "isp",
+            "port": "GigabitEthernet0/0"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_isp_ext",
+          "a": {
+            "device": "isp",
+            "port": "GigabitEthernet0/1"
+          },
+          "b": {
+            "device": "ext",
+            "port": "GigabitEthernet0"
+          },
+          "media": "auto",
+          "length_m": 3
+        }
+      ],
+      "objectives": [
+        "Mark the inside and the outside",
+        "Translate with a static line, PAT and a pool",
+        "Forward one port to the web server"
+      ],
+      "notes": "Inside local is the address a host really has, inside global the public address it appears as, outside global the address of the far host.",
+      "lab": {
+        "name": "ccna2-nat-pat",
+        "version": 1
+      },
+      "profile": "P2"
+    },
+    "ccna2-troubleshoot-routing": {
+      "schema": "netforge.topology/1.2",
+      "seed": 234,
+      "devices": [
+        {
+          "id": "pc1",
+          "type": "pc.nfpc",
+          "name": "PC1",
+          "position": {
+            "logical": [
+              70,
+              300
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC1\n!\ninterface GigabitEthernet0\n ip address 192.168.10.11 255.255.255.0\n!\nip default-gateway 192.168.10.1\n!\nend\n",
+          "modules": []
+        },
+        {
+          "id": "pc2",
+          "type": "pc.nfpc",
+          "name": "PC2",
+          "position": {
+            "logical": [
+              70,
+              460
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC2\n!\ninterface GigabitEthernet0\n ip address 192.168.10.12 255.255.255.0\n!\nip default-gateway 192.168.10.1\n!\nend\n",
+          "modules": []
+        },
+        {
+          "id": "sw1",
+          "type": "switch.nfc2960",
+          "name": "SW1",
+          "position": {
+            "logical": [
+              210,
+              380
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname SW1\n!\ninterface FastEthernet0/1\n switchport mode access\n spanning-tree portfast\n!\ninterface FastEthernet0/2\n switchport mode access\n spanning-tree portfast\n!\ninterface GigabitEthernet0/1\n switchport mode access\n spanning-tree portfast\n!\nend\n"
+        },
+        {
+          "id": "r1",
+          "type": "router.nf2911",
+          "name": "R1",
+          "position": {
+            "logical": [
+              330,
+              200
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname R1\n!\ninterface GigabitEthernet0/0\n ip address 192.168.10.1 255.255.255.0\n!\ninterface GigabitEthernet0/1\n ip address 10.0.12.1 255.255.255.252\n!\nip route 192.168.20.0 255.255.255.0 10.0.12.2\n!\nend\n"
+        },
+        {
+          "id": "r2",
+          "type": "router.nf2911",
+          "name": "R2",
+          "position": {
+            "logical": [
+              570,
+              200
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname R2\n!\ninterface GigabitEthernet0/0\n ip address 10.0.12.2 255.255.255.252\n!\ninterface GigabitEthernet0/1\n ip address 192.168.20.1 255.255.255.0\n!\nip route 192.168.10.0 255.255.255.0 10.0.12.1\n!\nend\n"
+        },
+        {
+          "id": "sw2",
+          "type": "switch.nfc2960",
+          "name": "SW2",
+          "position": {
+            "logical": [
+              690,
+              380
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname SW2\n!\ninterface FastEthernet0/1\n switchport mode access\n spanning-tree portfast\n spanning-tree bpduguard enable\n!\ninterface FastEthernet0/2\n switchport mode access\n spanning-tree portfast\n spanning-tree bpduguard enable\n!\ninterface GigabitEthernet0/1\n switchport mode access\n spanning-tree portfast\n!\nend\n"
+        },
+        {
+          "id": "pc3",
+          "type": "pc.nfpc",
+          "name": "PC3",
+          "position": {
+            "logical": [
+              830,
+              300
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname PC3\n!\ninterface GigabitEthernet0\n ip address 192.168.20.13 255.255.255.0\n!\nip default-gateway 192.168.20.1\n!\nend\n",
+          "modules": []
+        },
+        {
+          "id": "srv",
+          "type": "server.nfserver",
+          "name": "SRV",
+          "position": {
+            "logical": [
+              830,
+              460
+            ]
+          },
+          "power": true,
+          "config": "! NetForge NFOS configuration\nversion 1.0\n!\nhostname SRV\n!\ninterface GigabitEthernet0\n ip address 192.168.20.100 255.255.255.0\n!\nip default-gateway 192.168.20.1\n!\nend\n",
+          "modules": []
+        }
+      ],
+      "links": [
+        {
+          "id": "l_pc1_sw1",
+          "a": {
+            "device": "pc1",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "sw1",
+            "port": "FastEthernet0/1"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_pc2_sw1",
+          "a": {
+            "device": "pc2",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "sw1",
+            "port": "FastEthernet0/2"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_sw1_r1",
+          "a": {
+            "device": "sw1",
+            "port": "GigabitEthernet0/1"
+          },
+          "b": {
+            "device": "r1",
+            "port": "GigabitEthernet0/0"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_r1_r2",
+          "a": {
+            "device": "r1",
+            "port": "GigabitEthernet0/1"
+          },
+          "b": {
+            "device": "r2",
+            "port": "GigabitEthernet0/0"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_r2_sw2",
+          "a": {
+            "device": "r2",
+            "port": "GigabitEthernet0/1"
+          },
+          "b": {
+            "device": "sw2",
+            "port": "GigabitEthernet0/1"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_pc3_sw2",
+          "a": {
+            "device": "pc3",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "sw2",
+            "port": "FastEthernet0/1"
+          },
+          "media": "auto",
+          "length_m": 3
+        },
+        {
+          "id": "l_srv_sw2",
+          "a": {
+            "device": "srv",
+            "port": "GigabitEthernet0"
+          },
+          "b": {
+            "device": "sw2",
+            "port": "FastEthernet0/2"
+          },
+          "media": "auto",
+          "length_m": 3
+        }
+      ],
+      "objectives": [
+        "Bring back the port that was shut down",
+        "Put both ends of the router link in one subnet",
+        "Repair the route to the branch",
+        "Reach the branch from HQ"
+      ],
+      "notes": "Troubleshooting from the bottom up saves guessing: a route cannot work over a link whose ends disagree on the subnet, and nothing works over a port that is down.",
+      "lab": {
+        "name": "ccna2-troubleshoot-routing",
+        "version": 1
+      },
+      "profile": "P2"
+    }
+  }
+}

@@ -4,8 +4,9 @@
  * `management`, `ip default-gateway`), the `wlan` section, the lightweight access point's `capwap enable` and
  * `capwap controller`, and `show capwap`.
  *
- * Built on p2.world's TEST-ONLY wireless models (§7 W4 qa): NF-WLC-9800 (`NF_WLC_9800_TEST_INPUT`) and NF-AP-1832 with
- * `lightweight-ap` (`P2_WIRELESS_MODEL_DELTAS`) — since the W6 catalog item both resolve to the real catalog data.
+ * Built on p2.world's wireless models, TEST-ONLY until the P2 W6 catalog item (§7 W4 qa): NF-WLC-9800 and NF-AP-1832
+ * with `lightweight-ap` (`P2_WIRELESS_MODEL_DELTAS`), now the real catalog data (`NF_WLC_9800_INPUT`; the test-only
+ * alias was deleted in P3 W0, ARCHITECTURE-P3 §9.2 W0 item 4).
  * The capwap daemons are the W5 wireless item's (same wave, rule 9):
  * the worlds here are built without them (the registry overlay removes both names), so only the grammar, the handlers,
  * the config store and the runtime are under test; `show capwap` reads fake tables in the §2.6 row shapes.
@@ -70,9 +71,10 @@ import { modeForContext, modesOfClass } from '../src/cli/modes.js';
 import { help, matchCommand } from '../src/cli/parser.js';
 import { catalogModel, commandCtxFor, matchContextFor, type RecordingCtx } from './cli.p05.fixture.js';
 import { p2Model } from './cli.p2.fixture.js';
-import { createP2Simulation, defineP2Model, NF_WLC_9800_TEST_INPUT } from './p2.world.js';
+import { NF_WLC_9800_INPUT } from '../src/device/catalog/wireless.js';
+import { createP2Simulation, defineP2Model } from './p2.world.js';
 
-const WLC = defineP2Model(NF_WLC_9800_TEST_INPUT);
+const WLC = defineP2Model(NF_WLC_9800_INPUT);
 const AP = p2Model('ap.nfap-lw');
 const H = P2_HANDLERS;
 const MASK = '255.255.255.0';

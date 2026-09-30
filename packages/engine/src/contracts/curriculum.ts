@@ -14,6 +14,8 @@
  * sim/scenarios is automatically the lab the lesson opens, and nothing has to be kept in sync by hand.
  */
 
+import type { DefaultsProfile } from './catalog.js';
+
 /** One published video that explains a lesson. `url` is the full watch link (https only, no raw HTML anywhere). */
 export interface LessonVideo {
   youtubeId: string;
@@ -59,6 +61,12 @@ export interface Course {
   description: string;
   status: CourseStatus;
   modules: readonly CourseModule[];
+  /**
+   * @since P3 The defaults profile a world opened from this course takes (ARCHITECTURE-P3 D2): data from W0 (ccna1 'P1',
+   * ccna2 'P2', ccna3 'P3' while still planned). Nothing reads it until the W7 course flip, whose change makes
+   * `profileForCourse(id) = courseById(id)?.profile ?? LATEST_DEFAULTS_PROFILE`; required at W8.
+   */
+  profile?: DefaultsProfile;
 }
 
 /** Theory bodies by lesson id (markdown subset), contributed by `curriculum/<course>/theory.ts`. */

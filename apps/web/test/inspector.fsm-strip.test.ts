@@ -135,7 +135,8 @@ describe('FsmStrip', () => {
   });
 
   it('reads the store trace by default and stops at the reviewed instant', () => {
-    store.setState({ events: EVENTS, timeline: { review: { t: 15 * S }, head: null, lanes: [], seeking: false, reviewEvents: [] } });
+    const review = { at: { dispatched: 0, now: 15 * S }, t: 15 * S, live: { dispatched: 0, now: 30 * S }, atLive: false };
+    store.setState({ events: EVENTS, timeline: { review, head: null, lanes: [], seeking: false, reviewEvents: [] } });
     const t = text(renderToStaticMarkup(createElement(FsmStrip, { device: 'sw1', machines: ['stp-port'] })));
     expect(t).toContain('Now learning');
     expect(t).not.toContain('Trunk negotiation');

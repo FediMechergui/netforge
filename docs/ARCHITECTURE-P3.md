@@ -670,7 +670,7 @@ it. **Rejected:** a separate web implementation (it could disagree with the rout
     count nor duration is **continuous** until `flow stop` or the cap, and is used only under `runFor`: its datagrams
     commit non-periodic link events (`p2p.ts:213-232`), so over a congested link it would hold `runToIdle` until the
     cap (rule 19).
-  - The **congestion view** reads one display member, `PortSnapshot.txQueue` (optional by meaning, present only while
+  - The **congestion view** reads one display member, `PortSnapshot.txBacklog` (optional by meaning, present only while
     frames wait): the depth and up to 8 summaries of the frames the link model has committed with a future `txStart`
     (the "virtual FIFO", `link/media/p2p.ts:186-277`, :213), filled by the snapshot cache from the in-flight store.
     The web cannot draw them from the in-flight list: `visible(now)` hides legs with `txStart > now`
@@ -1082,7 +1082,7 @@ crypto (approved, §8.5 P10).**
 | OSPF on a tunnel | WAN: the tunnel role needs OSPF network type point-to-point | D7: `tunnel` → point-to-point, added with [S18] |
 | Lanes | WAN: `wan`; management: `mgmt` | `mgmt` (MUST: cdp, lldp, ntp rows and the `ntp` machine); `wan` with the approved [S18]/[S19]/[C13]; ACL rows and [S13] `vty-logins` in the existing `security` lane, OSPF and [C1] EIGRP in `routing` |
 | Queueing sandbox | WAN: [S] web concept tool | part of MUST (M13), on the pure `core/queueing.ts` that [S20] reuses |
-| The FIFO congestion view | WAN: web-only, from frames with a future `txStart` | an engine display member, `PortSnapshot.txQueue` (P3 review: the in-flight list never carries future frames) |
+| The FIFO congestion view | WAN: web-only, from frames with a future `txStart` | an engine display member, `PortSnapshot.txBacklog` (P3 review: the in-flight list never carries future frames) |
 
 ---
 
@@ -1680,8 +1680,9 @@ map), [S33] `snmp-traps`.
 //                         matchedBytes: number; marked: number }[] }
 //   (OBM) present only on a port with a service policy (M13 marking counters, runtime-owned through
 //   DeviceRuntime.qosCounters, display only); [S20] widens it to the EgressQueueView of the WAN map.
-// PortSnapshot += txQueue?: { depth: number; frames: readonly { pdu: PduId; summary: PduSummary; txStart: SimTime;
-//                             bytes: number }[] }
+// PortSnapshot += txBacklog?: { depth: number; frames: readonly { pdu: PduId; summary: PduSummary; txStart: SimTime;
+//                               bytes: number }[] }        (the type is PortTxQueueView)
+//   (named `txBacklog` by the W0 ruling R6: the required P0 frame count `txQueue: number` is unchanged)
 //   (OBM) the frames the link model has committed on this egress port with txStart > now (the virtual FIFO, D16):
 //   the depth and up to 8 of them, oldest first. Written in every profile, only while depth ≥ 1 (absent otherwise);
 //   the snapshot cache fills it from the in-flight store (`link/inflight.ts` `queued(ref, now)`) and marks the
@@ -2020,7 +2021,7 @@ export function scenarioOf(doc: LabDocument): ScenarioInfo;
 
 // store/types.ts
 // ConceptTool = ConceptToolId (the engine contract; the local union at :62 is deleted)
-// TopoOverlayState += qos: boolean                    (M13: FIFO stacks at egress ports from PortSnapshot.txQueue, and
+// TopoOverlayState += qos: boolean                    (M13: FIFO stacks at egress ports from PortSnapshot.txBacklog, and
 //                                                      cable load sleeves)
 // store.ts: DEFAULT_TIMELINE_LANES (:77) gains 'mgmt' last (W0 stub; store.timeline.test.ts:54-56 pins it to LANE_IDS)
 //   approved: [S1] ospf: boolean; ospfArea: string | null   [S18/S19] wan: boolean   [C1] eigrp: boolean;
@@ -2052,7 +2053,7 @@ goldens. The source tags each `@since P3 (optional by meaning)`; the W8 extensio
 | transport.ts | `tcp.listen.tls`, `tcp.connect.tls` |
 | tables.ts | `RouteRow.routeType` |
 | trace.ts | drop `rule`, log `mnemonic`, configChange `origin` |
-| snapshot.ts | `SimSnapshot.profile` ('P3' value), `DeviceSnapshot.clock`, `PortSnapshot.qos`, `PortSnapshot.txQueue`, [S32] `DeviceSnapshot.storage` |
+| snapshot.ts | `SimSnapshot.profile` ('P3' value), `DeviceSnapshot.clock`, `PortSnapshot.qos`, `PortSnapshot.txBacklog`, [S32] `DeviceSnapshot.storage` |
 | device.ts | the `origin` parameter of `DeviceRuntime.applyConfigLine` |
 | StateViews | the tcp and udp `probes` member |
 | topology.ts | `Topology.profile` ('P3' value), [S32] `TopologyDevice.files` |
@@ -2546,7 +2547,7 @@ Setup: PC-V 192.168.1.10 and PC-D 192.168.1.20 on SW1 → R1 Gi0/0 192.168.1.1. 
    (`p2p.ts:213`), so every waiting frame's `frameTx` already carries a future `txStart`; each 1004-byte data frame
    takes ≈ 63 ms to serialise. The queue grows to `P2P_QUEUE_LIMIT` (256, P2 D23), then both flows suffer `queue-full`
    drops.
-5. **What the learner sees.** The `qos` overlay draws the FIFO stack at R1 Se0/0/0 from `PortSnapshot.txQueue` (up to
+5. **What the learner sees.** The `qos` overlay draws the FIFO stack at R1 Se0/0/0 from `PortSnapshot.txBacklog` (up to
    8 capsules from its frame summaries plus a `+k` counter from its depth, voice capsules labelled `EF`), and the cable
    load sleeve at 100 % (utilisation computed in the web from `outBytes` deltas against `speedBps`, display-only
    floats). At PC-S, udp finds
@@ -3012,7 +3013,7 @@ Consequences:
 | `udp`, `tcp` on managed switches (D22) | dormant: ipv4 hands them nothing until a P3 service (`ntp server`/`ntp master`, `restconf` with `ip http secure-server`, approved S services) is configured on the switch; then they answer as on hosts (port unreachable, RST) | P2's path byte for byte (protocol unreachable); proved by the guard worlds | same |
 | runtime `deviceConfigure` | a `configure` action (only restconf issues one in MUST) | never | never |
 | QoS steps (10c, egress marking) | `service-policy input\|output <p>` on a routed port or subinterface | unchanged path | unchanged path |
-| `PortSnapshot.txQueue` | a port with frames waiting behind a busy transmitter (display only, never in the trace) | present while a backlog exists; normalised away in the goldens | same |
+| `PortSnapshot.txBacklog` | a port with frames waiting behind a busy transmitter (display only, never in the trace) | present while a backlog exists; normalised away in the goldens | same |
 | [S24] visible timestamps lines (a P3 default) | — | not replayed | replayed on routers, managed switches, the controller |
 | [S25] extended logging, console printing (a P3 default) | — | never (typed `logging console` works in any profile) | on (oper-change, restart, configuration logs; console at level debugging) |
 | [S13] `vty` / `vty-client` | a `line vty` section with telnet allowed, or an RSA key with SSH allowed (hidden listeners: no row, no debug, not in the tcp StateView); the client acts only on a typed `telnet`/`ssh`. On a managed switch nothing reaches the listener until a P3 line wakes the transport (D22) | silent, no `sockets` row, snapshot unchanged | silent |
@@ -3088,7 +3089,7 @@ that real devices run CDP by default and that NetForge projects saved before P3 
    stays), every table whose descriptor `since` is later than the golden's stage (the stage-filtered snooping tables,
    the empty OSPF, ACL, CDP, LLDP, NTP and API tables a home router derives through `routing`), the later-stage members
    of the model-derived lists (`capabilities`, `gui`, `allowedRoles`), and the P3 display member
-   `PortSnapshot.txQueue`. Applied to a snapshot of the unchanged engine it removes nothing, so no recorded golden
+   `PortSnapshot.txBacklog`. Applied to a snapshot of the unchanged engine it removes nothing, so no recorded golden
    changes. The P1 guard asserts that everything outside P1's vocabulary is `since` P2 or P3; the P2 guard, that
    everything outside `p2Vocabulary` is `since` P3.
 3. **Silence** (§4.3), **the profile** (D2) and **dormancy** (D22): the new defaults — CDP, and with the approved
@@ -3390,7 +3391,7 @@ with no code.
 | `worker.delta` independent of machine load | `test/worker.delta.test.ts` (fresh module per test, explicit drain helper, per-file timeout) | W0 | web-shell |
 | Defaults profile in the web: `profileOfSnapshot` accepts P3; the "Classic defaults" chip for P1 only; File → "Use current defaults" enabled below latest with a `PROFILE_NOTES` hint (W1); the worker's upgrade calls the engine ladder `sim/defaults-upgrade.ts` (W2, after W1 sim ships it); `profileForCourse` from `Course.profile` then `LATEST_DEFAULTS_PROFILE`, in the course-flip change (W7) | `learn/course-profile.ts`, `app/StatusBar.tsx`, `app/FileMenu.tsx`, `bridge/worker/index.ts` (:348-360) | W1 / W2 / W7 | web-shell |
 | Markdown code blocks: an optional display-only `lang` | `labs/markdown.ts`, the lesson renderer | W1 | web-learn |
-| QoS overlay model (pure): FIFO stack per egress port from `PortSnapshot.txQueue` (≤ 8 capsules from its frame summaries + `+k` from its depth, DSCP letters `EF`/`AF`/`BE`), cable load sleeve per direction from `outBytes` deltas (thickness ∝ utilisation, a % label when zoomed, an ok/warn/err ramp as the redundant channel); `store.ts`'s `reconcileInflight` is unchanged | `canvas/overlays/qos-model.ts` | W1 | web-canvas |
+| QoS overlay model (pure): FIFO stack per egress port from `PortSnapshot.txBacklog` (≤ 8 capsules from its frame summaries + `+k` from its depth, DSCP letters `EF`/`AF`/`BE`), cable load sleeve per direction from `outBytes` deltas (thickness ∝ utilisation, a % label when zoomed, an ok/warn/err ramp as the redundant channel); `store.ts`'s `reconcileInflight` is unchanged | `canvas/overlays/qos-model.ts` | W1 | web-canvas |
 | QoS overlay layer, registry entry `qos`, keyboard outline text | `canvas/qos.ts`, `canvas/overlays/registry.ts`, `canvas/scene.ts`, `canvas/Canvas.tsx`, `canvas/a11y/CanvasOutline.tsx` | W3 | web-canvas |
 | Topology overlay slice `topoOverlays.qos` and the approved `ospf`/`ospfArea` [S1], `wan` [S18]/[S19], `eigrp`/`eigrpPrefix` [C1] (persisted, defaults false/null, one persisted-slice migration) and their View-menu entries; [S2] the `routingUi` slice (not persisted) | `store/{types,store,persist}.ts`, `app/TopBar.tsx` | W2 | web-shell |
 | [S2] The `routing` dock tab shown: `DOCK_STAGE` `'P3'`, `app/Dock.tsx` maps `routing` to the lazy `routing/LinkStatePanel.tsx`, the hotkey migration (§9.2 item 36b) | `dock/registry.ts`, `app/Dock.tsx` | W4 | web-shell |
@@ -3594,7 +3595,7 @@ svc, sim, io, qa, course, capture, web-shell, web-canvas, web-inspector, web-lea
   `curriculum.ccna3.test.ts` (ids as §11.1, ≤ 45 min, every lab reachable from exactly one lesson, every objective has a
   row with a `handsOn` value of §11.4).
 - **web-inspector** — `vocab/*` real entries. Tests `vocab.test.ts` (exhaustive, unique letters, no banned words).
-- **web-canvas** — `canvas/overlays/qos-model.ts` (reads `PortSnapshot.txQueue` and port counters); [S1]
+- **web-canvas** — `canvas/overlays/qos-model.ts` (reads `PortSnapshot.txBacklog` and port counters); [S1]
   `canvas/overlays/ospf-model.ts`. Tests `overlays.qos-model.test.ts`; [S1] `overlays.ospf-model.test.ts`.
 - **web-shell** — `profileOfSnapshot` accepts `'P3'`; the "Classic defaults" chip stays P1-only; File → "Use current
   defaults" enabled whenever the profile is below `LATEST_DEFAULTS_PROFILE` (still `'P2'`, so for P1 worlds only, as
@@ -3690,7 +3691,7 @@ rules, not the W2 grammar.
   exactly as today when it does not run; DTP, LACP and BPDUs on a routed port keep today's path).
 - **media** — `link/inflight.ts`: `queued(ref, now)` (the legs on an egress port with `txStart > now`, oldest first).
   Tests `link.inflight.queued.test.ts`.
-- **sim** ⚑ — `sim/snapshot-cache.ts` (`DeviceSnapshot.clock`, `SimSnapshot.profile` 'P3', `PortSnapshot.txQueue` from
+- **sim** ⚑ — `sim/snapshot-cache.ts` (`DeviceSnapshot.clock`, `SimSnapshot.profile` 'P3', `PortSnapshot.txBacklog` from
   `queued` with the device dirtied at an enqueue that leaves a backlog and at each `txComplete` of a port that has one,
   `PortSnapshot.qos` from `DeviceRuntime.qosCounters` tested with a fake runtime), `HOST_APP_PROCESS` rows (traffic).
   Tests `sim.snapshot-clock.test.ts`, `sim.snapshot-txqueue.test.ts` (none on an uncongested link),
@@ -3958,7 +3959,7 @@ part of the line.
 | M10 | SSH-only device access at configuration level, on routers and switches: key generation with its prerequisites, `ip ssh`, `username … secret` (with `privilege`, read by `login local`), `login local`, `transport input`, `access-class` stored and shown, the `ip domain-name` and ACL scopes widened to switches, `show ip ssh` / `show ssh` / `show users`, `ssh.*` and `vty.*` facts | Named objective (configure SSH); lesson 19's lab | 1.5 | W1 cli (rules); W2–W3 cli; W3 acl (adapter) | Device hardening becomes theory |
 | M11 | DHCP snooping: trust, bindings from ACKs and the own SVI, MAC check, rate limit → err-disable (proved with the injector), static bindings, `show ip dhcp snooping [binding]` | Named objective (configure and verify) | 2.0 | W1 l2; W2 l2; W3 cli, l2 (adapter); W4 flip (staged tables) | Rogue-server lesson becomes theory |
 | M12 | Dynamic ARP inspection: binding check, rate limit → err-disable, the `arp-inspection` table, logs, shows | Named objective (configure and verify) | 1.5 | W1 l2; W2 l2; W3 cli, l2 (adapter) | ARP-spoofing defence becomes theory |
-| M13 | QoS lite: MQC `class-map`/`policy-map` with `match` and `set`, the lazily compiled policies, input marking at step 10c and output marking at `transmitOn` and after `vlanPush` with `QosMark` provenance, `show class-map`/`show policy-map [interface]`; the traffic generator (daemon, discard sink, `flows` table, host-shell `flow`, Traffic app); the FIFO congestion view (`PortSnapshot.txQueue`, the `qos` overlay); the queueing sandbox on `core/queueing.ts` | The QoS objectives are describe-level; marking, congestion and the four disciplines become visible and one lab exists | 7.5 | W1 core, web-canvas; W2 qos, svc, cli, media, sim, web-concept, web-shell; W3 device, web-canvas, web-inspector, web-concept, web-desktop, qos (adapter) | QoS module becomes theory with static figures |
+| M13 | QoS lite: MQC `class-map`/`policy-map` with `match` and `set`, the lazily compiled policies, input marking at step 10c and output marking at `transmitOn` and after `vlanPush` with `QosMark` provenance, `show class-map`/`show policy-map [interface]`; the traffic generator (daemon, discard sink, `flows` table, host-shell `flow`, Traffic app); the FIFO congestion view (`PortSnapshot.txBacklog`, the `qos` overlay); the queueing sandbox on `core/queueing.ts` | The QoS objectives are describe-level; marking, congestion and the four disciplines become visible and one lab exists | 7.5 | W1 core, web-canvas; W2 qos, svc, cli, media, sim, web-concept, web-shell; W3 device, web-canvas, web-inspector, web-concept, web-desktop, qos (adapter) | QoS module becomes theory with static figures |
 | M14 | Discovery: `udp`/`tcp` on managed switches with the dormant-transport rule (D22), control-table rows and the routed-port control check, CDP (NF format, daemon, table, `show cdp …`, `no cdp run`/`no cdp enable`), LLDP (IEEE, daemon, shows, transmit/receive), the table descriptors, lanes and FSM vocabulary of the management tables | Named objective (configure and verify CDP and LLDP); the P3 profile's one default | 4.8 | W1 l2, pdu, catalog (`cdpDefault`), l3 (dormancy); W2 disc, device; W3 cli, disc (adapter); W4 flip | Discovery lesson becomes theory; no P3 default |
 | M15 | Device clock and NTP: the calendar epoch, unset boot, `clock set`/`timezone`, `show clock`; NTPv4 client/server/master with the non-periodic re-polls and bounded retries, stratum-16 answers, `ntp-peers` and the `clock` table, `show ntp associations\|status`, `service ntp`, the facts | Named objective (configure and verify NTP client and server) | 4.7 | W1 device, pdu; W2 svc, sim, cli; W3 cli, web-inspector, svc (adapter) | NTP lesson becomes theory |
 | M16 | Device API: the configure seam (`deviceConfigure`, `config.result`, the origin through `applyConfigLine`), `http.request` with verbs and bodies, the tcp `tls` flag, the `restconf` daemon with the IETF/`nf-native` model, JSON encoding, Basic authentication, errors, `restconf-log`, `username … privilege`, the host-shell `rest` command with its verbatim `-d` | REST verbs, URIs, status codes, authentication and JSON on real (simulated) wires; lesson 38's lab | 4.5 | W1 auto, device, sim, cli, svc (`tls`); W2 http, sim, cli; W3 http (adapter) | Automation is theory only |
@@ -4207,7 +4208,7 @@ location in the wave report. The item that forces a migration performs it, in th
   only to its ports; the `probes` member is absent until a probe runs, which happens only in grader clones; [S13]'s
   hidden listeners never appear in the tcp StateView.
 - The web's `reconcileInflight` (`apps/web/src/store/store.ts`) and its tests: unchanged; the FIFO view reads
-  `PortSnapshot.txQueue` (D16).
+  `PortSnapshot.txBacklog` (D16).
 - `learn.course-profile.test.ts` until W7: `profileForCourse` keeps its rule until the course flip (D2).
 
 ### 9.2 By wave
@@ -4243,7 +4244,7 @@ location in the wave report. The item that forces a migration performs it, in th
    P1 list has a `since: 'P2'` descriptor" becomes "a `since` of `P2` or `P3`", both still asserted per name with
    `toEqual([])` / membership in the exact two-element set; the normalisation (`normaliseSnapshot`, :262-290) becomes
    the per-device rule of §4.6 item 2 (a process's StateView and owned tables are removed from a device that derives it
-   only through later-stage rows; later-stage tables and `PortSnapshot.txQueue` are removed); on the recorded golden it
+   only through later-stage rows; later-stage tables and `PortSnapshot.txBacklog` are removed); on the recorded golden it
    removes nothing. The header comment (:33-34) is updated.
 4. `test/p2.world.ts`: the `@deprecated` aliases are deleted; their three importers (`cli.wlc.test.ts`,
    `device.catalog.p2.test.ts` and `p2.world.ts` itself) use the real names, assertions unchanged.
@@ -4277,6 +4278,62 @@ location in the wave report. The item that forces a migration performs it, in th
     `'mgmt'` and `'wan'`.
 12. `curriculum/index.ts` gains `Course.profile` data (course): `profileForCourse` does not read it until W7, so no pin
     moves.
+
+**W0 rulings (lead architect, 2026-09-30).** Decided after the W0 build and its review; binding like the rest of this
+brief. Where a ruling and an earlier line of this document differ, the ruling wins.
+
+- **R1.** `RouteRow.source` gains `'O'` and `'EIGRP'` in W0. The authorised stub edit is
+  `apps/web/src/inspector/TablesView.tsx` `SOURCE_TITLE`: two entries, in original wording. Nothing writes either
+  value before the item that implements it.
+- **R2.** `TraceEvent` `'frameQueued'` [S20] is added in W0. The authorised stub is one case in
+  `apps/web/src/simmode/sim-events-client.ts` (a label only, no behaviour), together with the entry that the exhaustive
+  `TRACE_KIND_VOCAB` (`vocab/trace-kinds.ts`, a W0 stub file) needs. Only the [S20] held queue (W3) emits the kind.
+  The typed records `SAMPLE` and `EXPECTED_BY_KIND` of `timeline.lanes.test.ts` gain the kind, in no lane (`laneOf`
+  is unchanged).
+- **R3.** `PortEncap` `'tunnel'` [S18] is added in W0. The authorised stub is one entry in `device/pipeline.ts`
+  `ENCAP_ALLOWS` (no framing accepted). The exhaustive switch of `capture/tap.ts` `captureLinkForEncap` also needs a
+  case, which returns `raw`, as for `'none'`; the [S18] capture owner confirms it. No port carries the value before
+  the [S18] item derives `TUNNEL_FAMILY`. W0 migration: `device.pipeline.roles.test.ts:161` pins the exact record
+  with `tunnel: []` added (still `toEqual`).
+- **R4.** `FramingProto` `'ppp'`, `MediumOp` `'ppp-link'` and `CaptureLinkType` `'ppp_hdlc'` [S19] are NOT added in W0.
+  They land with the [S19] items that write the PPP framing (`FRAMING_RULES`), the link (`link/link.ts` `mediumOp`) and
+  the capture code (`capture/tap.ts`).
+- **R5.** The `HostAppRequest` traffic apps (M13) and the [S32] apps are NOT added in W0. Each lands with the W2/W3
+  sim item that adds its `HOST_APP_PROCESS` row.
+- **R6.** The FIFO congestion view is named `PortSnapshot.txBacklog?: PortTxQueueView` (optional by meaning). The
+  required P0 member `txQueue: number` is untouched, so neither `goldens/accept.p05.p0-sequences.json` nor the P1
+  digests move. This brief says `txBacklog` everywhere it meant the new data (D16, §1.1, §2.8, §2.14, §2.15, §3.5,
+  §4.3, §4.6, §6, §7, §8.1, §9, §10, §13). Both digest normalisers (§4.6 item 2) remove `txBacklog` and keep `txQueue`.
+- **R7.** Schema 1.3: W0 declares only `TOPOLOGY_SCHEMA_ID_1_3` (and, types only, `Topology.profile` 'P3' and [S32]
+  `TopologyDevice.files`). The W1 io item adds the id to `TOPOLOGY_SCHEMA_IDS`, `LATEST_TOPOLOGY_SCHEMA_ID` and
+  `schemaIdFor`, as a reviewed additive edit of `contracts/topology.ts`.
+- **R8.** Pure helpers in contract files land in W1 with their owners, as reviewed additive edits: `contracts/clock.ts`
+  `formatClock`, `ntpTimestamp` and `fromNtpTimestamp` (the W1 core/svc clock item), and `contracts/lab-document.ts`
+  `labDocumentOf` and `scenarioOf` (the [S37] item). W0 stays types only.
+- **R9.** Accepted as built:
+  - `LabDocument.tasks` is `LabTask[]`, and faults keep their `at`.
+  - The `acl.check` family is `4` only.
+  - `CONCEPT_TOOLS` is not extended in W0. Each tool lands with its item, which then migrates
+    `concept.views.test.ts:171` (the exact list gains that tool).
+  - The table descriptors have no past-timestamp columns.
+  - `CAPABILITY_PROCESSES` gains `programmable: []`.
+  - W0 migration: `vocab.test.ts`'s exact FSM machine list (`state-machine vocabulary [S14]`) grows by the ten P3
+    machines of item 1 (`ospf-if`, `ospf-nbr`, `ntp`, `tunnel`, `ppp-lcp`, `ppp-auth`, `ppp-ncp`, `eigrp-nbr`,
+    `eigrp-route`, `ike`). It is still an exact array compared with `toEqual`. This replaces "`vocab.test.ts`
+    assertions unchanged" in item 1 for that one list.
+- **R10.** Open item for W1: the [S13] owner specifies how a remote CLI session's output reaches the vty daemon.
+- **R11.** (W0 close-out, architect, 2026-09-30.) The 18 P3 field tables live in `P3_PROTO_FIELDS`
+  (`contracts/fields.ts`), which nothing reads, so NetScope's display filter in P1/P2 worlds is unchanged in W0; each
+  W1 **pdu** codec item moves its protocol's table into `PROTO_FIELDS` in the same change as its codec, registry and
+  dispatch lines (§2.3, §7 W1 pdu).
+- **R12.** (W0 close-out.) R2's exhaustive `TRACE_KIND_VOCAB` entry makes a "Queued" chip (count 0) appear among the
+  simulation-mode filter chips in every world — a web-only change, accepted; engine bytes are untouched.
+- **R13.** (W0 close-out.) The first W0 recording of `p2-profile-digests.json` stripped each port's P0 frame count
+  `txQueue`, which §4.6 does not ask for. The harness keeps that deletion behind the transitional
+  `GOLDEN_STRIPS_TX_QUEUE = true` so the tree stays green. Re-recording the four digest shards' snapshot hashes with
+  the constant `false` (only `snapshot` / `snapshotParts` may move) is an architect action that needs the product
+  owner's permission in this environment; until then the P2 golden does not see transmit-queue changes (the P1
+  golden, which keeps `txQueue`, still does). It must be done before the W2 items that touch transmit accounting.
 
 **W1**
 
@@ -4552,7 +4609,7 @@ stay listed as the designs of their stage and must not exist as files in P3a.
 | `accept.p3.device-access.test.ts` (W4) | On a router and on a switch: key generation refused without a hostname or a domain name (exact messages); with both, `show ip ssh` reports version 2 and the key size; `username admin privilege 15 secret …` works with `login local`; `transport input ssh`, `login local` and `access-class 10 in` (a list defined on the switch) round-trip through export, reload and the clone; the `ssh.*` and `vty.*` facts read them. |
 | `accept.p3.dhcp-snooping.test.ts` (W4) | §3.4 steps 1–5: exact drops and the binding row; rate-limit err-disable from an injected burst (`test/inject.ts`) and recovery (`runFor`); the grader clone rebuilds bindings and a connectivity check through an inspected port passes. |
 | `accept.p3.dai.test.ts` (W4) | §3.4 steps 6–8: the spoofed ARP dropped and the victim's cache unchanged; the statistics row; a static host dropped until a static binding exists; 16 injected ARPs in one second → err-disable. |
-| `accept.p3.qos-marking.test.ts` (W4) | §3.5 with bounded flows: the voice datagram's provenance at R1 is exactly `QosMark ipv4.dscp 0→46` (cause `policy-map MARK class VOIP set dscp ef`), `ChecksumRecompute`, `FcsRecompute`; data datagrams are not rewritten; a flooded frame for another MAC is neither classified nor counted; editing VOICE-PORTS changes the next datagram's class; an output `set cos 5` on a subinterface records `dot1q.pcp` on the pushed tag; `service-policy` on an SVI is refused with `qosPortUnsupported`; `show policy-map interface` counts equal the trace counts; under `runFor` the receiver's `flows` row (`where {src, flow, dscp: 46}`) shows voice delay > 1 s within 30 s, `queue-full` drops on the FIFO link and `PortSnapshot.txQueue` at R1 Se0/0/0 with depth > 8 and 8 summaries; 3 runs byte-identical. |
+| `accept.p3.qos-marking.test.ts` (W4) | §3.5 with bounded flows: the voice datagram's provenance at R1 is exactly `QosMark ipv4.dscp 0→46` (cause `policy-map MARK class VOIP set dscp ef`), `ChecksumRecompute`, `FcsRecompute`; data datagrams are not rewritten; a flooded frame for another MAC is neither classified nor counted; editing VOICE-PORTS changes the next datagram's class; an output `set cos 5` on a subinterface records `dot1q.pcp` on the pushed tag; `service-policy` on an SVI is refused with `qosPortUnsupported`; `show policy-map interface` counts equal the trace counts; under `runFor` the receiver's `flows` row (`where {src, flow, dscp: 46}`) shows voice delay > 1 s within 30 s, `queue-full` drops on the FIFO link and `PortSnapshot.txBacklog` at R1 Se0/0/0 with depth > 8 and 8 summaries; 3 runs byte-identical. |
 | `accept.p3.traffic-bounded.test.ts` (W4) | Caps enforced (8 flows per device, 2 Mb/s and 1000 pps per flow, 300 s per flow, refused with exact messages); a bounded flow holds `runToIdle` until its last datagram and no longer; an uncongested or finished flow does not hold it; a continuous flow stops at `TRAFFIC_MAX_DURATION_MS` (`runFor`); the receiver's final `flows` write comes 1 s after its last datagram, and tail losses are counted when the final datagram arrives; a datagram without the traffic header to a closed port still draws port unreachable, on any host. |
 | `accept.p3.cdp.test.ts` (W4) | §3.6: both rows within link-up + propagation with exact fields, the router's row received on its routed port (also with a native subinterface); hold counts down; aged at last update + 180 s ± 1 ms behind an unmanaged switch; link-down deletes the row; `no cdp enable` and `no cdp run` behave as specified; NF-AP-1832 bridges CDP and has no row; `runToIdle` returns in fewer than 5 000 events. |
 | `accept.p3.lldp.test.ts` (W4) | The IEEE byte golden (chassis subtype 4, port subtype 5, TTL 120, end TLV); the 30 s interval; transmit/receive asymmetry; never bridged by a VLAN-aware switch; dropped with `lldp is not running on this device` at the controller; bridged by a transparent one. |
@@ -4594,8 +4651,8 @@ stay listed as the designs of their stage and must not exist as files in P3a.
 
 ### 10.2 Web acceptance (`apps/web/test/`)
 
-- `overlays.qos-model.test.ts`: a port whose `PortSnapshot.txQueue` holds three frames draws three capsules in `txStart`
-  order; with depth 12 (8 summaries) it draws 8 and `+4`; no `txQueue` draws nothing; the load sleeve fraction for a
+- `overlays.qos-model.test.ts`: a port whose `PortSnapshot.txBacklog` holds three frames draws three capsules in `txStart`
+  order; with depth 12 (8 summaries) it draws 8 and `+4`; no `txBacklog` draws nothing; the load sleeve fraction for a
   saturated 128 kb/s link is 1.0; DSCP letters from the frames' summaries.
 - `concept.queueing.test.ts`: for one arrival list, the web model's departures equal `core/queueing.ts` exactly for
   FIFO, WFQ (flow DRR), CBWFQ and LLQ; every step's sentence is text.
@@ -4930,7 +4987,7 @@ goldens), T28 = P9 (course-profile pin), T39 = P2 (`show errdisable recovery`).
   `settleMs` guidance and the acceptance rows are recomputed: routes at link-up + 15 s on point-to-point links (the
   neighbour's re-originated LSA reaches the SPF only at its next run, which the fixed order cannot change), failover at
   T + 5 s, restore at T2 + 15 s for T2 ≥ T + 30 s, the LAN still at U + 45 s + ε; 60 s settle covers every case.
-- **T5 [medium] The FIFO view had no data source — accepted, option one.** `PortSnapshot.txQueue` (optional by meaning:
+- **T5 [medium] The FIFO view had no data source — accepted, option one.** `PortSnapshot.txBacklog` (optional by meaning:
   depth plus up to 8 frame summaries, written only while a backlog exists, filled from the in-flight store's new
   `queued(ref, now)`, normalised away in the goldens) is the overlay's only source; D24 holds; `reconcileInflight` is
   unchanged (D16, §2.8, §3.5, §6, §10.2).

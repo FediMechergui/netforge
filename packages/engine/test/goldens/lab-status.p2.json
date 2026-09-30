@@ -1,0 +1,6070 @@
+{
+  "about": "Lab status of every CCNA 1 and CCNA 2 lab (ARCHITECTURE-P3 D3, D5, §10.1 accept.p3.lab-status), recorded from the unchanged engine at commit 5263f16 before any P3 code: the evaluateLab status, with every detail string, unsolved at 60 s and solved at 710 s (the reference solution applied at 60 s). Change it only as §9.4 allows, by re-recording with NF_RECORD_LAB_STATUS.",
+  "script": {
+    "unsolvedAtS": 60,
+    "solvedAtS": 710
+  },
+  "labs": {
+    "ccna1-switched-lan": {
+      "unsolved": {
+        "lab": "ccna1-switched-lan",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 40,
+        "results": [
+          {
+            "task": "pc1-address",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "PC1 GigabitEthernet0 has no IPv4 address."
+              }
+            ]
+          },
+          {
+            "task": "pc2-address",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "PC2 GigabitEthernet0 has no IPv4 address."
+              }
+            ]
+          },
+          {
+            "task": "switch-name",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "SW1 hostname is \"SW1\", expected \"LAB-SW1\"."
+              }
+            ]
+          },
+          {
+            "task": "lan-reachable",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "PC2 has no IPv4 address to be reached at."
+              }
+            ]
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna1-switched-lan",
+        "checkedAt": 710000000000,
+        "score": 40,
+        "total": 40,
+        "results": [
+          {
+            "task": "pc1-address",
+            "pass": true,
+            "points": 10,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "pc2-address",
+            "pass": true,
+            "points": 10,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "switch-name",
+            "pass": true,
+            "points": 5,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "lan-reachable",
+            "pass": true,
+            "points": 15,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "ccna1-default-gateway": {
+      "unsolved": {
+        "lab": "ccna1-default-gateway",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 40,
+        "results": [
+          {
+            "task": "pc1-address",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "PC1 GigabitEthernet0 has no IPv4 address."
+              }
+            ]
+          },
+          {
+            "task": "pc1-gateway",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "PC1 has no configuration line at ip.default-gateway."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "The rib table of PC1 has no row with network=0.0.0.0 source=S."
+              }
+            ]
+          },
+          {
+            "task": "reach-gateway",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "PC1 got no reply from 192.168.20.1 (0 echo requests sent)."
+              }
+            ]
+          },
+          {
+            "task": "reach-remote",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "PC1 got no reply from 192.168.21.10 (0 echo requests sent)."
+              }
+            ]
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna1-default-gateway",
+        "checkedAt": 710000000000,
+        "score": 40,
+        "total": 40,
+        "results": [
+          {
+            "task": "pc1-address",
+            "pass": true,
+            "points": 10,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "pc1-gateway",
+            "pass": true,
+            "points": 10,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "reach-gateway",
+            "pass": true,
+            "points": 5,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "reach-remote",
+            "pass": true,
+            "points": 15,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "ccna1-device-hardening": {
+      "unsolved": {
+        "lab": "ccna1-device-hardening",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 50,
+        "results": [
+          {
+            "task": "hostname",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "SW1 hostname is \"SW1\", expected \"LAB-ACCESS1\"."
+              }
+            ]
+          },
+          {
+            "task": "enable-secret",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "SW1 has no configuration line at enable.secret."
+              }
+            ]
+          },
+          {
+            "task": "console-login",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "SW1 has no configuration line at line.con.0.password."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "SW1 has no configuration line at line.con.0.login."
+              }
+            ]
+          },
+          {
+            "task": "banner",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "SW1 has no configuration line at banner.motd."
+              }
+            ]
+          },
+          {
+            "task": "management",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "SW1 Vlan1 has no IPv4 address."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "SW1 Vlan1 operUp is false, expected true."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "SW1 has no configuration line at ip.default-gateway."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "SW1 has no IPv4 address to be reached at."
+              }
+            ]
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna1-device-hardening",
+        "checkedAt": 710000000000,
+        "score": 50,
+        "total": 50,
+        "results": [
+          {
+            "task": "hostname",
+            "pass": true,
+            "points": 5,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "enable-secret",
+            "pass": true,
+            "points": 10,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "console-login",
+            "pass": true,
+            "points": 10,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "banner",
+            "pass": true,
+            "points": 5,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "management",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "ccna1-subnetting-plan": {
+      "unsolved": {
+        "lab": "ccna1-subnetting-plan",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 75,
+        "results": [
+          {
+            "task": "router-subnet1",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 GigabitEthernet0/0 has no IPv4 address."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R1 GigabitEthernet0/0 operUp is false, expected true."
+              }
+            ]
+          },
+          {
+            "task": "router-subnet2",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 GigabitEthernet0/1 has no IPv4 address."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R1 GigabitEthernet0/1 operUp is false, expected true."
+              }
+            ]
+          },
+          {
+            "task": "hosts-subnet1",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "PC1 GigabitEthernet0 has no IPv4 address."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "PC2 GigabitEthernet0 has no IPv4 address."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "PC2 has no IPv4 address to be reached at."
+              }
+            ]
+          },
+          {
+            "task": "across-subnets",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "PC3 GigabitEthernet0 has no IPv4 address."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "PC3 has no IPv4 address to be reached at."
+              }
+            ]
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna1-subnetting-plan",
+        "checkedAt": 710000000000,
+        "score": 75,
+        "total": 75,
+        "results": [
+          {
+            "task": "router-subnet1",
+            "pass": true,
+            "points": 15,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "router-subnet2",
+            "pass": true,
+            "points": 15,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "hosts-subnet1",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "across-subnets",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "ccna1-two-subnets": {
+      "unsolved": {
+        "lab": "ccna1-two-subnets",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 60,
+        "results": [
+          {
+            "task": "left-interface",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 GigabitEthernet0/0 has no IPv4 address."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R1 GigabitEthernet0/0 operUp is false, expected true."
+              }
+            ]
+          },
+          {
+            "task": "right-interface",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 GigabitEthernet0/1 has no IPv4 address."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R1 GigabitEthernet0/1 operUp is false, expected true."
+              }
+            ]
+          },
+          {
+            "task": "connected-routes",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "The rib table of R1 has no row with network=192.168.11.0 source=C."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "The rib table of R1 has no row with network=192.168.12.0 source=C."
+              }
+            ]
+          },
+          {
+            "task": "end-to-end",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "PC1 got no reply from 192.168.12.10 (2 echo requests sent)."
+              }
+            ]
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna1-two-subnets",
+        "checkedAt": 710000000000,
+        "score": 60,
+        "total": 60,
+        "results": [
+          {
+            "task": "left-interface",
+            "pass": true,
+            "points": 15,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "right-interface",
+            "pass": true,
+            "points": 15,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "connected-routes",
+            "pass": true,
+            "points": 10,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "end-to-end",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "ccna1-static-routes": {
+      "unsolved": {
+        "lab": "ccna1-static-routes",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 75,
+        "results": [
+          {
+            "task": "r1-routes",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "The rib table of R1 has no row with network=10.3.0.0 source=S nextHop=10.0.12.2."
+              }
+            ]
+          },
+          {
+            "task": "r2-routes",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "The rib table of R2 has no row with network=10.1.0.0 source=S nextHop=10.0.12.1."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "The rib table of R2 has no row with network=10.3.0.0 source=S nextHop=10.0.23.2."
+              }
+            ]
+          },
+          {
+            "task": "r3-routes",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "The rib table of R3 has no row with network=10.1.0.0 source=S nextHop=10.0.23.1."
+              }
+            ]
+          },
+          {
+            "task": "end-to-end",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "PC1 got no reply from 10.3.0.10 (2 echo requests sent)."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "PC3 got no reply from 10.1.0.10 (2 echo requests sent)."
+              }
+            ]
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna1-static-routes",
+        "checkedAt": 710000000000,
+        "score": 75,
+        "total": 75,
+        "results": [
+          {
+            "task": "r1-routes",
+            "pass": true,
+            "points": 15,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "r2-routes",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "r3-routes",
+            "pass": true,
+            "points": 15,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "end-to-end",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "ccna1-traceroute-path": {
+      "unsolved": {
+        "lab": "ccna1-traceroute-path",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 70,
+        "results": [
+          {
+            "task": "wrong-route-gone",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "The rib table of R2 still has a row with network=10.3.0.0 nextHop=10.0.12.1."
+              }
+            ]
+          },
+          {
+            "task": "right-route",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "The rib table of R2 has no row with network=10.3.0.0 source=S nextHop=10.0.23.2."
+              }
+            ]
+          },
+          {
+            "task": "path-complete",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "PC1 got no reply from 10.3.0.10 (2 echo requests sent)."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "PC3 got no reply from 10.1.0.10 (2 echo requests sent)."
+              }
+            ]
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna1-traceroute-path",
+        "checkedAt": 710000000000,
+        "score": 70,
+        "total": 70,
+        "results": [
+          {
+            "task": "wrong-route-gone",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "right-route",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "path-complete",
+            "pass": true,
+            "points": 30,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "ccna1-dhcpv4-server": {
+      "unsolved": {
+        "lab": "ccna1-dhcpv4-server",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 75,
+        "results": [
+          {
+            "task": "excluded",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 has no configuration line at ip.dhcp.excluded-address."
+              }
+            ]
+          },
+          {
+            "task": "pool",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 has no configuration line at ip.dhcp.pool.LAN15.network."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R1 has no configuration line at ip.dhcp.pool.LAN15.default-router."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "R1 has no configuration line at ip.dhcp.pool.LAN15.domain-name."
+              }
+            ]
+          },
+          {
+            "task": "leases",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "PC1 dhcp-client clients.iface=GigabitEthernet0.state is not set, expected BOUND."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "PC2 dhcp-client clients.iface=GigabitEthernet0.state is not set, expected BOUND."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "The dhcp-bindings table of R1 has no row with pool=LAN15 state=bound hostname=PC1."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "The dhcp-bindings table of R1 has no row with pool=LAN15 state=bound hostname=PC2."
+              },
+              {
+                "index": 4,
+                "pass": false,
+                "detail": "The retained trace holds 0 matching events, expected at least 4."
+              }
+            ]
+          },
+          {
+            "task": "reachable",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "PC1 got no reply from 192.168.15.1 (0 echo requests sent)."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "PC2 has no IPv4 address to be reached at."
+              }
+            ]
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna1-dhcpv4-server",
+        "checkedAt": 710000000000,
+        "score": 75,
+        "total": 75,
+        "results": [
+          {
+            "task": "excluded",
+            "pass": true,
+            "points": 10,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "pool",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "leases",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              },
+              {
+                "index": 4,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "reachable",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "ccna1-dhcp-relay": {
+      "unsolved": {
+        "lab": "ccna1-dhcp-relay",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 85,
+        "results": [
+          {
+            "task": "central-pool",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R2 has no configuration line at ip.dhcp.pool.BRANCH16.network."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R2 has no configuration line at ip.dhcp.pool.BRANCH16.default-router."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "R2 has no configuration line at ip.dhcp.excluded-address."
+              }
+            ]
+          },
+          {
+            "task": "helper",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 has no configuration line at interface.GigabitEthernet0/0.ip.helper-address."
+              }
+            ]
+          },
+          {
+            "task": "relayed-leases",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "PC1 dhcp-client clients.iface=GigabitEthernet0.state is not set, expected BOUND."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "PC2 dhcp-client clients.iface=GigabitEthernet0.state is not set, expected BOUND."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "The dhcp-bindings table of R2 has no row with pool=BRANCH16 state=bound relay=192.168.16.1."
+              }
+            ]
+          },
+          {
+            "task": "reachable",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "PC1 got no reply from 10.10.0.2 (0 echo requests sent)."
+              }
+            ]
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna1-dhcp-relay",
+        "checkedAt": 710000000000,
+        "score": 85,
+        "total": 85,
+        "results": [
+          {
+            "task": "central-pool",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "helper",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "relayed-leases",
+            "pass": true,
+            "points": 30,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "reachable",
+            "pass": true,
+            "points": 15,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "ccna1-dns-records": {
+      "unsolved": {
+        "lab": "ccna1-dns-records",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 80,
+        "results": [
+          {
+            "task": "service-on",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "SRV1 dns-server enabled is false, expected true."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "The sockets table of SRV1 has no row with proto=udp localPort=53."
+              }
+            ]
+          },
+          {
+            "task": "records",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "SRV1 has no configuration line at ip.dns.record."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "SRV1 has no configuration line at ip.dns.record."
+              }
+            ]
+          },
+          {
+            "task": "client",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "PC1 has no configuration line at ip.name-server."
+              }
+            ]
+          },
+          {
+            "task": "resolve",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "PC1 got no reply from www.lab.nf (0 echo requests sent)."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "PC1 got no reply from files.lab.nf (0 echo requests sent)."
+              }
+            ]
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna1-dns-records",
+        "checkedAt": 710000000000,
+        "score": 80,
+        "total": 80,
+        "results": [
+          {
+            "task": "service-on",
+            "pass": true,
+            "points": 15,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "records",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "client",
+            "pass": true,
+            "points": 15,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "resolve",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "ccna1-web-server": {
+      "unsolved": {
+        "lab": "ccna1-web-server",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 85,
+        "results": [
+          {
+            "task": "web-service",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "SRV1 http-server enabled is false, expected true."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "The sockets table of SRV1 has no row with proto=tcp localPort=80 state=LISTEN."
+              }
+            ]
+          },
+          {
+            "task": "page",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "SRV1 http-server pages.0.path is not set, expected /index.html."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "SRV1 has no configuration line at ip.http.page."
+              }
+            ]
+          },
+          {
+            "task": "name",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "SRV1 dns-server enabled is false, expected true."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "SRV1 has no configuration line at ip.dns.record."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "PC1 has no configuration line at ip.name-server."
+              }
+            ]
+          },
+          {
+            "task": "reachable",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "PC1 got no reply from www.lab.nf (0 echo requests sent)."
+              }
+            ]
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna1-web-server",
+        "checkedAt": 710000000000,
+        "score": 85,
+        "total": 85,
+        "results": [
+          {
+            "task": "web-service",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "page",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "name",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "reachable",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "ccna1-ipv6-slaac": {
+      "unsolved": {
+        "lab": "ccna1-ipv6-slaac",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 100,
+        "results": [
+          {
+            "task": "forwarding",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 has no configuration line at ipv6.unicast-routing."
+              }
+            ]
+          },
+          {
+            "task": "prefixes",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 GigabitEthernet0/0 has no IPv6 address, expected 2001:db8:1::1."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R1 GigabitEthernet0/1 has no IPv6 address, expected 2001:db8:2::1."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "R1 GigabitEthernet0/0 operUp is false, expected true."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "R1 GigabitEthernet0/1 operUp is false, expected true."
+              }
+            ]
+          },
+          {
+            "task": "host-addresses",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "The rib6 table of PC1 has no row with network=2001:db8:1:: prefixLen=64 source=C."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "The rib6 table of PC1 has no row with network=:: source=ND."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "The nd table of PC1 has no row with isRouter=true."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "The rib6 table of PC2 has no row with network=2001:db8:2:: prefixLen=64 source=C."
+              }
+            ]
+          },
+          {
+            "task": "both-lans-ready",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "PC1 ipv6 interfaces.0.addresses.1.origin is not set, expected slaac."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "PC2 ipv6 interfaces.0.addresses.1.origin is not set, expected slaac."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "The rib6 table of PC2 has no row with network=:: source=ND."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "R1 ipv6 forwarding is false, expected true."
+              },
+              {
+                "index": 4,
+                "pass": false,
+                "detail": "The retained trace holds 0 matching events, expected at least 1."
+              }
+            ]
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna1-ipv6-slaac",
+        "checkedAt": 710000000000,
+        "score": 100,
+        "total": 100,
+        "results": [
+          {
+            "task": "forwarding",
+            "pass": true,
+            "points": 15,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "prefixes",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "host-addresses",
+            "pass": true,
+            "points": 30,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "both-lans-ready",
+            "pass": true,
+            "points": 30,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              },
+              {
+                "index": 4,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "ccna1-home-wifi": {
+      "unsolved": {
+        "lab": "ccna1-home-wifi",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 90,
+        "results": [
+          {
+            "task": "wireless-network",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "HOME1 has no configuration line at interface.Wlan0.ssid."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "HOME1 has no configuration line at interface.Wlan0.security."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "HOME1 has no configuration line at interface.Wlan0.passphrase."
+              }
+            ]
+          },
+          {
+            "task": "address-pool",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "HOME1 has no configuration line at ip.dhcp.pool.HOME.network."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "HOME1 has no configuration line at ip.dhcp.pool.HOME.default-router."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "HOME1 has no configuration line at ip.dhcp.excluded-address."
+              }
+            ]
+          },
+          {
+            "task": "joined",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "LAPTOP1 has no configuration line at interface.Wlan0.ssid."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "LAPTOP1 Wlan0 operUp is false, expected true."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "The dot11-assoc table of HOME1 has no row with ssid=HOMELAB state=associated."
+              }
+            ]
+          },
+          {
+            "task": "wireless-lease",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "LAPTOP1 dhcp-client clients.iface=Wlan0.state is not set, expected BOUND."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "LAPTOP1 got no reply from 192.168.1.10 (0 echo requests sent)."
+              }
+            ]
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna1-home-wifi",
+        "checkedAt": 710000000000,
+        "score": 90,
+        "total": 90,
+        "results": [
+          {
+            "task": "wireless-network",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "address-pool",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "joined",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "wireless-lease",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "ccna1-troubleshoot-addressing": {
+      "unsolved": {
+        "lab": "ccna1-troubleshoot-addressing",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 100,
+        "results": [
+          {
+            "task": "mask",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "PC2 GigabitEthernet0 has 192.168.30.80/26, expected 192.168.30.80/24."
+              }
+            ]
+          },
+          {
+            "task": "gateway",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "PC1 ip.default-gateway is \"192.168.30.9\", expected \"192.168.30.1\"."
+              }
+            ]
+          },
+          {
+            "task": "local",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "PC2 got no reply from 192.168.30.10 (2 echo requests sent)."
+              }
+            ]
+          },
+          {
+            "task": "remote",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "PC1 got no reply from 192.168.31.10 (2 echo requests sent)."
+              }
+            ]
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna1-troubleshoot-addressing",
+        "checkedAt": 710000000000,
+        "score": 100,
+        "total": 100,
+        "results": [
+          {
+            "task": "mask",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "gateway",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "local",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "remote",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "ccna1-troubleshoot-ports": {
+      "unsolved": {
+        "lab": "ccna1-troubleshoot-ports",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 100,
+        "results": [
+          {
+            "task": "enable-port",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "SW1 FastEthernet0/2 adminUp is false, expected true."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "The link between PC2 and SW1 is down (admin-down:b)."
+              }
+            ]
+          },
+          {
+            "task": "negotiate",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "SW1 interface.FastEthernet0/1.duplex is \"full\", expected \"auto\"."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "SW1 interface.FastEthernet0/1.speed is \"100\", expected \"auto\"."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "PC1 GigabitEthernet0 duplex is half, expected full."
+              }
+            ]
+          },
+          {
+            "task": "lan-healthy",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "PC1 got no reply from 192.168.35.12 (2 echo requests sent)."
+              }
+            ]
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna1-troubleshoot-ports",
+        "checkedAt": 710000000000,
+        "score": 100,
+        "total": 100,
+        "results": [
+          {
+            "task": "enable-port",
+            "pass": true,
+            "points": 30,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "negotiate",
+            "pass": true,
+            "points": 35,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "lan-healthy",
+            "pass": true,
+            "points": 35,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "ccna2-switch-management": {
+      "unsolved": {
+        "lab": "ccna2-switch-management",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 75,
+        "results": [
+          {
+            "task": "management-address",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "SW1 has no interface called Vlan99."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "SW1 has no interface called Vlan99."
+              }
+            ]
+          },
+          {
+            "task": "bench-reach",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "SW1 has no IPv4 address to be reached at."
+              }
+            ]
+          },
+          {
+            "task": "default-gateway",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "SW1 has no configuration line at ip.default-gateway."
+              }
+            ]
+          },
+          {
+            "task": "remote-reach",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "SW1 has no IPv4 address to be reached at."
+              }
+            ]
+          },
+          {
+            "task": "remote-login",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "SW1 has no configuration line at username.netadmin."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "SW1 has no configuration line at line.vty.login."
+              }
+            ]
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna2-switch-management",
+        "checkedAt": 710000000000,
+        "score": 75,
+        "total": 75,
+        "results": [
+          {
+            "task": "management-address",
+            "pass": true,
+            "points": 15,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "bench-reach",
+            "pass": true,
+            "points": 10,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "default-gateway",
+            "pass": true,
+            "points": 15,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "remote-reach",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "remote-login",
+            "pass": true,
+            "points": 15,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "ccna2-vlan-access-ports": {
+      "unsolved": {
+        "lab": "ccna2-vlan-access-ports",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 80,
+        "results": [
+          {
+            "task": "create-vlans",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "VLAN 10 does not exist on SW1."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "VLAN 20 does not exist on SW1."
+              }
+            ]
+          },
+          {
+            "task": "sales-ports",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "SW1 FastEthernet0/1 is in mode dynamic auto, expected access; has access VLAN 1, expected 10."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "SW1 FastEthernet0/2 is in mode dynamic auto, expected access; has access VLAN 1, expected 10."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "VLAN 10 does not exist on SW1."
+              },
+              {
+                "index": 3,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "staff-ports",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "SW1 FastEthernet0/3 is in mode dynamic auto, expected access; has access VLAN 1, expected 20."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "SW1 FastEthernet0/4 is in mode dynamic auto, expected access; has access VLAN 1, expected 20."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "VLAN 20 does not exist on SW1."
+              },
+              {
+                "index": 3,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "retire-project",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "VLAN 30 still exists on SW1."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "SW1 FastEthernet0/5 has access VLAN 30, expected 20."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "VLAN 20 does not exist on SW1."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "PC5 got no reply from 192.168.20.13 (2 echo requests sent)."
+              }
+            ]
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna2-vlan-access-ports",
+        "checkedAt": 710000000000,
+        "score": 80,
+        "total": 80,
+        "results": [
+          {
+            "task": "create-vlans",
+            "pass": true,
+            "points": 15,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "sales-ports",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "staff-ports",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "retire-project",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "ccna2-trunk-native-allowed": {
+      "unsolved": {
+        "lab": "ccna2-trunk-native-allowed",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 80,
+        "results": [
+          {
+            "task": "trunk-up",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "SW1 GigabitEthernet0/1 operates as access, expected trunk; is in mode dynamic auto, expected trunk."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "SW2 GigabitEthernet0/1 operates as access, expected trunk; is in mode dynamic auto, expected trunk."
+              }
+            ]
+          },
+          {
+            "task": "native-vlan",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "SW1 GigabitEthernet0/1 has native VLAN 1, expected 99."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "SW2 GigabitEthernet0/1 has native VLAN 1, expected 99."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "SW1 got no reply from 192.168.99.12 (0 echo requests sent)."
+              }
+            ]
+          },
+          {
+            "task": "allowed-list",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "SW1 GigabitEthernet0/1 carries VLANs 1,10,20,30,99,1002-1005 on its trunk (allowed and existing), expected 10,20,99."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "SW2 GigabitEthernet0/1 carries VLANs 1,10,20,30,99,1002-1005 on its trunk (allowed and existing), expected 10,20,99."
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "vlans-across",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "PC1 got no reply from 192.168.10.13 (2 echo requests sent)."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "PC2 got no reply from 192.168.20.14 (2 echo requests sent)."
+              }
+            ]
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna2-trunk-native-allowed",
+        "checkedAt": 710000000000,
+        "score": 80,
+        "total": 80,
+        "results": [
+          {
+            "task": "trunk-up",
+            "pass": true,
+            "points": 15,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "native-vlan",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "allowed-list",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "vlans-across",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "ccna2-dtp-modes": {
+      "unsolved": {
+        "lab": "ccna2-dtp-modes",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 80,
+        "results": [
+          {
+            "task": "negotiated-trunk",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "SW1 GigabitEthernet0/1 operates as access, expected trunk; is in mode dynamic auto, expected dynamic desirable."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "SW2 GigabitEthernet0/1 operates as access, expected trunk."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "PC1 got no reply from 192.168.10.12 (2 echo requests sent)."
+              }
+            ]
+          },
+          {
+            "task": "fixed-trunk",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "SW1 GigabitEthernet0/2 operates as access, expected trunk; is in mode dynamic auto, expected trunk."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "SW3 GigabitEthernet0/1 operates as access, expected trunk; is in mode dynamic auto, expected trunk."
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              },
+              {
+                "index": 4,
+                "pass": false,
+                "detail": "PC1 got no reply from 192.168.10.13 (2 echo requests sent)."
+              }
+            ]
+          },
+          {
+            "task": "refuse-trunk",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "SW1 FastEthernet0/24 operates as trunk, expected access; is in mode dynamic auto, expected access."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "The dtp table of SW1 still has a row with port=FastEthernet0/24."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "SW4 GigabitEthernet0/1 operates as trunk, expected access."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "PC4 reached 192.168.10.11 (2 of 2 replied), which this task expects to fail."
+              }
+            ]
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna2-dtp-modes",
+        "checkedAt": 710000000000,
+        "score": 80,
+        "total": 80,
+        "results": [
+          {
+            "task": "negotiated-trunk",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "fixed-trunk",
+            "pass": true,
+            "points": 30,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              },
+              {
+                "index": 4,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "refuse-trunk",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "ccna2-router-on-a-stick": {
+      "unsolved": {
+        "lab": "ccna2-router-on-a-stick",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 90,
+        "results": [
+          {
+            "task": "switch-trunk",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "SW1 GigabitEthernet0/1 is in mode dynamic auto, expected trunk; has native VLAN 1, expected 99."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "SW1 has no configuration line at interface.GigabitEthernet0/1.switchport.nonegotiate."
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "parent-up",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 GigabitEthernet0/0 adminUp is false, expected true."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R1 GigabitEthernet0/0 operUp is false, expected true."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "SW1 GigabitEthernet0/1 is down, expected it to operate as trunk."
+              }
+            ]
+          },
+          {
+            "task": "vlan-subinterfaces",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 has no interface called GigabitEthernet0/0.10."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R1 has no interface called GigabitEthernet0/0.10."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "R1 has no interface called GigabitEthernet0/0.20."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "R1 has no interface called GigabitEthernet0/0.20."
+              },
+              {
+                "index": 4,
+                "pass": false,
+                "detail": "R1 has no route to 192.168.10.10."
+              },
+              {
+                "index": 5,
+                "pass": false,
+                "detail": "R1 has no route to 192.168.20.10."
+              },
+              {
+                "index": 6,
+                "pass": false,
+                "detail": "PC1 got no reply from 172.16.1.1 (2 echo requests sent)."
+              },
+              {
+                "index": 7,
+                "pass": false,
+                "detail": "PC2 got no reply from 172.16.1.1 (2 echo requests sent)."
+              }
+            ]
+          },
+          {
+            "task": "native-subinterface",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 has no interface called GigabitEthernet0/0.99."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R1 has no interface called GigabitEthernet0/0.99."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "SW1 got no reply from 172.16.1.10 (0 echo requests sent)."
+              }
+            ]
+          },
+          {
+            "task": "routed",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "PC1 got no reply from 192.168.20.10 (2 echo requests sent)."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "PC2 got no reply from 172.16.1.10 (2 echo requests sent)."
+              }
+            ]
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna2-router-on-a-stick",
+        "checkedAt": 710000000000,
+        "score": 90,
+        "total": 90,
+        "results": [
+          {
+            "task": "switch-trunk",
+            "pass": true,
+            "points": 10,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "parent-up",
+            "pass": true,
+            "points": 10,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "vlan-subinterfaces",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              },
+              {
+                "index": 4,
+                "pass": true
+              },
+              {
+                "index": 5,
+                "pass": true
+              },
+              {
+                "index": 6,
+                "pass": true
+              },
+              {
+                "index": 7,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "native-subinterface",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "routed",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "ccna2-l3-switch-svis": {
+      "unsolved": {
+        "lab": "ccna2-l3-switch-svis",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 90,
+        "results": [
+          {
+            "task": "vlan-interfaces",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "MLS1 has no interface called Vlan10."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "MLS1 has no interface called Vlan10."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "MLS1 has no interface called Vlan20."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "MLS1 has no interface called Vlan20."
+              }
+            ]
+          },
+          {
+            "task": "ip-routing",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "MLS1 has no configuration line at ip.routing."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "MLS1 ipv4 forwarding is false, expected true."
+              }
+            ]
+          },
+          {
+            "task": "routed-uplink",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "MLS1 GigabitEthernet1/0/24 role is switched, expected routed."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "MLS1 GigabitEthernet1/0/24 has no IPv4 address."
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "MLS1 has no route to 172.16.1.10."
+              }
+            ]
+          },
+          {
+            "task": "relay",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "MLS1 has no configuration line at interface.Vlan10.ip.helper-address."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "MLS1 has no configuration line at interface.Vlan20.ip.helper-address."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "PC1 dhcp-client clients.iface=GigabitEthernet0.state is not set, expected BOUND."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "PC2 dhcp-client clients.iface=GigabitEthernet0.state is not set, expected BOUND."
+              },
+              {
+                "index": 4,
+                "pass": false,
+                "detail": "The dhcp-bindings table of R1 has no row with pool=SALES state=bound relay=192.168.10.1."
+              },
+              {
+                "index": 5,
+                "pass": false,
+                "detail": "The dhcp-bindings table of R1 has no row with pool=STAFF state=bound relay=192.168.20.1."
+              }
+            ]
+          },
+          {
+            "task": "end-to-end",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "PC2 has no IPv4 address to be reached at."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "PC2 got no reply from 172.16.1.10 (0 echo requests sent)."
+              }
+            ]
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna2-l3-switch-svis",
+        "checkedAt": 710000000000,
+        "score": 90,
+        "total": 90,
+        "results": [
+          {
+            "task": "vlan-interfaces",
+            "pass": true,
+            "points": 15,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "ip-routing",
+            "pass": true,
+            "points": 10,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "routed-uplink",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "relay",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              },
+              {
+                "index": 4,
+                "pass": true
+              },
+              {
+                "index": 5,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "end-to-end",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "ccna2-troubleshoot-vlans": {
+      "unsolved": {
+        "lab": "ccna2-troubleshoot-vlans",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 100,
+        "results": [
+          {
+            "task": "wrong-vlan",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "SW2 FastEthernet0/1 has access VLAN 20, expected 10."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "VLAN 10 on SW2 lists no port, expected Fa0/1."
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "PC3 got no reply from 192.168.10.11 (2 echo requests sent)."
+              }
+            ]
+          },
+          {
+            "task": "trunk-vlan",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "SW1 GigabitEthernet0/2 carries VLANs 10,30 on its trunk (allowed and existing), expected 10,20,30."
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "PC4 got no reply from 192.168.20.12 (2 echo requests sent)."
+              }
+            ]
+          },
+          {
+            "task": "subinterface",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 GigabitEthernet0/0.30 adminUp is false, expected true."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R1 GigabitEthernet0/0.30 operUp is false, expected true."
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "R1 has no route to 192.168.30.100."
+              },
+              {
+                "index": 4,
+                "pass": false,
+                "detail": "PC1 got no reply from 192.168.30.100 (2 echo requests sent)."
+              }
+            ]
+          },
+          {
+            "task": "every-vlan",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "PC3 got no reply from 192.168.30.100 (2 echo requests sent)."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "PC4 got no reply from 192.168.10.11 (2 echo requests sent)."
+              }
+            ]
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna2-troubleshoot-vlans",
+        "checkedAt": 710000000000,
+        "score": 100,
+        "total": 100,
+        "results": [
+          {
+            "task": "wrong-vlan",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "trunk-vlan",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "subinterface",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              },
+              {
+                "index": 4,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "every-vlan",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "ccna2-stp-root-placement": {
+      "unsolved": {
+        "lab": "ccna2-stp-root-placement",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 100,
+        "results": [
+          {
+            "task": "vlan10-root",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "DS1 (VLAN 10) is not the root bridge (the root is AS1)."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "AS1 (VLAN 10) sees AS1 as the root, expected DS1."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "DS2 (VLAN 10) sees AS1 as the root, expected DS1."
+              }
+            ]
+          },
+          {
+            "task": "vlan20-root",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "DS2 (VLAN 20) is not the root bridge (the root is AS1)."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "AS1 (VLAN 20) sees AS1 as the root, expected DS2."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "DS1 (VLAN 20) sees AS1 as the root, expected DS2."
+              }
+            ]
+          },
+          {
+            "task": "blocked-ports",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "AS1 (VLAN 10) has GigabitEthernet0/1 in role designated, expected root."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "AS1 (VLAN 10) has GigabitEthernet0/2 in role designated, expected alternate; has GigabitEthernet0/2 forwarding, expected blocking."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "AS1 (VLAN 20) has GigabitEthernet0/2 in role designated, expected root."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "AS1 (VLAN 20) has GigabitEthernet0/1 in role designated, expected alternate; has GigabitEthernet0/1 forwarding, expected blocking."
+              }
+            ]
+          },
+          {
+            "task": "backup-roots",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "DS1 (VLAN 10) is not the root bridge (the root is AS1)."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "DS2 (VLAN 20) is not the root bridge (the root is AS1)."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "After the ping from PC1: DS2 (VLAN 10) is not the root bridge (the root is AS1)."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "After the ping from PC2: DS1 (VLAN 20) is not the root bridge (the root is AS1)."
+              }
+            ]
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna2-stp-root-placement",
+        "checkedAt": 710000000000,
+        "score": 100,
+        "total": 100,
+        "results": [
+          {
+            "task": "vlan10-root",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "vlan20-root",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "blocked-ports",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "backup-roots",
+            "pass": true,
+            "points": 30,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "ccna2-rapid-stp": {
+      "unsolved": {
+        "lab": "ccna2-rapid-stp",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 100,
+        "results": [
+          {
+            "task": "sw1-rapid",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "SW1 (VLAN 1) runs pvst, expected rapid-pvst."
+              }
+            ]
+          },
+          {
+            "task": "sw2-rapid",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "SW2 (VLAN 1) runs pvst, expected rapid-pvst."
+              }
+            ]
+          },
+          {
+            "task": "no-fallback",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "The stp table of CORE1 has no row with vlan=1 port=GigabitEthernet1/0/1 protocol=rstp."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "The stp table of CORE1 has no row with vlan=1 port=GigabitEthernet1/0/2 protocol=rstp."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "The stp table of SW1 has no row with vlan=1 port=GigabitEthernet0/2 protocol=rstp."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "The stp table of SW2 has no row with vlan=1 port=GigabitEthernet0/2 protocol=rstp."
+              }
+            ]
+          },
+          {
+            "task": "fast-failover",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "PC1 got no reply from 192.168.15.12 (2 echo requests sent)."
+              }
+            ]
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna2-rapid-stp",
+        "checkedAt": 710000000000,
+        "score": 100,
+        "total": 100,
+        "results": [
+          {
+            "task": "sw1-rapid",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "sw2-rapid",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "no-fallback",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "fast-failover",
+            "pass": true,
+            "points": 40,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "ccna2-stp-guards": {
+      "unsolved": {
+        "lab": "ccna2-stp-guards",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 100,
+        "results": [
+          {
+            "task": "edge-ports",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "AS1 (VLAN 1) has FastEthernet0/1 not as an edge port, expected an edge port."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "AS1 (VLAN 1) has FastEthernet0/2 not as an edge port, expected an edge port."
+              }
+            ]
+          },
+          {
+            "task": "bpdu-guard",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "AS1 FastEthernet0/4 is not err-disabled, expected it to be (bpduguard)."
+              }
+            ]
+          },
+          {
+            "task": "root-guard",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "DS1 (VLAN 1) is not the root bridge (the root is DESK-SW)."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "AS1 (VLAN 1) sees DESK-SW as the root, expected DS1."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "The stp table of DS1 has no row with vlan=1 port=GigabitEthernet1/0/2 inconsistent=root."
+              }
+            ]
+          },
+          {
+            "task": "recover-port",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "AS1 FastEthernet0/3 is err-disabled (bpduguard), expected it to be working."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "AS1 FastEthernet0/3 operUp is false, expected true."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "PC3 got no reply from 192.168.16.100 (0 echo requests sent)."
+              }
+            ]
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna2-stp-guards",
+        "checkedAt": 710000000000,
+        "score": 100,
+        "total": 100,
+        "results": [
+          {
+            "task": "edge-ports",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "bpdu-guard",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "root-guard",
+            "pass": true,
+            "points": 30,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "recover-port",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "ccna2-etherchannel-lacp": {
+      "unsolved": {
+        "lab": "ccna2-etherchannel-lacp",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 100,
+        "results": [
+          {
+            "task": "lacp-active",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "SW1 has no port in channel group 1."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "The etherchannel table of SW1 has no row with port=GigabitEthernet0/1 group=1 mode=active."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "The etherchannel table of SW1 has no row with port=GigabitEthernet0/2 group=1 mode=active."
+              }
+            ]
+          },
+          {
+            "task": "fix-member",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "SW2 GigabitEthernet0/2 is in mode access, expected trunk."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "Channel group 1 of SW2 has GigabitEthernet0/1 individual (no LACP partner), expected bundled; has GigabitEthernet0/2 individual (no LACP partner), expected bundled."
+              }
+            ]
+          },
+          {
+            "task": "one-logical-link",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "SW1 has no port in channel group 1."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "Channel group 1 of SW2 has Port-channel1 down, expected up."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "SW1 has no interface called Port-channel1."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "The stp table of SW1 still has a row with port=GigabitEthernet0/1."
+              },
+              {
+                "index": 4,
+                "pass": false,
+                "detail": "The stp table of SW1 still has a row with port=GigabitEthernet0/2."
+              }
+            ]
+          },
+          {
+            "task": "load-balance",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "SW1 has no configuration line at port-channel.load-balance."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "SW2 has no configuration line at port-channel.load-balance."
+              }
+            ]
+          },
+          {
+            "task": "lose-a-cable",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "PC1 got no reply from 192.168.17.13 (2 echo requests sent)."
+              }
+            ]
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna2-etherchannel-lacp",
+        "checkedAt": 710000000000,
+        "score": 100,
+        "total": 100,
+        "results": [
+          {
+            "task": "lacp-active",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "fix-member",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "one-logical-link",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              },
+              {
+                "index": 4,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "load-balance",
+            "pass": true,
+            "points": 10,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "lose-a-cable",
+            "pass": true,
+            "points": 30,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "ccna2-dhcpv6": {
+      "unsolved": {
+        "lab": "ccna2-dhcpv6",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 100,
+        "results": [
+          {
+            "task": "stateless-pool",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 has no configuration line at ipv6.dhcp.pool.OFFICE.dns-server."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R1 has no configuration line at ipv6.dhcp.pool.OFFICE.domain-name."
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "stateless-office",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 has no configuration line at interface.GigabitEthernet0/0.ipv6.nd.other-config-flag."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "PC1 dhcpv6-client clients.iface=GigabitEthernet0.mode is not set, expected stateless."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "PC1 dhcpv6-client clients.iface=GigabitEthernet0.state is not set, expected bound."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "PC1 dns-client servers.0 is not set, expected 2001:db8:a::53."
+              },
+              {
+                "index": 4,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "stateful-pool",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 has no configuration line at ipv6.dhcp.pool.LAB.address."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R1 has no configuration line at ipv6.dhcp.pool.LAB.dns-server."
+              }
+            ]
+          },
+          {
+            "task": "stateful-lab",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 has no configuration line at interface.GigabitEthernet0/1.ipv6.nd.managed-config-flag."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "PC2 dhcpv6-client clients.iface=GigabitEthernet0.mode is not set, expected stateful."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "PC2 dhcpv6-client clients.iface=GigabitEthernet0.state is not set, expected bound."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "PC2 GigabitEthernet0 has fe80::e4:3eff:fe28:1c01/64, 2001:db8:b:0:e4:3eff:fe28:1c01/64, expected 2001:db8:b::2."
+              },
+              {
+                "index": 4,
+                "pass": false,
+                "detail": "The dhcpv6-bindings table of R1 has no row with pool=LAB address=2001:db8:b::2."
+              }
+            ]
+          },
+          {
+            "task": "cold-start",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "After the ping from PC2: The dhcpv6-bindings table of R1 has no row with pool=LAB address=2001:db8:b::2."
+              }
+            ]
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna2-dhcpv6",
+        "checkedAt": 710000000000,
+        "score": 100,
+        "total": 100,
+        "results": [
+          {
+            "task": "stateless-pool",
+            "pass": true,
+            "points": 15,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "stateless-office",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              },
+              {
+                "index": 4,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "stateful-pool",
+            "pass": true,
+            "points": 15,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "stateful-lab",
+            "pass": true,
+            "points": 30,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              },
+              {
+                "index": 4,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "cold-start",
+            "pass": true,
+            "points": 15,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "ccna2-hsrp-gateway": {
+      "unsolved": {
+        "lab": "ccna2-hsrp-gateway",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 100,
+        "results": [
+          {
+            "task": "join-group",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 GigabitEthernet0/0 has no standby group 10."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "The hsrp table of R1 has no row with iface=GigabitEthernet0/0 group=10 version=2."
+              }
+            ]
+          },
+          {
+            "task": "preferred-active",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 GigabitEthernet0/0 has no standby group 10."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "Standby group 10 on R2 GigabitEthernet0/0 is speak, expected standby."
+              }
+            ]
+          },
+          {
+            "task": "virtual-gateway",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "PC1 reaches 192.168.20.100 through 0.0.0.0/0 (S, distance 1, via 192.168.10.2, out GigabitEthernet0); expected next hop 192.168.10.1."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "PC2 reaches 192.168.20.100 through 0.0.0.0/0 (S, distance 1, via 192.168.10.2, out GigabitEthernet0); expected next hop 192.168.10.1."
+              }
+            ]
+          },
+          {
+            "task": "survive-failure",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "After the ping from PC1: R1 GigabitEthernet0/0 has no standby group 10."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "PC1 got no reply from 192.168.20.100 (2 echo requests sent)."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "PC2 got no reply from 192.168.20.100 (2 echo requests sent)."
+              }
+            ]
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna2-hsrp-gateway",
+        "checkedAt": 710000000000,
+        "score": 100,
+        "total": 100,
+        "results": [
+          {
+            "task": "join-group",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "preferred-active",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "virtual-gateway",
+            "pass": true,
+            "points": 15,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "survive-failure",
+            "pass": true,
+            "points": 40,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "ccna2-port-security": {
+      "unsolved": {
+        "lab": "ccna2-port-security",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 100,
+        "results": [
+          {
+            "task": "pin-pc1",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "Port security on SW1 FastEthernet0/1 is off."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "After the ping from PC1: Port security on SW1 FastEthernet0/1 is off."
+              }
+            ]
+          },
+          {
+            "task": "meeting-room",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "Port security on SW1 FastEthernet0/2 is off."
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "recover-pc4",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "SW1 FastEthernet0/3 is err-disabled (psecure-violation), expected it to be working."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "SW1 FastEthernet0/3 operUp is false, expected true."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "Port security on SW1 FastEthernet0/3 is secure-shutdown, expected secure-up."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "PC4 got no reply from 192.168.23.100 (0 echo requests sent)."
+              }
+            ]
+          },
+          {
+            "task": "unused-ports",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "SW1 FastEthernet0/4 adminUp is true, expected false."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "SW1 FastEthernet0/5 adminUp is true, expected false."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "SW1 FastEthernet0/6 adminUp is true, expected false."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "SW1 FastEthernet0/7 adminUp is true, expected false."
+              },
+              {
+                "index": 4,
+                "pass": false,
+                "detail": "SW1 FastEthernet0/8 adminUp is true, expected false."
+              },
+              {
+                "index": 5,
+                "pass": false,
+                "detail": "SW1 FastEthernet0/9 adminUp is true, expected false."
+              },
+              {
+                "index": 6,
+                "pass": false,
+                "detail": "SW1 FastEthernet0/10 adminUp is true, expected false."
+              },
+              {
+                "index": 7,
+                "pass": false,
+                "detail": "SW1 FastEthernet0/11 adminUp is true, expected false."
+              },
+              {
+                "index": 8,
+                "pass": false,
+                "detail": "SW1 FastEthernet0/12 adminUp is true, expected false."
+              },
+              {
+                "index": 9,
+                "pass": false,
+                "detail": "SW1 FastEthernet0/13 adminUp is true, expected false."
+              },
+              {
+                "index": 10,
+                "pass": false,
+                "detail": "SW1 FastEthernet0/14 adminUp is true, expected false."
+              },
+              {
+                "index": 11,
+                "pass": false,
+                "detail": "SW1 FastEthernet0/15 adminUp is true, expected false."
+              },
+              {
+                "index": 12,
+                "pass": false,
+                "detail": "SW1 FastEthernet0/16 adminUp is true, expected false."
+              },
+              {
+                "index": 13,
+                "pass": false,
+                "detail": "SW1 FastEthernet0/17 adminUp is true, expected false."
+              },
+              {
+                "index": 14,
+                "pass": false,
+                "detail": "SW1 FastEthernet0/18 adminUp is true, expected false."
+              },
+              {
+                "index": 15,
+                "pass": false,
+                "detail": "SW1 FastEthernet0/19 adminUp is true, expected false."
+              },
+              {
+                "index": 16,
+                "pass": false,
+                "detail": "SW1 FastEthernet0/20 adminUp is true, expected false."
+              },
+              {
+                "index": 17,
+                "pass": false,
+                "detail": "SW1 FastEthernet0/21 adminUp is true, expected false."
+              },
+              {
+                "index": 18,
+                "pass": false,
+                "detail": "SW1 FastEthernet0/22 adminUp is true, expected false."
+              },
+              {
+                "index": 19,
+                "pass": false,
+                "detail": "SW1 FastEthernet0/23 adminUp is true, expected false."
+              },
+              {
+                "index": 20,
+                "pass": false,
+                "detail": "SW1 FastEthernet0/24 adminUp is true, expected false."
+              },
+              {
+                "index": 21,
+                "pass": false,
+                "detail": "SW1 GigabitEthernet0/2 adminUp is true, expected false."
+              }
+            ]
+          },
+          {
+            "task": "native-vlan",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "VLAN 99 does not exist on SW1."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "VLAN 99 does not exist on SW2."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "SW1 GigabitEthernet0/1 has native VLAN 1, expected 99."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "SW2 GigabitEthernet0/1 has native VLAN 1, expected 99."
+              }
+            ]
+          },
+          {
+            "task": "no-negotiation",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "SW1 has no configuration line at interface.GigabitEthernet0/1.switchport.nonegotiate."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "SW2 has no configuration line at interface.GigabitEthernet0/1.switchport.nonegotiate."
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna2-port-security",
+        "checkedAt": 710000000000,
+        "score": 100,
+        "total": 100,
+        "results": [
+          {
+            "task": "pin-pc1",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "meeting-room",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "recover-pc4",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "unused-ports",
+            "pass": true,
+            "points": 10,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              },
+              {
+                "index": 4,
+                "pass": true
+              },
+              {
+                "index": 5,
+                "pass": true
+              },
+              {
+                "index": 6,
+                "pass": true
+              },
+              {
+                "index": 7,
+                "pass": true
+              },
+              {
+                "index": 8,
+                "pass": true
+              },
+              {
+                "index": 9,
+                "pass": true
+              },
+              {
+                "index": 10,
+                "pass": true
+              },
+              {
+                "index": 11,
+                "pass": true
+              },
+              {
+                "index": 12,
+                "pass": true
+              },
+              {
+                "index": 13,
+                "pass": true
+              },
+              {
+                "index": 14,
+                "pass": true
+              },
+              {
+                "index": 15,
+                "pass": true
+              },
+              {
+                "index": 16,
+                "pass": true
+              },
+              {
+                "index": 17,
+                "pass": true
+              },
+              {
+                "index": 18,
+                "pass": true
+              },
+              {
+                "index": 19,
+                "pass": true
+              },
+              {
+                "index": 20,
+                "pass": true
+              },
+              {
+                "index": 21,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "native-vlan",
+            "pass": true,
+            "points": 15,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "no-negotiation",
+            "pass": true,
+            "points": 15,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "ccna2-wlc-wlan": {
+      "unsolved": {
+        "lab": "ccna2-wlc-wlan",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 100,
+        "results": [
+          {
+            "task": "management",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "WLC1 has no configuration line at wlc-interface.management.vlan."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "WLC1 has no configuration line at wlc-interface.management.address."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "WLC1 has no configuration line at wlc-interface.management.gateway."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "WLC1 got no reply from 192.168.99.20 (0 echo requests sent)."
+              }
+            ]
+          },
+          {
+            "task": "staff-interface",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "WLC1 has no configuration line at wlc-interface.STAFF-IF.vlan."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "WLC1 has no configuration line at wlc-interface.STAFF-IF.address."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "WLC1 has no configuration line at wlc-interface.STAFF-IF.gateway."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "WLC1 has no configuration line at wlc-interface.STAFF-IF.dhcp-server."
+              },
+              {
+                "index": 4,
+                "pass": false,
+                "detail": "WLC1 has no interface called Vlan20."
+              },
+              {
+                "index": 5,
+                "pass": false,
+                "detail": "WLC1 has no interface called Vlan20."
+              }
+            ]
+          },
+          {
+            "task": "wlan",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "WLC1 has no configuration line at wlan.1.STAFF.LabNet."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "WLC1 has no configuration line at wlan.1.security."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "WLC1 has no configuration line at wlan.1.passphrase."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "WLC1 has no configuration line at wlan.1.interface."
+              },
+              {
+                "index": 4,
+                "pass": true
+              },
+              {
+                "index": 5,
+                "pass": false,
+                "detail": "WLC1 got no reply from 192.168.99.20 (0 echo requests sent)."
+              }
+            ]
+          },
+          {
+            "task": "client",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "LAPTOP1 has no configuration line at interface.Wlan0.ssid."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "LAPTOP1 has no configuration line at interface.Wlan0.ip.address."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "LAPTOP1 got no reply from 192.168.20.1 (0 echo requests sent)."
+              }
+            ]
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna2-wlc-wlan",
+        "checkedAt": 710000000000,
+        "score": 100,
+        "total": 100,
+        "results": [
+          {
+            "task": "management",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "staff-interface",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              },
+              {
+                "index": 4,
+                "pass": true
+              },
+              {
+                "index": 5,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "wlan",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              },
+              {
+                "index": 4,
+                "pass": true
+              },
+              {
+                "index": 5,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "client",
+            "pass": true,
+            "points": 30,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "ccna2-static-routes": {
+      "unsolved": {
+        "lab": "ccna2-static-routes",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 100,
+        "results": [
+          {
+            "task": "next-hop-route",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 has no route to 10.2.0.10."
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "exit-interface-route",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 has no route to 10.3.0.10."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "The rib table of R1 has no row with network=10.3.0.0 prefixLen=24 source=S iface=Serial0/0/0."
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "fully-specified-route",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R2 has no route to 10.1.0.10."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "The rib table of R2 has no row with network=10.1.0.0 prefixLen=24 source=S iface=GigabitEthernet0/0 nextHop=10.0.12.1."
+              }
+            ]
+          },
+          {
+            "task": "host-route",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R3 has no route to 10.1.0.100."
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "traffic",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "PC1 got no reply from 10.2.0.10 (2 echo requests sent)."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "PC3 got no reply from 10.1.0.100 (2 echo requests sent)."
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna2-static-routes",
+        "checkedAt": 710000000000,
+        "score": 100,
+        "total": 100,
+        "results": [
+          {
+            "task": "next-hop-route",
+            "pass": true,
+            "points": 15,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "exit-interface-route",
+            "pass": true,
+            "points": 15,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "fully-specified-route",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "host-route",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "traffic",
+            "pass": true,
+            "points": 30,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "ccna2-floating-static": {
+      "unsolved": {
+        "lab": "ccna2-floating-static",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 100,
+        "results": [
+          {
+            "task": "default-route",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 has no route to 198.51.100.10."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R1 has no route to 192.0.2.77."
+              }
+            ]
+          },
+          {
+            "task": "return-route",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R2 has no route to 192.168.10.10."
+              }
+            ]
+          },
+          {
+            "task": "main-path",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "PC1 got no reply from 198.51.100.10 (2 echo requests sent)."
+              }
+            ]
+          },
+          {
+            "task": "floating-backup",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 has no route to 198.51.100.10."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R2 has no route to 192.168.10.10."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "PC1 got no reply from 198.51.100.10 (2 echo requests sent)."
+              }
+            ]
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna2-floating-static",
+        "checkedAt": 710000000000,
+        "score": 100,
+        "total": 100,
+        "results": [
+          {
+            "task": "default-route",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "return-route",
+            "pass": true,
+            "points": 15,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "main-path",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "floating-backup",
+            "pass": true,
+            "points": 45,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "ccna2-ipv6-static": {
+      "unsolved": {
+        "lab": "ccna2-ipv6-static",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 100,
+        "results": [
+          {
+            "task": "ipv6-default",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 has no route to 2001:db8:2::10."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R1 has no route to 2001:db8:77::1."
+              }
+            ]
+          },
+          {
+            "task": "link-local-next-hop",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R2 has no route to 2001:db8:1::10."
+              }
+            ]
+          },
+          {
+            "task": "both-families",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "PC1 got no reply from 2001:db8:2:0:e4:3eff:fe28:1c01 (2 echo requests sent)."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "PC2 got no reply from 2001:db8:1:0:56:45ff:fe97:5701 (2 echo requests sent)."
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna2-ipv6-static",
+        "checkedAt": 710000000000,
+        "score": 100,
+        "total": 100,
+        "results": [
+          {
+            "task": "ipv6-default",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "link-local-next-hop",
+            "pass": true,
+            "points": 30,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "both-families",
+            "pass": true,
+            "points": 45,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "ccna2-nat-pat": {
+      "unsolved": {
+        "lab": "ccna2-nat-pat",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 100,
+        "results": [
+          {
+            "task": "inside-outside",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 has no configuration line at interface.GigabitEthernet0/0.ip.nat."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R1 has no configuration line at interface.GigabitEthernet0/1.ip.nat."
+              }
+            ]
+          },
+          {
+            "task": "static-nat",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 holds no translations with kind static, inside local 192.168.1.100, inside global 203.0.113.100 (0 rows in all)."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "MAIL got no reply from 198.51.100.10 (2 echo requests sent)."
+              }
+            ]
+          },
+          {
+            "task": "pat",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "PC1 got no reply from 198.51.100.10 (2 echo requests sent)."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "PC2 got no reply from 198.51.100.10 (2 echo requests sent)."
+              }
+            ]
+          },
+          {
+            "task": "pool",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "PC3 got no reply from 198.51.100.10 (2 echo requests sent)."
+              }
+            ]
+          },
+          {
+            "task": "port-forward",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 holds no translations with proto tcp, kind static, inside local 192.168.1.80, inside global 203.0.113.1 (0 rows in all)."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "The nat table of R1 has no row with proto=tcp insideLocal=192.168.1.80 insideLocalPort=80 insideGlobalPort=8080."
+              }
+            ]
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna2-nat-pat",
+        "checkedAt": 710000000000,
+        "score": 100,
+        "total": 100,
+        "results": [
+          {
+            "task": "inside-outside",
+            "pass": true,
+            "points": 10,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "static-nat",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "pat",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "pool",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "port-forward",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "ccna2-troubleshoot-routing": {
+      "unsolved": {
+        "lab": "ccna2-troubleshoot-routing",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 100,
+        "results": [
+          {
+            "task": "server-port",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "SW2 FastEthernet0/2 is err-disabled (bpduguard), expected it to be working."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "SW2 FastEthernet0/2 operUp is false, expected true."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "PC3 got no reply from 192.168.20.100 (2 echo requests sent)."
+              }
+            ]
+          },
+          {
+            "task": "link-subnet",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R2 GigabitEthernet0/0 has 10.0.12.6/30, expected 10.0.12.2/30."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "R1 got no reply from 10.0.12.6 (0 echo requests sent)."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "R2 has no route to 192.168.10.11."
+              }
+            ]
+          },
+          {
+            "task": "branch-route",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 has no route to 192.168.20.100."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "The rib table of R1 still has a row with network=192.168.2.0 prefixLen=24."
+              }
+            ]
+          },
+          {
+            "task": "end-to-end",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "PC1 got no reply from 192.168.20.100 (2 echo requests sent)."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "PC2 got no reply from 192.168.20.13 (2 echo requests sent)."
+              }
+            ]
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna2-troubleshoot-routing",
+        "checkedAt": 710000000000,
+        "score": 100,
+        "total": 100,
+        "results": [
+          {
+            "task": "server-port",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "link-subnet",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "branch-route",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "end-to-end",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

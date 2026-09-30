@@ -188,8 +188,9 @@ describe('association lines and beams', () => {
     expect(ends?.station).toEqual({ x: layout.antenna.get('laptop1/Wlan0')?.x, y: layout.antenna.get('laptop1/Wlan0')?.y });
     expect(ends?.ap).toEqual({ x: layout.antenna.get('home1/Wlan0')?.x, y: layout.antenna.get('home1/Wlan0')?.y });
     // an association without an AP end (still scanning) has no line
-    const { ap: _ap, ...scanning } = assoc;
-    expect(assocEndpoints({ ...scanning, state: 'scanning' }, layout)).toBeNull();
+    const { ap: _ap, ...rest } = assoc;
+    const scanning: AssociationSnapshot = { ...rest, state: 'scanning' };
+    expect(assocEndpoints(scanning, layout)).toBeNull();
     // uplink and downlink legs are mirror arcs between the same antennas
     const upLeg = legGeometry(assoc.station, assoc.ap ?? assoc.station, layout);
     expect(upLeg?.p0).toEqual(ends?.station);

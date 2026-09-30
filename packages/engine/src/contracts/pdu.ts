@@ -61,6 +61,43 @@ export type ProtoName =
   | 'hsrp'
   /** @since P2 [SHOULD S3] Port aggregation negotiation (original NF format under the NF OUI, D8). */
   | 'pagp'
+  // ── P3 (ARCHITECTURE-P3 §2.3; appended; field tables in contracts/fields.ts, codecs from W1) ──
+  /** @since P3 OSPFv2 (IP protocol 89, RFC 2328 bytes; D7). */
+  | 'ospf'
+  /** @since P3 One OSPF LSA (or LSA header in a DBD / LSAck), chained under `ospf`. */
+  | 'ospf-lsa'
+  /** @since P3 The NF discovery format ("CDP" is a name only; NF SNAP PID 4, D18). */
+  | 'cdp'
+  /** @since P3 IEEE 802.1AB LLDP (ethertype 0x88cc, D18). */
+  | 'lldp'
+  /** @since P3 NTPv4 (UDP 123, RFC 5905; D19). */
+  | 'ntp'
+  /** @since P3 [S13] Telnet (TCP 23). */
+  | 'telnet'
+  /** @since P3 [S13] Simulated SSH (TCP 22; clear version exchange, then a protected payload). */
+  | 'ssh'
+  /** @since P3 [S18] GRE (IP protocol 47). */
+  | 'gre'
+  /** @since P3 [S19] PPP framing (RFC 1662, without flags). */
+  | 'ppp'
+  /** @since P3 [S19] PPP Link Control Protocol. */
+  | 'lcp'
+  /** @since P3 [S19] PPP Password Authentication Protocol. */
+  | 'pap'
+  /** @since P3 [S19] PPP Challenge-Handshake Authentication Protocol. */
+  | 'chap'
+  /** @since P3 [S19] PPP IP Control Protocol. */
+  | 'ipcp'
+  /** @since P3 [S19] PPP IPv6 Control Protocol. */
+  | 'ipv6cp'
+  /** @since P3 [S25] Syslog (UDP 514, RFC 3164 style). */
+  | 'syslog'
+  /** @since P3 [C1] EIGRP (IP protocol 88, RFC 7868 bytes; D26). */
+  | 'eigrp'
+  /** @since P3 [C13] ESP (IP protocol 50) with simulated crypto (D27). */
+  | 'esp'
+  /** @since P3 [C13] IKEv2-lite (UDP 500; D27). */
+  | 'ikev2'
   | (string & {});
 
 export type FieldValue = number | string | boolean | Uint8Array | null;
@@ -104,7 +141,12 @@ export type MutationReason =
   | 'Encapsulate'
   | 'Other'
   /** @since P0.5 An outer layer (and its trailer) was stripped by `rewrap` (802.11 ↔ 802.3 at a radio, HDLC ↔ Ethernet at a router). */
-  | 'Decapsulate';
+  | 'Decapsulate'
+  /**
+   * @since P3 A QoS policy rewrote a marking field (`ipv4.dscp`, `dot1q.pcp`; D16), cause e.g.
+   * 'policy-map MARK class VOIP set dscp ef'. ('Encrypt' and 'Decrypt' exist and are first recorded by [C13], D27.)
+   */
+  | 'QosMark';
 
 /** One recorded field change (the backbone of the provenance visualizer §9.3). */
 export interface Mutation {
@@ -144,6 +186,12 @@ export interface PduMeta {
    * simulated", spec §4.9).
    */
   readonly protected?: true;
+  /**
+   * @since P3 (optional by meaning) With `protected: true`, names the simulated channel: 'tls' (RESTCONF over 443, D21),
+   * [S13] 'ssh' (the SSH payload, D14), [C13] 'esp' (the ESP payload) and 'ike' (the IKE_AUTH payloads, D27). Absent
+   * together with `protected` keeps P2's DTLS meaning (CAPWAP control), so no P2 byte or label changes.
+   */
+  readonly protectedBy?: 'tls' | 'ssh' | 'esp' | 'ike';
 }
 
 /** Read-only view handed to the UI, tables and assertions. */
@@ -304,8 +352,9 @@ export interface CodecContext {
  * (ipv4.protocol, ipv6.nextHeader, extension nextHeader), 'udp.port' / 'tcp.port' (destination port first,
  * then source port, only when the transport payload is ≥ 1 byte).
  * @since P2 'llc.sap' (llc.dsap of a non-SNAP LLC header) and 'nf.pid' (llc.type when llc.oui is NF_OUI).
+ * @since P3 [S19] 'ppp.proto' (ppp.protocol: PPP_PROTO values).
  */
-export type DispatchSpace = 'ethertype' | 'ipproto' | 'udp.port' | 'tcp.port' | 'llc.sap' | 'nf.pid' | (string & {});
+export type DispatchSpace = 'ethertype' | 'ipproto' | 'udp.port' | 'tcp.port' | 'llc.sap' | 'nf.pid' | 'ppp.proto' | (string & {});
 
 /** A protocol codec. Registered in `pdu/codecs/registry.ts`. Pure functions — no engine state. */
 export interface Codec {
@@ -566,3 +615,70 @@ export const CAPWAP_MSG = Object.freeze({
   wlanConfigReq: 3398913,
   wlanConfigResp: 3398914,
 });
+
+// ── P3 wire constants (ARCHITECTURE-P3 §2.3, §2.16, §2.17) ───────────────────
+
+/** @since P3 OSPFv2 IP protocol number (D7). */
+export const IPPROTO_OSPF = 89;
+/** @since P3 AllSPFRouters (every non-passive OSPF interface joins it). */
+export const OSPF_ALL_ROUTERS = '224.0.0.5';
+/** @since P3 AllDRouters (joined on entering DR or Backup). */
+export const OSPF_ALL_DROUTERS = '224.0.0.6';
+/** @since P3 The NF control-frame PID of the NF discovery format ("CDP", a name only; P2 D8, P3 D18). */
+export const NF_PID_CDP = 0x0004;
+/** @since P3 LLDP nearest-bridge group address (IEEE 802.1AB). */
+export const LLDP_NEAREST_BRIDGE_MAC = '01:80:c2:00:00:0e';
+/** @since P3 LLDP ethertype. */
+export const ETHERTYPE_LLDP = 0x88cc;
+/** @since P3 NTP (D19). */
+export const UDP_PORT_NTP = 123;
+/** @since P3 The discard port: the traffic generator's default destination (M13, D16). */
+export const UDP_PORT_DISCARD = 9;
+/** @since P3 HTTPS: RESTCONF over simulated TLS (D21). */
+export const TCP_PORT_HTTPS = 443;
+/** @since P3 [S18] GRE IP protocol number. */
+export const IPPROTO_GRE = 47;
+/** @since P3 [S18] Outer IPv4 20 + GRE 4: a GRE tunnel's IP MTU is the transport MTU − 24 (1476 on a 1500-byte port). */
+export const GRE_OVERHEAD = 24;
+/** @since P3 [S19] PPP address field (all stations). */
+export const PPP_ADDRESS = 0xff;
+/** @since P3 [S19] PPP control field (unnumbered information). */
+export const PPP_CONTROL = 0x03;
+/** @since P3 [S19] PPP header: address + control + protocol (no flags in `bytes`, as HDLC). */
+export const PPP_HEADER = 4;
+/** @since P3 [S19] PPP FCS (CRC-16, the existing crc16X25). */
+export const PPP_FCS = 2;
+/** @since P3 [S19] PPP protocol numbers (the `ppp.proto` dispatch space). */
+export const PPP_PROTO = Object.freeze({
+  ipv4: 0x0021,
+  ipv6: 0x0057,
+  lcp: 0xc021,
+  pap: 0xc023,
+  chap: 0xc223,
+  ipcp: 0x8021,
+  ipv6cp: 0x8057,
+});
+/** @since P3 [S25] Syslog (RFC 3164 style). */
+export const UDP_PORT_SYSLOG = 514;
+/** @since P3 [C1] EIGRP IP protocol number (RFC 7868; D26). */
+export const IPPROTO_EIGRP = 88;
+/** @since P3 [C1] EIGRP multicast group (hellos). */
+export const EIGRP_GROUP = '224.0.0.10';
+/** @since P3 [C1] Hello interval (s) on every interface (D26). */
+export const EIGRP_HELLO_S = 5;
+/** @since P3 [C1] Hold time (s) on every interface (D26). */
+export const EIGRP_HOLD_S = 15;
+/** @since P3 [C1] The infinite (unreachable) metric, 2³² − 1. */
+export const EIGRP_INFINITY = 0xffff_ffff;
+/** @since P3 [C13] ESP IP protocol number (D27). */
+export const IPPROTO_ESP = 50;
+/** @since P3 [C13] IKE (IKEv2-lite, D27). */
+export const UDP_PORT_IKE = 500;
+/** @since P3 [C13] The ESP integrity check value length (a chained FNV-1a value, never a key). */
+export const ESP_ICV_BYTES = 12;
+/**
+ * @since P3 [C13] Outer IPv4 20 + ESP header 8 + trailer 2 + ICV 12 + at most 2 alignment bytes at the largest inner
+ * packet that fits: a VTI's IP MTU defaults to the transport MTU − 44 (1456 on a 1500-byte port), and every inner
+ * packet of that size or less fits.
+ */
+export const IPSEC_OVERHEAD = 44;

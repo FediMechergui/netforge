@@ -55,6 +55,7 @@ import { MSG_MODULES_UNAVAILABLE, applyModuleChange, moduleName, portGroups, slo
 import { genericColumns, genericRows } from '../src/inspector/TablesView';
 import { linkStateText, linkTitle } from '../src/inspector/LinkInspector';
 import type { InspectorTab } from '../src/store/types';
+import { handBuilt } from './hand-built';
 
 // ── fixtures ─────────────────────────────────────────────────────────────────
 
@@ -80,8 +81,12 @@ function tabsOf(type: string): readonly InspectorTab[] {
   return inspectorTabsFor(byType(type), catalogModel(ALL_MODELS, type));
 }
 
+/**
+ * A P0-shaped port: the P0.5 members (role, traits, …) are absent unless given, because these tests pin the readers'
+ * branches for an absent role (`portToggleState`, `isDataPort`, the tables of a legacy device).
+ */
 function port(partial: Partial<PortSnapshot>): PortSnapshot {
-  return {
+  return handBuilt({
     id: 'Gi0/0',
     short: 'Gi0/0',
     kind: 'ethernet',
@@ -93,7 +98,7 @@ function port(partial: Partial<PortSnapshot>): PortSnapshot {
     l3: {},
     txQueue: 0,
     ...partial,
-  };
+  });
 }
 
 // ── tabs ─────────────────────────────────────────────────────────────────────
@@ -330,7 +335,7 @@ describe('module slots', () => {
     expect(insertModule).toHaveBeenCalledWith('r1', '0/0', 'mod.ehwic-2t');
     await expect(applyModuleChange({ insertModule, removeModule }, 'r1', '0/1', { op: 'remove' })).resolves.toMatchObject({ ok: false, code: 'powered-on' });
     expect(removeModule).toHaveBeenCalledWith('r1', '0/1');
-    await expect(applyModuleChange({}, 'r1', '0/1', { op: 'remove' })).rejects.toThrow(MSG_MODULES_UNAVAILABLE);
+    await expect(applyModuleChange(handBuilt({}), 'r1', '0/1', { op: 'remove' })).rejects.toThrow(MSG_MODULES_UNAVAILABLE);
   });
 
   it('words slot contents and hardware summaries', () => {
@@ -422,9 +427,9 @@ describe('lookups and link wording', () => {
     expect(deviceById({ snapshot: snap, snapshotIndex: index }, target?.id)).toBe(target);
     const stale = { ...index, devices: { [target?.id ?? '']: 0 } };
     expect(deviceById({ snapshot: snap, snapshotIndex: stale }, target?.id)).toBe(target);
-    expect(deviceById({ snapshot: snap }, 'nope')).toBeUndefined();
-    expect(deviceById({ snapshot: null }, target?.id)).toBeUndefined();
-    expect(linkById({ snapshot: snap }, 'nope')).toBeUndefined();
+    expect(deviceById({ snapshot: snap, snapshotIndex: undefined }, 'nope')).toBeUndefined();
+    expect(deviceById({ snapshot: null, snapshotIndex: undefined }, target?.id)).toBeUndefined();
+    expect(linkById({ snapshot: snap, snapshotIndex: undefined }, 'nope')).toBeUndefined();
   });
 
   it('words link states with a glyph and names radio links', () => {

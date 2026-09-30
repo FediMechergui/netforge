@@ -234,7 +234,12 @@ export type LinkDownCode =
   | 'out-of-range'
   | 'no-clock'
   | 'encapsulation-mismatch'
-  | 'keepalive-missed';
+  | 'keepalive-missed'
+  // ── P3 [S19] (ARCHITECTURE-P3 §2.7) ──
+  /** @since P3 [S19] A PPP end has not opened LCP (and its NCPs) yet. */
+  | 'ppp-negotiating'
+  /** @since P3 [S19] PPP authentication (PAP or CHAP) failed; retried every 10 s. */
+  | 'ppp-auth-failed';
 
 /** Config-derived PHY settings of a port, produced by the device runtime from running-config (`DeviceRuntime.phySettings`). */
 export interface PortPhySettings {
@@ -312,7 +317,18 @@ export type DropReason =
   /** @since P2 A port-security violation (protect, restrict or shutdown mode). */
   | 'port-security'
   /** @since P2 NAT had no free address or port for a new translation. */
-  | 'nat-exhausted';
+  | 'nat-exhausted'
+  // ── P3 (ARCHITECTURE-P3 §2.7; 'acl-deny' exists above and is first emitted in P3) ──
+  /** @since P3 DHCP snooping refused a DHCP message on an untrusted port (or its rate limit, D13). */
+  | 'dhcp-snooping'
+  /** @since P3 Dynamic ARP inspection refused an ARP on an untrusted port (D13). */
+  | 'arp-inspection'
+  /** @since P3 [S18] Larger than a tunnel can carry; fragmentation is not simulated (the D15 fallback; [C13] too). */
+  | 'mtu-exceeded'
+  /** @since P3 [S20] A policer dropped it (the LLQ conditional policer; [S21] `police`). */
+  | 'policed'
+  /** @since P3 [C13] An ESP packet whose SPI names no SA of this router. */
+  | 'ipsec-no-sa';
 
 /** @since P2 Frames queued on one P2P egress port before 'queue-full' (D23; memory bound, not an event-rate bound). */
 export const P2P_QUEUE_LIMIT = 256;
@@ -345,8 +361,84 @@ export type TransmitResult =
     }
   | { ok: false; reason: TransmitRefusal };
 
-/** Egress call the device runtime makes for every `send` action (the sim passes `linkModel.transmit`). */
-export type TransmitFn = (from: PortRef, pdu: Pdu, now: SimTime) => TransmitResult;
+/**
+ * Egress call the device runtime makes for every `send` action (the sim passes `linkModel.transmit`).
+ * `opts` @since P3 (optional by meaning) [S20]: the frame's QoS class on a port with a queueing policy.
+ */
+export type TransmitFn = (from: PortRef, pdu: Pdu, now: SimTime, opts?: TransmitOptions) => TransmitResult;
+
+/**
+ * @since P3 (optional by meaning) [S20] What the runtime tells the link model about a frame it transmits (D16): the
+ * position, in `EgressSchedulerSpec.classes`, of the output-policy class the frame matched. Absent = class-default on
+ * a scheduler port, and the virtual FIFO everywhere else (P1/P2 bytes).
+ */
+export interface TransmitOptions {
+  qosClass?: number;
+}
+
+/**
+ * @since P3 [S21] A token-bucket policer (`police`): conform transmits, exceed drops 'policed'. (The WAN map names this
+ * type without spelling it out; this is its W0 shape.)
+ */
+export interface PolicerSpec {
+  rateBps: number;
+  burstBytes: number;
+}
+
+/**
+ * @since P3 [S20] One class of a port's compiled output policy, in policy order (D16; the WAN map's §3 block
+ * unchanged). `priority` = the LLQ class (strict priority with a conditional policer at `rateBps` / `burstBytes`);
+ * `bandwidth` = a CBWFQ class served by class DRR with weight `weightKbps`; `default` = class-default. [S21] adds
+ * `fairQueue` (WFQ in class-default, scheduled as flow DRR) and `police`.
+ */
+export interface EgressClassSpec {
+  name: string;
+  kind: 'priority' | 'bandwidth' | 'default';
+  rateBps?: number;
+  burstBytes?: number;
+  weightKbps: number;
+  queueLimit: number;
+  fairQueue?: boolean;
+  police?: PolicerSpec;
+}
+
+/**
+ * @since P3 [S20] A port's compiled output scheduler (D16): the policy name, the reference rate of the 75 % admission
+ * check (the `bandwidth` line, else the negotiated rate) and the classes; [S21] `shapeBps` / `shapeBcBits` shape the
+ * whole port. Compiled lazily by the runtime from the port's `service-policy output` and read by the link model
+ * through `LinkModelDeps.egressPolicy`. A port without one keeps the virtual FIFO byte for byte.
+ */
+export interface EgressSchedulerSpec {
+  policy: string;
+  refBps: number;
+  classes: readonly EgressClassSpec[];
+  shapeBps?: number;
+  shapeBcBits?: number;
+}
+
+/**
+ * @since P3 [S20] Display view of a scheduler port (`LinkModel.egressQueues`, the [S20] `queue` member of
+ * `PortSnapshot.qos`): the per-class queue depths and counters the Policy section and `show policy-map interface`
+ * render (the WAN map's §3 block unchanged).
+ */
+export interface EgressQueueView {
+  policy?: string;
+  strategy: 'fifo' | 'class-based' | 'fair';
+  refBps: number;
+  classes: readonly {
+    name: string;
+    kind: EgressClassSpec['kind'];
+    depth: number;
+    limit: number;
+    matched: number;
+    matchedBytes: number;
+    sent: number;
+    tailDrops: number;
+    policed: number;
+    offeredBps30s: number;
+    flows?: number;
+  }[];
+}
 
 /** Asynchronous transmit outcomes (segment media). Applied to PortCounters by the device runtime (the only counter writer). */
 export type TxOutcome =
@@ -413,7 +505,7 @@ export interface LinkModel {
    *  • Capture: `deps.capture.record({dir:'tx'})` when the frame actually starts on the medium, after any
    *    egress rewrap and before corruption.
    */
-  transmit(from: PortRef, pdu: Pdu, now: SimTime): TransmitResult;
+  transmit(from: PortRef, pdu: Pdu, now: SimTime, opts?: TransmitOptions): TransmitResult;
   /** Run-loop hook: the Simulation calls this when it pops a `txComplete` event. `tx.queue--`. */
   onTxComplete(port: PortRef, now: SimTime): void;
   /** P0 run-loop hook: called when a `frameArrival` is popped, BEFORE the device runtime sees it. Removes the in-flight entry `(pduId, *, to)`. */
@@ -459,6 +551,10 @@ export interface LinkModel {
   airView(device: DeviceId): AirView;
   /** @since P1 Fault hook: raise the noise floor (`spec` null removes the entry `key`). */
   injectNoise?(spec: { band?: RfBand; channel?: number; center?: DeviceId; radiusM?: number; riseDb: number } | null, key: string, now: SimTime): OperChanges;
+
+  // ── P3 ──
+  /** @since P3 (optional by meaning) [S20] The held queues of a scheduler port (display only); undefined elsewhere. */
+  egressQueues?(ref: PortRef): EgressQueueView | undefined;
 }
 
 /** Constructor dependencies for the link model, supplied by the Simulation. */
@@ -509,4 +605,9 @@ export interface LinkModelDeps {
   devicePorts?(id: DeviceId): readonly PortId[];
   /** @since P1 NetScope capture tap (wire bytes at tx start and at admit). */
   capture?: CaptureTap;
+  /**
+   * @since P3 (optional by meaning) [S20] The compiled output scheduler of a port (`DeviceRuntime.egressPolicy`);
+   * undefined = the virtual FIFO (D16). Absent = no port has a scheduler.
+   */
+  egressPolicy?(ref: PortRef): EgressSchedulerSpec | undefined;
 }

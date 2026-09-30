@@ -20,6 +20,7 @@
 import type { DeviceId, LinkId, PortRef } from './ids.js';
 import type { Impairments, LinkKind, MediaType } from './link.js';
 import type { ModuleInstall } from './catalog.js';
+import type { TopologyFile } from './storage.js';
 
 export const TOPOLOGY_SCHEMA_ID_1_0 = 'netforge.topology/1.0';
 export const TOPOLOGY_SCHEMA_ID_1_1 = 'netforge.topology/1.1';
@@ -30,6 +31,13 @@ export const TOPOLOGY_SCHEMA_ID_1_1 = 'netforge.topology/1.1';
  * 1.1 (the id every P1 document keeps).
  */
 export const TOPOLOGY_SCHEMA_ID_1_2 = 'netforge.topology/1.2';
+/**
+ * @since P3 Schema 1.3 = 1.2 plus `Topology.profile` 'P3' and [S32] `TopologyDevice.files` (ARCHITECTURE-P3 §2.9).
+ * W0 declares the constant only (ruling R7): the W1 io item appends it to TOPOLOGY_SCHEMA_IDS, sets
+ * LATEST_TOPOLOGY_SCHEMA_ID and extends `schemaIdFor`, as a reviewed additive edit of this file, together with the
+ * identity 1.2 → 1.3 migration.
+ */
+export const TOPOLOGY_SCHEMA_ID_1_3 = 'netforge.topology/1.3';
 /** Every schema id a loader accepts (older first). */
 export const TOPOLOGY_SCHEMA_IDS = [TOPOLOGY_SCHEMA_ID_1_0, TOPOLOGY_SCHEMA_ID_1_1, TOPOLOGY_SCHEMA_ID_1_2] as const;
 export type TopologySchemaId = (typeof TOPOLOGY_SCHEMA_IDS)[number];
@@ -85,6 +93,11 @@ export interface TopologyDevice {
   hardware?: { macSalt?: number };
   /** @since P0.5 (1.1) Opaque GUI state. */
   ui?: TopologyDeviceUi;
+  /**
+   * @since P3 (optional by meaning; 1.3) [S32] The host's `files:` store (D21, ARCHITECTURE-P3 §2.9): schema 1.3 only,
+   * absent on every P1/P2 document. Declared in W0; the W1 io item reads and writes it.
+   */
+  files?: readonly TopologyFile[];
 }
 
 export interface TopologyLink {
@@ -121,8 +134,10 @@ export interface Topology {
    * belongs ONLY to the 1.2 field set: a 1.1 document carrying it is read with the 1.1 field set, which strips it, so
    * it loads as P1. EVERY writer that sets `profile` (exportTopology, useCurrentDefaults, the scenario kit's
    * `topology(…, {profile})`) sets `schema = schemaIdFor(t)` in the same step.
+   * 'P3' @since P3 (optional by meaning): belongs ONLY to the 1.3 field set (the 1.2 field set keeps its 'P2' literal,
+   * so a 1.2 document carrying 'P3' is refused with the schema's value message; W1 io).
    */
-  profile?: 'P2';
+  profile?: 'P2' | 'P3';
 }
 
 /**

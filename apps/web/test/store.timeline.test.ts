@@ -103,12 +103,14 @@ describe('a review batch', () => {
     const evs = store.getState().timeline?.reviewEvents ?? [];
     expect(evs).toHaveLength(REVIEW_EVENT_RING);
     expect(evs[0]?.kind === 'cliOutput' && evs[0].text).toBe('500\n');
-    expect(evs[evs.length - 1]?.kind === 'cliOutput' && evs[evs.length - 1]?.text).toBe(`${REVIEW_EVENT_RING + 499}\n`);
+    const lastEv = evs.length - 1;
+    expect(evs[lastEv]?.kind === 'cliOutput' && evs[lastEv]?.text).toBe(`${REVIEW_EVENT_RING + 499}\n`);
     // a later review batch appends and keeps the cap
     store.getState().applyBatch(reviewBatch(epoch, reviewInfo(21 * SEC, 50 * SEC), [output(21 * SEC, 'more\n')]));
     const next = store.getState().timeline?.reviewEvents ?? [];
     expect(next).toHaveLength(REVIEW_EVENT_RING);
-    expect(next[next.length - 1]?.kind === 'cliOutput' && next[next.length - 1]?.text).toBe('more\n');
+    const lastNext = next.length - 1;
+    expect(next[lastNext]?.kind === 'cliOutput' && next[lastNext]?.text).toBe('more\n');
   });
 
   it('merges a review delta against the review snapshot and keeps the identity of untouched devices', () => {

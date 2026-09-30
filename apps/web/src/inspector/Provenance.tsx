@@ -85,6 +85,8 @@ const REASON_ICON: Record<MutationReason, string> = {
   Encapsulate: '+',
   Other: '•',
   Decapsulate: '−',
+  // P3 (ARCHITECTURE-P3 §2.3, §9.2 W0 item 1): the architect's W0 stub; the W3 web-inspector item gives it its chip.
+  QosMark: 'Q',
 };
 
 const REASON_LABEL: Record<MutationReason, string> = {
@@ -103,6 +105,8 @@ const REASON_LABEL: Record<MutationReason, string> = {
   Encapsulate: 'Header pushed around the packet',
   Other: 'Field changed',
   Decapsulate: 'Header removed from around the packet',
+  // P3 (W0 stub)
+  QosMark: 'Marking rewritten by a QoS policy',
 };
 
 const DERIVED = new Set<string>(['ChecksumRecompute', 'FcsRecompute']);

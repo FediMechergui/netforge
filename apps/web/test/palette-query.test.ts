@@ -26,6 +26,7 @@ import {
   variantLabel,
 } from '../src/app/palette/palette-query.js';
 import type { PaletteQueryInput } from '../src/app/palette/palette-query.js';
+import { handBuilt } from './hand-built.js';
 
 const eth = (name: string, speedBps = 1_000_000_000, autoMdix = false) => ({ name, kind: 'ethernet' as const, speedBps, autoMdix });
 
@@ -49,7 +50,8 @@ const PC = defineModel({
   type: 'pc.nfpc', model: 'NF-PC', description: 'Workstation with one network adapter', category: 'computers', icon: 'pc',
   capabilities: ['host'], ports: [eth('GigabitEthernet0')],
 }, 'P0.5');
-const FIXTURE: DeviceModel = { ...PC, type: 'pc.fixture', model: 'NF-FIXTURE', family: undefined, category: undefined, description: 'Hand-built test model' };
+// Hand-built without the family and category `defineModel` fills: the palette still lists it (uncategorised).
+const FIXTURE: DeviceModel = handBuilt({ ...PC, type: 'pc.fixture', model: 'NF-FIXTURE', family: undefined, category: undefined, description: 'Hand-built test model' });
 
 // Deliberately not in category order: sections must follow DEVICE_CATEGORIES, not the list.
 const CATALOG: readonly DeviceModel[] = [PC, FIXTURE, SWITCH_24, HUB, ROUTER, SWITCH_8];
@@ -80,10 +82,10 @@ describe('palette sections and families', () => {
     expect(tile.hasVariants).toBe(true);
     expect(switches!.count).toBe(2);
     expect(variantLabel(SWITCH_8)).toBe('8-port');
-    expect(variantLabel({ model: 'NF-X', variant: undefined })).toBe('NF-X');
+    expect(variantLabel(handBuilt({ model: 'NF-X', variant: undefined }))).toBe('NF-X');
     expect(selectedVariant(tile, 'switch.nfc2960-8').type).toBe('switch.nfc2960-8');
     expect(selectedVariant(tile, 'router.nf2911').type).toBe('switch.nfc2960');
-    expect(familyKeyOf({ type: 'pc.fixture', family: undefined })).toBe('pc.fixture');
+    expect(familyKeyOf(handBuilt({ type: 'pc.fixture', family: undefined }))).toBe('pc.fixture');
   });
 
   it('counts models per category over the whole catalog for the rail', () => {

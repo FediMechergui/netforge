@@ -6,35 +6,36 @@
  * flip registers cannot change the expected lists. The W6 catalog item made the helper's wireless data the real data;
  * the pins that described the data before it (NF-AP-1832's real capabilities, NF-WLC-9800 inserted by the helper)
  * moved to their W6 values with the same strength (§9.2 W6 item 23).
+ *
+ * ARCHITECTURE-P3 §9.2 W0 item 4: the helper's `@deprecated` aliases were deleted and this file uses the real names,
+ * assertions unchanged. An assertion that compared an alias with the real value now compares the helper's own data
+ * (`staged.world`, which p2.world wraps at stage P2) with it: the helper's final order restricted to the contract's
+ * names, and the helper's input list.
  */
 import { describe, expect, it } from 'vitest';
-import { PROCESS_ORDER, expandCapabilities, isVlanAware } from '../src/contracts/catalog.js';
+import { CAPABILITY_PROCESSES, PROCESS_ORDER, expandCapabilities, isVlanAware } from '../src/contracts/catalog.js';
 import type { ProcessName } from '../src/contracts/ids.js';
 import type { ProcessFactory } from '../src/contracts/process.js';
 import { SEC } from '../src/contracts/time.js';
 import type { TraceEvent } from '../src/contracts/trace.js';
 import { ALL_MODEL_INPUTS, ALL_MODELS } from '../src/device/catalog.js';
-import { defineModel, deriveTables } from '../src/device/catalog/define.js';
+import { CAPWAP_TUNNEL_FAMILY, defineModel, deriveTables } from '../src/device/catalog/define.js';
 import { NF_C2960_INPUT } from '../src/device/catalog/switches.js';
 import { PROCESS_FACTORIES } from '../src/protocols/index.js';
 import { pcConfig } from '../src/sim/scenarios/templates.js';
 import { NF_AP_1832_INPUT, NF_WLC_9800_INPUT } from '../src/device/catalog/wireless.js';
 import {
-  CAPWAP_TUNNEL_FAMILY,
-  NF_WLC_9800_TEST_INPUT,
-  P2_CAPABILITY_PROCESS_ROWS,
   P2_DAEMONS,
   P2_MODEL_DELTAS,
-  P2_PROCESS_ORDER,
   P2_WIRELESS_MODEL_DELTAS,
   applyP2ModelDelta,
   createP2Catalog,
   createP2Simulation,
   p2ModelDeltaFor,
-  p2ModelInputs,
   p2Registry,
   type P2FactoryOverlay,
 } from './p2.world.js';
+import { STAGED_PROCESS_ORDER, stagedModelInputs } from './staged.world.js';
 
 /** A silent daemon: answers nothing, sends nothing, keeps no state. */
 function stub(name: ProcessName): ProcessFactory {
@@ -60,18 +61,20 @@ const missing = (events: readonly TraceEvent[]): string[] =>
   events.flatMap((e) => (e.kind === 'log' && e.message.includes('is not available') ? [e.message] : []));
 
 describe('p2.world data', () => {
-  it('P2_PROCESS_ORDER keeps the contract order of every P1 daemon and adds exactly the approved P2 daemons', () => {
+  it('PROCESS_ORDER keeps the contract order of every P1 daemon and adds exactly the approved P2 daemons', () => {
     const p1 = PROCESS_ORDER.filter((p) => !P2_DAEMONS.includes(p));
-    expect(P2_PROCESS_ORDER.filter((p) => p1.includes(p))).toEqual(p1);
-    expect(P2_PROCESS_ORDER.filter((p) => !p1.includes(p))).toEqual([
+    expect(PROCESS_ORDER.filter((p) => p1.includes(p))).toEqual(p1);
+    expect(PROCESS_ORDER.filter((p) => !p1.includes(p))).toEqual([
       'capwap-wtp', 'vlan', 'dtp', 'etherchannel', 'stp', 'nat', 'hsrp', 'dhcpv6-client', 'dhcpv6-server', 'capwap-ac',
     ]);
-    expect(new Set(P2_PROCESS_ORDER).size).toBe(P2_PROCESS_ORDER.length);
-    expect(P2_PROCESS_ORDER).not.toContain('vtp');
-    expect(P2_PROCESS_ORDER).not.toContain('radius-server');
-    for (const rows of Object.values(P2_CAPABILITY_PROCESS_ROWS)) for (const p of rows ?? []) expect(P2_PROCESS_ORDER).toContain(p);
-    // since the W6 catalog item registered capwap-wtp and capwap-ac, the contract order IS the final order
-    expect(P2_PROCESS_ORDER).toEqual(PROCESS_ORDER);
+    expect(new Set(PROCESS_ORDER).size).toBe(PROCESS_ORDER.length);
+    expect(PROCESS_ORDER).not.toContain('vtp');
+    expect(PROCESS_ORDER).not.toContain('radius-server');
+    // the `since: 'P2'` rows of CAPABILITY_PROCESSES (what the deleted P2_CAPABILITY_PROCESS_ROWS alias listed)
+    for (const rows of Object.values(CAPABILITY_PROCESSES)) for (const p of rows.filter((r) => r.since === 'P2').map((r) => r.process)) expect(PROCESS_ORDER).toContain(p);
+    // since the W6 catalog item registered capwap-wtp and capwap-ac, the contract order IS the final order the helper
+    // derives in (staged.world's order, restricted to the contract's names)
+    expect(STAGED_PROCESS_ORDER.filter((p) => PROCESS_ORDER.includes(p))).toEqual(PROCESS_ORDER);
   });
 
   it('the W4 deltas make exactly the nine managed switches managed, and are idempotent', () => {
@@ -140,7 +143,7 @@ describe('p2.world models', () => {
     expect(noStp.tables).not.toContain('stp-bridge');
 
     for (const m of all.list()) {
-      const ranks = m.processes.map((p) => P2_PROCESS_ORDER.indexOf(p));
+      const ranks = m.processes.map((p) => PROCESS_ORDER.indexOf(p));
       expect(ranks.every((r) => r >= 0)).toBe(true);
       expect([...ranks].sort((a, b) => a - b)).toEqual(ranks);
     }
@@ -267,10 +270,10 @@ describe('p2.world wireless deltas (W6 model data: test-only for W5, the real da
   it('NF-WLC-9800 is the real wireless-controller model: the helper inserts nothing and its test input is the real one', () => {
     // §9.2 W6 item 23: the real catalog carries NF-WLC-9800 at the end of the Wireless category and shows NF-WLC-3504
     // at the end of the Legacy category, so the helper's inputs are exactly the real inputs
-    const types = p2ModelInputs().map((i) => i.type);
+    const types = stagedModelInputs('P2').map((i) => i.type);
     expect(types).toEqual(ALL_MODEL_INPUTS.map((i) => i.type));
     expect(ALL_MODEL_INPUTS.filter((i) => i.type === 'wlc.nfwlc9800')).toEqual([NF_WLC_9800_INPUT]);
-    expect(NF_WLC_9800_TEST_INPUT).toBe(NF_WLC_9800_INPUT);
+    expect(stagedModelInputs('P2').find((i) => i.type === 'wlc.nfwlc9800')).toBe(NF_WLC_9800_INPUT);
     expect(types.indexOf('wlc.nfwlc9800')).toBe(types.indexOf('ap.nfap-ax') + 1);
     expect(types.indexOf('wlc.nfwlc3504')).toBe(types.indexOf('bridge.nfbr4') + 1);
 

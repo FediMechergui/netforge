@@ -12,10 +12,12 @@
 import type { DeviceId, PortId, PortRef, ProcessName, SessionId } from './ids.js';
 import type { ConfigAst } from './config.js';
 import type { Scheduler } from './events.js';
-import type { FrameRxInfo, PortPhySettings, TransmitFn, TxOutcome } from './link.js';
+import type { EgressSchedulerSpec, FrameRxInfo, PortPhySettings, TransmitFn, TxOutcome } from './link.js';
 import type { Pdu, PduFactory } from './pdu.js';
 import type { ErrDisableCause, PortSpec, PortState, PortView } from './port.js';
-import type { Action, Process, ProcessFactory, StateView, DebugEvent } from './process.js';
+import type { Action, ClockAction, ConfigOrigin, Process, ProcessFactory, Severity, StateView, DebugEvent } from './process.js';
+import type { DeviceClockView } from './clock.js';
+import type { PortSnapshot } from './snapshot.js';
 import type { Rng } from './rng.js';
 import type { DeviceTables, TableFactory, TableName } from './tables.js';
 import type { SimTime } from './time.js';
@@ -147,6 +149,14 @@ export interface DeviceModel {
    * `no spanning-tree mode` restores in a P2 world (§5.1).
    */
   stpDefaultMode?: 'pvst' | 'rapid-pvst';
+
+  // ── P3 (optional by meaning, filled by defineModel; ARCHITECTURE-P3 §2.1, D2) ──
+  /**
+   * @since P3 (optional by meaning) CDP runs by default in a P3 world (D2): derived by the W1 catalog item as
+   * `!nat-gateway && ((cli.shell === 'nfos' && (routing || managed-switch)) || wireless-controller)`, only for
+   * `defineModel(…, 'P3')`. Absent = never on by default.
+   */
+  cdpDefault?: true;
 }
 
 /** What port-name resolution works against: the model plus the live instance port set. */
@@ -262,8 +272,12 @@ export interface DeviceRuntime {
   readonly processes: ReadonlyMap<ProcessName, Process>;
   port(id: PortId): PortState | undefined;
   portView(id: PortId): PortView | undefined;
-  /** Apply a config delta: mutates `running`, notifies processes. */
-  applyConfigLine(context: string[][], line: string[], negate: boolean): { ok: boolean; error?: string };
+  /**
+   * Apply a config delta: mutates `running`, notifies processes.
+   * `origin` @since P3 (optional by meaning; D21): the configure seam's origin, copied into the line's `configChange`
+   * events; absent for typed lines (P1/P2 bytes).
+   */
+  applyConfigLine(context: string[][], line: string[], negate: boolean, origin?: ConfigOrigin): { ok: boolean; error?: string };
   stateSnapshots(): StateView[];
   recentDebug(limit?: number): DebugEvent[];
   /** Uptime since boot, 0 while off. */
@@ -335,4 +349,23 @@ export interface DeviceRuntime {
   readonly profile: DefaultsProfile;
   /** @since P2 Fault path (`err-disable` fault, lab-check clone): the same effects as an `errDisable` action. */
   errDisablePort(port: PortId, cause: ErrDisableCause, now: SimTime): void;
+
+  // ── P3 (ARCHITECTURE-P3 §2.9; optional during the transition, required in the item that implements them — hand-built
+  //    typed fakes spread `P3_DEVICE` from test/port.fixtures.ts). No DeviceRuntimeDeps member is added (D14, D21). ──
+  /** @since P3 The device clock at `now` (D19). */
+  clockView?(now: SimTime): DeviceClockView;
+  /** @since P3 Rebase the device clock (the ntp daemon's `clock` action, D19). */
+  setClock?(op: ClockAction, now: SimTime): void;
+  /** @since P3 A port's QoS marking counters (M13; undefined without a policy): the snapshot cache and the shows. */
+  qosCounters?(port: PortId): PortSnapshot['qos'];
+  /**
+   * @since P3 [S24] The one log path (D20): emits the unchanged `log` TraceEvent and, when the model runs `logger`,
+   * delivers ProcessEvent `log.record` to it depth-first inside the same action budget.
+   */
+  emitLog?(severity: Severity, facility: string, message: string, now: SimTime, mnemonic?: string): void;
+  /**
+   * @since P3 [S20] A port's compiled output scheduler (from its output policy), read by the link model through
+   * LinkModelDeps.egressPolicy; [S21] adds fair-queue, police and shape to it. Undefined = the virtual FIFO.
+   */
+  egressPolicy?(port: PortId): EgressSchedulerSpec | undefined;
 }

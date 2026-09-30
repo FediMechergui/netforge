@@ -55,6 +55,8 @@ export const TRACE_KIND_VOCAB: Readonly<Record<TraceKind, TraceKindVocab>> = Obj
   cliPrompt: kind('cliPrompt', 'Prompt', 'cli', 'A terminal session showed its prompt.', true),
   debug: kind('debug', 'Debug', 'diagnostics', 'A protocol process reported a step of its state machine.'),
   log: kind('log', 'Log', 'diagnostics', 'A device wrote a system log message.'),
+  // P3 [S20] (ARCHITECTURE-P3 §2.7; the W0 stub of ruling R2): emitted from W3 on, by a port with a scheduler only.
+  frameQueued: kind('frameQueued', 'Queued', 'packets', 'A frame waited in a class queue of a port with a scheduler.'),
 });
 
 /** Every trace kind in display order. */

@@ -1,0 +1,10 @@
+{
+  // Check 3b (ARCHITECTURE-P3 §0 rule 4, §7 W0 "architect (health, P2 §14)"): type-checks the web sources AND the web
+  // tests. Run it from apps/web: `npx tsc -p tsconfig.test.json`. Check 3 (`npx tsc -p tsconfig.json`) stays on
+  // src only, so the node types that tests need never leak into the browser sources.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["vite/client", "node"]
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx", "test/**/*.ts", "test/**/*.tsx", "vite.config.ts", "vitest.config.ts"]
+}

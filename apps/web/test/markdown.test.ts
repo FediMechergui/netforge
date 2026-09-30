@@ -76,10 +76,17 @@ describe('markdown subset', () => {
   it('allows only concept and https link targets', () => {
     expect(markdownLinkTarget('concept:subnetting')).toEqual({ kind: 'concept', tool: 'subnetting' });
     expect(markdownLinkTarget(' concept:ipv6 ')).toEqual({ kind: 'concept', tool: 'ipv6' });
+    // ARCHITECTURE-P3 §9.2 W0 item 2: the allowlist is the one contract ConceptToolId (D24)
+    expect(markdownLinkTarget('concept:queueing')).toEqual({ kind: 'concept', tool: 'queueing' });
+    expect(markdownLinkTarget('concept:data-formats')).toEqual({ kind: 'concept', tool: 'data-formats' });
+    expect(markdownLinkTarget('concept:wildcard')).toEqual({ kind: 'concept', tool: 'wildcard' });
     expect(markdownLinkTarget('https://example.org/a?b=1')).toEqual({ kind: 'external', href: 'https://example.org/a?b=1' });
     for (const bad of [
       'concept:vlans',
       'concept:',
+      'concept:toString',
+      'concept:Queueing',
+      'concept:wan',
       'http://example.org',
       'javascript:alert(1)',
       'JavaScript:alert',

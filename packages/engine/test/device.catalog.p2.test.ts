@@ -25,7 +25,7 @@ import {
 import type { DeviceModel } from '../src/contracts/device.js';
 import type { ProcessName } from '../src/contracts/ids.js';
 import { SEC } from '../src/contracts/time.js';
-import { NF_2911, NF_C2960, NF_PC } from '../src/device/catalog.js';
+import { ALL_MODEL_INPUTS, NF_2911, NF_C2960, NF_PC } from '../src/device/catalog.js';
 import { ALL_MODELS, ALL_MODULES, CATALOG_STAGE, createCatalog } from '../src/device/catalog/index.js';
 import { LOOPBACK_FAMILY, MANAGED_SWITCH_VLAN_FAMILY, PORT_CHANNEL_FAMILY, SUBINTERFACE_MAX } from '../src/device/catalog/define.js';
 import { validateCatalog } from '../src/device/catalog/validate.js';
@@ -51,7 +51,7 @@ import {
   createVlan,
 } from '../src/protocols/index.js';
 import { NF_WLC_9800_INPUT } from '../src/device/catalog/wireless.js';
-import { NF_WLC_9800_TEST_INPUT, P2_WIRELESS_MODEL_DELTAS, createP2Catalog, p2Registry } from './p2.world.js';
+import { P2_WIRELESS_MODEL_DELTAS, createP2Catalog, p2Registry } from './p2.world.js';
 
 /** The §2.1 final order without the two W6 names (`capwap-wtp`, `capwap-ac`); vtp and radius-server are not approved. */
 const P2_ORDER_AFTER_W4: readonly ProcessName[] = [
@@ -238,14 +238,15 @@ describe('the W4 catalog flip: derived summaries', () => {
     // real data, so it now holds model for model, in palette order.
     expect(p2Registry()).toEqual(PROCESS_FACTORIES);
     const helper = createP2Catalog();
-    const wireless = new Set<string>([...Object.keys(P2_WIRELESS_MODEL_DELTAS), NF_WLC_9800_TEST_INPUT.type]);
+    const wireless = new Set<string>([...Object.keys(P2_WIRELESS_MODEL_DELTAS), NF_WLC_9800_INPUT.type]);
     expect([...wireless].sort()).toEqual(['ap.nfap-lw', 'wlc.nfwlc9800']);
     for (const m of ALL_MODELS) expect(helper.get(m.type), m.type).toEqual(m);
     expect(helper.list()).toEqual(ALL_MODELS);
     // the real catalog carries the controller and the lightweight capability; the helper's copies are the same data
     const live = createCatalog(PROCESS_FACTORIES);
-    expect(NF_WLC_9800_TEST_INPUT).toBe(NF_WLC_9800_INPUT);
-    expect(live.get(NF_WLC_9800_TEST_INPUT.type)).toEqual(helper.get(NF_WLC_9800_TEST_INPUT.type));
+    // P3 §9.2 W0 item 4: the helper's controller input is the real one (its test-only alias was deleted)
+    expect(ALL_MODEL_INPUTS.find((i) => i.type === NF_WLC_9800_INPUT.type)).toBe(NF_WLC_9800_INPUT);
+    expect(live.get(NF_WLC_9800_INPUT.type)).toEqual(helper.get(NF_WLC_9800_INPUT.type));
     expect(live.get('ap.nfap-lw')?.capabilities).toContain('lightweight-ap');
     expect(helper.get('ap.nfap-lw')?.capabilities).toContain('lightweight-ap');
     for (const name of PROCESS_ORDER) expect(helper.process(name)).toBe(PROCESS_FACTORIES[name]);

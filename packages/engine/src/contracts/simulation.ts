@@ -155,7 +155,11 @@ export interface SnapshotOptions {
   devices?: readonly DeviceId[];
 }
 
-/** @since P0.5 Non-config GUI actions, mapped by the facade onto ProcessRequests. Results appear in process StateViews. */
+/**
+ * @since P0.5 Non-config GUI actions, mapped by the facade onto ProcessRequests. Results appear in process StateViews.
+ * P3 (ARCHITECTURE-P3 §2.9): the traffic apps (M13) and the [S32] apps are NOT added in W0 (ruling R5); each joins with
+ * the W2/W3 sim item that adds its HOST_APP_PROCESS row (sim/simulation.ts).
+ */
 export type HostAppRequest =
   | { app: 'http.get'; url: string }
   | { app: 'wifi.scan'; port?: PortId }

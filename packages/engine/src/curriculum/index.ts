@@ -56,6 +56,8 @@ const CCNA1: Course = {
     'Start with nothing and finish able to build a small routed network, hand out addresses, publish a name and a page, and find a fault instead of guessing at it. Every idea is explained in plain language, shown in a short video and then practised in a lab that grades itself.',
   status: 'available',
   modules: withContent(CCNA1_MODULES, CCNA1_THEORY, CCNA1_VIDEOS),
+  // P3 (ARCHITECTURE-P3 D2, §7 W0 course, §9.2 W0 item 12): data only; nothing reads it until the W7 course flip.
+  profile: 'P1',
 };
 
 const CCNA2: Course = {
@@ -67,6 +69,7 @@ const CCNA2: Course = {
     'Grow from one switch to a campus: split it into VLANs and route between them, let spanning tree tame redundant links, bundle links and share a gateway, lock down the access ports, run many access points from one controller, and write every kind of static route and address translation. Every idea is explained in plain language, shown in a short video and practised in a lab that grades itself.',
   status: 'available',
   modules: withContent(CCNA2_MODULES, CCNA2_THEORY, CCNA2_VIDEOS),
+  profile: 'P2',
 };
 
 const CCNA3: Course = {
@@ -78,6 +81,8 @@ const CCNA3: Course = {
     'The last level: joining sites over long links, controlling who may reach what, and letting a script do the configuration you would otherwise type. Not written yet.',
   status: 'planned',
   modules: [],
+  // still planned: the profile its worlds will take once the course opens (W7)
+  profile: 'P3',
 };
 
 /** Every course, in level order: the ones you can take, then the one that is coming. */

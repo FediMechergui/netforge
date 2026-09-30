@@ -6,7 +6,7 @@
  * THIS IS A SECURITY BOUNDARY. Lab text is data, never markup: the parser produces text, code, emphasis and
  * link nodes and NOTHING else, so there is no node kind a renderer could turn into raw HTML. Angle brackets,
  * ampersands and quotes travel inside text nodes and React escapes them when it renders. Link targets are
- * allowlisted to `concept:subnetting`, `concept:ipv6` and `https://…`; every other target (`javascript:`,
+ * allowlisted to `concept:<id>` for the ids of `ConceptToolId` and `https://…`; every other target (`javascript:`,
  * `data:`, plain `http:`, a relative path) is not a link at all — the whole `[text](target)` run stays visible
  * as literal text, so nothing is silently dropped either. Anything else the parser does not know is text too.
  *
@@ -19,8 +19,27 @@
  * to the end of the text as code, which shows the author exactly what they forgot to close.
  */
 
-/** Concept views a lab may link to (`concept:subnetting`, `concept:ipv6`). */
-export type ConceptLinkTool = 'subnetting' | 'ipv6';
+import type { ConceptToolId } from '@netforge/engine';
+
+/**
+ * Concept views a lab may link to (`concept:subnetting`, `concept:ipv6`, …). @since P3 the one engine contract
+ * `ConceptToolId` (ARCHITECTURE-P3 D24, §2.14): the local union is gone.
+ */
+export type ConceptLinkTool = ConceptToolId;
+
+/**
+ * @since P3 The `concept:<id>` allowlist, exhaustive over `ConceptToolId` (a new id is a compile error here until it is
+ * listed): subnetting, ipv6, and the P3 'queueing', 'data-formats' and [S9] 'wildcard' (ARCHITECTURE-P3 §9.2 W0 item 2).
+ */
+const CONCEPT_LINK_IDS: Readonly<Record<ConceptToolId, true>> = Object.freeze({
+  subnetting: true,
+  ipv6: true,
+  queueing: true,
+  'data-formats': true,
+  wildcard: true,
+});
+
+const CONCEPT_PREFIX = 'concept:';
 
 /** Where an allowed link points. */
 export type MdLinkTarget = { kind: 'concept'; tool: ConceptLinkTool } | { kind: 'external'; href: string };
@@ -49,13 +68,16 @@ const ORDERED = /^[ \t]*\d{1,9}[.)][ \t]+(.*)$/;
 const FENCE = /^[ \t]*(?:```|~~~)/;
 
 /**
- * The allowed target of `[text](href)`, or null when the link is not allowed. Only `concept:subnetting`,
- * `concept:ipv6` and an `https://` address with no whitespace, angle brackets or quotes pass.
+ * The allowed target of `[text](href)`, or null when the link is not allowed. Only `concept:<id>` for an id of
+ * `ConceptToolId` and an `https://` address with no whitespace, angle brackets or quotes pass.
  */
 export function markdownLinkTarget(href: string): MdLinkTarget | null {
   const t = href.trim();
-  if (t === 'concept:subnetting') return { kind: 'concept', tool: 'subnetting' };
-  if (t === 'concept:ipv6') return { kind: 'concept', tool: 'ipv6' };
+  if (t.startsWith(CONCEPT_PREFIX)) {
+    const id = t.slice(CONCEPT_PREFIX.length);
+    if (Object.prototype.hasOwnProperty.call(CONCEPT_LINK_IDS, id)) return { kind: 'concept', tool: id as ConceptToolId };
+    return null;
+  }
   if (/^https:\/\/[^\s<>"'`\\]+$/i.test(t)) return { kind: 'external', href: `https://${t.slice('https://'.length)}` };
   return null;
 }

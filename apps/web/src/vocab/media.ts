@@ -198,6 +198,11 @@ export const LINK_DOWN_VOCAB: Readonly<Record<LinkDownKey, LinkDownVocab>> = Obj
     'The two serial ports use different encapsulations. Set the same encapsulation on both ends.'),
   'keepalive-missed': down('keepalives stopped arriving',
     '{end} stopped hearing keepalives from its peer and took the line protocol down. Check that keepalives are enabled on both ends.'),
+  // P3 [S19] (ARCHITECTURE-P3 §2.7; the architect's W0 stubs)
+  'ppp-negotiating': down('PPP is still negotiating',
+    'The PPP link has not finished negotiating its options and addresses yet. Check that both ends use PPP encapsulation.'),
+  'ppp-auth-failed': down('PPP authentication failed',
+    'The PPP peers did not accept each other\'s credentials. Check the usernames and passwords on both ends; the link retries every 10 seconds.'),
 });
 
 /** Names used to fill link-down wording. */

@@ -11,7 +11,11 @@
  * - `tableWrite` / `tableExpire` by table (`TABLE_LANES`): stp and stp-bridge → `stp`, etherchannel → `etherchannel`,
  *   vlans and dtp → `vlan`, hsrp → `fhrp`, rib and rib6 → `routing`, nat → `nat`, dhcp-bindings and dhcpv6-bindings →
  *   `dhcp`, capwap* and dot11-assoc → `wireless`, port-security → `security`; every other table (cam, arp, nd,
- *   sockets, dns-cache) is in no lane;
+ *   sockets, dns-cache) is in no lane. P3 (ARCHITECTURE-P3 §2.12): the ospf-* and [C1] eigrp-* tables → `routing`;
+ *   acl, arp-inspection and [S13] vty-logins → `security`; dhcp-snooping → `dhcp`; cdp-neighbours, lldp-neighbours,
+ *   ntp-peers, clock and [S25] syslog-messages → `mgmt`; restconf-log → `config`; [S18] tunnels, [S19] ppp and [C13]
+ *   ipsec-sa → `wan`; flows and [S32] script-runs are in no lane. Machines: ospf-if, ospf-nbr and [C1] eigrp-nbr,
+ *   eigrp-route → `routing`; ntp → `mgmt`; [S18] tunnel, [S19] ppp-lcp, ppp-auth, ppp-ncp and [C13] ike → `wan`;
  * - `configChange` → `config`;
  * - `drop` → `drops` (a background drop too: the event carries `background: true`, and the caller decides whether a
  *   background drop is counted — the lane itself does not change);
@@ -45,6 +49,9 @@ export const LANE_INDEX: Readonly<Record<LaneId, number>> = Object.freeze({
   security: 9,
   config: 10,
   drops: 11,
+  // P3 (ARCHITECTURE-P3 §2.12): appended, so every existing index is unchanged
+  mgmt: 12,
+  wan: 13,
 });
 
 /** Every lane in canonical order (`LANE_IDS[LANE_INDEX[l]] === l`). */
@@ -61,6 +68,8 @@ export const LANE_IDS: readonly LaneId[] = Object.freeze([
   'security',
   'config',
   'drops',
+  'mgmt',
+  'wan',
 ] as const);
 
 /** The lane of every state machine that reports through `ctx.transition` (exhaustive over `FsmMachine`). */
@@ -78,6 +87,17 @@ export const FSM_MACHINE_LANES: Readonly<Record<FsmMachine, LaneId>> = Object.fr
   'capwap-ac': 'wireless',
   hsrp: 'fhrp',
   pagp: 'etherchannel',
+  // P3 (ARCHITECTURE-P3 §2.12; the final values, written by the architect in W0)
+  'ospf-if': 'routing',
+  'ospf-nbr': 'routing',
+  ntp: 'mgmt',
+  tunnel: 'wan', // [S18]
+  'ppp-lcp': 'wan', // [S19]
+  'ppp-auth': 'wan', // [S19]
+  'ppp-ncp': 'wan', // [S19]
+  'eigrp-nbr': 'routing', // [C1]
+  'eigrp-route': 'routing', // [C1]
+  ike: 'wan', // [C13]
 });
 
 /** The lane of every table whose writes and expiries are timeline activity; tables not listed are in no lane. */
@@ -98,6 +118,26 @@ export const TABLE_LANES: Readonly<Partial<Record<'cam' | 'arp' | 'rib' | ExtraT
   'capwap-aps': 'wireless',
   'wlan-clients': 'wireless',
   hsrp: 'fhrp',
+  // P3 (ARCHITECTURE-P3 §2.12; the final values, written by the architect in W0). `flows` and [S32] `script-runs` are in
+  // no lane.
+  'ospf-interfaces': 'routing',
+  'ospf-neighbors': 'routing',
+  'ospf-lsdb': 'routing',
+  acl: 'security',
+  'dhcp-snooping': 'dhcp',
+  'arp-inspection': 'security',
+  'cdp-neighbours': 'mgmt',
+  'lldp-neighbours': 'mgmt',
+  'ntp-peers': 'mgmt',
+  clock: 'mgmt',
+  'restconf-log': 'config',
+  'vty-logins': 'security', // [S13]
+  tunnels: 'wan', // [S18]
+  ppp: 'wan', // [S19]
+  'syslog-messages': 'mgmt', // [S25]
+  'eigrp-neighbors': 'routing', // [C1]
+  'eigrp-topology': 'routing', // [C1]
+  'ipsec-sa': 'wan', // [C13]
 });
 
 /** The lane of a table name (`undefined` for tables that are not timeline activity, and for unknown names). */

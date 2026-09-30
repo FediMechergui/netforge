@@ -14,6 +14,7 @@ import type {
   TraceEvent,
 } from '@netforge/engine';
 import { buildCableLookup } from '../src/app/cable/cable-compat.js';
+import { deviceMembersFromModel, portMembersFromSpec } from './snapshot-members.js';
 import { dropLabel } from '../src/vocab/drops.js';
 import { linkDownText } from '../src/vocab/media.js';
 import {
@@ -85,13 +86,12 @@ const AP = defineModel({
 }, 'P0.5');
 const LOOKUP = buildCableLookup([PC, SWITCH, ROUTER, AP]);
 
+/** Snapshot port from a catalog spec, with the P0.5 members the engine derives from it (snapshot-members.ts). */
 function snapPort(spec: PortSpec, extra: Partial<PortSnapshot> = {}): PortSnapshot {
   const base: PortSnapshot = {
     id: spec.name, short: spec.short, kind: spec.kind, mac: '02:00:00:00:00:01', adminUp: true, operUp: false, mtu: 1500,
-    counters: emptyCounters(), l3: {}, txQueue: 0,
+    counters: emptyCounters(), l3: {}, txQueue: 0, ...portMembersFromSpec(spec),
   };
-  if (spec.role !== undefined) base.role = spec.role;
-  if (spec.connector !== undefined) base.connector = spec.connector;
   if (spec.wiring !== undefined) base.wiring = spec.wiring;
   if (spec.autoMdix !== undefined) base.autoMdix = spec.autoMdix;
   return { ...base, ...extra };
@@ -108,7 +108,7 @@ function snapDevice(
   return {
     id, type: model.type, model: model.model, kind: model.kind, name, position, power: true, booted: true, uptimeNs: 0,
     ports: model.ports.map((p) => snapPort(p, extra[p.name] ?? {})), tables: { cam: [], arp: [], rib: [] }, processes: [],
-    runningConfig: '', hasStartupConfig: false, ...device,
+    runningConfig: '', hasStartupConfig: false, ...deviceMembersFromModel(model), ...device,
   };
 }
 

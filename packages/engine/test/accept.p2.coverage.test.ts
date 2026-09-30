@@ -7,6 +7,11 @@
  * (a wave or SHOULD tag such as `(W0)` or `[S2]` may follow the name). This test reads the table from the brief, so the
  * table and the suite cannot drift apart: a row without its file fails, and so does an `accept.p2.*.test.ts` file
  * anywhere under packages/engine/test/ that no row names. The pass conditions themselves live in the named files.
+ *
+ * ARCHITECTURE-P3 §9.2 W0 item 8: P3 split `accept.p2.replay-exact` into shards by category. The P2 brief is closed
+ * and not edited, so this test carries one explicit shard record (`SHARDS`): the row `accept.p2.replay-exact.test.ts`
+ * is satisfied by exactly its three shards, each of which must exist, and every `accept.p2.*.test.ts` file must be a
+ * listed file or one of its shards (both directions kept).
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
@@ -18,6 +23,23 @@ const BRIEF = join(HERE, '..', '..', '..', 'docs', 'ARCHITECTURE-P2.md');
 
 /** An acceptance file name of this stage. */
 const ACCEPT_P2 = /^accept\.p2\.[a-z0-9-]+\.test\.ts$/;
+
+/**
+ * Rows of the closed P2 brief that a later stage split into shards (ARCHITECTURE-P3 §9.2 W0 item 8), with the exact
+ * files that satisfy each row. A sharded row is satisfied by its shards only: the unsplit file must not remain.
+ */
+const SHARDS: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  'accept.p2.replay-exact.test.ts': Object.freeze([
+    'accept.p2.replay-exact-templates.test.ts',
+    'accept.p2.replay-exact-ccna1.test.ts',
+    'accept.p2.replay-exact-ccna2.test.ts',
+  ]),
+});
+
+/** The files that satisfy a row of the table: its shards when it was split, else the file it names. */
+function filesOfRow(name: string): readonly string[] {
+  return Object.prototype.hasOwnProperty.call(SHARDS, name) ? (SHARDS[name] as readonly string[]) : [name];
+}
 
 /** The body of §10.1: from its heading to the next heading. */
 function section101(): string {
@@ -90,14 +112,28 @@ describe('P2 acceptance: the §10.1 table and the suite name the same files', ()
     expect(() => tableFiles(`${header}| \`notes.md\` | not an acceptance file |\n`)).toThrow(/names an accept\.p2 test file/);
   });
 
-  it('has a file in packages/engine/test/ for every row of the table', () => {
-    const present = new Set(readdirSync(HERE));
-    const missing = listedFiles().filter((f) => !present.has(f));
-    expect(missing, 'files the §10.1 table lists that do not exist').toEqual([]);
+  it('carries one shard record per split row, naming rows of the table and well-formed shard files (P3 §9.2 W0 item 8)', () => {
+    const listed = listedFiles();
+    expect(Object.keys(SHARDS)).toEqual(['accept.p2.replay-exact.test.ts']);
+    for (const [row, shards] of Object.entries(SHARDS)) {
+      expect(listed, 'a shard record names a row of the §10.1 table').toContain(row);
+      expect(shards.length, row).toBeGreaterThan(1);
+      expect(new Set(shards).size, row).toBe(shards.length);
+      for (const s of shards) {
+        expect(s, 'a shard is an accept.p2 test file').toMatch(ACCEPT_P2);
+        expect(listed, 'a shard is not a row of its own').not.toContain(s);
+      }
+    }
   });
 
-  it('lists every accept.p2.*.test.ts file of the engine suite in the table', () => {
-    const listed = new Set(listedFiles());
+  it('has a file in packages/engine/test/ for every row of the table (every shard of a split row)', () => {
+    const present = new Set(readdirSync(HERE));
+    const missing = listedFiles().flatMap((f) => filesOfRow(f)).filter((f) => !present.has(f));
+    expect(missing, 'files the §10.1 table lists (or the shards of a split row) that do not exist').toEqual([]);
+  });
+
+  it('lists every accept.p2.*.test.ts file of the engine suite in the table (a split row by its shards)', () => {
+    const listed = new Set(listedFiles().flatMap((f) => filesOfRow(f)));
     const onDisk = acceptFilesUnder(HERE);
     expect(onDisk.length).toBeGreaterThan(0);
     // every acceptance file sits directly in test/ with a well-formed name, and the table names it

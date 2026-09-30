@@ -477,6 +477,17 @@ describe('state-machine vocabulary [S14]', () => {
       'capwap-ac',
       'hsrp',
       'pagp',
+      // ARCHITECTURE-P3 §9.2 W0 item 1 (FSM_VOCAB +10): the P3 machines, still an exact list
+      'ospf-if',
+      'ospf-nbr',
+      'ntp',
+      'tunnel',
+      'ppp-lcp',
+      'ppp-auth',
+      'ppp-ncp',
+      'eigrp-nbr',
+      'eigrp-route',
+      'ike',
     ];
     expect([...fsm.FSM_MACHINES].sort()).toEqual([...machines].sort());
     for (const m of fsm.FSM_MACHINES) {

@@ -28,7 +28,12 @@ import type { SimTime } from './time.js';
 /** 'c_<n>' live, 'i_<n>' imported. */
 export type CaptureId = string;
 
-/** Link types, named after pcap LINKTYPE_* values. */
+/**
+ * Link types, named after pcap LINKTYPE_* values.
+ * P3 [S19] (ARCHITECTURE-P3 §2.13): 'ppp_hdlc' (LINKTYPE_PPP_HDLC, 50). NOT added in W0 (ruling R4): the exhaustive
+ * records of capture/tap.ts (capture-owned) would need entries, so the W2 capture [S19] item adds the member, its
+ * PCAP_LINKTYPE number and its `outerForLinkType` case with them.
+ */
 export type CaptureLinkType = 'ethernet' | 'ieee802_11' | 'c_hdlc' | 'raw';
 export const PCAP_LINKTYPE: Readonly<Record<CaptureLinkType, number>> = Object.freeze({ ethernet: 1, ieee802_11: 105, c_hdlc: 104, raw: 101 });
 

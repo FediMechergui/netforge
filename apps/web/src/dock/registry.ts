@@ -8,7 +8,8 @@
  */
 import type { DockTab } from '../store/types';
 
-export type DockStage = 'P0' | 'P0.5' | 'P1';
+/** 'P3' @since P3 [S2] (ARCHITECTURE-P3 §2.14): the stage of the `routing` tab, shown from the W4 web-shell item. */
+export type DockStage = 'P0' | 'P0.5' | 'P1' | 'P3';
 
 export interface DockTabDef {
   readonly id: DockTab;
@@ -34,7 +35,7 @@ export const DOCK_OPEN_HEIGHT = 260;
 export const INSPECTOR_HIDDEN_BELOW = 40;
 export const INSPECTOR_OPEN_WIDTH = 340;
 
-const STAGE_RANK: Readonly<Record<DockStage, number>> = Object.freeze({ P0: 0, 'P0.5': 1, P1: 2 });
+const STAGE_RANK: Readonly<Record<DockStage, number>> = Object.freeze({ P0: 0, 'P0.5': 1, P1: 2, P3: 3 });
 
 interface DockTabInput {
   id: DockTab;
@@ -54,6 +55,9 @@ const ALL_TABS: readonly DockTabInput[] = [
   { id: 'netscope', label: 'NetScope', description: 'Capture and analyse traffic.', keepMounted: true, stage: 'P1' },
   { id: 'sim-events', label: 'Sim events', description: 'Step through matching events with breakpoints.', keepMounted: false, stage: 'P1' },
   { id: 'labs', label: 'Labs', description: 'Lab instructions and task checks.', keepMounted: false, stage: 'P1' },
+  // P3 [S2] (ARCHITECTURE-P3 §2.14; the architect's W0 stub): hidden while DOCK_STAGE is 'P1', so buildDockTabs() and
+  // the hotkeys are unchanged until the W4 web-shell item shows it.
+  { id: 'routing', label: 'Link state', description: 'Link-state databases and shortest-path trees of OSPF routers.', keepMounted: false, stage: 'P3' },
 ];
 
 export function isStageAvailable(stage: DockStage, build: DockStage = DOCK_STAGE): boolean {

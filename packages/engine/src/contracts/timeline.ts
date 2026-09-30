@@ -9,8 +9,14 @@
  */
 import type { SimTime } from './time.js';
 
-/** @since P2 [S1] One timeline lane. */
-export type LaneId = 'link' | 'stp' | 'etherchannel' | 'vlan' | 'fhrp' | 'routing' | 'nat' | 'dhcp' | 'wireless' | 'security' | 'config' | 'drops';
+/**
+ * @since P2 [S1] One timeline lane.
+ * 'mgmt' @since P3 (lane 12: cdp-neighbours, lldp-neighbours, ntp-peers, clock and [S25] syslog-messages rows; the 'ntp'
+ * machine) and 'wan' @since P3 (lane 13, for the approved [S18], [S19] and [C13]: tunnels, ppp and ipsec-sa rows; the
+ * tunnel, ppp-lcp, ppp-auth, ppp-ncp and ike machines), appended so LANE_IDS keeps every existing index
+ * (ARCHITECTURE-P3 §2.12; the final lane entries are in timeline/lanes.ts).
+ */
+export type LaneId = 'link' | 'stp' | 'etherchannel' | 'vlan' | 'fhrp' | 'routing' | 'nat' | 'dhcp' | 'wireless' | 'security' | 'config' | 'drops' | 'mgmt' | 'wan';
 
 /** @since P2 [S1] Bucketed lane activity between two times. */
 export interface TimelineQuery {

@@ -18,6 +18,7 @@
 import type {
   CaptureId,
   CaptureInfo,
+  ConceptToolId,
   DeviceCategory,
   DeviceId,
   DeviceModel,
@@ -45,7 +46,11 @@ import type { EngineBatch, InitResult, PlaybackMode, ReviewInfo, StopInfo } from
 
 export type Tool = 'select' | 'cable' | 'add-device' | 'pan';
 /** Dock tabs; `netscope`, `sim-events` and `labs` @since P1 (one registry: apps/web/src/dock/registry.ts). */
-export type DockTab = 'terminal' | 'packets' | 'events' | 'tables' | 'provenance' | 'netscope' | 'sim-events' | 'labs';
+/**
+ * 'routing' @since P3 [S2] (the LSDB browser, "Link state"): registered in W0 at dock stage P3, hidden until the W4
+ * web-shell item sets DOCK_STAGE 'P3' and maps it to its panel (ARCHITECTURE-P3 §2.14).
+ */
+export type DockTab = 'terminal' | 'packets' | 'events' | 'tables' | 'provenance' | 'netscope' | 'sim-events' | 'labs' | 'routing';
 export type Theme = 'dark' | 'light';
 
 /**
@@ -59,7 +64,11 @@ export type LearnSurface = 'landing' | 'course' | 'lesson';
  * @since course …or a learn surface, which covers the whole window (`isLearnView`).
  */
 export type WorkspaceView = 'topology' | 'concept' | LearnSurface;
-export type ConceptTool = 'subnetting' | 'ipv6';
+/**
+ * The concept tools a view can open. @since P3 the one engine contract `ConceptToolId` (ARCHITECTURE-P3 D24, §2.14):
+ * the local union is gone, so a new tool id is added once, in the engine.
+ */
+export type ConceptTool = ConceptToolId;
 
 /** The learn surfaces, in the order you meet them. */
 export const LEARN_SURFACES: readonly LearnSurface[] = Object.freeze(['landing', 'course', 'lesson']);

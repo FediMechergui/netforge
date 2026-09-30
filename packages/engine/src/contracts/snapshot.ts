@@ -9,7 +9,7 @@
 import type { DeviceId, LinkId, PduId, PortId, PortRef, SessionId } from './ids.js';
 import type { MacAddress } from './addr.js';
 import type { DeviceKind } from './device.js';
-import type { LinkState, PortPhy, PortPhySettings } from './link.js';
+import type { EgressQueueView, LinkState, PortPhy, PortPhySettings } from './link.js';
 import type { PortCounters, PortKind, PortL3, SwitchportConfig } from './port.js';
 import type { StateView } from './process.js';
 import type { ArpRow, CamRow, ChannelMemberState, PortSecurityRow, RouteRow, TableColumn, TableName } from './tables.js';
@@ -37,6 +37,8 @@ import type {
 import type { MediaSnapshot, MediumId, MediumKind } from './medium.js';
 import type { RadioPortView } from './rf.js';
 import type { TopologyDeviceUi } from './topology.js';
+import type { ClockSource } from './clock.js';
+import type { DeviceStorageView } from './storage.js';
 
 /** @since P2 L2 view of one bridged port of a VLAN-aware device, derived at snapshot time from config plus tables (D6). */
 export interface PortL2View {
@@ -106,6 +108,58 @@ export interface PortSnapshot {
   parent?: PortId;
   /** @since P2 (optional by meaning) Subinterfaces: the 802.1Q encapsulation. */
   dot1q?: { vid: number; native: boolean };
+
+  // ── P3 (optional by meaning: absent keeps P1/P2 snapshots stable; ARCHITECTURE-P3 §2.8) ──
+  /**
+   * @since P3 (optional by meaning) Present only on a port with a service policy: the M13 marking counters (runtime-owned
+   * through DeviceRuntime.qosCounters, display only); [S20] widened with the queue view of a scheduler port.
+   */
+  qos?: PortQosView;
+  /**
+   * @since P3 (optional by meaning) The virtual FIFO of this egress port (D16): present only while the link model has
+   * committed at least one frame here with txStart > now, absent otherwise, so an uncongested world never gains it.
+   * Written in every profile by the snapshot cache (W2 sim); display only, never in the trace, and removed by the
+   * digest normalisation (§4.6 item 2), so no golden sees it. The qos overlay's only queue source (D24). Named
+   * `txBacklog` by the W0 ruling R6: the P0 frame count `txQueue` above stays as it is.
+   */
+  txBacklog?: PortTxQueueView;
+}
+
+/**
+ * @since P3 The QoS view of a port with a service policy (ARCHITECTURE-P3 §2.8): the input and output policy names and
+ * the per-class marking counters (M13). [S20] widens it with `queue`, the EgressQueueView of a port whose output policy
+ * queues (the WAN map's `PortSnapshot.qos`).
+ */
+export interface PortQosView {
+  input?: string;
+  output?: string;
+  classes: readonly { name: string; matched: number; matchedBytes: number; marked: number }[];
+  /** @since P3 (optional by meaning) [S20] The held class queues of a scheduler port. */
+  queue?: EgressQueueView;
+}
+
+/**
+ * @since P3 The frames the link model has committed on an egress port with txStart > now (the virtual FIFO, D16): the
+ * depth and up to 8 of them, oldest first. The type of `PortSnapshot.txBacklog` (ARCHITECTURE-P3 §2.8, ruling R6): the
+ * member is not called `txQueue`, so the required P0 frame count `PortSnapshot.txQueue: number` (snapshot-cache
+ * `p.tx.queue`, pinned by goldens/accept.p05.p0-sequences.json and the P1 digests) is untouched.
+ */
+export interface PortTxQueueView {
+  depth: number;
+  frames: readonly { pdu: PduId; summary: PduSummary; txStart: SimTime; bytes: number }[];
+}
+
+/**
+ * @since P3 (optional by meaning) A device clock as the snapshot shows it (D19): present only in a P3 world, or when the
+ * source is 'user', 'ntp' or 'master'; changes only on a set or a sync (the web extrapolates from `now`).
+ */
+export interface DeviceClockSnapshot {
+  source: ClockSource;
+  baseUnixMs: number;
+  baseAt: SimTime;
+  stratum?: number;
+  reference?: string;
+  tzOffsetMin: number;
 }
 
 /** @since P0.5 A module slot of a chassis. */
@@ -171,6 +225,15 @@ export interface DeviceSnapshot {
   baseMac: MacAddress;
   /** @since P0.5 Opaque persisted GUI state. */
   ui?: TopologyDeviceUi;
+
+  // ── P3 (optional by meaning; ARCHITECTURE-P3 §2.8) ──
+  /** @since P3 (optional by meaning) The device clock (D19); see DeviceClockSnapshot. */
+  clock?: DeviceClockSnapshot;
+  /**
+   * @since P3 (optional by meaning) [S32] Present only on a host with user files in `files:` (the automation workspace's
+   * file list; [S29], not approved, would add flash: and nvram:).
+   */
+  storage?: readonly DeviceStorageView[];
 }
 
 export type LinkSnapshot = LinkState;
@@ -214,8 +277,11 @@ export interface SimSnapshot {
   pendingEvents: number;
   /** @since P0.5 Segments, BSSs, cells, associations; omitted when none exist and the scale is the default. */
   media?: MediaSnapshot;
-  /** @since P2 (optional by meaning) The world's defaults profile when it is 'P2'; absent = 'P1' (D2). */
-  profile?: 'P2';
+  /**
+   * @since P2 (optional by meaning) The world's defaults profile when it is 'P2'; absent = 'P1' (D2).
+   * 'P3' @since P3 (optional by meaning; ARCHITECTURE-P3 §2.8).
+   */
+  profile?: 'P2' | 'P3';
 }
 
 export type Selection =

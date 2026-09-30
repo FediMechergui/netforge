@@ -12,7 +12,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SCENARIOS, schemaIdFor } from '@netforge/engine';
-import type { DeviceModel, SimSnapshot, Topology } from '@netforge/engine';
+import type { DefaultsProfile, DeviceModel, SimSnapshot, Topology } from '@netforge/engine';
 import { classicDefaultsChip } from '../src/app/StatusBar';
 import { startupProfile } from '../src/bridge/client';
 import type { EngineApi, EngineBatch } from '../src/bridge/protocol';
@@ -34,7 +34,7 @@ vi.mock('comlink', () => ({
 const WORKER = '../src/bridge/worker/index.ts';
 type WorkerModule = { withCurrentDefaults(t: Topology, modelOf: (type: string) => Pick<DeviceModel, 'profileConfig'> | undefined): Topology };
 
-async function freshWorker(init: { seed: number; profile?: 'P1' | 'P2' }): Promise<{ api: EngineApi; batches: EngineBatch[]; mod: WorkerModule }> {
+async function freshWorker(init: { seed: number; profile?: DefaultsProfile }): Promise<{ api: EngineApi; batches: EngineBatch[]; mod: WorkerModule }> {
   vi.resetModules();
   exposed = undefined;
   const mod = (await import(WORKER)) as unknown as WorkerModule;

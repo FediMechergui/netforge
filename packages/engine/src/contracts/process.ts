@@ -42,18 +42,20 @@ import type { DropReason } from './link.js';
 import type { LayerSpec, Pdu, PduMeta, FieldValue, MutationReason, RewrapOp } from './pdu.js';
 import type { ErrDisableCause, Ipv6PortAddress, PortIpv4Address, PortView, VirtualIpv4 } from './port.js';
 import type { Rng } from './rng.js';
-import type { DeviceTables, Lpm6Result, LpmResult, RouteRow } from './tables.js';
+import type { DeviceTables, Lpm6Result, LpmResult, RouteRow, TableName } from './tables.js';
 import type { SimTime } from './time.js';
 import type { Capability, DefaultsProfile, PortRole } from './catalog.js';
 import type { AirView, MediumEvent, MediumOp } from './medium.js';
 import type { BssSettings, RadioSettings } from './rf.js';
 import type { AppPayload, ProcessEvent, SocketId } from './transport.js';
+import type { DeviceClockView } from './clock.js';
+import type { FileSystemId, StoredFile, StoredFileInput, StoredFileMeta } from './storage.js';
 
 /**
  * Demux layer = the frame's outer framing (`ethernet` | `hdlc` | `dot11`) or, for the `ingress` action on
- * loopback-style ports, the IP layer (`ipv4` | `ipv6`).
+ * loopback-style ports, the IP layer (`ipv4` | `ipv6`). 'ppp' @since P3 [S19] (a PPP-framed serial port).
  */
-export type DemuxLayer = 'ethernet' | 'hdlc' | 'dot11' | 'ipv4' | 'ipv6';
+export type DemuxLayer = 'ethernet' | 'hdlc' | 'dot11' | 'ipv4' | 'ipv6' | 'ppp';
 
 /**
  * Which frames a process wants first-look at. A selector is a candidate iff `layer` matches the frame's
@@ -95,7 +97,31 @@ export type FsmMachine =
   // [SHOULD S2]
   | 'hsrp'
   // [SHOULD S3]
-  | 'pagp';
+  | 'pagp'
+  // ── P3 (ARCHITECTURE-P3 §2.4; appended, so every existing order is unchanged) ──
+  /** @since P3 subject: the interface ('GigabitEthernet0/0'). */
+  | 'ospf-if'
+  /** @since P3 subject: interface and neighbour router id ('GigabitEthernet0/0 2.2.2.2'). */
+  | 'ospf-nbr'
+  /** @since P3 subject: the server address ('10.0.0.10'). */
+  | 'ntp'
+  /** @since P3 [S18] subject: the tunnel interface ('Tunnel0'). */
+  | 'tunnel'
+  /** @since P3 [S19] subject: the serial interface ('Serial0/0/0'). */
+  | 'ppp-lcp'
+  /** @since P3 [S19] subject: the serial interface. */
+  | 'ppp-auth'
+  /** @since P3 [S19] subject: interface and NCP ('Serial0/0/0 IPCP'). */
+  | 'ppp-ncp'
+  /** @since P3 [C1] subject: interface and neighbour address ('GigabitEthernet0/0 10.0.12.2'); states pending, up, down. */
+  | 'eigrp-nbr'
+  /** @since P3 [C1] subject: the prefix ('10.4.0.0/24'); states passive, active (§2.16). */
+  | 'eigrp-route'
+  /**
+   * @since P3 [C13] subject: the tunnel interface ('Tunnel0'); states idle, init-sent, init-answered, auth-sent,
+   * established, failed (§2.17).
+   */
+  | 'ike';
 
 /**
  * @since P2 One state-machine transition. `subject` is stable and canonical-PortId based — never an abbreviation:
@@ -187,8 +213,12 @@ export type ProcessRequest =
    * 'no-route' detail 'limited broadcast needs an egress interface'.
    */
   | { kind: 'ipv4.send'; pdu: Pdu; cause?: string; iface?: PortId; nextHop?: Ipv4Address }
-  /** ipv4/udp → icmpv4: generate an error (ttl-exceeded, unreachable) quoting `original`. */
-  | { kind: 'icmp.error'; original: Pdu; type: number; code: number; inPort?: PortId }
+  /**
+   * ipv4/udp → icmpv4: generate an error (ttl-exceeded, unreachable) quoting `original`.
+   * `param` @since P3 (optional by meaning) [S18]: the next-hop MTU, written into the low 16 bits of icmpv4 `unused`
+   * (RFC 1191) for type 3 code 4 — the D15 fallback of every tunnel (GRE and [C13] IPsec). Absent = P1 bytes.
+   */
+  | { kind: 'icmp.error'; original: Pdu; type: number; code: number; inPort?: PortId; param?: number }
 
   // ── P1: RIB arbitration and DHCP-learned addressing (ipv4 owns PortL3.ipv4 and the rib) ──
   /** @since P1 host (ip default-gateway, S AD 1) / dhcp-client (D AD 254) → ipv4: offer or withdraw a candidate route; ipv4 installs the lowest AD per key. */
@@ -231,8 +261,15 @@ export type ProcessRequest =
   | { kind: 'udp.close'; socket: SocketId }
 
   // ── P1: sockets (tcp) ──
-  | { kind: 'tcp.listen'; owner: ProcessName; socket: SocketId; family: IpFamily; localPort: number; localAddr?: IpAddress; backlog?: number }
-  | { kind: 'tcp.connect'; owner: ProcessName; socket: SocketId; dst: IpAddress; dstPort: number; src?: IpAddress; timeoutNs?: SimTime }
+  /**
+   * `tls` @since P3 (optional by meaning): data segments of the connections accepted on this listener carry
+   * `meta.protected` with `protectedBy: 'tls'` (RESTCONF, D21; no handshake bytes). `service` @since P3 (optional by
+   * meaning) [S13]: a hidden listener (vty) — no `sockets` row, no debug line, no `sock.opened`, not in the tcp
+   * StateView, so a P1/P2 router whose configuration holds `line vty` keeps its bytes (D14).
+   */
+  | { kind: 'tcp.listen'; owner: ProcessName; socket: SocketId; family: IpFamily; localPort: number; localAddr?: IpAddress; backlog?: number; tls?: true; service?: true }
+  /** `tls` @since P3 (optional by meaning): the connection's data segments carry `meta.protected` + `protectedBy 'tls'`. */
+  | { kind: 'tcp.connect'; owner: ProcessName; socket: SocketId; dst: IpAddress; dstPort: number; src?: IpAddress; timeoutNs?: SimTime; tls?: true }
   | { kind: 'tcp.send'; socket: SocketId; data: Uint8Array }
   /** Graceful: FIN after pending data. */
   | { kind: 'tcp.close'; socket: SocketId }
@@ -266,9 +303,18 @@ export type ProcessRequest =
    * @since P2 ipv4 → nat: routed, TTL already decremented, inPort inside, iface outside. nat answers with exactly one
    * of: request arp 'arp.sendVia' {pdu, nextHop, iface, cause}, or a drop ('nat-exhausted' | other).
    */
-  | { kind: 'nat.outbound'; pdu: Pdu; inPort: PortId; iface: PortId; nextHop: Ipv4Address; cause?: string }
-  /** @since P2 nat → ipv4: continue receive processing at the for-me test; never handed to nat again. */
-  | { kind: 'ipv4.resume'; pdu: Pdu; inPort: PortId }
+  /**
+   * `filterOut` @since P3 (optional by meaning; D12): set by ipv4 when the egress interface has an outbound access
+   * list; after translating, nat hands the packet to acl `acl.filter` {dir 'out', natted: true} with onPermit = the
+   * `arp.sendVia` request it would have sent. Absent = the P2 seam.
+   */
+  | { kind: 'nat.outbound'; pdu: Pdu; inPort: PortId; iface: PortId; nextHop: Ipv4Address; cause?: string; filterOut?: true }
+  /**
+   * @since P2 nat → ipv4: continue receive processing at the for-me test; never handed to nat again.
+   * `after` @since P3 (optional by meaning; D12): 'acl-in' = acl → ipv4, continue at the NAT inbound hook (the packet
+   * passed the inbound list). Absent = the P2 meaning.
+   */
+  | { kind: 'ipv4.resume'; pdu: Pdu; inPort: PortId; after?: 'acl-in' }
   /** @since P2 cli → nat: `clear ip nat translation *` (dynamic rows only). */
   | { kind: 'nat.clear'; session?: SessionId }
   /**
@@ -292,8 +338,222 @@ export type ProcessRequest =
       validUntil?: SimTime;
       server?: Ipv6Address;
     }
+
+  // ── P3 (ARCHITECTURE-P3 §2.4; every kind @since P3) ──
+  /**
+   * @since P3 A routing daemon (ospf; [C1] eigrp) → ipv4: REPLACE the owner's whole candidate set (D8). Rows sharing a
+   * key are equal-cost paths in path order. ipv4 applies the batch in ascending (network u32, prefixLen) order —
+   * re-offer changed slots, offer new ones, withdraw vanished ones — with arbiter owner `${owner}|${slot}`, runs
+   * settleStatics once, sends no decision event, and emits one `ip routing` debug line per installed-row change.
+   */
+  | { kind: 'ipv4.routes'; owner: ProcessName; rows: readonly RouteRow[] }
+  /**
+   * @since P3 any → ipv4: register (replace) the owner's RIB watch (D8); answered at once and on every change by
+   * ProcessEvent `ipv4.ribChanged` to the owner only. `keys` = exact RIB keys ('0.0.0.0/0'); `lpm` = addresses whose
+   * longest-match result is watched (an unsynchronised NTP client's servers, D19; [S18] a tunnel destination). Both
+   * empty or absent = stop the watch.
+   */
+  | { kind: 'ipv4.ribWatch'; owner: ProcessName; keys?: readonly string[]; lpm?: readonly Ipv4Address[] }
+  /** @since P3 cli → ospf: `clear ip ospf process`, after the interactive confirm (refused headless). */
+  | { kind: 'ospf.clear'; session?: SessionId }
+  /**
+   * @since P3 ipv4 (and nat on the `filterOut` path) → acl (D12). `inPort` (optional by meaning; dir 'out' only) = the
+   * packet's ingress interface, used as the ICMP error's source interface. `natted` (optional by meaning) = set by
+   * nat on the filterOut path (the packet is already translated). acl answers with EXACTLY ONE of: [onPermit]; or a
+   * drop {reason 'acl-deny', port: iface, detail, rule} plus, when the rate gate is open, `no ip unreachables` is absent
+   * and `natted` is not set, request icmpv4 icmp.error {3, 13, inPort: dir 'in' ? iface : inPort}. Counts on the
+   * matched row. ([S11], not approved, would widen `family` with 6.)
+   */
+  | { kind: 'acl.filter'; family: 4; dir: 'in' | 'out'; iface: PortId; inPort?: PortId; natted?: true; pdu: Pdu; onPermit: Action }
+  /** @since P3 cli → acl: `clear access-list counters [<list>]`. */
+  | { kind: 'acl.clear'; list?: string }
+  /**
+   * @since P3 a process or the CLI (the host-shell `rest` job, owner 'cli') → http-client: resolve (dns-client for
+   * names), tcp.connect {tls: url is https}, send the head and a Content-Length body, parse the response; answer
+   * `http.result` to a process owner, or text to the CLI `session`. `http.fetch` is unchanged.
+   */
+  | { kind: 'http.request'; owner: ProcessName | 'cli'; token: string; method: HttpMethod; url: string; headers?: readonly (readonly [string, string])[]; body?: Uint8Array; timeoutNs?: SimTime; session?: SessionId }
+  /** @since P3 host shell (`flow`) / GUI (the Traffic generator app) → traffic: start one generated flow (M13, D16). */
+  | { kind: 'traffic.start'; flow: TrafficFlowSpec; session?: SessionId }
+  /** @since P3 host shell / GUI → traffic: stop the flow `id`. */
+  | { kind: 'traffic.stop'; id: string; session?: SessionId }
+  /**
+   * @since P3 cli `clock set` → ntp (D19): ntp returns the `clock {op: 'set', source: 'user'}` action and writes its
+   * `clock` row (rule 20).
+   */
+  | { kind: 'ntp.clockSet'; unixMs: number; session?: SessionId }
+  /**
+   * @since P3 grader clone → tcp, applied exactly as icmp.ping is (§2.10): one SYN from an ephemeral port. The outcome
+   * lands in the tcp StateView `probes`, keyed by session: 'open' on SYN-ACK (answered with a RST), 'refused' on RST,
+   * 'unreachable' on an ICMP destination unreachable (type and code kept), 'timeout' after timeoutNs (3 s).
+   */
+  | { kind: 'tcp.probe'; session: string; dst: IpAddress; port: number; src?: IpAddress; timeoutNs: SimTime }
+  /**
+   * @since P3 grader clone → udp: one datagram (payload: the marker 'NFPR' and the session) from an ephemeral port;
+   * the udp StateView records 'unreachable' on an ICMP error, else 'sent'.
+   */
+  | { kind: 'udp.probe'; session: string; dst: IpAddress; port: number; src?: IpAddress; timeoutNs: SimTime }
+  // ── P3 [S13] remote terminal (D14) ──
+  /**
+   * @since P3 [S13] vty → acl: check `tuple` against the vty `access-class` list (answered by ProcessEvent
+   * `acl.verdict` to `owner`, counted on the matched row with `lastIface 'vty'`). ([S11] would widen `family`.)
+   */
+  | { kind: 'acl.check'; family: 4; list: string; tuple: PacketTuple; token: string; owner: ProcessName }
+  /** @since P3 [S13] cli (`telnet`, `ssh -l`) → vty-client: open a remote session from this device. */
+  | { kind: 'vty.connect'; session: SessionId; target: IpAddress; proto: 'telnet' | 'ssh'; user?: string; password?: string; port?: number }
+  /** @since P3 [S13] cli → vty-client: one line typed in a remote session. */
+  | { kind: 'vty.input'; session: SessionId; line: string }
+  /** @since P3 [S13] cli → vty-client: the escape / interrupt sequence of a remote session. */
+  | { kind: 'vty.interrupt'; session: SessionId }
+  // ── P3 [S32] NF-Py (D21) ──
+  /** @since P3 [S32] host shell (`python`) / GUI (the automation workspace) → script-host: run a script of `files:`. */
+  | { kind: 'script.run'; token: string; file: string; argv?: readonly string[]; session?: SessionId }
+  /** @since P3 [S32] host shell / GUI → script-host: stop the run `token`. */
+  | { kind: 'script.stop'; token: string }
+  /** @since P3 [S32] GUI (the automation workspace) → script-host: write a file of `files:` (a `storage` action). */
+  | { kind: 'file.write'; path: string; content: string }
+  /** @since P3 [S32] GUI → script-host: delete a file of `files:`. */
+  | { kind: 'file.delete'; path: string }
+  // ── P3 [C1] EIGRP (§2.16) ──
+  /** @since P3 [C1] cli → eigrp: `clear ip eigrp neighbors [<address>]` resets every neighbour (or one); not interactive. */
+  | { kind: 'eigrp.clear'; neighbor?: IpAddress; session?: SessionId }
+  // ── P3 [C13] site-to-site IPsec (§2.17) ──
+  /**
+   * @since P3 [C13] gre → ike: an ipsec-mode tunnel's underlay became ready or its protection profile changed; ike
+   * opens `ike#500` if needed and arms `ike-kick:<port>` (0 ns).
+   */
+  | { kind: 'ike.connect'; port: PortId; local: Ipv4Address; peer: Ipv4Address; profile: string }
+  /** @since P3 [C13] gre → ike: the underlay went, the mode left ipsec, or the tunnel was removed; ike drops the SA and its row. */
+  | { kind: 'ike.disconnect'; port: PortId }
+  /**
+   * @since P3 [C13] ike → gre: the tunnel's SA. gre keeps the SPIs, the key id and its ESP sequence counter, writes
+   * the `tunnels` row (up only while the SA is up) and issues `virtualChanged`.
+   */
+  | { kind: 'tunnel.sa'; port: PortId; op: 'up' | 'down'; spiIn?: number; spiOut?: number; keyId?: number; reason?: 'ike-negotiating' | 'ike-failed' | 'ike-no-proposal' | 'ike-no-response' }
   /** Extension slot: non-built-in requests must be namespaced `ext.<name>` so built-in kinds still narrow. */
   | { kind: `ext.${string}`; [k: string]: unknown };
+
+// ── P3 request and action payloads (ARCHITECTURE-P3 §2.4) ──
+
+/** @since P3 HTTP methods of `http.request` (D21). */
+export type HttpMethod = 'GET' | 'HEAD' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+
+/**
+ * @since P3 One generated flow (M13, D16). Caps: ≤ 8 flows per device; per flow ≤ 2 Mb/s and ≤ 1000 pps; every flow
+ * stops at most TRAFFIC_MAX_DURATION_MS after it starts (a count or duration beyond it is refused).
+ */
+export interface TrafficFlowSpec {
+  /** Default: the lowest free 'f<n>'. */
+  readonly id?: string;
+  readonly dst: IpAddress;
+  /** Default 9 (discard). */
+  readonly dstPort?: number;
+  /** IP datagram size, 60–1500. */
+  readonly sizeBytes: number;
+  /** Exactly one of rateKbps and pps; pacing = floor(size·8·1e9 / rate) ns. */
+  readonly rateKbps?: number;
+  readonly pps?: number;
+  /** 0–63, default 0. */
+  readonly dscp?: number;
+  /**
+   * Bounded: a non-periodic pacing timer, so runToIdle waits for its end. Neither = continuous: a periodic pacing timer
+   * that stops at `flow stop` or the cap; used only under runFor, because its datagrams commit non-periodic link
+   * events and a congested link would hold runToIdle until the cap (rule 19).
+   */
+  readonly count?: number;
+  readonly durationMs?: number;
+  /** 50 pps × 60 B / × 200 B, dscp 46. */
+  readonly preset?: 'voice-g729' | 'voice-g711';
+}
+
+/** @since P3 The hard cap of every generated flow: 5 minutes of sim time (D16). */
+export const TRAFFIC_MAX_DURATION_MS = 300_000;
+
+/**
+ * @since P3 [S13] The packet fields an access list matches, as `core/acl`'s `tupleOf` builds them (D12): the IPv4
+ * protocol number, the addresses, the ports of TCP/UDP, the ICMP type and code, and the TCP flags (`established`
+ * matches ACK or RST). Used by `acl.check` (a vty login has no packet in hand: the tuple is the accepted SYN's).
+ */
+export interface PacketTuple {
+  readonly family: 4;
+  readonly proto: number;
+  readonly src: Ipv4Address;
+  readonly dst: Ipv4Address;
+  readonly srcPort?: number;
+  readonly dstPort?: number;
+  readonly icmpType?: number;
+  readonly icmpCode?: number;
+  readonly tcpFlags?: number;
+}
+
+/** @since P3 Why a policy dropped a packet (D12, D13): the sentence, and where the rule lives. */
+export interface DropRule {
+  /** ([S15] 'ip-source-guard' and [S16] 'storm-control' are not approved.) */
+  readonly kind: 'acl' | 'dhcp-snooping' | 'arp-inspection';
+  /** Original wording, e.g. 'denied by access list 101 line 20 (deny tcp host 10.1.1.10 any eq www), inbound on GigabitEthernet0/0'. */
+  readonly text: string;
+  readonly table?: TableName;
+  readonly key?: string;
+  readonly config?: { readonly context: readonly (readonly string[])[]; readonly line: readonly string[] };
+  readonly iface?: PortId;
+  readonly dir?: 'in' | 'out';
+  readonly list?: string;
+  /** ([S11] would add 'nd-na' | 'nd-ns'.) */
+  readonly seq?: number | 'implicit';
+  /** ([S11] would add 6.) */
+  readonly family?: 4;
+}
+
+/** @since P3 Who changed the configuration through the configure seam (D21). ([S33] snmp, [S29] tftp, [C21] netconf are not approved.) */
+export interface ConfigOrigin {
+  readonly via: 'restconf';
+  readonly user?: string;
+  readonly address?: IpAddress;
+}
+
+/**
+ * @since P3 The `clock` action (D19): ntp only — a step after a valid reply, or a set on behalf of `clock set` (which
+ * the CLI sends as `ntp.clockSet`). `offsetNs` is a decimal string and may be negative. The runtime rebases the device
+ * clock and emits ONE ctx.transition-style debug event {machine: 'ntp', subject: reference, from, to} when the
+ * synchronised state changes (category 'ntp events'); ntp writes its `clock` row.
+ */
+export interface ClockAction {
+  type: 'clock';
+  op: 'step' | 'set';
+  offsetNs?: string;
+  unixMs?: number;
+  source: 'ntp' | 'master' | 'user';
+  stratum?: number;
+  reference?: string;
+}
+
+/**
+ * @since P3 [S13] vty → runtime (D14): a server-side remote session event. The runtime schedules SimEvent
+ * {kind: 'remoteCli', device, from, act} at now through deps.scheduler (zero delay, non-periodic); in THAT dispatch the
+ * Simulation calls CliRuntime.openRemote / execRemote / closeRemote. No DeviceRuntimeDeps member.
+ */
+export interface RemoteCliAction {
+  type: 'remoteCli';
+  op: 'open' | 'line' | 'close';
+  conn: string;
+  peer?: IpAddress;
+  proto?: 'telnet' | 'ssh';
+  user?: string;
+  text?: string;
+}
+
+/**
+ * @since P3 [S13] vty-client → runtime (D14): the client-side state of a console session running a remote session
+ * (the prompt, masked input, the "R1 via SSH" chip). Scheduled like `remoteCli`; the Simulation calls
+ * CliRuntime.setRemote.
+ */
+export interface CliRemoteAction {
+  type: 'cliRemote';
+  session: SessionId;
+  prompt?: string;
+  input?: 'plain' | 'secret';
+  remote?: string;
+}
 
 export type Action =
   /** Enqueue `pdu` for transmission on `port`. Applied per ROLE_TRAITS[role].egress (link / owner / loop). */
@@ -302,8 +562,11 @@ export type Action =
   | { type: 'deliver'; to: ProcessName; pdu: Pdu; port: PortId }
   /** Ask another daemon to do something. */
   | { type: 'request'; to: ProcessName; req: ProcessRequest }
-  /** Discard `pdu`; produces a `drop` trace event with a clickable reason (spec §9.1). */
-  | { type: 'drop'; pdu: Pdu; reason: DropReason; detail?: string; port?: PortId }
+  /**
+   * Discard `pdu`; produces a `drop` trace event with a clickable reason (spec §9.1).
+   * `rule` @since P3 (optional by meaning; D12, D13): why a policy dropped it, passed through to the trace `drop` event.
+   */
+  | { type: 'drop'; pdu: Pdu; reason: DropReason; detail?: string; port?: PortId; rule?: DropRule }
   /** The PDU reached its final consumer (echo reply matched by the ping job). Emits `pduConsumed`. */
   | { type: 'consume'; pdu: Pdu }
   /** Arm (or re-arm) a timer identified by `key`. Fires `onTimer(ctx, key)` after `delay`. `periodic` (D10): see file header. */
@@ -374,7 +637,30 @@ export type Action =
    * controller that pushed the profile; the runtime stores it with the profile and `radioSettings(port)` reports it
    * as `RadioSettings.controller` (§2.12, display only).
    */
-  | { type: 'radio-profile'; port: PortId; bss: readonly BssSettings[] | null; controller?: string };
+  | { type: 'radio-profile'; port: PortId; bss: readonly BssSettings[] | null; controller?: string }
+
+  // ── P3 (ARCHITECTURE-P3 §2.4; every type @since P3) ──
+  /**
+   * @since P3 A daemon changes its device's configuration (D21): the runtime schedules SimEvent {kind:
+   * 'deviceConfigure'} at now through deps.scheduler (zero delay, non-periodic). In THAT dispatch the Simulation — the
+   * one caller — runs cliCore.configure(device, lines, {atomic, indentation, origin}) with its own ACTION_BUDGET; the
+   * headless session hands `origin` to applyConfigLine for each line; then it delivers ProcessEvent
+   * {kind: 'config.result', token, result} to the issuer. Never nested, never journaled.
+   */
+  | { type: 'configure'; token: string; lines: readonly string[]; atomic?: boolean; indentation?: boolean; origin: ConfigOrigin }
+  /** @since P3 ntp → runtime: rebase the device clock (D19; see ClockAction). */
+  | ClockAction
+  /** @since P3 [S18] gre → runtime: recomputeVirtual(now) (a tunnel's line protocol from its `tunnels` row, D17). */
+  | { type: 'virtualChanged' }
+  /** @since P3 [S13] vty → runtime (see RemoteCliAction). */
+  | RemoteCliAction
+  /** @since P3 [S13] vty-client → runtime (see CliRemoteAction). */
+  | CliRemoteAction
+  /**
+   * @since P3 [S32] script-host → runtime: write or delete a file of the host's `files:` store (D21; [S29], not
+   * approved, would add flash: and nvram:).
+   */
+  | { type: 'storage'; op: 'write' | 'delete'; fs: FileSystemId; path: string; file?: StoredFileInput };
 
 /** Everything a process may read/do synchronously. Passed fresh into every handler. */
 export interface ProcessCtx {
@@ -467,6 +753,14 @@ export interface ProcessCtx {
    * renderer to this; for a radio with no controller profile the result is byte-identical to today's renderer.
    */
   radioSettings?(port: PortId): RadioSettings | undefined;
+
+  // ── P3 (ARCHITECTURE-P3 §2.4; optional during the transition, required once implemented: P3_CTX spread) ──
+  /** @since P3 The device clock (D19, contracts/clock.ts). W1 device; required once implemented. */
+  clock?(): DeviceClockView;
+  /** @since P3 [S32] The files of a host's store (hosts' `files:` only in P3a; D21). */
+  files?(fs: FileSystemId): readonly StoredFileMeta[];
+  /** @since P3 [S32] One file of a host's store, or undefined. */
+  readFile?(fs: FileSystemId, path: string): StoredFile | undefined;
 }
 
 export interface Process {

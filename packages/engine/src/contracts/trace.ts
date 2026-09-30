@@ -14,7 +14,7 @@ import type { DeviceId, LinkId, PduId, PortId, PortRef, ProcessName, SessionId }
 import type { MacAddress } from './addr.js';
 import type { DropReason, PhyEndView } from './link.js';
 import type { Mutation, ProtoName } from './pdu.js';
-import type { DebugEvent, Severity } from './process.js';
+import type { ConfigOrigin, DebugEvent, DropRule, Severity } from './process.js';
 import type { TableName } from './tables.js';
 import type { SimTime } from './time.js';
 import type { CellAttachState, MediumId, MediumKind, WifiAssocState } from './medium.js';
@@ -33,8 +33,11 @@ export interface PduSummary {
   layers?: ProtoName[];
   /** @since P2 (optional by meaning) Outermost 802.1Q VID, present only for tagged frames (packet colouring). */
   vlan?: number;
-  /** @since P2 (optional by meaning; wireless) Present only while the frame is inside a CAPWAP tunnel. */
-  tunnel?: 'capwap';
+  /**
+   * @since P2 (optional by meaning; wireless) Present only while the frame is inside a CAPWAP tunnel.
+   * 'gre' @since P3 [S18] (a GRE tunnel leg) and 'ipsec' @since P3 [C13] (an ESP leg of a VTI).
+   */
+  tunnel?: 'capwap' | 'gre' | 'ipsec';
 }
 
 /** What a structural `topologyChanged` event is about. `module` @since P0.5 (id = `${deviceId}/${slotId}`). */
@@ -79,6 +82,11 @@ export type TraceEvent =
        * ARCHITECTURE-P2 §9.3 (b), made by W2 device — not before).
        */
       background?: true;
+      /**
+       * @since P3 (optional by meaning) Why a policy dropped it (D12, D13): passed through from the drop action. Absent on
+       * every P1/P2 drop, so their bytes are unchanged.
+       */
+      rule?: DropRule;
     }
   /** A PDU was created by a device process. */
   | { t: SimTime; kind: 'pduCreated'; pdu: PduSummary; device: DeviceId; process: ProcessName }
@@ -89,7 +97,11 @@ export type TraceEvent =
   | { t: SimTime; kind: 'tableWrite'; device: DeviceId; table: TableName; key: string; row: Record<string, unknown>; previous?: Record<string, unknown> }
   | { t: SimTime; kind: 'tableExpire'; device: DeviceId; table: TableName; key: string; row: Record<string, unknown>; reason: string }
   | { t: SimTime; kind: 'debug'; event: DebugEvent }
-  | { t: SimTime; kind: 'log'; device: DeviceId; severity: Severity; facility: string; message: string }
+  | {
+      t: SimTime; kind: 'log'; device: DeviceId; severity: Severity; facility: string; message: string;
+      /** @since P3 (optional by meaning) [S24] The log's mnemonic, set only by P3 code paths (never by a P1/P2 log site). */
+      mnemonic?: string;
+    }
   | { t: SimTime; kind: 'linkState'; link: LinkId; up: boolean; reason?: string }
   /**
    * Port state change. `reason` values include P0 ones plus 'role-change', 'virtual-created', 'virtual-removed',
@@ -117,7 +129,11 @@ export type TraceEvent =
       /** @since P1 Set when the next line answers an input request (the terminal masks 'secret' and skips history). */
       input?: CliInputRequest;
     }
-  | { t: SimTime; kind: 'configChange'; device: DeviceId; line: string; negate: boolean; context: string[][] }
+  | {
+      t: SimTime; kind: 'configChange'; device: DeviceId; line: string; negate: boolean; context: string[][];
+      /** @since P3 (optional by meaning) Who changed it through the configure seam (D21); absent for typed lines. */
+      origin?: ConfigOrigin;
+    }
   /** Structural change. `add`/`remove` bump `topologyVersion` (UI refetches the snapshot); `move` does not. */
   | { t: SimTime; kind: 'topologyChanged'; what: TopologyWhat; id: string; op: 'add' | 'remove' | 'move' }
 
@@ -134,7 +150,16 @@ export type TraceEvent =
   | { t: SimTime; kind: 'assocState'; tech: 'wifi' | 'cellular'; medium: MediumId; station: PortRef; ap?: PortRef; bssid?: MacAddress; state: WifiAssocState | CellAttachState; prev: WifiAssocState | CellAttachState; reason?: string; rssiDbm?: number }
   /** RF link quality changed — emitted only when bars or rate change (not per milli-dB). */
   | { t: SimTime; kind: 'rfState'; port: PortRef; peer: PortRef; rssiDbm: number; snrDb: number; rateBps: number; bars: 0 | 1 | 2 | 3 | 4 }
-  | { t: SimTime; kind: 'segmentChanged'; segment: MediumId; members: PortRef[]; op: 'formed' | 'changed' | 'dissolved' };
+  | { t: SimTime; kind: 'segmentChanged'; segment: MediumId; members: PortRef[]; op: 'formed' | 'changed' | 'dissolved' }
+
+  // ── P3 (ARCHITECTURE-P3 §2.7) ──
+  /**
+   * @since P3 [S20] A frame entered a held class queue of a scheduler port (`queue` = the class name, `depth` = that
+   * queue's depth after the enqueue). Emitted only by the [S20] held queue of a port with a scheduler spec (W3), so no
+   * P1/P2 world ever carries it. Added in W0 (ruling R2) with its web stubs (the sim-events-client label and the
+   * trace-kind vocabulary entry).
+   */
+  | { t: SimTime; kind: 'frameQueued'; pdu: PduSummary; device: DeviceId; port: PortId; queue: string; depth: number };
 
 export type TraceKind = TraceEvent['kind'];
 

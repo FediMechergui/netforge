@@ -9,15 +9,24 @@
  */
 import type { FaultSpec } from './events.js';
 import type { ProcessName } from './ids.js';
-import type { MediaType } from './link.js';
+import type { DropReason, MediaType } from './link.js';
+import type { TrafficFlowSpec } from './process.js';
 import type { PortCounters, SwitchportMode } from './port.js';
 import type { Simulation, TraceFilter } from './simulation.js';
 import type { HsrpRow, PortSecurityRow, StpRole, StpState, TableName } from './tables.js';
 import type { SimTime } from './time.js';
 import type { Topology } from './topology.js';
 
-/** 'ccna2-lab' @since P2 (profile P2 labs, ARCHITECTURE-P2 §11.2). */
-export type ScenarioCategory = 'template' | 'ccna1-lab' | 'ccna2-lab' | (string & {});
+/** 'ccna2-lab' @since P2 (profile P2 labs, ARCHITECTURE-P2 §11.2). 'ccna3-lab' @since P3 (profile P3 labs, ARCHITECTURE-P3 §11.2). */
+export type ScenarioCategory = 'template' | 'ccna1-lab' | 'ccna2-lab' | 'ccna3-lab' | (string & {});
+
+/**
+ * @since P3 One list of concept tools (ARCHITECTURE-P3 D24): replaces the three copies of the union (this file's
+ * `ScenarioMeta.concept`, the web store's `ConceptTool` and the markdown link allowlist). 'queueing' and
+ * 'data-formats' are M13 / lesson 37's; 'wildcard' is [S9]'s (approved). ([S22] 'wan', [S28] 'yang' and [C26] 'sdn'
+ * are not approved.)
+ */
+export type ConceptToolId = 'subnetting' | 'ipv6' | 'queueing' | 'data-formats' | 'wildcard';
 /** §12.1 subset shipped in P1. */
 export type LabType = 'guided' | 'build' | 'troubleshoot' | 'concept';
 
@@ -45,8 +54,8 @@ export interface ScenarioMeta {
   instructions?: string;
   /** Simulation seed the lab resets to. */
   seed?: number;
-  /** Opens this concept view with the lab. */
-  concept?: 'subnetting' | 'ipv6';
+  /** Opens this concept view with the lab. The union is ConceptToolId @since P3 (D24). */
+  concept?: ConceptToolId;
   version?: number;
   tasks?: readonly LabTaskMeta[];
 }
@@ -65,16 +74,139 @@ export interface LabTaskMeta {
  * resolve like the 'port' kind.
  */
 export type LabFault =
-  | { cut: { a: string; b: string } }
+  /**
+   * `aPort`, `bPort` @since P3 (optional by meaning): cut only the cable on that port of `a` (or `b`); absent = every
+   * cable between the two devices (P2).
+   */
+  | { cut: { a: string; b: string; aPort?: string; bPort?: string } }
   | { powerOff: string }
-  | { shutdown: { device: string; port: string } };
+  | { shutdown: { device: string; port: string } }
+  /** @since P3 A configuration fault: `lines` applied to `device` through `configure` in the clone. */
+  | { config: { device: string; lines: readonly string[] } };
 
-/** Devices are referenced by topology NAME (stable in lab builds). */
-export type LabAssertion =
+/** @since P3 (optional by meaning) On every assertion (spec §12.4): shown when the assertion fails. */
+export interface LabAssertionNotes {
+  feedback?: string;
+  misconception?: string;
+}
+
+/**
+ * @since P3 The protocols whose neighbour rows `neighbor` reads: 'ospf' (ospf-neighbors; state words 'full', '2way' …),
+ * 'cdp' and 'lldp' (their neighbour tables), [S19] 'ppp' (the `ppp` rows; the state word is the LCP state, 'opened') and
+ * [C1] 'eigrp' (eigrp-neighbors; 'up'). ([S6] 'ospfv3' is not approved.)
+ */
+export type NeighborProtocol = 'ospf' | 'cdp' | 'lldp' | 'ppp' | 'eigrp';
+
+/**
+ * @since P3 Facts are data: each name has a declared type, a reader (FACT_READERS, sim/lab-checks/facts.ts and the area
+ * adapters) and a declared source, a table or the configuration (rule 20; the source is in the comment).
+ * A fact of declared type 'address' compares against a device NAME through IDENTITY_SOURCES (hostname, any interface
+ * address, base MAC, protocol router ids — OSPF's and [C1] EIGRP's). 'eigrp.successor' and 'eigrp.feasibleSuccessor'
+ * are of type 'address' (the next hop of the first successor / feasible successor in path order; absent when none).
+ * ([S4] 'ospf.abr' | 'ospf.asbr' are not approved.)
+ */
+export type LabFactName =
+  /** ospf-interfaces.routerId (the id in use, not the configured one). */
+  | 'ospf.routerId'
+  /** Configuration; subject: none. */
+  | 'ospf.referenceBandwidthMbps'
+  | 'ospf.defaultOriginate'
+  /** ospf-interfaces; subject: interface name. */
+  | 'ospf.ifaceArea'
+  | 'ospf.ifaceCost'
+  | 'ospf.ifaceNetworkType'
+  | 'ospf.ifaceState'
+  | 'ospf.ifacePriority'
+  | 'ospf.passive'
+  /** ospf-lsdb; subject: area; every router of the area holds the same LSA headers. */
+  | 'ospf.lsdbSynced'
+  /** Configuration; subject: VLAN. */
+  | 'snooping.enabled'
+  | 'dai.enabled'
+  /** arp-inspection; subject: VLAN. */
+  | 'dai.dropped'
+  /** Configuration; subject: port. */
+  | 'snooping.trusted'
+  | 'dai.trusted'
+  /** dhcp-snooping; subject: host device name → the bound port. */
+  | 'snooping.bindingPort'
+  /** Configuration. */
+  | 'ssh.enabled'
+  | 'ssh.version'
+  | 'ssh.keyBits'
+  | 'vty.transport'
+  | 'vty.loginLocal'
+  | 'vty.accessClass'
+  /** Configuration; subject: interface name. */
+  | 'qos.inputPolicy'
+  | 'qos.outputPolicy'
+  /** Configuration + profile; subject: optional interface name. */
+  | 'cdp.enabled'
+  | 'lldp.enabled'
+  /** ntp-peers (the sys-peer row). */
+  | 'ntp.synced'
+  | 'ntp.peer'
+  /** The ntp daemon's `clock` row (absent → 'unset'). */
+  | 'ntp.stratum'
+  | 'clock.source'
+  | 'clock.offsetMs'
+  // the approved items' facts, each with its source:
+  /** [S13] vty-logins: successful logins (count); subject: optional 'telnet' | 'ssh'. */
+  | 'vty.logins'
+  /** [S18] tunnels.state; subject: tunnel interface. */
+  | 'tunnel.up'
+  /** [S19] ppp rows; subject: serial interface. */
+  | 'ppp.lcp'
+  | 'ppp.ipcp'
+  | 'ppp.auth'
+  /** [S20] Configuration (the output policy passed admission); subject: interface. */
+  | 'qos.admitted'
+  /** [S24]/[S25] Configuration. */
+  | 'logging.buffered'
+  | 'logging.trap'
+  /** [S32] script-runs: the state of the newest run; subject: optional file name. */
+  | 'automation.lastRun'
+  /** [C1] eigrp-topology; subject: prefix. */
+  | 'eigrp.fd'
+  | 'eigrp.successor'
+  | 'eigrp.feasibleSuccessor'
+  /** [C1] Configuration ('1 0 1 0 0'). */
+  | 'eigrp.kValues'
+  /** [C13] ipsec-sa.state; subject: tunnel interface. */
+  | 'ipsec.sa';
+
+/** @since P3 A packet the pure `aclDecision` kind evaluates against a configured list (no traffic, no clone). */
+export interface LabPacketProbe {
+  proto: 'ip' | 'icmp' | 'tcp' | 'udp';
+  src: string;
+  dst: string;
+  srcPort?: number;
+  dstPort?: number;
+  established?: boolean;
+}
+
+/**
+ * Devices are referenced by topology NAME (stable in lab builds).
+ * @since P3 Every kind carries the optional-by-meaning LabAssertionNotes envelope (spec §12.4).
+ */
+export type LabAssertion = (
   | { kind: 'config'; device: string; path: string; equals?: string | readonly string[]; exists?: boolean; contains?: string }
   /** `field` 'errDisabled' @since P2 (the cause string, e.g. 'psecure-violation'). */
   | { kind: 'port'; device: string; port: string; field: 'operUp' | 'adminUp' | 'ipv4' | 'ipv6' | 'duplex' | 'speedBps' | 'role' | 'errDisabled'; equals: string | number | boolean }
-  | { kind: 'table'; device: string; table: TableName; where: Readonly<Record<string, string | number | boolean>>; exists: boolean }
+  /**
+   * `minCount`, `maxCount`, `whereOps` @since P3 (optional by meaning): bounds on the number of matching rows, and
+   * per-column comparisons beyond `where`'s equality.
+   */
+  | {
+      kind: 'table';
+      device: string;
+      table: TableName;
+      where: Readonly<Record<string, string | number | boolean>>;
+      exists: boolean;
+      minCount?: number;
+      maxCount?: number;
+      whereOps?: Readonly<Record<string, { op: 'lt' | 'le' | 'gt' | 'ge' | 'ne' | 'contains'; value: string | number }>>;
+    }
   /**
    * A dotted path into `Process.stateSnapshot().state`. An array step is an index (`pages.0.path`) or a
    * `field=value` selector (`clients.iface=Wlan0.state`) matching the first element whose `field` compares equal as
@@ -88,6 +220,12 @@ export type LabAssertion =
    * @since P2 (all three optional by meaning) `after`: faults applied in the clone once it has settled, then the clone
    * runs `settleMs` (default 60 000) before the ping; `then`: static assertions evaluated in the same clone after the
    * ping (for example the NAT rows the ping created). One clone per distinct `after` set.
+   * @since P3 (every member optional by meaning; absent = P2 behaviour) `proto` 'tcp' / 'udp' with `port` use the
+   * tcp.probe / udp.probe process requests, applied in the clone exactly as icmp.ping is (TCP passes on SYN-ACK and fails
+   * on RST, an ICMP unreachable or 3 s; UDP passes when the clone's trace shows the probe consumed by a socket on the
+   * target). `toIface` / `toAddress` target an interface or an address (a loopback) of `to`; `source` is an interface
+   * or address on `from`; `droppedAt` (a device NAME that must drop it, with expect 'fail') and `dropReason` are read
+   * from the clone trace's `drop` event of the probe's PduId.
    */
   | {
       kind: 'connectivity';
@@ -100,6 +238,13 @@ export type LabAssertion =
       after?: readonly LabFault[];
       settleMs?: number;
       then?: readonly LabAssertion[];
+      proto?: 'icmp' | 'tcp' | 'udp';
+      port?: number;
+      toIface?: string;
+      toAddress?: string;
+      source?: string;
+      droppedAt?: string;
+      dropReason?: DropReason;
     }
   /** Something was observed in the retained trace. */
   | { kind: 'traceSeen'; filter: TraceFilter; min?: number }
@@ -145,7 +290,11 @@ export type LabAssertion =
       stickyMac?: string;
       minViolations?: number;
     }
-  /** @since P2 The longest-prefix winner for `destination` (an address), or `none`. */
+  /**
+   * @since P2 The longest-prefix winner for `destination` (an address), or `none`.
+   * `metric`, `routeType` and `minPaths` @since P3 (optional by meaning). ([S4] 'IA', [C6] 'E1', [C4] 'N1' | 'N2' are
+   * not approved.)
+   */
   | {
       kind: 'route';
       device: string;
@@ -157,6 +306,9 @@ export type LabAssertion =
       iface?: string;
       ad?: number;
       none?: boolean;
+      metric?: number;
+      routeType?: 'E2';
+      minPaths?: number;
     }
   /** @since P2 A NAT translation row (or the count of matching rows). */
   | {
@@ -171,7 +323,84 @@ export type LabAssertion =
       minCount?: number;
     }
   /** @since P2 [SHOULD S2] A standby group. */
-  | { kind: 'fhrp'; device: string; iface: string; group: number; state?: HsrpRow['state']; virtualIp?: string; priority?: number; preempt?: boolean };
+  | { kind: 'fhrp'; device: string; iface: string; group: number; state?: HsrpRow['state']; virtualIp?: string; priority?: number; preempt?: boolean }
+  // ── P3 (ARCHITECTURE-P3 §2.10; all @since P3; devices, ports and hosts by NAME) ──
+  /** @since P3 A neighbour row of `protocol` on `device` (NEIGHBOR_SOURCES); `neighbor` is a device NAME (IDENTITY_SOURCES). */
+  | {
+      kind: 'neighbor';
+      device: string;
+      protocol: NeighborProtocol;
+      neighbor?: string;
+      iface?: string;
+      /** The protocol's own state word: 'full', '2way' … */
+      state?: string;
+      role?: 'dr' | 'bdr' | 'drother';
+      exists?: boolean;
+      count?: number;
+      minCount?: number;
+    }
+  /** @since P3 A named fact of a device (FACT_READERS: a table or the configuration). */
+  | { kind: 'fact'; device: string; fact: LabFactName; subject?: string; equals?: string | number | boolean; atLeast?: number; atMost?: number }
+  /**
+   * @since P3 A configured access list: its entries (canonical aclEntryText, no sequence), its bindings read from the
+   * configuration, and the hit count of one entry. ([S11] would add `family` and type 'ipv6'.)
+   */
+  | {
+      kind: 'acl';
+      device: string;
+      list: string;
+      type?: 'standard' | 'extended';
+      exists?: boolean;
+      entries?: readonly string[];
+      match?: 'exactly' | 'includes';
+      applied?: readonly { iface?: string; vty?: true; dir: 'in' | 'out' }[];
+      entry?: number | 'implicit';
+      minMatches?: number;
+    }
+  /** @since P3 Pure: evaluates the CONFIGURED list with core/acl's evaluateAcl; no traffic, no clone. */
+  | { kind: 'aclDecision'; device: string; list: string; packet: LabPacketProbe; expect: 'permit' | 'deny'; entry?: number | 'implicit' }
+  // the approved items' kinds (W5 sim, clone checks):
+  /**
+   * @since P3 [S13] The clone opens a remote session from `from` (a vty-client) to `to` and reads the outcome from its
+   * vty-logins row (success, failed) or the client's TCP refusal (refused: a RST, transport or access-class).
+   */
+  | {
+      kind: 'service';
+      from: string;
+      to: string;
+      service: 'telnet' | 'ssh';
+      user?: string;
+      password?: string;
+      expect: 'success' | 'fail' | 'refused';
+      timeoutMs?: number;
+      after?: readonly LabFault[];
+    }
+  /**
+   * @since P3 [S18] The path a probe takes in the clone. `tunnelAt` [C13] (optional by meaning): every frame of the probe
+   * that `device` receives carries PduSummary.tunnel === tunnel (read from the clone trace's legs), so "only ESP
+   * crosses the provider" is gradeable.
+   */
+  | {
+      kind: 'path';
+      from: string;
+      to: string;
+      toIface?: string;
+      toAddress?: string;
+      family?: 4 | 6;
+      via?: readonly string[];
+      notVia?: readonly string[];
+      after?: readonly LabFault[];
+      settleMs?: number;
+      tunnelAt?: { device: string; tunnel: 'gre' | 'ipsec' };
+    }
+  /** @since P3 [S20] Generated flows run in the clone for `runMs`; each expectation reads the receiver's `flows` row. */
+  | {
+      kind: 'traffic';
+      flows: readonly (TrafficFlowSpec & { from: string; to: string })[];
+      runMs: number;
+      expect: readonly { receiver: string; flow: string; maxLossPct?: number; maxDelayMs?: number; maxJitterMs?: number }[];
+    }
+) & LabAssertionNotes;
 
 export interface LabTask extends LabTaskMeta {
   assertions: readonly LabAssertion[];
@@ -201,7 +430,11 @@ export interface ScenarioInfo extends ScenarioMeta {
   faults?: readonly { at: SimTime; fault: FaultSpec }[];
   /** Reference solution: per device name, commands for `Simulation.configure` (labs.solutions test). */
   solution?: Readonly<Record<string, readonly string[]>>;
-  /** Deterministic escape hatch for checks the declarative assertions cannot express. */
+  /**
+   * Deterministic escape hatch for checks the declarative assertions cannot express.
+   * @deprecated since P3 W0 (ARCHITECTURE-P3 D6): no lab or task uses it and the grader does not run it; removed at the
+   * P3a exit gate (W8).
+   */
   customChecks?: readonly { id: string; evaluate(sim: Simulation): { pass: boolean; detail?: string } }[];
 }
 

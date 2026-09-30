@@ -58,18 +58,19 @@ import {
 import { deviceStatusText } from '../src/canvas/devices.js';
 import { MEDIA_VOCAB } from '../src/vocab/media.js';
 import { TEST_THEME, device, link, port, snapshot, templateSnapshot } from './canvas-fixtures.js';
+import { handBuilt } from './hand-built.js';
 
 describe('device visuals and body size', () => {
   it('takes the body from the model icon, then the kind default, then the generic artwork', () => {
-    const byIcon = deviceVisual({ kind: 'pc', icon: 'router' });
+    const byIcon = deviceVisual(handBuilt({ kind: 'pc', icon: 'router' }));
     expect(byIcon).toBe(DEVICE_VISUALS.router);
-    expect(deviceVisual({ kind: 'switch' })).toBe(DEVICE_VISUALS[KIND_DEFAULT_ICON.switch]);
+    expect(deviceVisual(handBuilt({ kind: 'switch' }))).toBe(DEVICE_VISUALS[KIND_DEFAULT_ICON.switch]);
     expect(bodySize(byIcon)).toEqual({ halfW: byIcon.w / 2, halfH: byIcon.h / 2 });
     expect(bodySize(GENERIC_VISUAL).halfW).toBeGreaterThan(0);
   });
 
   it('adds a capability badge to badge-ready artwork only', () => {
-    const plain = deviceVisual({ kind: 'mlswitch', icon: 'mlswitch' });
+    const plain = deviceVisual(handBuilt({ kind: 'mlswitch', icon: 'mlswitch' }));
     const badged = deviceVisual({ kind: 'mlswitch', icon: 'mlswitch', capabilities: ['layer3-switch'] });
     expect(badged.badge).toBe('L3');
     expect(badged.w).toBe(plain.w);
@@ -100,8 +101,8 @@ describe('port picker groups', () => {
     port('Console', { kind: 'console', role: 'console' }),
     port('Usb0', { kind: 'usb' }),
   ], { slots: [
-    { id: 'hwic0', label: 'HWIC slot 0', type: 'hwic', accepts: [] },
-    { id: 'hwic1', label: 'HWIC slot 1', type: 'hwic', accepts: [] },
+    { id: 'hwic0', label: 'HWIC slot 0', type: 'ehwic', accepts: [] },
+    { id: 'hwic1', label: 'HWIC slot 1', type: 'ehwic', accepts: [] },
   ] });
 
   it('classifies ports and never offers Wi-Fi, cellular or virtual interfaces', () => {

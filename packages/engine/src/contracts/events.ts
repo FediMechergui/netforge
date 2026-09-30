@@ -11,6 +11,7 @@ import type { Pdu } from './pdu.js';
 import type { SimTime } from './time.js';
 import type { MediumId } from './medium.js';
 import type { RfBand } from './rf.js';
+import type { CliRemoteAction, ConfigOrigin, RemoteCliAction } from './process.js';
 
 export type SimEventBody =
   /** Last bit of a frame has arrived on `port` (store-and-forward). */
@@ -53,7 +54,27 @@ export type SimEventBody =
   /** @since P0.5 Link-model-owned timer (CSMA deferral/backoff/jam end, RF hold, attach, noise bursts). Never periodic. */
   | { kind: 'mediumTimer'; medium: MediumId; key: string }
   /** @since P0.5 Coalesced mobility re-evaluation (scheduled at `now` by moveDevice for devices with radio ports). */
-  | { kind: 'deviceMoved'; device: DeviceId };
+  | { kind: 'deviceMoved'; device: DeviceId }
+  // ── P3 (ARCHITECTURE-P3 §2.7) ──
+  /**
+   * @since P3 A daemon's `configure` action (D21), scheduled by the runtime at now (zero delay, non-periodic, like
+   * userCommand). In this event's own dispatch the Simulation — the one caller — runs cliCore.configure with its own
+   * ACTION_BUDGET and delivers ProcessEvent `config.result` to `from`. Never nested, never journaled.
+   */
+  | {
+      kind: 'deviceConfigure';
+      device: DeviceId;
+      from: ProcessName;
+      token: string;
+      lines: readonly string[];
+      opts: { atomic?: boolean; indentation?: boolean; origin: ConfigOrigin };
+    }
+  /**
+   * @since P3 [S13] A vty `remoteCli` or vty-client `cliRemote` action (D14), scheduled at now (zero delay,
+   * non-periodic). The Simulation applies it to its CliRuntime (openRemote / execRemote / closeRemote / setRemote) and
+   * delivers the output of a via-'vty' session to the device's vty daemon as ProcessEvent `vty.output`.
+   */
+  | { kind: 'remoteCli'; device: DeviceId; from: ProcessName; act: RemoteCliAction | CliRemoteAction };
 
 export type SimEvent = SimEventBody & {
   readonly at: SimTime;

@@ -183,6 +183,9 @@ export const ENCAP_ALLOWS: Readonly<Record<PortEncap, readonly FramingProto[]>> 
   dot11: Object.freeze(['dot11', 'ethernet'] as FramingProto[]),
   ppp: Object.freeze([] as FramingProto[]),
   none: Object.freeze([] as FramingProto[]),
+  // P3 [S18] (ARCHITECTURE-P3 §2.1; the W0 stub of ruling R3): no port carries 'tunnel' before the [S18] item, which
+  // sets what it accepts ("the owner frames it").
+  tunnel: Object.freeze([] as FramingProto[]),
 });
 
 /** Step 9: is the outer layer allowed by the port encapsulation? The failure detail is `no-${encap}-layer` (P0 `no-ethernet-layer`). */

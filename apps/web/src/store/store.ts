@@ -87,6 +87,9 @@ export const DEFAULT_TIMELINE_LANES: readonly LaneId[] = Object.freeze([
   'security',
   'config',
   'drops',
+  // P3 (ARCHITECTURE-P3 §2.12, §9.2 W0 item 1): appended in the engine's canonical order
+  'mgmt',
+  'wan',
 ]);
 
 /** @since P2 [S1] A fresh timeline slice: no review, no head yet, every lane, nothing in flight. */

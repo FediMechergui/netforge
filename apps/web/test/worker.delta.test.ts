@@ -3,12 +3,29 @@
  *
  * The worker module is imported with Comlink mocked and wall timers faked. The pure pieces (dirty tracker, delta
  * assembly, clock policy) are tested directly.
+ *
+ * Independent of machine load (ARCHITECTURE-P3 §7 W0 web-shell, §9.2 W0 item 9; P2 §9.2 item 22e). Every worker test
+ * re-evaluates the worker and the whole engine graph, about a second on an idle machine and several on a loaded one,
+ * so the 5 s default budget used to be overrun, and a test that overran kept running after it had failed: its tail
+ * posted into the next test's batches. Three things make the tests independent of load, with every assertion
+ * unchanged:
+ *   - a per-file timeout (`WORKER_TEST_TIMEOUT_MS`, tests and hooks), and a warm-up import in `beforeAll`, so the
+ *     first test does not also pay for transforming the module graph;
+ *   - a fresh module per test that belongs to that test alone: `freshWorker` takes the API its own import exposed,
+ *     wraps it in a session and tracks every call the session has in flight;
+ *   - an explicit drain helper (`drainWorkers`, after each test): it closes the test's sessions, so a late batch is
+ *     discarded and a late call refused, waits until nothing the test started is still in flight, and clears the fake
+ *     timers before the real ones come back.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { InflightFrame, PduSummary, PortRef, TraceEvent } from '@netforge/engine';
 import type { EngineApi, EngineBatch } from '../src/bridge/protocol';
 import { createWorkerClock } from '../src/bridge/worker/clock';
 import { createDirtyTracker, preferFullSnapshot, toDelta } from '../src/bridge/worker/delta';
+
+/** Per-file budget of every test and hook here: generous, because a loaded machine only makes them slower. */
+const WORKER_TEST_TIMEOUT_MS = 60_000;
+vi.setConfig({ testTimeout: WORKER_TEST_TIMEOUT_MS, hookTimeout: WORKER_TEST_TIMEOUT_MS });
 
 let exposed: EngineApi | undefined;
 
@@ -22,17 +39,79 @@ vi.mock('comlink', () => ({
 const WORKER = '../src/bridge/worker/index.ts';
 const SEC = 1_000_000_000;
 
-async function freshWorker(opts: { maxEventsPerBatch?: number } = {}): Promise<{ api: EngineApi; batches: EngineBatch[] }> {
-  vi.resetModules();
-  exposed = undefined;
-  await import(WORKER);
-  const api = exposed as unknown as EngineApi;
-  const batches: EngineBatch[] = [];
-  await api.subscribe((b) => {
-    batches.push(b);
-  }, opts);
-  await api.init({ seed: 7 });
-  return { api, batches };
+/** One test's worker: its own module instance and the batches it posted while its test ran. */
+interface WorkerSession {
+  readonly batches: EngineBatch[];
+  closed: boolean;
+}
+
+/** Sessions opened by the running test (closed by `drainWorkers`). */
+const sessions = new Set<WorkerSession>();
+/** Worker starts and API calls that have not settled yet, whichever test made them. */
+const inflight = new Set<Promise<unknown>>();
+/** Bumped by every drain: a worker whose start began before the last drain belongs to a test that has ended. */
+let generation = 0;
+
+function track<T>(p: Promise<T>): Promise<T> {
+  inflight.add(p);
+  p.then(
+    () => inflight.delete(p),
+    () => inflight.delete(p),
+  );
+  return p;
+}
+
+/** The session's view of the API: every call is tracked, and refused once the test that owns it has ended. */
+function sessionApi(raw: EngineApi, session: WorkerSession): EngineApi {
+  return new Proxy(raw, {
+    get(target, key, receiver) {
+      const member: unknown = Reflect.get(target, key, receiver);
+      if (typeof member !== 'function') return member;
+      return (...args: unknown[]): unknown => {
+        if (session.closed) throw new Error(`worker.delta: ${String(key)} called after the test that owns the worker ended`);
+        const result: unknown = member.apply(target, args);
+        return result instanceof Promise ? track(result) : result;
+      };
+    },
+  });
+}
+
+/**
+ * Drain helper, run after every test: closes the test's sessions (a later batch is discarded, a later call refused),
+ * then waits until every worker start and API call still in flight has settled — a test that overran its budget is
+ * still running, and the loop also waits for what their continuations start — and clears the fake timers. Nothing a
+ * finished test started can then reach the next test.
+ */
+async function drainWorkers(): Promise<void> {
+  generation++;
+  for (const s of sessions) s.closed = true;
+  sessions.clear();
+  while (inflight.size > 0) await Promise.allSettled([...inflight]);
+  vi.clearAllTimers();
+}
+
+/** A fresh worker module for the running test alone, subscribed and initialised (seed 7). */
+function freshWorker(opts: { maxEventsPerBatch?: number } = {}): Promise<{ api: EngineApi; batches: EngineBatch[] }> {
+  const started = generation;
+  return track(
+    (async () => {
+      vi.resetModules();
+      exposed = undefined;
+      await import(WORKER);
+      const raw = exposed as EngineApi | undefined;
+      exposed = undefined;
+      if (raw === undefined) throw new Error('worker.delta: the worker module did not expose its API');
+      const session: WorkerSession = { batches: [], closed: started !== generation };
+      if (!session.closed) sessions.add(session);
+      const api = sessionApi(raw, session);
+      const batches = session.batches;
+      await api.subscribe((b) => {
+        if (!session.closed) batches.push(b);
+      }, opts);
+      await api.init({ seed: 7 });
+      return { api, batches };
+    })(),
+  );
 }
 
 async function booted(scenario: string, opts: { maxEventsPerBatch?: number } = {}): Promise<{ api: EngineApi; batches: EngineBatch[] }> {
@@ -55,10 +134,16 @@ function last(batches: readonly EngineBatch[]): EngineBatch {
   return b;
 }
 
+beforeAll(async () => {
+  // Warm-up: transform the worker and engine module graph once, outside any test's budget.
+  await import(WORKER);
+  exposed = undefined;
+});
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'setTimeout', 'clearTimeout', 'performance'] });
 });
-afterEach(() => {
+afterEach(async () => {
+  await drainWorkers();
   vi.useRealTimers();
 });
 

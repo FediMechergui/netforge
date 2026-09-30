@@ -3,8 +3,15 @@ import { SCENARIOS, createSimulation, emptyCounters } from '@netforge/engine';
 import type { DeviceSnapshot, LinkSnapshot, PortSnapshot, SimSnapshot } from '@netforge/engine';
 import type { ThemeColors } from '../src/canvas/scene.js';
 
+/**
+ * A complete snapshot port (the P1 web fixture migration, finished in ARCHITECTURE-P3 §9.2 W0 item 7). The P0.5
+ * members the canvas reads default to what its readers took an absent member to mean before the fixtures carried them
+ * — role 'switched' (`l2-model.ts` isSwitchedPort), not virtual, linkable, configurable — so completing the fixture
+ * changes no test's path; `allowedRoles` follows the final role; encapsulation, ordinal and connector, which no canvas
+ * reader reads, are a copper Ethernet port's. A test that needs another value passes it.
+ */
 export function port(id: string, extra: Partial<PortSnapshot> = {}): PortSnapshot {
-  return {
+  const p: PortSnapshot = {
     id,
     short: id,
     kind: 'ethernet',
@@ -15,10 +22,24 @@ export function port(id: string, extra: Partial<PortSnapshot> = {}): PortSnapsho
     counters: emptyCounters(),
     l3: {},
     txQueue: 0,
+    role: 'switched',
+    allowedRoles: ['switched'],
+    encap: 'ethernet',
+    ordinal: 1,
+    virtual: false,
+    linkable: true,
+    configurable: true,
+    connector: 'rj45',
     ...extra,
   };
+  return extra.allowedRoles === undefined ? { ...p, allowedRoles: [p.role] } : p;
 }
 
+/**
+ * A complete snapshot device: an NF-PC unless `extra` says otherwise. The P0.5 members are the NF-PC's identity
+ * (category, family, variant, icon, command shell) and empty lists where the readers took an absent member as empty
+ * (capabilities, GUI panels, host ports).
+ */
 export function device(id: string, x: number, y: number, ports: PortSnapshot[], extra: Partial<DeviceSnapshot> = {}): DeviceSnapshot {
   return {
     id,
@@ -35,7 +56,15 @@ export function device(id: string, x: number, y: number, ports: PortSnapshot[], 
     processes: [],
     runningConfig: '',
     hasStartupConfig: false,
+    category: 'computers',
+    family: 'nf-pc',
+    variant: 'Wired',
     icon: 'pc',
+    capabilities: [],
+    cli: { shell: 'host', grammar: 'host' },
+    gui: [],
+    hostPorts: [],
+    baseMac: '00:00:00:00:00:00',
     ...extra,
   };
 }

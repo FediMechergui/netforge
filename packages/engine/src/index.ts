@@ -17,6 +17,11 @@
  * `COURSES` and the handler registry), and nothing test-only is exported. A module must not redeclare a name a
  * contract exports (`DefaultSlots`, `schemaIdFor`, …): two `export *` lines that export different declarations under
  * one name do not compile.
+ *
+ * P3a (docs/ARCHITECTURE-P3.md §0 rule 1): this file stays architect-owned and append-only. Wave 0 adds no line here:
+ * the P3 contracts (including the new contracts/clock.ts, contracts/storage.ts [S32] and contracts/lab-document.ts
+ * [S37]) are exported through contracts/index.js. Each later wave item adds only its own `export * from …` lines, in
+ * the change that creates those files; the architect reconciles the file at the exit gate.
  */
 export * from './contracts/index.js';
 export { DEFAULT_METRES_PER_UNIT } from './contracts/topology.js';

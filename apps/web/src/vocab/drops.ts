@@ -90,6 +90,17 @@ export const DROP_VOCAB: Readonly<Record<DropReason, DropVocab>> = Object.freeze
     'Check the secure addresses and the maximum on the port. A port shut down by a violation comes back with "shutdown" then "no shutdown".'),
   'nat-exhausted': drop('nat-exhausted', 'no free translation', 'Address translation had no free address or port left for a new connection', 'network',
     'Enlarge the pool, or let every inside host share one address with overload.'),
+  // ── P3 (ARCHITECTURE-P3 §2.7; the architect's W0 stubs, real wording in W1 web-inspector) ──
+  'dhcp-snooping': drop('dhcp-snooping', 'refused by DHCP snooping', 'DHCP snooping refused this DHCP message on an untrusted port', 'policy',
+    'Only trusted ports may carry server replies; trust the port that leads to the real server.'),
+  'arp-inspection': drop('arp-inspection', 'refused by ARP inspection', 'Dynamic ARP inspection found no binding that matches this ARP', 'policy',
+    'Check the DHCP snooping bindings, or add a static binding for a host with a fixed address.'),
+  'mtu-exceeded': drop('mtu-exceeded', 'too big for the tunnel', 'The packet is larger than the tunnel can carry, and fragmentation is not simulated', 'network',
+    'Send smaller packets, or clamp TCP with "ip tcp adjust-mss" on the tunnel.'),
+  policed: drop('policed', 'over the policed rate', 'A policer dropped the packet because its class exceeded the allowed rate', 'policy',
+    'Send less traffic in this class or raise the policed rate.'),
+  'ipsec-no-sa': drop('ipsec-no-sa', 'no security association', 'An encrypted packet named a security association this router does not have', 'policy',
+    'Wait for the tunnel to negotiate again, or check the keys at both ends.'),
 });
 
 /** Every drop reason in table order. */

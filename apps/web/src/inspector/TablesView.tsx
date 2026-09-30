@@ -262,6 +262,9 @@ const SOURCE_TITLE: Record<RouteRow['source'], string> = {
   L: 'L — local address of an interface',
   S: 'S — static route',
   D: 'D — default route learned from a DHCP lease',
+  // P3 (ARCHITECTURE-P3 §2.6; the W0 stub of ruling R1)
+  O: 'O — route learned through OSPF',
+  EIGRP: 'D — route learned through EIGRP',
 };
 
 function ribColumns(shortOf: (port: string) => string): Column<RouteRow>[] {

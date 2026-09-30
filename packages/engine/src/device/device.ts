@@ -212,6 +212,10 @@ export const ERR_DISABLE_CAUSE_TEXT: Readonly<Record<ErrDisableCause, string>> =
   bpduguard: 'BPDU guard',
   'channel-misconfig': 'an EtherChannel misconfiguration',
   fault: 'an injected fault',
+  // P3 (ARCHITECTURE-P3 §2.2, §9.2 W0 item 1): the architect's W0 compile stub, final texts. Nothing raises these causes
+  // before the W2 l2 change that also appends them to ERR_DISABLE_CAUSES.
+  'dhcp-rate-limit': 'the DHCP snooping rate limit',
+  'arp-inspection': 'dynamic ARP inspection',
 });
 
 /** @since P2 Log line of an `errDisable` action (severity 4; `detail` appended when given). Original wording. */

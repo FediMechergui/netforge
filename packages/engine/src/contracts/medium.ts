@@ -53,6 +53,9 @@ export type MediumOp =
   | { op: 'line-protocol'; up: boolean; reason?: string }
   | { op: 'cell-attach' }
   | { op: 'cell-detach'; reason?: string };
+// P3 [S19] (ARCHITECTURE-P3 §2.7): MediumOp += { op: 'ppp-link'; up: boolean; reason?: 'ppp-negotiating' |
+//   'ppp-auth-failed' | 'keepalive-missed' }. NOT added in W0 (ruling R4): link/link.ts `mediumOp` (media-owned)
+//   switches on `op.op` and would no longer return on every path, so the [S19] media item adds the member with its case.
 
 /** Medium → daemon notifications (`Process.onMediumEvent`). */
 export type MediumEvent =
@@ -73,7 +76,12 @@ export type MediumEvent =
    * onPortChanged) while the station's wlan-client is `scanning` or `failed(out-of-range|no-bss)`. wlan-client starts
    * a scan at once (non-periodic `scan` timer), so runToIdle waits for the reassociation.
    */
-  | { kind: 'bss-in-range'; bssid: MacAddress };
+  | { kind: 'bss-in-range'; bssid: MacAddress }
+  /**
+   * @since P3 [S19] The serial line under a PPP end became ready or stopped being ready (carrier and clock). Sent only
+   * when the value changes AND either end is ppp, so an HDLC link never sees it.
+   */
+  | { kind: 'serial-line'; ready: boolean };
 
 export interface VisibleBss {
   bssid: MacAddress;

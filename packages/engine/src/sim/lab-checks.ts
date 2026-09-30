@@ -1167,6 +1167,22 @@ function checkStatic(sim: Simulation, a: Exclude<LabAssertion, { kind: 'connecti
         return checkNat(sim, a);
       case 'fhrp':
         return checkFhrp(sim, a);
+      // P3 (ARCHITECTURE-P3 §2.10, D5, §9.2 W0): the architect's W0 stub cases, one original detail each, so a lab that
+      // uses a P3 kind fails readably until the W1 sim item moves these cases into the checker registry.
+      case 'neighbor':
+        return fail('Neighbour checks are not available in this build.');
+      case 'fact':
+        return fail('Fact checks are not available in this build.');
+      case 'acl':
+        return fail('Access list checks are not available in this build.');
+      case 'aclDecision':
+        return fail('Access list decision checks are not available in this build.');
+      case 'service':
+        return fail('Remote login checks are not available in this build.');
+      case 'path':
+        return fail('Path checks are not available in this build.');
+      case 'traffic':
+        return fail('Traffic flow checks are not available in this build.');
       default:
         return fail(`"${String((a as { kind: string }).kind)}" is not a check this grader knows.`);
     }

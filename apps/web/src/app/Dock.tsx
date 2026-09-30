@@ -19,6 +19,14 @@ import { ResizeHandle } from './ResizeHandle';
 
 export { DOCK_COLLAPSED_HEIGHT, DOCK_MIN_HEIGHT } from '../dock/registry';
 
+/**
+ * P3 [S2] placeholder (ARCHITECTURE-P3 §2.14; the architect's W0 stub): the `routing` tab is registered at dock stage P3
+ * and hidden in this build; the W4 web-shell item maps it to the lazy routing/LinkStatePanel.
+ */
+function RoutingPlaceholder() {
+  return <p className="dim">The link-state browser is not available in this build.</p>;
+}
+
 /** Panels of the tabs this build ships (tabs of later stages are not in DOCK_TABS). */
 const DOCK_PANELS: Partial<Record<DockTab, ComponentType>> = {
   terminal: TerminalPanel,
@@ -29,6 +37,7 @@ const DOCK_PANELS: Partial<Record<DockTab, ComponentType>> = {
   netscope: NetScope,
   'sim-events': SimEventsPanel,
   labs: LabPanel,
+  routing: RoutingPlaceholder,
 };
 
 const tabDomId = (id: DockTab): string => `dock-tab-${id}`;

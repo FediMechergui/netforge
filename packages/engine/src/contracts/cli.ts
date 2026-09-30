@@ -27,14 +27,17 @@
  */
 import type { DeviceId, PortId, PortRef, ProcessName, SessionId } from './ids.js';
 import type { ConfigAst } from './config.js';
-import type { Action, DebugEvent, ProcessRequest, StateView } from './process.js';
+import type { Action, CliRemoteAction, ConfigOrigin, DebugEvent, ProcessRequest, RemoteCliAction, StateView } from './process.js';
 import type { PortKind, PortView } from './port.js';
 import type { RadioPortView } from './rf.js';
 import type { AirView } from './medium.js';
 import type { DeviceTables, TableName } from './tables.js';
 import type { SimTime } from './time.js';
 import type { DeviceCatalog, DeviceModel, DeviceRuntime } from './device.js';
-import type { TraceSink } from './trace.js';
+import type { TraceEvent, TraceSink } from './trace.js';
+import type { DeviceClockView } from './clock.js';
+import type { EgressQueueView } from './link.js';
+import type { PortSnapshot } from './snapshot.js';
 import type { BuildStage, Capability, CliGrammar, PortRole } from './catalog.js';
 
 export type CliMode =
@@ -60,6 +63,25 @@ export type CliMode =
   | 'config-wlan'
   /** @since P2 (wireless) `wlc-interface <name>` on the controller. */
   | 'config-wlc-if'
+  // ── P3 (ARCHITECTURE-P3 §2.11; registered RESERVED in MODES until the cli item whose grammar enters them) ──
+  /** @since P3 `ip access-list extended <name|number>`. */
+  | 'config-ext-nacl'
+  /** @since P3 `class-map [match-all|match-any] <name>`. */
+  | 'config-cmap'
+  /** @since P3 `policy-map <name>`. */
+  | 'config-pmap'
+  /** @since P3 `class <name>` under a policy-map. */
+  | 'config-pmap-c'
+  /** @since P3 [C1] `router eigrp <as>` (prompt `(config-router)#`, the refinement of router entries whose second token is eigrp). */
+  | 'config-router-eigrp'
+  /** @since P3 [C13] `crypto ikev2 keyring <name>`. */
+  | 'config-ikev2-keyring'
+  /** @since P3 [C13] `peer <name>` under a keyring. */
+  | 'config-ikev2-keyring-peer'
+  /** @since P3 [C13] `crypto ikev2 profile <name>`. */
+  | 'config-ikev2-profile'
+  /** @since P3 [C13] `crypto ipsec profile <name>`. */
+  | 'config-ipsec-profile'
   | (string & {});
 
 export type PrivilegeLevel = 0 | 1 | 15;
@@ -261,6 +283,13 @@ export interface CliSessionView {
   input?: CliInputRequest;
   /** @since P0.5 Running job. */
   job?: { process: ProcessName; label: string };
+  /** @since P3 (optional by meaning) [S25] `terminal monitor` is on: logs print on this vty session. */
+  monitor?: boolean;
+  /**
+   * @since P3 (optional by meaning) [S13] This console session runs a remote session ("R1 via SSH", the terminal's chip),
+   * set by the vty-client's `cliRemote` action.
+   */
+  remote?: string;
 }
 
 /** Constructor dependencies for `cli/runtime.ts` (`createCliRuntime(deps)`), supplied by the Simulation. */
@@ -296,6 +325,11 @@ export interface ConfigureOptions {
   stopOnError?: boolean;
   /** Revert every applied delta (inverse `diffTree` changes, applied through the runtime) when any line fails. Implies stopOnError. Default false. */
   atomic?: boolean;
+  /**
+   * @since P3 (optional by meaning) Who changes the configuration (D21): kept on the headless session and passed as the
+   * fourth argument of `DeviceRuntime.applyConfigLine` for every line, so the runtime stamps it on `configChange`.
+   */
+  origin?: ConfigOrigin;
 }
 
 export interface ConfigureLineResult {
@@ -358,6 +392,25 @@ export interface CliRuntime {
   onPortsRemoved(device: DeviceId, ports: readonly PortId[]): void;
   /** @since P2 [S1] Sessions opened (`s_<n>`) and headless runs (`h_<n>`) so far, counted from `CliRuntimeDeps.resume`. */
   counters(): { sessions: number; headless: number };
+
+  // ── P3 (ARCHITECTURE-P3 §2.11; optional during the transition, required in the item that implements them) ──
+  /**
+   * @since P3 [S24] Fed by the Simulation for every `log` trace event (the `sim/simulation.ts` trace-sink branch, like
+   * `onDebugEvent`): console and `terminal monitor` printing in P3 worlds or after a typed `logging console` (D20).
+   */
+  onLogEvent?(ev: Extract<TraceEvent, { kind: 'log' }>): void;
+  /**
+   * @since P3 [S13] Open a via-'vty' session for the vty daemon's connection `act.conn` on `device` (D14). Called only by
+   * the Simulation's `remoteCli` event dispatch. The session's output is delivered to the device's vty daemon as
+   * ProcessEvent `vty.output`, never as a `cliOutput` trace event.
+   */
+  openRemote?(device: DeviceId, act: RemoteCliAction, now: SimTime): SessionId;
+  /** @since P3 [S13] One line received on a remote connection (`remoteCli` op 'line'). */
+  execRemote?(device: DeviceId, act: RemoteCliAction, now: SimTime): void;
+  /** @since P3 [S13] The remote connection closed (`remoteCli` op 'close'). */
+  closeRemote?(device: DeviceId, act: RemoteCliAction, now: SimTime): void;
+  /** @since P3 [S13] The vty-client's view of a console session running a remote session (`cliRemote`). */
+  setRemote?(act: CliRemoteAction, now: SimTime): void;
 }
 
 /** @since P0.5 Options of `CommandCtx.enterMode`. */
@@ -439,6 +492,14 @@ export interface CommandCtx {
   readonly air: AirView;
   /** @since P1 Hash/verify secrets (`nf1$<16 hex>` = FNV-1a-64 of device-id salt + plain); deterministic. */
   readonly secrets: { hash(plain: string): string; verify(stored: string, plain: string): boolean };
+
+  // ── P3 (ARCHITECTURE-P3 §2.9; optional during the transition, required once implemented) ──
+  /** @since P3 The device clock (`show clock`, `show ntp status`, the [S24] timestamps render; D19). */
+  clock?(): DeviceClockView;
+  /** @since P3 A port's QoS marking counters (display; M13). */
+  qosCounters?(port: PortId): PortSnapshot['qos'];
+  /** @since P3 [S20] The held queues of a scheduler port (`show policy-map interface`). */
+  egressQueues?(port: PortId): EgressQueueView | undefined;
 }
 
 export interface CommandOutcome {
@@ -468,6 +529,16 @@ export const MODE_PROMPT: Readonly<Record<string, string>> = {
   'config-std-nacl': '(config-std-nacl)#',
   'config-wlan': '(config-wlan)#',
   'config-wlc-if': '(config-wlc-if)#',
+  // P3 (ARCHITECTURE-P3 §2.11; the MODES registry below holds them too, reserved until their grammar enters them)
+  'config-ext-nacl': '(config-ext-nacl)#',
+  'config-cmap': '(config-cmap)#',
+  'config-pmap': '(config-pmap)#',
+  'config-pmap-c': '(config-pmap-c)#',
+  'config-router-eigrp': '(config-router)#',
+  'config-ikev2-keyring': '(config-ikev2-keyring)#',
+  'config-ikev2-keyring-peer': '(config-ikev2-keyring-peer)#',
+  'config-ikev2-profile': '(config-ikev2-profile)#',
+  'config-ipsec-profile': '(ipsec-profile)#',
 };
 
 /** @since P0.5 Mode classes: `exit` pops a config-class mode to its parent; `end` returns to priv-exec; `do` works only in config class. */
@@ -512,6 +583,20 @@ export const MODES: Readonly<Record<string, ModeDef>> = Object.freeze({
   'config-std-nacl': { name: 'config-std-nacl', class: 'config', parent: 'config', prompt: '(config-std-nacl)#', contextKey: 'ip access-list standard', grammars: ['nfos'] },
   'config-wlan': { name: 'config-wlan', class: 'config', parent: 'config', prompt: '(config-wlan)#', contextKey: 'wlan', grammars: ['nfos'] },
   'config-wlc-if': { name: 'config-wlc-if', class: 'config', parent: 'config', prompt: '(config-wlc-if)#', contextKey: 'wlc-interface', grammars: ['nfos'] },
+  // ── P3 (ARCHITECTURE-P3 §2.11). Registered RESERVED, as P2 did: the cli item whose grammar enters a mode drops its
+  // flag in that change, so the mode helpers (`modesOfClass`, pinned by cli.modes-rules.test.ts) change only together
+  // with the grammar. `config-router` keeps its flag until the W2 cli item enters it (refined to ospf entries). ──
+  'config-ext-nacl': { name: 'config-ext-nacl', class: 'config', parent: 'config', prompt: '(config-ext-nacl)#', contextKey: 'ip access-list extended', grammars: ['nfos'], reserved: true },
+  'config-cmap': { name: 'config-cmap', class: 'config', parent: 'config', prompt: '(config-cmap)#', contextKey: 'class-map', grammars: ['nfos'], reserved: true },
+  'config-pmap': { name: 'config-pmap', class: 'config', parent: 'config', prompt: '(config-pmap)#', contextKey: 'policy-map', grammars: ['nfos'], reserved: true },
+  'config-pmap-c': { name: 'config-pmap-c', class: 'config', parent: 'config-pmap', prompt: '(config-pmap-c)#', contextKey: 'class', grammars: ['nfos'], reserved: true },
+  // [C1]
+  'config-router-eigrp': { name: 'config-router-eigrp', class: 'config', parent: 'config', prompt: '(config-router)#', contextKey: 'router eigrp', grammars: ['nfos'], reserved: true },
+  // [C13]
+  'config-ikev2-keyring': { name: 'config-ikev2-keyring', class: 'config', parent: 'config', prompt: '(config-ikev2-keyring)#', contextKey: 'crypto ikev2 keyring', grammars: ['nfos'], reserved: true },
+  'config-ikev2-keyring-peer': { name: 'config-ikev2-keyring-peer', class: 'config', parent: 'config-ikev2-keyring', prompt: '(config-ikev2-keyring-peer)#', contextKey: 'peer', grammars: ['nfos'], reserved: true },
+  'config-ikev2-profile': { name: 'config-ikev2-profile', class: 'config', parent: 'config', prompt: '(config-ikev2-profile)#', contextKey: 'crypto ikev2 profile', grammars: ['nfos'], reserved: true },
+  'config-ipsec-profile': { name: 'config-ipsec-profile', class: 'config', parent: 'config', prompt: '(ipsec-profile)#', contextKey: 'crypto ipsec profile', grammars: ['nfos'], reserved: true },
 });
 
 /** @since P0.5 Debug categories are data (`debug <category>` grammar and validation derive from the registry). */
@@ -569,4 +654,58 @@ export const CLI_MESSAGES = Object.freeze({
    * interface (architect ruling of 2026-09-23, ARCHITECTURE-P2 §9.2 item 20e): a standby group needs a shared LAN.
    */
   standbyNotHere: '% A standby group needs a shared LAN: use it on a routed Ethernet interface, a subinterface or a VLAN interface (on a switched port, enter "no switchport" first).',
+  // ── P3 (ARCHITECTURE-P3 §2.11; original wording; `{…}` placeholders are filled by the handler) ──
+  /** @since P3 A second `router ospf` process. */
+  ospfOneProcess: '% This device runs one OSPF process; process {pid} is already configured. Remove it with "no router ospf {pid}" first.',
+  /** @since P3 `router-id` changed while the process runs. */
+  ospfRouterIdLater: '% The new router ID is used after "clear ip ospf process" or a reload.',
+  /** @since P3 `router ospf` under `no ip routing`. */
+  ospfNeedsIpRouting: '% OSPF needs IP routing. Enter "ip routing" first.',
+  /** @since P3 A `network` line already in another area. */
+  ospfNetworkOtherArea: '% {net} {wildcard} is already in area {area}. Remove that line first.',
+  /** @since P3 A log: the process cannot pick a router id. */
+  ospfNoRouterId: 'OSPF process {pid} cannot start: it has no router ID and no interface address to borrow one from.',
+  /** @since P3 The interactive confirm of `clear ip ospf process`. */
+  clearOspfConfirm: 'Restart every OSPF process and drop its neighbours? [no]: ',
+  /** @since P3 An access-list number outside both ranges. */
+  aclNumberRange: '% Standard lists use 1-99 or 1300-1999; extended lists use 100-199 or 2000-2699.',
+  /** @since P3 `ip access-group` naming a list that does not exist (the line is stored). */
+  aclUndefinedApplied: '% Note: access list {list} does not exist yet, so this interface lets every packet through.',
+  /** @since P3 `ip access-group` on a switched port. */
+  accessGroupSwitchport: '% Access lists filter routed interfaces; {port} is a switched port.',
+  /** @since P3 `crypto key generate rsa` with the default hostname. */
+  sshNeedsHostname: '% Give the device a name other than the default before creating a key.',
+  /** @since P3 `crypto key generate rsa` without `ip domain-name`. */
+  sshNeedsDomain: '% Set a domain name (ip domain-name) before creating a key.',
+  /** @since P3 `ip ssh version 2` without a large enough key. */
+  sshVersionNeedsKey: '% SSH version 2 needs an RSA key of at least 768 bits.',
+  /** @since P3 A `class` naming a class-map that does not exist. */
+  qosClassMissing: '% There is no class-map named {name}.',
+  /** @since P3 `service-policy` on a port that is not a routed interface or subinterface. */
+  qosPortUnsupported: '% Service policies attach to routed interfaces and subinterfaces; {port} is not one of them.',
+  // [S20]/[S21] (the M13 `qosSetOnly` message is not added: S20 is approved, so it would be dead vocabulary)
+  /** @since P3 [S20] A queueing policy attached as `service-policy input`. */
+  qosQueueingOutputOnly: '% Queueing happens as packets leave. Attach this policy with "service-policy output".',
+  /** @since P3 [S20] A queueing policy on a subinterface. */
+  qosQueueingPhysicalOnly: '% Queueing needs a physical interface; on {port} a policy can only mark and police.',
+  /** @since P3 [S20] The 75 % admission check. */
+  qosAdmission: '% The priority and bandwidth classes ask for {asked} kb/s, more than 75% of the {bw} kb/s on {port}.',
+  // [C1]
+  /** @since P3 [C1] A second `router eigrp` autonomous system. */
+  eigrpOneProcess: '% This device runs one EIGRP process; autonomous system {as} is already configured. Remove it with "no router eigrp {as}" first.',
+  /** @since P3 [C1] `router eigrp` under `no ip routing`. */
+  eigrpNeedsIpRouting: '% EIGRP needs IP routing. Enter "ip routing" first.',
+  /** @since P3 [C1] `auto-summary` (refused). */
+  eigrpAutoSummary: '% Automatic summarisation is not simulated: every subnet is advertised as it is.',
+  // [C13]
+  /** @since P3 [C13] `tunnel protection ipsec profile` naming a profile that does not exist (the line is stored). */
+  ipsecProfileMissing: '% There is no IPsec profile named {name}.',
+  /** @since P3 [C13] `tunnel protection` on a GRE-mode tunnel. */
+  ipsecProtectionVtiOnly: '% Tunnel protection applies to IPsec tunnels here ("tunnel mode ipsec ipv4"); GRE over IPsec is not simulated.',
+  /** @since P3 `restconf` without `ip http secure-server`. */
+  restconfNeedsSecureServer: '% The API listens only when "ip http secure-server" is also configured.',
+  /** @since P3 A flow longer than the cap (TRAFFIC_MAX_DURATION_MS). */
+  trafficFlowCap: '% A flow lasts at most {minutes} minutes; give a smaller count or duration.',
+  /** @since P3 A ninth flow on one device. */
+  trafficTooManyFlows: '% This device already sends {max} flows. Stop one first (flow stop <id>).',
 });

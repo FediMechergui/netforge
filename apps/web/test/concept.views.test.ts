@@ -21,7 +21,7 @@ vi.mock('../src/desktop/WindowLayer', () => ({ WindowLayer: () => null }));
 
 import { useStore } from '../src/store/store';
 import { Workspace } from '../src/app/Workspace';
-import { CONCEPT_TOOLS, ConceptView, conceptToolLabel } from '../src/concept/ConceptView';
+import { CONCEPT_TOOLS, ConceptView, conceptToolLabel, type ConceptViewProps } from '../src/concept/ConceptView';
 import { BitsPane, PracticePane, SUBNET_PANES, SubnetWorkbench, VlsmPane, readSubnet } from '../src/concept/subnetting/SubnetWorkbench';
 import { Eui64Pane, IPV6_PANES, IdentifyPane, Ipv6Explorer, ShortenPane } from '../src/concept/ipv6/Ipv6Explorer';
 import { practiceProblem } from '../src/concept/subnetting/model';
@@ -181,7 +181,7 @@ describe('concept view host', () => {
     const stored = text(renderToStaticMarkup(createElement(ConceptView)));
     expect(stored).toContain('Shorten or write out');
     expect(stored).toContain('Back to the topology');
-    const forced = text(renderToStaticMarkup(createElement(ConceptView, { tool: 'subnetting' })));
+    const forced = text(renderToStaticMarkup(createElement<ConceptViewProps>(ConceptView, { tool: 'subnetting' })));
     expect(forced).toContain('Bits and mask');
   });
 });

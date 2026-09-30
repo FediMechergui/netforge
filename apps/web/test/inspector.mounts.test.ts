@@ -50,7 +50,7 @@ describe('the controller panel is mounted on the NF-WLC-9800 Controller tab (fin
     sim.addDevice({ id: 'wlc', type: 'wlc.nfwlc9800', name: 'WLC1', position: { x: 0, y: 0 } });
     sim.runFor(30 * S);
     const snapshot = sim.snapshot();
-    store.setState({ snapshot, catalog: sim.catalog.list(), events: [] });
+    store.setState({ snapshot, catalog: [...sim.catalog.list()], events: [] });
     const wlc = deviceOf(snapshot, 'wlc');
     expect(panelsForTab(wlc, 'wireless')).toEqual(['wlc.controller']);
     const html = renderToStaticMarkup(createElement(SettingsPanel, { device: wlc, panel: 'wlc.controller' }));
@@ -70,7 +70,7 @@ describe('[S14] the state-machine history strip is mounted (finding #7)', () => 
     sim.addLink({ a: { device: 'sw1', port: 'GigabitEthernet0/1' }, b: { device: 'sw2', port: 'GigabitEthernet0/1' } });
     sim.runFor(70 * S);
     const snapshot = sim.snapshot();
-    store.setState({ snapshot, catalog: sim.catalog.list(), snapshotIndex: undefined });
+    store.setState({ snapshot, catalog: [...sim.catalog.list()], snapshotIndex: undefined });
     return { snapshot, events: sim.traceQuery({ from: 0, limit: 200_000 }).events.map((e) => e.event) };
   }
 

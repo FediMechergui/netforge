@@ -51,6 +51,9 @@ export const SURFACE_PANEL_TAB: Readonly<Record<GuiPanelId, InspectorTab>> = Obj
   // P2 (ARCHITECTURE-P2 §5.5, W6): the controller panel. The NF-WLC-9800 has no command line (shell 'none'), so its
   // 'default' surface is this tab and a refused 'console' names it ("Its settings are under Controller …").
   'wlc.controller': 'wireless',
+  // P3 (ARCHITECTURE-P3 §5.9, §9.2 W0 item 1; the architect's W0 stub, final values): Desktop apps of hosts.
+  'desktop.traffic': 'desktop',
+  'desktop.automation': 'desktop',
 });
 
 const INSPECTOR_TABS: readonly InspectorTab[] = ['overview', 'ports', 'config', 'tables', 'processes', 'physical', 'desktop', 'wireless', 'services'];

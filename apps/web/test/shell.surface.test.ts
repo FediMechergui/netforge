@@ -29,6 +29,24 @@ function load(): void {
 describe('resolveDeviceSurface', () => {
   it('maps every GUI panel to a tab or a window', () => {
     for (const id of GUI_PANELS) expect(SURFACE_PANEL_TAB[id]).toBeDefined();
+    // ARCHITECTURE-P3 §9.2 W0 item 1: the exact record, with the P3 Desktop apps
+    expect(SURFACE_PANEL_TAB).toEqual({
+      physical: 'physical',
+      'desktop.ip-config': 'desktop',
+      'desktop.wifi': 'desktop',
+      'desktop.cellular': 'desktop',
+      'desktop.command-prompt': 'desktop',
+      'desktop.web-browser': 'desktop',
+      services: 'services',
+      'wireless.ap': 'wireless',
+      'home-router.setup': 'wireless',
+      'radio.link': 'wireless',
+      'cell.tower': 'wireless',
+      'modem.status': 'wireless',
+      'wlc.controller': 'wireless',
+      'desktop.traffic': 'desktop',
+      'desktop.automation': 'desktop',
+    });
     expect(resolveDeviceSurface(pc as never, 'desktop.ip-config')).toEqual({ kind: 'window', app: 'desktop.ip-config' });
     expect(resolveDeviceSurface(home as never, 'home-router.setup')).toEqual({ kind: 'tab', tab: 'wireless' });
     expect(resolveDeviceSurface(router as never, 'physical')).toEqual({ kind: 'tab', tab: 'physical' });

@@ -26,13 +26,18 @@
  *     masked, RouteRow.owner dropped). `eventsDigest` is the SHA-256 of those lines joined by '\n'.
  *   • `typed` — the CliResult of the ping and of the show (a synchronous `show` prints through its result, not the
  *     trace, so its text is kept verbatim here; the ping's report arrives as cliOutput events and is in `events`).
- *   • `snapshot` — SHA-256 of the canonical JSON of the final snapshot after the ONE fixed normalisation rule of §10.1
- *     (`normaliseSnapshot`): StateViews of daemons the P1 engine did not have, extra tables it did not have, and the
- *     members of the model-derived lists (capabilities, GUI panels, port allowedRoles) it did not have are removed.
+ *   • `snapshot` — SHA-256 of the canonical JSON of the final snapshot after the ONE fixed normalisation rule
+ *     (`normaliseSnapshot`; ARCHITECTURE-P2 §10.1, made per device by ARCHITECTURE-P3 §4.6 item 2 in P3 W0, §9.2 W0
+ *     item 3): a device loses the StateViews and the owned tables of the daemons the P1 engine did not have and of
+ *     every daemon it derives only through CAPABILITY_PROCESSES rows of a stage after P1 (so a managed switch's P3
+ *     udp/tcp go, a router's P1 udp/tcp stay), extra tables the P1 engine did not have or whose descriptor is of a
+ *     stage after P1, the members of the model-derived lists (capabilities, GUI panels, port allowedRoles) it did not
+ *     have, and the P3 display member `PortSnapshot.txBacklog` (W0 ruling R6; the P0 frame count `txQueue` stays). On
+ *     the recorded golden it removes nothing more than the P2 rule did.
  *     "What the P1 engine had" is `p1Vocabulary`, recorded with the golden and never re-recorded; a guard test proves
- *     that everything outside it is a P2 daemon (all its CAPABILITY_PROCESSES rows `since: 'P2'`) or a table whose
- *     descriptor is `since: 'P2'`. `snapshotParts` hashes each device and each other top-level member separately,
- *     so a mismatch names the device.
+ *     that everything outside it is a later-stage daemon (all its CAPABILITY_PROCESSES rows `since` P2 or P3) or a
+ *     table whose descriptor is `since` P2 or P3. `snapshotParts` hashes each device and each other top-level member
+ *     separately, so a mismatch names the device.
  * A mismatch fails with a readable report: the world, the first diverging event (golden line, fresh line and the
  * fresh event's normalised JSON), the per-kind counts that moved and a per-event diff.
  *
@@ -47,11 +52,12 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { assert, beforeAll, describe, expect, it } from 'vitest';
 import { CAPABILITIES, CAPABILITY_PROCESSES, GUI_PANELS, PORT_ROLES, PROCESS_ORDER } from '../src/contracts/catalog.js';
+import type { BuildStage } from '../src/contracts/catalog.js';
 import type { DeviceId, SessionId } from '../src/contracts/ids.js';
 import type { ScenarioInfo } from '../src/contracts/scenario.js';
 import type { Simulation } from '../src/contracts/simulation.js';
 import type { SimSnapshot } from '../src/contracts/snapshot.js';
-import { TABLE_DESCRIPTORS } from '../src/contracts/tables.js';
+import { PROCESS_TABLES, TABLE_DESCRIPTORS } from '../src/contracts/tables.js';
 import { SEC } from '../src/contracts/time.js';
 import type { TraceEvent } from '../src/contracts/trace.js';
 import { CCNA1_LABS, SCENARIOS, SCENARIO_SEED, TEMPLATES } from '../src/sim/scenarios.js';
@@ -259,24 +265,49 @@ function recordOf(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
+/** The stages the P1 golden's engine had (the golden's stage is P1). */
+const P1_STAGES: readonly BuildStage[] = ['P0', 'P0.5', 'P1'];
+/** The stages after P1 (ARCHITECTURE-P3 §9.2 W0 item 3: P2 or P3). */
+const LATER_STAGES: readonly string[] = ['P2', 'P3'];
+
 /**
- * THE fixed rule of §10.1: a JSON copy of `snapshot` without the StateViews of daemons outside `vocab.processes`
- * (P2 daemons), without extra tables outside `vocab.tables` (descriptors `since: 'P2'`; a list left empty is dropped,
- * as P1 never has an empty one), and without P2 members of the model-derived lists `capabilities`, `gui` and each
- * port's `allowedRoles`. Nothing else is touched.
+ * THE fixed rule (ARCHITECTURE-P2 §10.1, per device since ARCHITECTURE-P3 §4.6 item 2): a JSON copy of `snapshot` where
+ * each device loses the StateViews and the owned tables (`PROCESS_TABLES`) of the daemons it runs outside
+ * `vocab.processes` or derives only through CAPABILITY_PROCESSES rows of a stage after P1, every extra table outside
+ * `vocab.tables` or whose descriptor is of a stage after P1 (a list left empty is dropped, as P1 never has an empty
+ * one), the members of the model-derived lists `capabilities`, `gui` and each port's `allowedRoles` outside the
+ * vocabulary, and each port's P3 display member `txBacklog` (the FIFO view, D16, named by the W0 ruling R6; the P0 frame
+ * count `txQueue` is kept: it is part of the recorded hashes). Nothing else is touched.
  */
 function normaliseSnapshot(snapshot: SimSnapshot, vocab: P1Vocabulary): Record<string, unknown> {
+  const stages = new Set<string>(P1_STAGES);
   const processes = new Set(vocab.processes);
   const tables = new Set(vocab.tables);
   const capabilities = new Set(vocab.capabilities);
   const guiPanels = new Set(vocab.guiPanels);
   const portRoles = new Set(vocab.portRoles);
+  const capabilityRows = CAPABILITY_PROCESSES as unknown as Readonly<Record<string, readonly { readonly process: string; readonly since: string }[]>>;
+  const processTables = PROCESS_TABLES as unknown as Readonly<Record<string, readonly string[] | undefined>>;
+  const descriptors = TABLE_DESCRIPTORS as unknown as Readonly<Record<string, { readonly since: string } | undefined>>;
   const copy = JSON.parse(JSON.stringify(snapshot)) as Record<string, unknown>;
   for (const d of listOf(copy['devices']).map(recordOf)) {
-    if (Array.isArray(d['processes'])) d['processes'] = listOf(d['processes']).filter((v) => processes.has(String(recordOf(v)['process'])));
+    const caps = listOf(d['capabilities']).map(String);
+    const laterOnly = (process: string): boolean => {
+      const rows = caps.flatMap((c) => (capabilityRows[c] ?? []).filter((r) => r.process === process));
+      return rows.length > 0 && rows.every((r) => !stages.has(r.since));
+    };
+    const running = listOf(d['processes']).map((v) => String(recordOf(v)['process']));
+    const dropped = new Set(running.filter((p) => !processes.has(p) || laterOnly(p)));
+    const keptTables = new Set(running.filter((p) => !dropped.has(p)).flatMap((p) => processTables[p] ?? []));
+    const droppedTables = new Set([...dropped].flatMap((p) => processTables[p] ?? []).filter((name) => !keptTables.has(name)));
+    if (Array.isArray(d['processes'])) d['processes'] = listOf(d['processes']).filter((v) => !dropped.has(String(recordOf(v)['process'])));
     const t = recordOf(d['tables']);
     if (Array.isArray(t['extra'])) {
-      const kept = listOf(t['extra']).filter((x) => tables.has(String(recordOf(x)['name'])));
+      const keep = (name: string): boolean => {
+        const since = descriptors[name]?.since;
+        return tables.has(name) && (since === undefined || stages.has(since)) && !droppedTables.has(name);
+      };
+      const kept = listOf(t['extra']).filter((x) => keep(String(recordOf(x)['name'])));
       if (kept.length === 0) delete t['extra'];
       else t['extra'] = kept;
     }
@@ -284,6 +315,7 @@ function normaliseSnapshot(snapshot: SimSnapshot, vocab: P1Vocabulary): Record<s
     if (Array.isArray(d['gui'])) d['gui'] = listOf(d['gui']).filter((g) => guiPanels.has(String(g)));
     for (const p of listOf(d['ports']).map(recordOf)) {
       if (Array.isArray(p['allowedRoles'])) p['allowedRoles'] = listOf(p['allowedRoles']).filter((r) => portRoles.has(String(r)));
+      delete p['txBacklog'];
     }
   }
   return copy;
@@ -588,21 +620,22 @@ describe('accept P2: the P1-profile digests', () => {
     }
   });
 
-  it('normalises the snapshot by removing only what P2 added (§10.1)', () => {
+  it('normalises the snapshot by removing only what later stages added (§10.1; per device since P3 §4.6)', () => {
     const p1 = golden().p1Vocabulary;
     const now = currentVocabulary();
-    // Nothing the P1 engine had is gone or reordered: P2 only inserts (PROCESS_ORDER) or appends.
+    // Nothing the P1 engine had is gone or reordered: later stages only insert (PROCESS_ORDER) or append.
     for (const key of ['processes', 'tables', 'capabilities', 'guiPanels', 'portRoles'] as const) {
       expect(now[key].filter((x) => p1[key].includes(x)), key).toEqual(p1[key]);
     }
-    // Every daemon outside the P1 list is a P2 daemon: each of its CAPABILITY_PROCESSES rows is `since: 'P2'`.
+    // Every daemon outside the P1 list is a later-stage daemon: each of its CAPABILITY_PROCESSES rows is `since` a
+    // stage after P1 (P2 or P3; ARCHITECTURE-P3 §9.2 W0 item 3).
     const rows = Object.values(CAPABILITY_PROCESSES).flat();
     for (const name of now.processes.filter((x) => !p1.processes.includes(x))) {
-      expect(rows.filter((r) => r.process === name).map((r) => r.since as string).filter((s) => s !== 'P2'), name).toEqual([]);
+      expect(rows.filter((r) => r.process === name).map((r) => r.since as string).filter((s) => !LATER_STAGES.includes(s)), name).toEqual([]);
     }
-    // Every table outside the P1 list has a `since: 'P2'` descriptor.
+    // Every table outside the P1 list has a descriptor `since` P2 or P3.
     const descriptors: Readonly<Record<string, { readonly since: string }>> = TABLE_DESCRIPTORS;
-    for (const name of now.tables.filter((x) => !p1.tables.includes(x))) expect(descriptors[name]?.since, name).toBe('P2');
+    for (const name of now.tables.filter((x) => !p1.tables.includes(x))) expect(LATER_STAGES, name).toContain(descriptors[name]?.since);
   });
 
   for (const sc of worlds()) {

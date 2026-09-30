@@ -34,6 +34,8 @@ function fsm(machine: FsmMachine, label: string, states: readonly string[]): Fsm
 
 const CAPWAP_STATES = ['idle', 'discovery', 'dtls', 'join', 'configure', 'data-check', 'run'] as const;
 const MEMBER_STATES = ['down', 'waiting', 'individual', 'suspended', 'bundled'] as const;
+/** @since P3 [S19] The RFC 1661 automaton states (LCP and the NCPs; `PppFsmState`). */
+const PPP_STATES = ['initial', 'starting', 'closed', 'stopped', 'closing', 'stopping', 'req-sent', 'ack-rcvd', 'ack-sent', 'opened'] as const;
 
 /** Every state machine, exhaustive over `FsmMachine`. */
 export const FSM_VOCAB: Readonly<Record<FsmMachine, FsmVocab>> = Object.freeze({
@@ -50,6 +52,17 @@ export const FSM_VOCAB: Readonly<Record<FsmMachine, FsmVocab>> = Object.freeze({
   'capwap-ac': fsm('capwap-ac', 'Controller to access point', CAPWAP_STATES),
   hsrp: fsm('hsrp', 'Standby group', ['initial', 'learn', 'listen', 'speak', 'standby', 'active']),
   pagp: fsm('pagp', 'Port aggregation', MEMBER_STATES),
+  // ── P3 (ARCHITECTURE-P3 §2.4, §2.16, §2.17; the architect's W0 stubs, the contract's own state words) ──
+  'ospf-if': fsm('ospf-if', 'OSPF interface', ['down', 'loopback', 'waiting', 'point-to-point', 'drother', 'backup', 'dr']),
+  'ospf-nbr': fsm('ospf-nbr', 'OSPF neighbour', ['down', 'attempt', 'init', '2way', 'exstart', 'exchange', 'loading', 'full']),
+  ntp: fsm('ntp', 'Time synchronisation', ['unsynchronised', 'candidate', 'synchronised']),
+  tunnel: fsm('tunnel', 'Tunnel', ['down', 'up']),
+  'ppp-lcp': fsm('ppp-lcp', 'PPP link control', PPP_STATES),
+  'ppp-auth': fsm('ppp-auth', 'PPP authentication', ['pending', 'success', 'failed']),
+  'ppp-ncp': fsm('ppp-ncp', 'PPP network control', PPP_STATES),
+  'eigrp-nbr': fsm('eigrp-nbr', 'EIGRP neighbour', ['pending', 'up', 'down']),
+  'eigrp-route': fsm('eigrp-route', 'EIGRP route', ['passive', 'active']),
+  ike: fsm('ike', 'IKE negotiation', ['idle', 'init-sent', 'init-answered', 'auth-sent', 'established', 'failed']),
 });
 
 /** Machines in display order. */

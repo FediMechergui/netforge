@@ -19,6 +19,8 @@ import {
   verdictText,
 } from '../src/app/cable/cable-compat.js';
 import { MEDIA_PICKER_ORDER } from '../src/vocab/media.js';
+import { handBuilt } from './hand-built.js';
+import { deviceMembersFromModel, portMembersFromSpec } from './snapshot-members.js';
 
 const GIG = 1_000_000_000;
 
@@ -58,27 +60,30 @@ const SX: ModuleModel = defineModule({
   transceiver: { connector: 'lc', mode: 'mm', speedBps: GIG, maxLengthM: 550, wavelengthNm: 850 },
 });
 
-/** Snapshot port from a catalog spec (P0.5 fields included unless `p0` strips them). */
+/**
+ * Snapshot port from a catalog spec, with the P0.5 members the engine derives from it (snapshot-members.ts), unless
+ * `p0` strips them: a P0-shaped port (the P0 members only) pins the catalog fallback of `cableEndFor`.
+ */
 function snapPort(spec: PortSpec, extra: Partial<PortSnapshot> = {}, p0 = false): PortSnapshot {
-  const base: PortSnapshot = {
+  const p0Members = {
     id: spec.name, short: spec.short, kind: spec.kind, mac: '02:00:00:00:00:01', adminUp: true, operUp: false, mtu: 1500,
     counters: emptyCounters(), l3: {}, txQueue: 0,
   };
-  if (!p0) {
-    if (spec.role !== undefined) base.role = spec.role;
-    if (spec.connector !== undefined) base.connector = spec.connector;
-    if (spec.wiring !== undefined) base.wiring = spec.wiring;
-    if (spec.autoMdix !== undefined) base.autoMdix = spec.autoMdix;
-  }
+  if (p0) return handBuilt<PortSnapshot>({ ...p0Members, ...extra });
+  const base: PortSnapshot = { ...p0Members, ...portMembersFromSpec(spec) };
+  if (spec.wiring !== undefined) base.wiring = spec.wiring;
+  if (spec.autoMdix !== undefined) base.autoMdix = spec.autoMdix;
   return { ...base, ...extra };
 }
 
+/** Snapshot device of a model; `p0` builds the P0 shape (no P0.5 member on the device or its ports). */
 function snapDevice(id: string, name: string, model: DeviceModel, ports?: PortSnapshot[], p0 = false): DeviceSnapshot {
-  return {
+  const p0Members = {
     id, type: model.type, model: model.model, kind: model.kind, name, position: { x: 0, y: 0 }, power: true, booted: true, uptimeNs: 0,
     ports: ports ?? model.ports.map((p) => snapPort(p, {}, p0)), tables: { cam: [], arp: [], rib: [] }, processes: [],
     runningConfig: '', hasStartupConfig: false,
   };
+  return p0 ? handBuilt<DeviceSnapshot>(p0Members) : { ...p0Members, ...deviceMembersFromModel(model) };
 }
 
 const port = (m: DeviceModel, name: string): PortSpec => m.ports.find((p) => p.name === name)!;
@@ -141,10 +146,11 @@ describe('port compatibility before the first click', () => {
   it('keys every port of every device in snapshot order', () => {
     const expected = SNAP.devices.flatMap((d) => d.ports.map((p) => `${d.id}/${p.id}`));
     expect([...map.keys()]).toEqual(expected);
-    expect(isPickablePort({ kind: 'virtual' })).toBe(false);
-    expect(isPickablePort({ kind: 'ethernet', role: 'svi' })).toBe(false);
-    expect(isPickablePort({ kind: 'radio', role: 'radio-ptp' })).toBe(true);
-    expect(isPickablePort({ kind: 'ethernet', linkable: false })).toBe(false);
+    // Partial ports on purpose: each case pins one rule of the picker filter with the other members absent.
+    expect(isPickablePort(handBuilt({ kind: 'virtual' }))).toBe(false);
+    expect(isPickablePort(handBuilt({ kind: 'ethernet', role: 'svi' }))).toBe(false);
+    expect(isPickablePort(handBuilt({ kind: 'radio', role: 'radio-ptp' }))).toBe(true);
+    expect(isPickablePort(handBuilt({ kind: 'ethernet', linkable: false }))).toBe(false);
   });
 });
 

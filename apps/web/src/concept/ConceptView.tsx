@@ -8,6 +8,9 @@
  * component otherwise, so the view works either way; `tool` overrides both, for a host that already knows.
  *
  * ponytail: two tools, listed in one place (CONCEPT_TOOLS) so adding a third is one entry plus one case.
+ *
+ * P3 (ARCHITECTURE-P3 D24): `ConceptTool` is the engine's `ConceptToolId`; an id whose tool is not built yet shows a
+ * short "not available" note instead of falling back to the subnetting workbench.
  */
 import { useState } from 'react';
 import { useStore } from '../store/store';
@@ -66,7 +69,15 @@ export function ConceptView({ tool }: ConceptViewProps = {}) {
           </button>
         )}
       </div>
-      {current === 'ipv6' ? <Ipv6Explorer /> : <SubnetWorkbench />}
+      {current === 'ipv6' ? (
+        <Ipv6Explorer />
+      ) : current === 'subnetting' ? (
+        <SubnetWorkbench />
+      ) : (
+        // P3 (ARCHITECTURE-P3 D24; the architect's W0 stub): a ConceptToolId whose tool is not built yet ('queueing',
+        // 'data-formats', [S9] 'wildcard'); each web-concept item adds its tool to CONCEPT_TOOLS and a case here.
+        <p className="dim">This concept tool is not available in this build.</p>
+      )}
     </div>
   );
 }

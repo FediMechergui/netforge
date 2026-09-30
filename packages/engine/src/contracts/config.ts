@@ -26,6 +26,11 @@ export interface ConfigNode {
   key: string;
   args: string[];
   children: ConfigNode[];
+  /**
+   * @since P3 (optional by meaning) The sequence number of an access-list entry (D12): set by a leading number in a list
+   * mode or last + 10; never rendered (replay from text renumbers 10, 20, …). Absent on every other node.
+   */
+  seq?: number;
 }
 
 export interface ConfigAst {
@@ -64,7 +69,7 @@ export interface ConfigAst {
    *       that slot, or clears the slot when the slot is not a default slot.
    * Without `defaults` the behaviour is exactly `set`/`unset` today. Implemented by W1 cli (required since then).
    */
-  apply(context: readonly (readonly string[])[], line: readonly string[], negate: boolean, opts?: { defaults?: DefaultSlots }): ConfigDelta | undefined;
+  apply(context: readonly (readonly string[])[], line: readonly string[], negate: boolean, opts?: { defaults?: DefaultSlots; seq?: number }): ConfigDelta | undefined;
 }
 
 /**
@@ -177,6 +182,12 @@ export interface ConfigLineRule {
   renderSlot?: ConfigRenderSlot;
   /** Sort key within the slot or section (lower first; ties = insertion order). */
   order?: number;
+  /**
+   * @since P3 (optional by meaning) (D12) Entries of this rule are sequenced: `'section'` = one sequence per section (a
+   * named or numbered `ip access-list`), `{token}` = one sequence per value of that token (global `access-list N`).
+   * `ConfigNode.seq` is kept on each entry; absent = P2 storage.
+   */
+  sequenced?: { list: 'section' | { token: number } };
 }
 
 export interface ConfigRuleSet {

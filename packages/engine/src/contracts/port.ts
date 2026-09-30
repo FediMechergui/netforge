@@ -63,6 +63,11 @@ export interface PortCounters {
   excessiveCollisions?: number;
   /** @since P0.5 802.11 retransmission attempts. */
   txRetries?: number;
+  /**
+   * @since P3 (optional by meaning) Packets an access list denied on this port (ARCHITECTURE-P3 §2.2, D12): the
+   * runtime increments it on every 'acl-deny' drop that names a port. Absent until the first such drop (P1/P2 bytes).
+   */
+  aclDenies?: number;
 }
 
 /** P0 counter set (the P0.5 optional counters start absent and are created on first increment). */
@@ -260,8 +265,13 @@ export const CONTROLLER_PORT_SWITCHPORT: SwitchportConfig = Object.freeze({
   mode: 'trunk', negotiate: false, accessVlan: 1, nativeVlan: 1, allowed: '1-4094',
 });
 
-/** @since P2 Why a port is err-disabled (PortState.errDisabled holds one of these). */
-export type ErrDisableCause = 'psecure-violation' | 'bpduguard' | 'channel-misconfig' | 'fault';
+/**
+ * @since P2 Why a port is err-disabled (PortState.errDisabled holds one of these).
+ * 'dhcp-rate-limit' and 'arp-inspection' @since P3 (ARCHITECTURE-P3 §2.2, D13): the union only in W0. The runtime list
+ * ERR_DISABLE_CAUSES gains them, in this order, in the W2 l2 change that raises them (`show errdisable recovery`
+ * iterates it), never earlier (§0 rule 3).
+ */
+export type ErrDisableCause = 'psecure-violation' | 'bpduguard' | 'channel-misconfig' | 'fault' | 'dhcp-rate-limit' | 'arp-inspection';
 /** @since P2 Every err-disable cause, in the order `show errdisable recovery` lists them. */
 export const ERR_DISABLE_CAUSES: readonly ErrDisableCause[] = Object.freeze(['psecure-violation', 'bpduguard', 'channel-misconfig', 'fault']);
 

@@ -48,7 +48,8 @@ describe('Simulation.profile', () => {
   });
 
   it('refuses an unknown profile before anything is built', () => {
-    expect(() => createSimulation({ seed: 1, profile: 'P3' as DefaultsProfile })).toThrow(new RangeError('profile must be one of P1, P2, got P3'));
+    // ARCHITECTURE-P3 §9.2 W0 item 5: 'P3' is a valid profile now, so the unknown one is 'P4' and the message lists three
+    expect(() => createSimulation({ seed: 1, profile: 'P4' as DefaultsProfile })).toThrow(new RangeError('profile must be one of P1, P2, P3, got P4'));
   });
 
   it('a loaded P1 document in a P1 world stays P1 and its devices carry no profile', () => {

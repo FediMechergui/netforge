@@ -158,7 +158,8 @@ describe('device/pipeline: check order', () => {
 
 describe('device/pipeline: encapsulation validators', () => {
   it('pins the allowed outer framings per encapsulation', () => {
-    expect(ENCAP_ALLOWS).toEqual({ ethernet: ['ethernet'], hdlc: ['hdlc'], dot11: ['dot11', 'ethernet'], ppp: [], none: [] });
+    // ARCHITECTURE-P3 §9.2 W0 ruling R3: [S18] 'tunnel' joins PortEncap with no framing accepted until its item.
+    expect(ENCAP_ALLOWS).toEqual({ ethernet: ['ethernet'], hdlc: ['hdlc'], dot11: ['dot11', 'ethernet'], ppp: [], none: [], tunnel: [] });
   });
 
   it('refuses a framing the port encapsulation does not carry', () => {

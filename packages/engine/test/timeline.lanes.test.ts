@@ -3,6 +3,9 @@
  *
  * The expected table below is written out by hand from the brief, not derived from the module, so a changed mapping
  * has to be a deliberate edit in both places.
+ *
+ * P3 W0 (ARCHITECTURE-P3 §9.2 W0 item 11): EXPECTED_TABLES gains the twenty P3 tables and EXPECTED_MACHINES the ten P3
+ * machines with their §2.12 lanes; the lane numbering covers the fourteen lanes, 'mgmt' and 'wan' appended.
  */
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
@@ -51,6 +54,8 @@ const SAMPLE: Readonly<Record<TraceKind, TraceEvent>> = {
   assocState: { t: 1, kind: 'assocState', tech: 'wifi', medium: 'bss:d1/Wlan0', station: REF, state: 'associated', prev: 'handshake' },
   rfState: { t: 1, kind: 'rfState', port: REF, peer: REF, rssiDbm: -60, snrDb: 30, rateBps: 1, bars: 3 },
   segmentChanged: { t: 1, kind: 'segmentChanged', segment: 'seg:1', members: [REF], op: 'formed' },
+  // P3 [S20] (ARCHITECTURE-P3 §9.2 W0 ruling R2): the kind joins the exhaustive records; laneOf puts it in no lane.
+  frameQueued: { t: 1, kind: 'frameQueued', pdu: PDU, device: 'd1', port: 'Gi0/1', queue: 'class-default', depth: 1 },
 } as Record<TraceKind, TraceEvent>;
 
 /** §3.13 step 1, kind by kind, for the samples above (the cam table and a debug line without fsm are in no lane). */
@@ -80,6 +85,7 @@ const EXPECTED_BY_KIND: Readonly<Record<TraceKind, LaneId | undefined>> = {
   assocState: undefined,
   rfState: undefined,
   segmentChanged: undefined,
+  frameQueued: undefined,
 };
 
 /** Table → lane, written from the brief (tables not listed are in no lane). */
@@ -105,6 +111,27 @@ const EXPECTED_TABLES: Readonly<Record<'cam' | 'arp' | 'rib' | ExtraTableName, L
   'capwap-aps': 'wireless',
   'wlan-clients': 'wireless',
   hsrp: 'fhrp',
+  // P3 (ARCHITECTURE-P3 §2.12)
+  'ospf-interfaces': 'routing',
+  'ospf-neighbors': 'routing',
+  'ospf-lsdb': 'routing',
+  acl: 'security',
+  'dhcp-snooping': 'dhcp',
+  'arp-inspection': 'security',
+  'cdp-neighbours': 'mgmt',
+  'lldp-neighbours': 'mgmt',
+  'ntp-peers': 'mgmt',
+  clock: 'mgmt',
+  'restconf-log': 'config',
+  flows: undefined,
+  'vty-logins': 'security',
+  tunnels: 'wan',
+  ppp: 'wan',
+  'syslog-messages': 'mgmt',
+  'script-runs': undefined,
+  'eigrp-neighbors': 'routing',
+  'eigrp-topology': 'routing',
+  'ipsec-sa': 'wan',
 };
 
 /** Machine → lane, written from the brief. */
@@ -122,6 +149,17 @@ const EXPECTED_MACHINES: Readonly<Record<FsmMachine, LaneId>> = {
   'capwap-wtp': 'wireless',
   'capwap-ac': 'wireless',
   hsrp: 'fhrp',
+  // P3 (ARCHITECTURE-P3 §2.12)
+  'ospf-if': 'routing',
+  'ospf-nbr': 'routing',
+  ntp: 'mgmt',
+  'eigrp-nbr': 'routing',
+  'eigrp-route': 'routing',
+  tunnel: 'wan',
+  'ppp-lcp': 'wan',
+  'ppp-auth': 'wan',
+  'ppp-ncp': 'wan',
+  ike: 'wan',
 };
 
 function fsmEvent(machine: FsmMachine): TraceEvent {
@@ -195,8 +233,8 @@ describe('laneOf', () => {
 });
 
 describe('lane numbering', () => {
-  it('numbers the twelve lanes 0..11 in canonical order', () => {
-    expect(LANE_IDS).toEqual(['link', 'stp', 'etherchannel', 'vlan', 'fhrp', 'routing', 'nat', 'dhcp', 'wireless', 'security', 'config', 'drops']);
+  it('numbers the fourteen lanes 0..13 in canonical order', () => {
+    expect(LANE_IDS).toEqual(['link', 'stp', 'etherchannel', 'vlan', 'fhrp', 'routing', 'nat', 'dhcp', 'wireless', 'security', 'config', 'drops', 'mgmt', 'wan']);
     LANE_IDS.forEach((lane, i) => expect(LANE_INDEX[lane]).toBe(i));
     expect(Object.keys(LANE_INDEX).sort()).toEqual([...LANE_IDS].sort());
   });

@@ -79,6 +79,9 @@ export function captureLinkForEncap(encap: PortEncap | undefined): CaptureLinkIn
     case 'ppp':
       return { linkType: 'c_hdlc', fcsLen: 0 };
     case 'none':
+    // P3 [S18] (ARCHITECTURE-P3 §2.1; a W0 compile stub forced by ruling R3): no port carries 'tunnel' before the [S18]
+    // item, whose capture owner confirms or changes this link type (the carried packet has no link header).
+    case 'tunnel':
       return { linkType: 'raw', fcsLen: 0 };
     case 'ethernet':
     case undefined:

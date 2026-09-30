@@ -18,11 +18,15 @@ import { HOUR, MIN, SEC } from './time.js';
 
 // ── build stages ─────────────────────────────────────────────────────────────
 
-/** Delivery stage of a feature (D1). `since` tags in contracts and catalog derivations use it. 'P2' @since P2. */
-export type BuildStage = 'P0' | 'P0.5' | 'P1' | 'P2';
+/**
+ * Delivery stage of a feature (D1). `since` tags in contracts and catalog derivations use it. 'P2' @since P2.
+ * 'P3' @since P3 (ARCHITECTURE-P3 §2.1): P3a, the CCNA 3 content. No catalog row, descriptor or panel of stage P3
+ * changes a P2-stage derivation; the real catalog flips to it only in the W4 catalog change.
+ */
+export type BuildStage = 'P0' | 'P0.5' | 'P1' | 'P2' | 'P3';
 
 /** Stages in delivery order. */
-export const BUILD_STAGES: readonly BuildStage[] = ['P0', 'P0.5', 'P1', 'P2'];
+export const BUILD_STAGES: readonly BuildStage[] = ['P0', 'P0.5', 'P1', 'P2', 'P3'];
 
 /** True when something delivered in stage `since` exists in a build of stage `current`. */
 export function stageIncluded(since: BuildStage, current: BuildStage): boolean {
@@ -36,9 +40,15 @@ export function stageIncluded(since: BuildStage, current: BuildStage): boolean {
  * every P2 command works in a P1 world when typed. Visible defaults are config lines replayed at every boot
  * (`DeviceModel.profileConfig`); invisible defaults are read from `ProcessCtx.profile` (P2: proxy ARP only).
  */
-export type DefaultsProfile = 'P1' | 'P2';
-/** @since P2 Profiles in delivery order. */
-export const DEFAULTS_PROFILES: readonly DefaultsProfile[] = ['P1', 'P2'];
+export type DefaultsProfile = 'P1' | 'P2' | 'P3';
+/** @since P2 Profiles in delivery order. 'P3' @since P3 (ARCHITECTURE-P3 D2, §2.1). */
+export const DEFAULTS_PROFILES: readonly DefaultsProfile[] = ['P1', 'P2', 'P3'];
+/**
+ * @since P3 The profile a new world takes when no course names one (web `profileForCourse`, "Use current defaults").
+ * 'P2' until the W7 course flip; that change sets 'P3' together with the course (ARCHITECTURE-P3 §7 W7, §9 W7,
+ * §8.5 P15).
+ */
+export const LATEST_DEFAULTS_PROFILE: DefaultsProfile = 'P2';
 /** @since P2 True when the defaults introduced by `since` apply in a world whose profile is `profile`. */
 export function profileIncludes(profile: DefaultsProfile, since: DefaultsProfile): boolean {
   return DEFAULTS_PROFILES.indexOf(since) <= DEFAULTS_PROFILES.indexOf(profile);
@@ -74,6 +84,12 @@ export const CAPABILITIES = [
   'lightweight-ap',
   /** @since P2 Controller appliance: CAPWAP controller + VLAN-aware bridge, no spanning tree (D17). */
   'wireless-controller',
+  // ── P3 (appended) ──
+  /**
+   * @since P3 [S32] A host that runs the NF-Py script host and the automation workspace (ARCHITECTURE-P3 §2.1, D21).
+   * Implies `host`. Its `script-host` row is added by the W6 flip, in the change that registers the daemon.
+   */
+  'programmable',
 ] as const;
 export type Capability = (typeof CAPABILITIES)[number];
 
@@ -90,6 +106,8 @@ export const CAPABILITY_IMPLIES: Readonly<Partial<Record<Capability, readonly Ca
   'managed-switch': ['switching'],
   'lightweight-ap': ['wifi-ap'],
   'wireless-controller': ['switching'],
+  /** @since P3 [S32] */
+  programmable: ['host'],
 };
 
 /** Pairs that may not coexist on one model (catalog validation error). */
@@ -221,13 +239,28 @@ export const PORT_ROLES = [
   'subif',
   /** @since P2 The controller's CAPWAP tunnel port (`Capwap0`): bridged, hairpin, egress owned by `capwap-ac` (D17). */
   'wlan-tunnel',
+  // ── P3 (appended) ──
+  /**
+   * @since P3 [S18] `interface TunnelN`: l3, virtual, egress owned by the tunnel owner `gre` (ARCHITECTURE-P3 §2.1,
+   * D17; [C13] in both modes, D27). No port carries it before the W1 catalog item derives `TUNNEL_FAMILY`.
+   */
+  'tunnel',
 ] as const;
 export type PortRole = (typeof PORT_ROLES)[number];
 
-/** Outermost encapsulation a port carries on its medium. `ppp` is RESERVED (P3). */
-export type PortEncap = 'ethernet' | 'hdlc' | 'ppp' | 'dot11' | 'none';
+/**
+ * Outermost encapsulation a port carries on its medium. `ppp` is RESERVED until [S19] makes it live.
+ * 'tunnel' @since P3 [S18] (ARCHITECTURE-P3 §2.1): "the owner frames it". Added in W0 (ruling R3) with its stub entry
+ * in `ENCAP_ALLOWS` (device/pipeline.ts, no framing accepted); no port carries it before the [S18] item derives
+ * `TUNNEL_FAMILY`.
+ */
+export type PortEncap = 'ethernet' | 'hdlc' | 'ppp' | 'dot11' | 'none' | 'tunnel';
 
-/** Outer framing of a PDU as seen by the device frame pipeline (validator, MAC filter, demux layer). */
+/**
+ * Outer framing of a PDU as seen by the device frame pipeline (validator, MAC filter, demux layer).
+ * P3 (§2.1): [S19] adds 'ppp'. NOT added in W0 (ruling R4): the exhaustive `FRAMING_RULES` (device/pipeline.ts,
+ * device-owned) would need its rules, so the [S19] item that writes the PPP framing adds the member with them.
+ */
 export type FramingProto = 'ethernet' | 'hdlc' | 'dot11';
 
 /** Ethernet copper wiring side: MDI (hosts, routers) transmits on pins 1-2, MDI-X (switch ports) on 3-6. */
@@ -303,6 +336,8 @@ export const ROLE_TRAITS: Readonly<Record<PortRole, PortRoleTraits>> = Object.fr
   channel: { frames: true, bridged: true, hairpin: false, l3: false, linkable: false, configurable: true, virtual: true, egress: 'owner', wiring: null, label: 'Port channel' },
   subif: { frames: true, bridged: false, hairpin: false, l3: true, linkable: false, configurable: true, virtual: true, egress: 'parent', wiring: null, label: 'Subinterface' },
   'wlan-tunnel': { frames: true, bridged: true, hairpin: true, l3: false, linkable: false, configurable: false, virtual: true, egress: 'owner', wiring: null, label: 'Controller tunnel' },
+  // ── P3 ── [S18]
+  tunnel: { frames: true, bridged: false, hairpin: false, l3: true, linkable: false, configurable: true, virtual: true, egress: 'owner', wiring: null, label: 'Tunnel interface' },
 });
 
 /**
@@ -335,6 +370,8 @@ export const ROLE_KINDS: Readonly<Record<PortRole, readonly PortKind[]>> = Objec
   channel: ['virtual'],
   subif: ['virtual'],
   'wlan-tunnel': ['virtual'],
+  // ── P3 ── [S18]
+  tunnel: ['virtual'],
 });
 
 /**
@@ -554,14 +591,20 @@ export interface VirtualFamilySpec {
   /** Long family: 'Vlan' | 'Loopback' (P2 adds 'Port-channel' and the controller's tunnel family). */
   readonly family: string;
   readonly short: string;
-  /** 'channel' and 'wlan-tunnel' @since P2. */
-  readonly role: 'svi' | 'virtual' | 'channel' | 'wlan-tunnel';
+  /** 'channel' and 'wlan-tunnel' @since P2. 'tunnel' @since P3 [S18] (`TUNNEL_FAMILY`). */
+  readonly role: 'svi' | 'virtual' | 'channel' | 'wlan-tunnel' | 'tunnel';
   readonly min: number;
   readonly max: number;
   /** Admin state of a new instance. L2/L3 switch SVIs start down (IOS default, including auto management Vlan1); home-router Vlan1 and loopbacks start up. */
   readonly defaultAdminUp: boolean;
   /** Instances created at construction; they cannot be removed (`no interface Vlan1` → error). */
   readonly auto?: readonly number[];
+  /**
+   * @since P3 (optional by meaning) [S18] The encapsulation of the family's ports (`TUNNEL_FAMILY` names the [S18]
+   * 'tunnel' encapsulation, in PortEncap since W0 by ruling R3: the owner frames it). Absent = the P2 rule
+   * (`KIND_ENCAP.virtual`), so every existing family keeps its bytes.
+   */
+  readonly encap?: PortEncap;
 }
 
 /**
@@ -611,6 +654,11 @@ export const GUI_PANELS = [
   'modem.status',
   // ── P2 (appended) ──
   'wlc.controller',
+  // ── P3 (appended; ARCHITECTURE-P3 §2.1, §5.9) ──
+  /** @since P3 The Traffic generator desktop app (M13) of hosts. */
+  'desktop.traffic',
+  /** @since P3 [S32] The automation workspace (NF-Py) of `programmable` hosts. */
+  'desktop.automation',
 ] as const;
 export type GuiPanelId = (typeof GUI_PANELS)[number];
 
@@ -650,6 +698,12 @@ export function ipDefaultsFor(caps: readonly Capability[]): IpDefaults {
  * the CAM first), `nat` (after ipv4), `hsrp` [S2] and `dhcpv6-client`, `dhcpv6-server` (after udp, which they use).
  * The W6 catalog item inserted `capwap-wtp` (after wlan-ap, so an EAPOL frame that ties at score 2 goes to wlan-ap)
  * and `capwap-ac` (last: after udp, whose sockets it uses). The relative order of every earlier name is unchanged.
+ *
+ * P3 (ARCHITECTURE-P3 §2.1, §0 rule 3): wave 0 inserts none of the P3 names. Each enters at its final position in the
+ * change that registers its factory (the W4 catalog flip: ppp after hdlc; cdp, lldp after stp; acl, gre after nat;
+ * vty, vty-client, logger, ntp after tcp; syslog-server after them; ospf, eigrp, ike after hsrp; restconf after
+ * http-server; traffic after traceroute; the W6 flip: script-host last). Until then `test/staged.world.ts` holds that
+ * final order, restricted to the approved names, as test-only data (§0 rule 13).
  */
 export const PROCESS_ORDER: readonly ProcessName[] = Object.freeze([
   'wlan-ap',
@@ -740,6 +794,10 @@ export const CAPABILITY_PROCESSES: Readonly<Record<Capability, readonly Capabili
   'managed-switch': [cp('vlan', 'P2'), cp('dtp', 'P2'), cp('etherchannel', 'P2'), cp('stp', 'P2')],
   'lightweight-ap': [cp('capwap-wtp', 'P2'), cp('udp', 'P2'), cp('dhcp-client', 'P2')],
   'wireless-controller': [cp('vlan', 'P2'), cp('udp', 'P2'), cp('capwap-ac', 'P2')],
+  // ── P3 ── (ARCHITECTURE-P3 §2.1, §0 rule 3) Wave 0 adds no row: every P3 row (`since: 'P3'`) is added by the change
+  // that registers its daemon (the W4 catalog flip; the W6 flip for `script-host`). [S32] `programmable` gets
+  // `script-host` only, in the W6 flip; until then it contributes nothing beyond what `host` brings.
+  programmable: [],
 });
 
 /**

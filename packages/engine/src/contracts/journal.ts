@@ -36,6 +36,11 @@ export interface FacadeCounters {
   readonly headless: number;
   readonly requests: number;
   readonly topologyVersion: number;
+  /**
+   * @since P3 (optional by meaning) [S13] Remote (via-'vty') sessions opened so far, so a replay numbers the server side
+   * of remote sessions exactly as the live world did (D14). Absent = 0.
+   */
+  readonly remote?: number;
 }
 
 /** @since P2 [S1] What a journal replays from: the world as it was when the journal started. */

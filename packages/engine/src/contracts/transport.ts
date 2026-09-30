@@ -23,8 +23,10 @@
 import type { IpAddress, IpFamily, Ipv4Address, Ipv6Address, MacAddress } from './addr.js';
 import type { PortId, ProcessName } from './ids.js';
 import type { LayerSpec, Pdu } from './pdu.js';
-import type { L2ChangeKind } from './process.js';
+import type { L2ChangeKind, Severity } from './process.js';
 import type { WifiAssocState } from './medium.js';
+import type { RouteRow } from './tables.js';
+import type { ConfigureResult } from './cli.js';
 import type { SimTime } from './time.js';
 import { MS, SEC } from './time.js';
 
@@ -56,7 +58,9 @@ export type SocketErrorCode =
   | 'net-unreachable'
   | 'port-unreachable'
   | 'proto-unreachable'
-  | 'ttl-exceeded';
+  | 'ttl-exceeded'
+  /** @since P3 tcp's soft error for ICMP 3/13, "communication administratively prohibited" (an ACL deny, D12). */
+  | 'admin-prohibited';
 
 /** Events for application processes. `socket` is always the id the owner used (or the accepted child id). */
 export type SocketEvent =
@@ -196,7 +200,91 @@ export interface WlanGrantEvent {
   state: WifiAssocState;
 }
 
-/** Every event a process can receive via Action 'event'. Extension events are namespaced 'ext.*'. P2 adds the four events above. */
+// ── P3 events (ARCHITECTURE-P3 §2.5) ──
+
+/**
+ * @since P3 ipv4 → the watcher that registered with `ipv4.ribWatch` (D8); never sent to anyone else. `key`/`row`
+ * answer an exact-key watch (row absent = no installed row); `lpm` answers a longest-match watch (row absent = no
+ * route). `lpm` is MUST (NTP, D19).
+ */
+export interface RibChangedEvent {
+  kind: 'ipv4.ribChanged';
+  key?: string;
+  row?: RouteRow;
+  lpm?: { address: Ipv4Address; row?: RouteRow };
+}
+
+/** @since P3 Simulation → the process that issued a `configure` action (D21). */
+export interface ConfigResultEvent {
+  kind: 'config.result';
+  token: string;
+  result: ConfigureResult;
+}
+
+/** @since P3 http-client → the process owner of an `http.request`. */
+export interface HttpResultEvent {
+  kind: 'http.result';
+  token: string;
+  status?: number;
+  reason?: string;
+  headers?: readonly (readonly [string, string])[];
+  body?: Uint8Array;
+  error?: SocketErrorCode | 'bad-url' | 'timeout';
+}
+
+/**
+ * @since P3 udp → traffic on the receiving host: a generated datagram (it carries the traffic header) that reaches a
+ * port with no socket is consumed silently (no port-unreachable) and handed over (M13). The discard rule applies ONLY
+ * when the traffic daemon runs on the device AND the payload starts with the traffic header (the marker `NFTG`, the
+ * flow id, a u32 sequence number, the u64 send time in ns and a flags byte whose bit 0 marks a flow's final datagram).
+ */
+export interface TrafficRxEvent {
+  kind: 'traffic.rx';
+  pdu: Pdu;
+  iface: PortId;
+  from: IpAddress;
+  dstPort: number;
+}
+
+/**
+ * @since P3 [S24] runtime → logger: one log the device emitted through `DeviceRuntime.emitLog` (D20), delivered
+ * depth-first inside the same action budget, only when the model runs `logger`.
+ */
+export interface LogRecordEvent {
+  kind: 'log.record';
+  at: SimTime;
+  severity: Severity;
+  facility: string;
+  message: string;
+  mnemonic?: string;
+}
+
+/** @since P3 [S13] acl → the owner of an `acl.check` request (the vty `access-class` check, D14). */
+export interface AclVerdictEvent {
+  kind: 'acl.verdict';
+  token: string;
+  action: 'permit' | 'deny';
+  seq: number | 'implicit';
+}
+
+/**
+ * @since P3 [S13] Simulation → vty: the output of a `via: 'vty'` CLI session (D14), which vty sends back over TCP.
+ * `closed` ends the connection (exit, logout, the idle timer).
+ */
+export interface VtyOutputEvent {
+  kind: 'vty.output';
+  conn: string;
+  text: string;
+  prompt?: string;
+  input?: 'plain' | 'secret';
+  closed?: true;
+}
+
+/**
+ * Every event a process can receive via Action 'event'. Extension events are namespaced 'ext.*'. P2 adds the four
+ * events above; P3 adds RibChangedEvent, ConfigResultEvent, HttpResultEvent, TrafficRxEvent and the approved [S24]
+ * LogRecordEvent and [S13] AclVerdictEvent and VtyOutputEvent.
+ */
 export type ProcessEvent =
   | SocketEvent
   | ProbeResultEvent
@@ -207,6 +295,13 @@ export type ProcessEvent =
   | L2FlushEvent
   | RaFlagsEvent
   | WlanGrantEvent
+  | RibChangedEvent
+  | ConfigResultEvent
+  | HttpResultEvent
+  | TrafficRxEvent
+  | LogRecordEvent
+  | AclVerdictEvent
+  | VtyOutputEvent
   | { kind: `ext.${string}`; [k: string]: unknown };
 
 /** Payload accepted by udp.send: raw bytes OR application layer specs encoded by the transport. */

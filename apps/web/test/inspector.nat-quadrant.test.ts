@@ -67,7 +67,7 @@ function mutation(device: string, field: string, before: unknown, after: unknown
 }
 
 function pdu(provenance: Mutation[]): PduJson {
-  return { id: 'p1', bytes: new Uint8Array(), layers: [], meta: { born: 0, origin: 'pc1' }, provenance, summary: '', topProto: 'ethernet' };
+  return { id: 1, bytes: new Uint8Array(), layers: [], meta: { born: 0, origin: 'pc1' }, provenance, summary: '', topProto: 'ethernet' };
 }
 
 function text(html: string): string {

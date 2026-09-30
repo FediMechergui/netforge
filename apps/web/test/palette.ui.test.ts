@@ -28,6 +28,7 @@ import { PALETTE_WIDTH, buildPaletteIndex, categoryCounts, familyKeyOf, queryPal
 import { CABLE_TARGET_LIST_LIMIT, CablePicker, colorTokenVar, freeRadioPorts, lookupPort, mediaGlyphSpec } from '../src/app/cable/CablePicker';
 import { MEDIA_PICKER_ORDER, MEDIA_VOCAB } from '../src/vocab/media';
 import { CATEGORY_VOCAB } from '../src/vocab/categories';
+import { handBuilt } from './hand-built';
 
 const setState = (useStore as unknown as { setState(p: Record<string, unknown>): void }).setState;
 
@@ -248,7 +249,7 @@ describe('palette parts', () => {
     expect(tileDetail({ hasVariants: true, models: [ALL_MODELS[0]!, ALL_MODELS[1]!] }, ALL_MODELS[0]!)).toBe('2 variants');
     expect(tileDetail(one, { model: 'NF-X', variant: '48-port', description: 'd' })).toBe('48-port');
     expect(tileDetail(one, { model: 'NF-X', variant: 'NF-X', description: 'd' })).toBe('d');
-    expect(tileDetail(one, { model: 'NF-X', description: 'd' })).toBe('d');
+    expect(tileDetail(one, handBuilt({ model: 'NF-X', description: 'd' }))).toBe('d');
   });
 
   it('falls back to the default width without storage and caches icons', () => {

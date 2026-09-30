@@ -128,6 +128,8 @@ export const CAPABILITY_VOCAB: Readonly<Record<Capability, CapabilityVocab>> = O
   ]),
   'lightweight-ap': cap('lightweight-ap', 'Controller-managed access point', ['lightweight', 'controller', 'capwap', 'access point']),
   'wireless-controller': cap('wireless-controller', 'Wireless controller', ['wireless controller', 'wlc', 'capwap', 'wlan', 'controller']),
+  // ── P3 (ARCHITECTURE-P3 §2.1; the architect's W0 stub; no model carries it before the W6 flip) ──
+  programmable: cap('programmable', 'Programmable host', ['programmable', 'automation', 'scripts', 'python', 'developer']),
 });
 
 /** Capabilities in canonical order (engine `CAPABILITIES`). */
@@ -176,6 +178,9 @@ export const GUI_PANEL_VOCAB: Readonly<Record<GuiPanelId, GuiPanelVocab>> = Obje
   'modem.status': panel('modem.status', 'Modem', 'inspector-tab', 'Line and local network status of a modem.'),
   // P2 (the panel itself arrives with the W6 web-inspector item, inspector/WlcPanel.tsx)
   'wlc.controller': panel('wlc.controller', 'Controller', 'inspector-tab', 'Access points, interfaces, WLANs and clients of a wireless controller.'),
+  // P3 (ARCHITECTURE-P3 §5.9; the architect's W0 stubs; the apps arrive with the W3 and W6 web-desktop items)
+  'desktop.traffic': panel('desktop.traffic', 'Traffic generator', 'desktop-app', 'Send steady streams of test traffic and read their delay, jitter and loss.'),
+  'desktop.automation': panel('desktop.automation', 'Automation', 'desktop-app', 'Write and run small scripts that manage devices over the network.'),
 });
 
 /** GUI panels in engine display order. */

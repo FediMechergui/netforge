@@ -20,7 +20,9 @@ import type { DeviceKind, DeviceModel, DeviceRuntime } from '../src/contracts/de
 import type { PortId } from '../src/contracts/ids.js';
 import type { LinkModelDeps } from '../src/contracts/link.js';
 import type { ErrDisableCause, PortSpec, PortState } from '../src/contracts/port.js';
-import type { FsmTransition, ProcessCtx } from '../src/contracts/process.js';
+import type { ClockAction, FsmTransition, ProcessCtx, Severity } from '../src/contracts/process.js';
+import { NF_CLOCK_UNSET_UNIX_MS, type DeviceClockView } from '../src/contracts/clock.js';
+import type { FileSystemId, StoredFile, StoredFileMeta } from '../src/contracts/storage.js';
 import type { SimTime } from '../src/contracts/time.js';
 import type { ArpRow, CamRow, DeviceTables, Lpm6Result, RouteRow, Table, TableName, TableRow } from '../src/contracts/tables.js';
 import { deriveCliSpec, deriveTables } from '../src/device/catalog/define.js';
@@ -150,6 +152,78 @@ export const P2_DEVICE: Pick<DeviceRuntime, 'profile' | 'errDisablePort'> = Obje
   profile: 'P1' as const,
   errDisablePort(this: { errDisablePortCalls?: ErrDisablePortCall[] }, port: PortId, cause: ErrDisableCause, now: SimTime): void {
     (this.errDisablePortCalls ??= []).push({ port, cause, now });
+  },
+});
+
+// ── P3 (ARCHITECTURE-P3 §0 rule 2, §9.2 item 19): the spreads the item that makes a member required uses ──
+
+/** The clock view of a device that was never set (D19): 2020-01-01 00:00:00 UTC, not authoritative ('*'). */
+export const UNSET_CLOCK_VIEW: DeviceClockView = Object.freeze({
+  source: 'unset' as const,
+  authoritative: false,
+  unixMs: NF_CLOCK_UNSET_UNIX_MS,
+  subMsNs: 0,
+  tz: Object.freeze({ name: 'UTC', offsetMin: 0 }),
+});
+
+/**
+ * The P3 `ProcessCtx` members (§0 rule 2; each required from the item that implements it) for a hand-built fake: a
+ * `clock()` that returns the unset clock view, and the [S32] `files()` / `readFile()` over an empty store. Spread it
+ * FIRST so a harness's own member wins. P0–P2 daemons never call them, so spreading this in changes no behaviour.
+ */
+export const P3_CTX: Required<Pick<ProcessCtx, 'clock' | 'files' | 'readFile'>> = Object.freeze({
+  clock(): DeviceClockView {
+    return UNSET_CLOCK_VIEW;
+  },
+  files(_fs: FileSystemId): readonly StoredFileMeta[] {
+    return [];
+  },
+  readFile(_fs: FileSystemId, _path: string): StoredFile | undefined {
+    return undefined;
+  },
+});
+
+/** One `clockView` call recorded by `P3_DEVICE`. */
+export interface ClockViewCall {
+  readonly now: SimTime;
+}
+/** One `setClock` call recorded by `P3_DEVICE`. */
+export interface SetClockCall {
+  readonly op: ClockAction;
+  readonly now: SimTime;
+}
+/** One [S24] `emitLog` call recorded by `P3_DEVICE`. */
+export interface EmitLogCall {
+  readonly severity: Severity;
+  readonly facility: string;
+  readonly message: string;
+  readonly now: SimTime;
+  readonly mnemonic?: string;
+}
+
+/**
+ * The P3 `DeviceRuntime` members (§0 rule 2; each required from the item that implements it) for a hand-built fake:
+ * `clockView` (the unset view) and `setClock`, which record their calls on the fake itself (`clockViewCalls`,
+ * `setClockCalls`, created on first use); `qosCounters` (no policy anywhere); [S24] `emitLog`, which records its calls
+ * (`emitLogCalls`) and emits nothing; [S20] `egressPolicy`, which returns undefined (every port keeps the virtual FIFO).
+ * An object literal spreads it FIRST; a class copies the members.
+ */
+export const P3_DEVICE: Required<Pick<DeviceRuntime, 'clockView' | 'setClock' | 'qosCounters' | 'emitLog' | 'egressPolicy'>> = Object.freeze({
+  clockView(this: { clockViewCalls?: ClockViewCall[] }, now: SimTime): DeviceClockView {
+    (this.clockViewCalls ??= []).push({ now });
+    return UNSET_CLOCK_VIEW;
+  },
+  setClock(this: { setClockCalls?: SetClockCall[] }, op: ClockAction, now: SimTime): void {
+    (this.setClockCalls ??= []).push({ op, now });
+  },
+  qosCounters(_port: PortId): undefined {
+    return undefined;
+  },
+  emitLog(this: { emitLogCalls?: EmitLogCall[] }, severity: Severity, facility: string, message: string, now: SimTime, mnemonic?: string): void {
+    (this.emitLogCalls ??= []).push(mnemonic === undefined ? { severity, facility, message, now } : { severity, facility, message, now, mnemonic });
+  },
+  egressPolicy(_port: PortId): undefined {
+    return undefined;
   },
 });
 

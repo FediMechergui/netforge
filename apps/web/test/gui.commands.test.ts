@@ -59,14 +59,26 @@ const SPEC_24: RadioPortSpec = {
   antennaGainDbi: 2, streams: 2, maxWidthMhz: 80, maxRangeM: 300,
 };
 
+/**
+ * Complete snapshot ports and devices (the P1 web fixture migration, ARCHITECTURE-P3 §9.2 W0 item 7). The P0.5 members
+ * default to a routed Ethernet adapter and to the values the form readers took an absent member to mean (no host
+ * ports, so `defaultAdapter` falls to the first port; the nfos grammar); `allowedRoles` follows the final role.
+ */
 function port(id: string, extra: Partial<PortSnapshot> = {}): PortSnapshot {
-  return { id, short: id, kind: 'ethernet', mac: '02:00:00:00:00:01', adminUp: true, operUp: true, mtu: 1500, counters: emptyCounters(), l3: {}, txQueue: 0, ...extra };
+  const p: PortSnapshot = {
+    id, short: id, kind: 'ethernet', mac: '02:00:00:00:00:01', adminUp: true, operUp: true, mtu: 1500, counters: emptyCounters(), l3: {}, txQueue: 0,
+    role: 'routed', allowedRoles: ['routed'], encap: 'ethernet', ordinal: 1, virtual: false, linkable: true, configurable: true, connector: 'rj45',
+    ...extra,
+  };
+  return extra.allowedRoles === undefined ? { ...p, allowedRoles: [p.role] } : p;
 }
 
 function device(ports: PortSnapshot[], runningConfig: string, extra: Partial<DeviceSnapshot> = {}): DeviceSnapshot {
   return {
     id: 'd1', type: 'x.y', model: 'NF-X', kind: 'ap', name: 'AP1', position: { x: 0, y: 0 }, power: true, booted: true, uptimeNs: 0,
-    ports, tables: { cam: [], arp: [], rib: [] }, processes: [], runningConfig, hasStartupConfig: false, ...extra,
+    ports, tables: { cam: [], arp: [], rib: [] }, processes: [], runningConfig, hasStartupConfig: false,
+    category: 'wireless', family: 'nf-x', variant: 'NF-X', icon: 'ap', capabilities: [], cli: { shell: 'nfos', grammar: 'nfos' }, gui: [],
+    hostPorts: [], baseMac: '02:00:00:00:00:00', ...extra,
   };
 }
 

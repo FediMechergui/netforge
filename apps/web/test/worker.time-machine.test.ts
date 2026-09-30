@@ -32,7 +32,7 @@ const ribWrite = (t: number): TraceEvent => ({ t, kind: 'tableWrite', device: 'r
 const arpWrite = (t: number): TraceEvent => ({ t, kind: 'tableWrite', device: 'r1', table: 'arp', key: '10.0.0.1', row: {} }) as TraceEvent;
 const configLine = (t: number): TraceEvent => ({ t, kind: 'configChange', device: 'sw1', line: 'hostname X', negate: false, context: [] }) as TraceEvent;
 const dropEv = (t: number, background: boolean): TraceEvent =>
-  ({ t, kind: 'drop', pdu: { id: pduSeq++, kind: 'frame', summary: 'x', proto: 'stp' }, device: 'pc1', reason: 'other', ...(background ? { background: true } : {}) }) as TraceEvent;
+  ({ t, kind: 'drop', pdu: { id: pduSeq++, kind: 'frame', summary: 'x', proto: 'stp', size: 64 }, device: 'pc1', reason: 'other', ...(background ? { background: true } : {}) }) as TraceEvent;
 const stpTransition = (t: number): TraceEvent =>
   ({ t, kind: 'debug', event: { at: t, device: 'sw1', process: 'stp', category: 'spanning-tree', message: 'm', fsm: { machine: 'stp-port', subject: 'Fa0/1', from: 'listening', to: 'learning' } } }) as TraceEvent;
 const frame = (t: number): TraceEvent =>
@@ -42,7 +42,9 @@ const frame = (t: number): TraceEvent =>
 function liveWorld(seed: number): { sim: Simulation; marks: { t: SimTime; position: JournalPosition; snapshot: string }[] } {
   const sim = createSimulation({ seed });
   const marks: { t: SimTime; position: JournalPosition; snapshot: string }[] = [];
-  const mark = (): void => marks.push({ t: sim.now, position: sim.position(), snapshot: JSON.stringify(sim.snapshot()) });
+  const mark = (): void => {
+    marks.push({ t: sim.now, position: sim.position(), snapshot: JSON.stringify(sim.snapshot()) });
+  };
   sim.loadTopology(twoPcsAndSwitch());
   sim.runFor(40 * SEC);
   const s = sim.cli.open('pc1', 'console');
@@ -104,7 +106,7 @@ describe('the lane index (bridge/worker/lanes.ts)', () => {
       [frame(2 * SEC + 1), 14], // no lane
       [configLine(3 * SEC), 15],
       [dropEv(3 * SEC + 1, true), 16], // background: left out
-      [dropEv(4 * SEC), 17],
+      [dropEv(4 * SEC, false), 17],
       [stpTransition(5 * SEC), 18],
     ];
     for (const [ev, cursor] of events) index.observe(ev, cursor);

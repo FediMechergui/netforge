@@ -539,6 +539,9 @@ export function eventText(ev: TraceEvent, n: RowNames): string {
     }
     case 'rfState':
       return `${n.port(ev.port)} ↔ ${n.port(ev.peer)}: ${formatSignal(ev.rssiDbm, ev.bars)}`;
+    // P3 [S20] (ARCHITECTURE-P3 §2.7; the W0 stub of ruling R2): a label only, the kind is emitted from W3 on.
+    case 'frameQueued':
+      return `${n.port({ device: ev.device, port: ev.port })} queued #${ev.pdu.id} in ${ev.queue} (${ev.depth} waiting)`;
     default:
       return `${SEGMENT_OP_TEXT[ev.op]} on ${ev.segment} (${ev.members.length} port${ev.members.length === 1 ? '' : 's'})`;
   }

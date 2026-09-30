@@ -69,6 +69,7 @@ import { IpConfigApp, adapterStateText, editableAdapters, listedAdapters, sameIp
 import { WifiApp, requestScan, stationPort, stationStateText, wifiNetworks } from '../src/desktop/apps/WifiApp';
 import { CellularApp, cellularAdapters, cellularStateText } from '../src/desktop/apps/CellularApp';
 import { CommandPromptApp, openPromptSession } from '../src/desktop/apps/CommandPromptApp';
+import { handBuilt } from './hand-built';
 
 const setState = (useStore as unknown as { setState(p: Record<string, unknown>): void }).setState;
 
@@ -137,7 +138,7 @@ describe('DesktopTab', () => {
     expect(desktopAppsFor(device(snap, 'pc1'))).toEqual(['desktop.ip-config', 'desktop.command-prompt', 'desktop.web-browser']);
     expect(desktopAppsFor(device(snap, 'home1'))).toEqual([]);
     expect(desktopAppsFor({ gui: ['desktop.wifi', 'physical', 'desktop.ip-config', 'desktop.wifi'] })).toEqual(['desktop.ip-config', 'desktop.wifi']);
-    expect(desktopAppsFor({})).toEqual([]);
+    expect(desktopAppsFor(handBuilt({}))).toEqual([]);
   });
 
   it('knows which apps this build can open', () => {

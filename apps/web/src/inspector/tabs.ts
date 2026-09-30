@@ -100,6 +100,10 @@ export const PANEL_TAB: Readonly<Record<GuiPanelId, InspectorTab>> = Object.free
   // P2 (ARCHITECTURE-P2 §5.5, W6): the controller panel (inspector/WlcPanel.tsx) is the settings panel of the
   // NF-WLC-9800, a GUI-only appliance (shell 'none'), so its tab is labelled "Controller" (`inspectorTabLabel`).
   'wlc.controller': 'wireless',
+  // P3 (ARCHITECTURE-P3 §5.9, §9.2 W0 item 1; the architect's W0 stub, final values): the Traffic generator and the
+  // [S32] automation workspace are Desktop apps of hosts.
+  'desktop.traffic': 'desktop',
+  'desktop.automation': 'desktop',
 });
 
 /** The P0 tab set, used for snapshots without catalog v2 fields (hand-built fixtures). */
