@@ -22,7 +22,7 @@ import { createCliRuntime } from '../src/cli/runtime.js';
 import { ALL_MODELS } from '../src/device/catalog/index.js';
 import { resolvePortName, SUBINTERFACE_FAMILY } from '../src/device/catalog/names.js';
 import { ArrayTrace, fakeCatalog, FakeTable, INERT_RF_VIEWS, type ActionCall, type ConfigCall } from './cli.runtime.fake.js';
-import { P2_DEVICE, testPortSpec, p0Tables } from './port.fixtures.js';
+import { P2_DEVICE, P3_DEVICE, testPortSpec, p0Tables } from './port.fixtures.js';
 
 /** A catalog model by type id (throws when the catalog lacks it). */
 export function catalogModel(type: string): DeviceModel {
@@ -65,6 +65,10 @@ export class P05Device implements DeviceRuntime {
   // P2 (ARCHITECTURE-P2 §9.2 W1 item 7): the required runtime members, copied from P2_DEVICE.
   readonly profile = P2_DEVICE.profile;
   errDisablePort = P2_DEVICE.errDisablePort;
+  // P3 (ARCHITECTURE-P3 §9.2 W1 item 19): the required runtime members, copied from P3_DEVICE.
+  clockView = P3_DEVICE.clockView;
+  setClock = P3_DEVICE.setClock;
+  emitLog = P3_DEVICE.emitLog;
   readonly configCalls: ConfigCall[] = [];
   readonly actionCalls: ActionCall[] = [];
   /** When set, `applyConfigLine` fails with the returned message for matching lines. */

@@ -51,18 +51,32 @@
  *    medium read the same answer; undefined for a port that is not a radio. It is present on the ctx exactly when the
  *    host offers a renderer (the device runtime always does); a hand-built host without one gives a ctx without the
  *    member (optional by meaning, §2.15), so a daemon may fall back to its own reader there.
+ *
+ * P3 members (ARCHITECTURE-P3 §2.4, D19, D21; W1 device), required on every ctx:
+ *  - `clock()`: the device clock at `now` — the host's `clockView(now)` (device/device.ts). A hand-built host without
+ *    one gets the clock the device would boot with (`bootClockBase`: true time on a host, unset on a network device);
+ *  - [S32] `files(fs)` / `readFile(fs, path)`: the host's `files:` store (hosts only; empty elsewhere and on a
+ *    hand-built host without a store).
+ * The pure clock helpers live here too (`bootClockBase`, `clockViewAt`, `rebaseClockBase`, `clockTimezoneOf`), so the
+ * runtime and the ctx compute one clock: integer nanoseconds and milliseconds only (no BigInt, no floating division
+ * whose floor could round the wrong way), `base + (now − baseAt)` (D19).
+ *
+ * P3 [S18] (§2.7): `pduSummary` tags a framed GRE leg (`[frame, ipv4, gre, …]`) `tunnel: 'gre'`; P1/P2 PDUs carry no
+ * `gre` layer, so their summaries are unchanged.
  */
 import { broadcastOf, inSubnet, isIpv4Broadcast, type Ipv4Address, type Ipv6Address, type MacAddress } from '../contracts/addr.js';
 import type { Capability, DefaultsProfile } from '../contracts/catalog.js';
-import type { ConfigAst } from '../contracts/config.js';
+import { NF_CLOCK_UNSET_UNIX_MS, NF_WORLD_EPOCH_UNIX_MS, type ClockSource, type DeviceClockView } from '../contracts/clock.js';
+import type { ConfigAst, ConfigNode } from '../contracts/config.js';
 import type { DeviceModel } from '../contracts/device.js';
 import type { DeviceId, PortId, ProcessName } from '../contracts/ids.js';
 import type { AirView } from '../contracts/medium.js';
 import type { FieldValue, LayerSpec, MutationReason, Pdu, PduFactory, PduMeta, RewrapOp } from '../contracts/pdu.js';
 import type { Ipv6PortAddress, PortState, PortView } from '../contracts/port.js';
-import type { DebugEvent, FsmTransition, ProcessCtx } from '../contracts/process.js';
+import type { ClockAction, DebugEvent, FsmTransition, ProcessCtx } from '../contracts/process.js';
 import type { RadioSettings } from '../contracts/rf.js';
 import type { Rng } from '../contracts/rng.js';
+import type { FileSystemId, StoredFile, StoredFileMeta } from '../contracts/storage.js';
 import type { DeviceTables, Lpm6Result, LpmResult, Route6Row } from '../contracts/tables.js';
 import type { SimTime } from '../contracts/time.js';
 import type { PduSummary, TraceSink } from '../contracts/trace.js';
@@ -98,6 +112,154 @@ export interface ProcessHost {
    * and `ctx.radioSettings` exists exactly when it does.
    */
   radioSettings?(port: PortId): RadioSettings | undefined;
+  /**
+   * @since P3 The device clock at `now` (D19; `DeviceRuntime.clockView`). Optional so hand-built hosts keep compiling:
+   * without it `ctx.clock()` is the clock the device would boot with. The device runtime always provides it.
+   */
+  clockView?(now: SimTime): DeviceClockView;
+  /** @since P3 [S32] The files of the host's store (`DeviceRuntimeImpl.files`); absent = an empty store. */
+  files?(fs: FileSystemId): readonly StoredFileMeta[];
+  /** @since P3 [S32] One file of the host's store, or undefined; absent = an empty store. */
+  readFile?(fs: FileSystemId, path: string): StoredFile | undefined;
+}
+
+// ── the device clock (P3, ARCHITECTURE-P3 D19; W1 device) ──────────────────────
+
+/** @since P3 Nanoseconds per millisecond (module-private: the clock helpers split ns into ms and a remainder). */
+const NS_PER_MS = 1_000_000;
+
+/** @since P3 The time zone of a device clock with no `clock timezone` line. */
+export const DEVICE_CLOCK_UTC: DeviceClockView['tz'] = Object.freeze({ name: 'UTC', offsetMin: 0 });
+
+/**
+ * @since P3 The stored state of a device clock (D19): the value `unixMs` + `subMsNs` at SimTime `at`, where it came
+ * from, and the NTP stratum and reference when a synchronisation or `ntp master` set it. The value at `now` is
+ * `base + (now − at)` (`clockViewAt`). Integers only.
+ */
+export interface DeviceClockBase {
+  readonly unixMs: number;
+  /** 0 … 999 999. */
+  readonly subMsNs: number;
+  readonly at: SimTime;
+  readonly source: ClockSource;
+  readonly stratum?: number;
+  readonly reference?: string;
+}
+
+/**
+ * @since P3 Does a device with these (effective) capabilities keep true time from boot (D19)? Hosts and servers do
+ * (source `host`: `host` without `routing`, the host-shell rule); every network device boots unset.
+ */
+export function isHostClock(capabilities: readonly Capability[]): boolean {
+  return capabilities.includes('host') && !capabilities.includes('routing');
+}
+
+/**
+ * @since P3 The clock a device has after boot and until something sets it (D19): on a host, true time
+ * (`NF_WORLD_EPOCH_UNIX_MS` at SimTime 0, source `host`); on a network device, unset — `NF_CLOCK_UNSET_UNIX_MS` plus
+ * uptime (at `bootedAt`; while not booted, at `now`, i.e. uptime 0), source `unset`.
+ */
+export function bootClockBase(capabilities: readonly Capability[], bootedAt: SimTime | undefined, now: SimTime): DeviceClockBase {
+  if (isHostClock(capabilities)) return { unixMs: NF_WORLD_EPOCH_UNIX_MS, subMsNs: 0, at: 0, source: 'host' };
+  return { unixMs: NF_CLOCK_UNSET_UNIX_MS, subMsNs: 0, at: bootedAt ?? now, source: 'unset' };
+}
+
+/** Split an integer count of nanoseconds into whole milliseconds (floored) and the 0 … 999 999 remainder, exactly. */
+function splitNs(ns: number): { ms: number; sub: number } {
+  const sub = ((ns % NS_PER_MS) + NS_PER_MS) % NS_PER_MS;
+  return { ms: (ns - sub) / NS_PER_MS, sub };
+}
+
+/**
+ * @since P3 The clock view of `base` at `now` (D19): `base + (now − base.at)`, not authoritative (a leading `*`) only
+ * while the source is `unset`; `stratum` and `reference` copied when set; `tz` as given.
+ */
+export function clockViewAt(base: DeviceClockBase, now: SimTime, tz: DeviceClockView['tz'] = DEVICE_CLOCK_UTC): DeviceClockView {
+  const { ms, sub } = splitNs(base.subMsNs + (now - base.at));
+  const view: { -readonly [K in keyof DeviceClockView]: DeviceClockView[K] } = {
+    source: base.source,
+    authoritative: base.source !== 'unset',
+    unixMs: base.unixMs + ms,
+    subMsNs: sub,
+    tz: { name: tz.name, offsetMin: tz.offsetMin },
+  };
+  if (base.stratum !== undefined) view.stratum = base.stratum;
+  if (base.reference !== undefined) view.reference = base.reference;
+  return view;
+}
+
+/** A decimal nanosecond count (`ClockAction.offsetNs`): optional minus sign, digits. */
+const OFFSET_NS_RE = /^(-?)([0-9]+)$/;
+
+/**
+ * @since P3 The clock after a `clock` action at `now` (D19), from its value at `now` (`current`):
+ *  - `step`: `current + offsetNs` (a decimal string, may be negative and beyond 2⁵³ ns: it is split into whole
+ *    milliseconds and a sub-millisecond remainder, never converted whole); no `offsetNs` = a zero step;
+ *  - `set`: exactly `unixMs` (sub-millisecond 0); no `unixMs` keeps the current value;
+ * then `source` from the action, `stratum` and `reference` from the action (absent = cleared). Undefined when the
+ * action is malformed (an `offsetNs` that is not a decimal integer, a millisecond part or `unixMs` beyond the safe
+ * integers, a stratum that is not an integer 0–16): the runtime then leaves the clock as it was.
+ */
+export function rebaseClockBase(current: Pick<DeviceClockView, 'unixMs' | 'subMsNs'>, a: ClockAction, now: SimTime): DeviceClockBase | undefined {
+  let unixMs = current.unixMs;
+  let subMsNs = current.subMsNs;
+  if (a.op === 'step') {
+    if (a.offsetNs !== undefined) {
+      const m = OFFSET_NS_RE.exec(a.offsetNs);
+      if (m === null) return undefined;
+      const digits = m[2] as string;
+      const sign = m[1] === '-' ? -1 : 1;
+      const msText = digits.length > 6 ? digits.slice(0, digits.length - 6) : '0';
+      const msPart = Number(msText);
+      const subPart = Number(digits.length > 6 ? digits.slice(digits.length - 6) : digits);
+      if (!Number.isSafeInteger(msPart)) return undefined;
+      const { ms, sub } = splitNs(subMsNs + sign * subPart);
+      unixMs = unixMs + sign * msPart + ms;
+      subMsNs = sub;
+      if (!Number.isSafeInteger(unixMs)) return undefined;
+    }
+  } else if (a.unixMs !== undefined) {
+    if (!Number.isSafeInteger(a.unixMs)) return undefined;
+    unixMs = a.unixMs;
+    subMsNs = 0;
+  }
+  if (a.stratum !== undefined && (!Number.isInteger(a.stratum) || a.stratum < 0 || a.stratum > 16)) return undefined;
+  const base: { -readonly [K in keyof DeviceClockBase]: DeviceClockBase[K] } = { unixMs, subMsNs, at: now, source: a.source };
+  if (a.stratum !== undefined) base.stratum = a.stratum;
+  if (a.reference !== undefined) base.reference = a.reference;
+  return base;
+}
+
+/** `clock timezone` hours: an optional sign and one or two digits. */
+const TZ_HOURS_RE = /^([+-]?)([0-9]{1,2})$/;
+/** `clock timezone` minutes: one or two digits. */
+const TZ_MINUTES_RE = /^[0-9]{1,2}$/;
+
+/**
+ * @since P3 The time zone the global `clock timezone <name> <±hours> [<minutes>]` line of a running configuration
+ * sets (§5.5): `offsetMin = sign · (|hours| · 60 + minutes)`, hours −23…23 and minutes 0…59. Read from the root's
+ * `clock` nodes whether the line is stored flat (`clock` with args `timezone …`) or folded (`clock` → `timezone …`).
+ * UTC (`DEVICE_CLOCK_UTC`) when the line is absent or malformed.
+ */
+export function clockTimezoneOf(root: Pick<ConfigNode, 'children'>): DeviceClockView['tz'] {
+  for (const node of root.children) {
+    if (node.key !== 'clock') continue;
+    let args: readonly string[] | undefined;
+    if (node.args[0] === 'timezone') args = node.args.slice(1);
+    else args = node.children.find((c) => c.key === 'timezone')?.args;
+    if (args === undefined) continue;
+    const name = args[0];
+    const hours = args[1] === undefined ? undefined : TZ_HOURS_RE.exec(args[1]);
+    if (name === undefined || name === '' || hours === null || hours === undefined || args.length > 3) return DEVICE_CLOCK_UTC;
+    const h = Number(hours[2]);
+    const minutesText = args[2];
+    if (minutesText !== undefined && !TZ_MINUTES_RE.test(minutesText)) return DEVICE_CLOCK_UTC;
+    const m = minutesText === undefined ? 0 : Number(minutesText);
+    if (h > 23 || m > 59) return DEVICE_CLOCK_UTC;
+    const total = h * 60 + m;
+    return { name, offsetMin: hours[1] === '-' ? -total : total };
+  }
+  return DEVICE_CLOCK_UTC;
 }
 
 /**
@@ -120,10 +282,17 @@ export function pduSummary(pdu: Pdu): PduSummary {
   // carries. Control messages and keep-alives carry no frame; P0/P1 PDUs never hold a capwap layer (bytes unchanged).
   // A tunnelled frame has at least five layers (frame, ipv4, udp, capwap, inner frame): shorter PDUs, the hot path
   // of every frame event, skip the walk.
+  // P3 [S18] (§2.7): a GRE leg — a gre layer after the frame and the outer ipv4, followed by the packet it carries —
+  // is tagged 'gre' (the first tunnel layer found decides). A framed GRE leg also has at least five layers.
   const ls = pdu.layers;
   if (ls.length >= 5) {
     for (let i = 1; i < ls.length - 1; i++) {
-      if (ls[i]!.proto !== 'capwap') continue;
+      const proto = ls[i]!.proto;
+      if (proto === 'gre') {
+        s.tunnel = 'gre';
+        break;
+      }
+      if (proto !== 'capwap') continue;
       const inner = ls[i + 1]!.proto;
       if (inner === 'dot11' || inner === 'ethernet') s.tunnel = 'capwap';
       break;
@@ -402,6 +571,14 @@ export function createProcessCtx(host: ProcessHost, name: ProcessName, rng: Rng)
     ? undefined
     : (port: PortId): RadioSettings | undefined => host.radioSettings?.(port);
 
+  // P3 (§2.4, D19, D21): the device clock and [S32] the host's `files:` store, read live from the host
+  const clock = (): DeviceClockView => {
+    if (host.clockView !== undefined) return host.clockView(host.now);
+    return clockViewAt(bootClockBase(host.capabilities, undefined, host.now), host.now);
+  };
+  const files = (fs: FileSystemId): readonly StoredFileMeta[] => host.files?.(fs) ?? [];
+  const readFile = (fs: FileSystemId, path: string): StoredFile | undefined => host.readFile?.(fs, path);
+
   const ctx: ProcessCtx = {
     get now(): SimTime {
       return host.now;
@@ -544,6 +721,9 @@ export function createProcessCtx(host: ProcessHost, name: ProcessName, rng: Rng)
       return chosen === undefined ? undefined : { address: chosen.address, iface: egress };
     },
     ...(radioSettings !== undefined ? { radioSettings } : {}),
+    clock,
+    files,
+    readFile,
   };
   return ctx;
 }

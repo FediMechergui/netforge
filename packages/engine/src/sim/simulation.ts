@@ -20,6 +20,7 @@
  *   linkState    → LinkModelImpl.cut(link, !up) + onPortOper fan-out
  *   userCommand  → cli.exec
  *   fault        → the fault handler (cable-cut, port-flap, power-loss, link-impairment, config-fragment)
+ *   deviceConfigure → the CLI core's headless configure, then `config.result` to the issuer (P3 D21; sim/configure.ts)
  * Events addressed to a device that no longer exists are ignored.
  *
  * Devices (§3.3): `addDevice` validates the type and the module installs (the spec's list, else the model's default
@@ -79,6 +80,9 @@
  * byte-identically as 1.1. The `err-disable` fault (target device + port, `params.cause` one of ERR_DISABLE_CAUSES,
  * default 'fault') goes through `DeviceRuntime.errDisablePort` — the lab-check clone re-applies err-disabled ports
  * with it. The snapshot carries `profile: 'P2'` for a P2 world and nothing for a P1 one (sim/snapshot-cache.ts).
+ * P3 (ARCHITECTURE-P3 §9.2 item 16, W1 sim): every such P2 rule reads "P2 or later" — a P3 world exports
+ * `profile: 'P3'` with `schema = schemaIdFor(t)` (1.3) and its snapshot carries `profile: 'P3'`; P1 and P2 worlds are
+ * unchanged byte for byte.
  *
  * [S1] Time travel (D18, §2.13, §3.13; the `// [S1]` block below): the facade journals every OUTERMOST mutating call
  * through sim/journal.ts — `{at: position(), op, traceHead}`, the op deep-copied at record time — and nothing reached
@@ -169,11 +173,13 @@ import { createMediaWiring, type MediaWiring } from './media-wiring.js';
 import {
   configFragmentCommands,
   configureDevice,
+  dispatchDeviceConfigure,
   insertModule as insertModuleOp,
   removeModule as removeModuleOp,
   CONFIG_FRAGMENT_OPTIONS,
   unknownDeviceError,
   type ConfigureEnv,
+  type DeviceConfigureEnv,
 } from './configure.js';
 import { buildSimSnapshot, createRenderCache } from './snapshot-cache.js';
 import { createJournalRecorder } from './journal.js';
@@ -794,9 +800,10 @@ export function createSimulation(opts: SimulationOptions): Simulation {
     if (w.retained.notes !== undefined) topo.notes = w.retained.notes;
     if (w.metresPerUnit !== DEFAULT_METRES_PER_UNIT) topo.canvas = { metresPerUnit: w.metresPerUnit };
     if (w.retained.lab !== undefined) topo.lab = { ...w.retained.lab };
-    // P2 (D2, §2.9): `profile` only for a P2 world, and then the schema that can express it (1.2), in the same step.
-    if (w.profile === 'P2') {
-      topo.profile = 'P2';
+    // P2 (D2, §2.9): `profile` only for a world of profile P2 or later, and then the schema that can express it
+    // (`schemaIdFor`: 1.2 for P2, 1.3 for P3), in the same step; a P1 world writes neither (P3 §9.2 item 16).
+    if (w.profile !== 'P1') {
+      topo.profile = w.profile;
       topo.schema = schemaIdFor(topo);
     }
     return topo;
@@ -812,6 +819,15 @@ export function createSimulation(opts: SimulationOptions): Simulation {
     invalidate: (id) => renderCache.invalidate(id),
     removeLink: (id) => removeLinkIn(world, id),
     moduleChanged: (id, op) => bumpTopology(world, 'module', id, op),
+  };
+
+  /** P3 (D21): the `deviceConfigure` dispatch runs the CLI core directly — never the journaled facade call. */
+  const deviceConfigureEnv: DeviceConfigureEnv = {
+    device: (id) => world.devices.get(id),
+    configure: (device, commands, options) => cliCore.configure(device, commands, options),
+    syncClock,
+    invalidate: (id) => renderCache.invalidate(id),
+    caller: SIM_PROCESS_NAME,
   };
 
   // ── faults ────────────────────────────────────────────────────────────────
@@ -1021,6 +1037,10 @@ export function createSimulation(opts: SimulationOptions): Simulation {
         return;
       case 'fault':
         handleFault(ev.fault, at);
+        return;
+      case 'deviceConfigure':
+        // P3 (D21): the one caller of the CLI core's headless configure for a daemon, in this event's own dispatch.
+        dispatchDeviceConfigure(deviceConfigureEnv, ev);
         return;
       default:
         return;

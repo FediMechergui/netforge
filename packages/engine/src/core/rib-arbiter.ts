@@ -41,6 +41,12 @@
  *   - `candidates()` marks every member installed; `installedOwner` names the first path's owner and
  *     `installedOwners` every member's, in path order.
  * Choosing among the paths per flow is the forwarding daemon's job (ECMP hash, §4.1), not the arbiter's.
+ *
+ * Path order @since P3 (ARCHITECTURE-P3 D8, §4.5; W1 fix): the optional `pathOrder` comparator breaks a tie of equal
+ * `ad` and `metric` BEFORE the offer sequence (it returns 0 to leave a pair to the offer order). ipv4 uses it so the
+ * paths of an `ipv4.routes` batch install in the batch's own order (OSPF's canonical next-hop order) whatever the
+ * offer history (a flap re-offers a path into a fresh slot). Without it every decision is exactly the P1/P2 one.
+ * The order is applied when a key settles: a batch that only reorders unchanged paths offers nothing and writes nothing.
  */
 import type { IpAddress } from '../contracts/addr.js';
 import type { PortId, ProcessName } from '../contracts/ids.js';
@@ -113,6 +119,11 @@ export interface RibArbiterOptions<R extends ArbitratedRow> {
   multipathEligible?: (row: R) => boolean;
   /** @since P2 [S6] The `cause` recorded on each path of a multipath row (default: none). */
   pathCause?: (row: R, owner: ProcessName) => string | undefined;
+  /**
+   * @since P3 (D8, §4.5) Tie-break between two candidates of equal `ad` and `metric`, applied before the offer order:
+   * negative = `a` first, positive = `b` first, 0 = leave them to the offer order. Absent = the P1/P2 order (offer).
+   */
+  pathOrder?: (a: R, aOwner: ProcessName, b: R, bOwner: ProcessName) => number;
 }
 
 /** Candidate lists per key with lowest-AD installation (see the module header). */
@@ -152,10 +163,20 @@ interface Entry<R extends ArbitratedRow> {
   seq: number;
 }
 
-/** Candidate order: lowest AD, then lowest metric, then the earliest offer. */
-function better<R extends ArbitratedRow>(a: Entry<R>, b: Entry<R>): number {
+/**
+ * Candidate order: lowest AD, then lowest metric, then (P3, only when given) `pathOrder`, then the earliest offer.
+ */
+function better<R extends ArbitratedRow>(
+  a: Entry<R>,
+  b: Entry<R>,
+  pathOrder?: (a: R, aOwner: ProcessName, b: R, bOwner: ProcessName) => number,
+): number {
   if (a.row.ad !== b.row.ad) return a.row.ad - b.row.ad;
   if (a.row.metric !== b.row.metric) return a.row.metric - b.row.metric;
+  if (pathOrder !== undefined) {
+    const o = pathOrder(a.row, a.owner, b.row, b.owner);
+    if (o !== 0) return o;
+  }
   return a.seq - b.seq;
 }
 
@@ -172,6 +193,8 @@ class RibArbiterImpl<R extends ArbitratedRow> implements RibArbiter<R> {
   private readonly maxPaths: number;
   private readonly eligible: ((row: R) => boolean) | undefined;
   private readonly pathCause: ((row: R, owner: ProcessName) => string | undefined) | undefined;
+  /** P3: the optional tie-break before the offer order (`RibArbiterOptions.pathOrder`). */
+  private readonly order: (a: Entry<R>, b: Entry<R>) => number;
   /** key → candidates (unsorted, insertion order). */
   private readonly lists = new Map<string, Entry<R>[]>();
   /** key → installed entry. */
@@ -190,6 +213,8 @@ class RibArbiterImpl<R extends ArbitratedRow> implements RibArbiter<R> {
     this.maxPaths = maxPaths;
     this.eligible = opts.multipathEligible;
     this.pathCause = opts.pathCause;
+    const pathOrder = opts.pathOrder;
+    this.order = (a, b) => better(a, b, pathOrder);
   }
 
   offer(row: R, owner: ProcessName): RibDecision<R> {
@@ -262,7 +287,7 @@ class RibArbiterImpl<R extends ArbitratedRow> implements RibArbiter<R> {
     const win = this.winners.get(key);
     const set = this.members.get(key);
     const isInstalled = (e: Entry<R>): boolean => (set === undefined ? e === win : set.some((m) => m.entry === e));
-    return list.slice().sort(better).map((e) => ({ owner: e.owner, row: e.row, installed: isInstalled(e) }));
+    return list.slice().sort(this.order).map((e) => ({ owner: e.owner, row: e.row, installed: isInstalled(e) }));
   }
 
   keys(): string[] {
@@ -286,7 +311,7 @@ class RibArbiterImpl<R extends ArbitratedRow> implements RibArbiter<R> {
     const list = this.lists.get(key);
     let best: Entry<R> | undefined;
     if (list !== undefined) {
-      for (const e of list) if (best === undefined || better(e, best) < 0) best = e;
+      for (const e of list) if (best === undefined || this.order(e, best) < 0) best = e;
     }
     if (best === undefined) {
       this.winners.delete(key);
@@ -312,7 +337,7 @@ class RibArbiterImpl<R extends ArbitratedRow> implements RibArbiter<R> {
 
   /** The path set of `list`: the winner, then equal-cost eligible candidates in candidate order (module header). */
   private pathSet(list: readonly Entry<R>[]): Entry<R>[] {
-    const sorted = list.slice().sort(better);
+    const sorted = list.slice().sort(this.order);
     const best = sorted[0];
     if (best === undefined) return [];
     const set = [best];

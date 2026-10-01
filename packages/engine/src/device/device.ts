@@ -87,6 +87,28 @@
  *  - `ctx.radioSettings(port)` (device/process-ctx.ts) is this same renderer, so wlan-ap and the air medium read
  *    one answer.
  *
+ * P3 (ARCHITECTURE-P3 §2.4, §2.7, §2.9, D12, D14, D17, D19, D20, D21; W1 device):
+ *  - drop `rule` passthrough: a `drop` action's `rule` is copied onto the trace `drop` event, and every `acl-deny`
+ *    drop that names a port counts `PortCounters.aclDenies` there;
+ *  - the device clock (D19): a `DeviceClockBase` (process-ctx.ts) — unset (2020-01-01 plus uptime) on a network device,
+ *    true time on a host — read by `clockView(now)`, `ctx.clock()` and (through the CLI) `CommandCtx.clock()`, with the
+ *    `clock timezone` line's zone; the `clock` action (and `setClock`) rebases it and emits one `ntp` transition debug
+ *    event (category `ntp events`) when the synchronised state (source `ntp` or `master`) changes; power-off forgets it;
+ *  - the `configure` action (D21) only schedules SimEvent `deviceConfigure` at now through `deps.scheduler` (zero delay,
+ *    non-periodic): the Simulation is its one caller; `applyConfigLine(context, line, negate, origin?)` copies `origin`
+ *    into every `configChange` event of that line (the removal lines of `no interface` and the address withdrawal of a
+ *    role flip included);
+ *  - [S13] the `remoteCli` and `cliRemote` actions only schedule SimEvent `remoteCli` at now (D14);
+ *  - [S18] the `virtualChanged` action recomputes virtual oper state; the tunnel rule reads the tunnel owner's
+ *    `tunnels` row (`VirtualOperLookups.tunnelState`); a send on a tunnel port goes to the owner (`gre`) like any owner
+ *    egress;
+ *  - [S24] `emitLog` is the one log path (D20): every runtime log site and the `log` action emit the unchanged `log`
+ *    trace event (a `mnemonic` only when a P3 caller passes one) and, when the model runs `logger`, deliver
+ *    `log.record` to it — depth-first inside the issuer's budget for the `log` action, as its own application for the
+ *    runtime's direct sites;
+ *  - [S32] the hosts' `files:` store: a flat, persistent store on devices with `host` (it survives power-off, like a
+ *    disk), changed only by the `storage` action, read by `ctx.files` / `ctx.readFile` and `files` / `readFile`.
+ *
  * Power-off semantics (RAM is lost, NVRAM survives): every daemon's `onShutdown` runs first (its actions apply while the
  * ports are still up; P1), then tables are cleared (declared order), processes and timers
  * dropped, virtual interfaces other than the auto ones removed, roles/encapsulations/admin state/counters/L3
@@ -121,14 +143,30 @@ import {
 } from '../contracts/catalog.js';
 import { CLI_MESSAGES } from '../contracts/cli.js';
 import type { ConfigAst, ConfigDelta, ConfigNode, DefaultSlots } from '../contracts/config.js';
+import type { DeviceClockView } from '../contracts/clock.js';
 import type { DeviceModel, DeviceRuntime, DeviceRuntimeDeps, DeviceSpec, PortResolution } from '../contracts/device.js';
+import type { SimEventBody } from '../contracts/events.js';
 import type { DeviceId, PortId, ProcessName } from '../contracts/ids.js';
 import type { DropReason, FrameRxInfo, PortPhySettings, TxOutcome } from '../contracts/link.js';
 import type { AirView, MediumEvent } from '../contracts/medium.js';
 import type { Pdu, PduFactory, RewrapOp } from '../contracts/pdu.js';
 import type { ErrDisableCause, Ipv6PortAddress, PortIpv4Address, PortL3, PortState, PortView, VirtualIpv4 } from '../contracts/port.js';
-import type { Action, DebugEvent, DemuxLayer, Process, ProcessCtx, StateView } from '../contracts/process.js';
-import type { L2ChangedEvent } from '../contracts/transport.js';
+import type {
+  Action,
+  ClockAction,
+  CliRemoteAction,
+  ConfigOrigin,
+  DebugEvent,
+  DemuxLayer,
+  DropRule,
+  Process,
+  ProcessCtx,
+  RemoteCliAction,
+  Severity,
+  StateView,
+} from '../contracts/process.js';
+import type { FileSystemId, StoredFile, StoredFileInput, StoredFileMeta } from '../contracts/storage.js';
+import type { L2ChangedEvent, LogRecordEvent } from '../contracts/transport.js';
 import { CHANNELS, type BssSettings, type ChannelWidthMhz, type RadioSettings, type RfBand, type WifiSecurity } from '../contracts/rf.js';
 import {
   stpKey,
@@ -141,6 +179,7 @@ import {
   type TableFactory,
   type TableName,
   type TableRow,
+  type TunnelRow,
 } from '../contracts/tables.js';
 import type { SimTime } from '../contracts/time.js';
 import type { TraceEvent, TraceSink } from '../contracts/trace.js';
@@ -192,7 +231,16 @@ import {
   type PortBuildContext,
   type VirtualOperLookups,
 } from './ports.js';
-import { createProcessCtx, pduSummary, type ProcessHost } from './process-ctx.js';
+import {
+  bootClockBase,
+  clockTimezoneOf,
+  clockViewAt,
+  createProcessCtx,
+  pduSummary,
+  rebaseClockBase,
+  type DeviceClockBase,
+  type ProcessHost,
+} from './process-ctx.js';
 
 /** Maximum number of actions applied per top-level `applyActions` call. */
 export const ACTION_BUDGET = 1000;
@@ -227,6 +275,95 @@ export function errDisabledMessage(port: PortId, cause: ErrDisableCause, detail?
 /** @since P2 Log line of an `errRecover` action (severity 5). Original wording. */
 export function errRecoveredMessage(port: PortId, cause: ErrDisableCause): string {
   return `Interface ${port} leaves the error-disabled state (${ERR_DISABLE_CAUSE_TEXT[cause]}) and may come up again.`;
+}
+
+// ── P3 (ARCHITECTURE-P3 D14, D19, D20, D21; W1 device) ─────────────────────────
+
+/** @since P3 [S24] The daemon that receives `log.record` from the one log path (D20), when the model runs it. */
+export const EMIT_LOG_TARGET: ProcessName = 'logger';
+
+/** @since P3 The debug category of the clock's synchronisation transitions (§5.8: ntp's `ntp events`). */
+export const CLOCK_TRANSITION_CATEGORY = 'ntp events';
+
+/** @since P3 The `ntp` transition subject when neither the action nor the clock names a reference. */
+export const CLOCK_TRANSITION_NO_REFERENCE = 'none';
+
+/** @since P3 A clock source that counts as synchronised for the `ntp` transition: an NTP sync or `ntp master`. */
+export function isSynchronisedClockSource(source: DeviceClockView['source']): boolean {
+  return source === 'ntp' || source === 'master';
+}
+
+/** @since P3 The `ntp` transition message of a clock that became synchronised (original wording). */
+export function clockSynchronisedMessage(reference: string, stratum: number | undefined): string {
+  return stratum === undefined ? `The clock is now synchronised to ${reference}.` : `The clock is now synchronised to ${reference}, stratum ${stratum}.`;
+}
+
+/** @since P3 The `ntp` transition message of a clock that stopped being synchronised (original wording). */
+export function clockUnsynchronisedMessage(reference: string): string {
+  return `The clock is no longer synchronised to ${reference}.`;
+}
+
+/** @since P3 [S32] The file system of the hosts' store (D21): the only one in P3a. */
+export const HOST_STORE_FS: FileSystemId = 'files';
+
+/**
+ * @since P3 [S32] A valid name in the flat `files:` store: not empty, no directory separator (`/`, `\`), no control
+ * character, not `.` or `..`.
+ */
+export function isStoredFileName(path: string): boolean {
+  if (path === '' || path === '.' || path === '..') return false;
+  for (let i = 0; i < path.length; i++) {
+    const c = path.charCodeAt(i);
+    if (c < 0x20 || c === 0x7f || c === 0x2f || c === 0x5c) return false;
+  }
+  return true;
+}
+
+/** @since P3 [S32] UTF-8 length of `text` in bytes (`StoredFileMeta.size`), counted without an encoder. */
+export function storedFileSize(text: string): number {
+  let n = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    if (c < 0x80) n += 1;
+    else if (c < 0x800) n += 2;
+    else if (c >= 0xd800 && c <= 0xdbff && i + 1 < text.length && (text.charCodeAt(i + 1) & 0xfc00) === 0xdc00) {
+      n += 4;
+      i++;
+    } else n += 3;
+  }
+  return n;
+}
+
+/** @since P3 A copy of a configure origin with only the members that are set (D21; stored on `configChange`). */
+function copyOrigin(o: ConfigOrigin): ConfigOrigin {
+  const out: { -readonly [K in keyof ConfigOrigin]: ConfigOrigin[K] } = { via: o.via };
+  if (o.user !== undefined) out.user = o.user;
+  if (o.address !== undefined) out.address = o.address;
+  return out;
+}
+
+/** @since P3 [S13] A copy of a `remoteCli` / `cliRemote` action for its SimEvent (only the members that are set). */
+function copyRemoteAct(a: RemoteCliAction | CliRemoteAction): RemoteCliAction | CliRemoteAction {
+  if (a.type === 'cliRemote') {
+    const c: CliRemoteAction = { type: 'cliRemote', session: a.session };
+    if (a.prompt !== undefined) c.prompt = a.prompt;
+    if (a.input !== undefined) c.input = a.input;
+    if (a.remote !== undefined) c.remote = a.remote;
+    return c;
+  }
+  const r: RemoteCliAction = { type: 'remoteCli', op: a.op, conn: a.conn };
+  if (a.peer !== undefined) r.peer = a.peer;
+  if (a.proto !== undefined) r.proto = a.proto;
+  if (a.user !== undefined) r.user = a.user;
+  if (a.text !== undefined) r.text = a.text;
+  return r;
+}
+
+/** @since P3 [S32] One stored file of the hosts' store (content and its size, the time of the last write). */
+interface StoredFileEntry {
+  readonly content: string;
+  readonly size: number;
+  readonly modifiedAt: SimTime;
 }
 
 /**
@@ -621,6 +758,13 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
   private airCache: AirView | undefined;
   /** @since P2 (wireless) Controller profiles by radio port (`radio-profile` action); RAM, cleared on power-off. */
   private readonly radioProfiles = new Map<PortId, StoredRadioProfile>();
+  /**
+   * @since P3 The device clock (D19) once a `clock` action rebased it; undefined = the boot clock (`bootClockBase`:
+   * unset plus uptime on a network device, true time on a host). RAM: power-off forgets it.
+   */
+  private clockBase: DeviceClockBase | undefined;
+  /** @since P3 [S32] The hosts' `files:` store by path (D21); persistent (kept across power-off, like a disk). */
+  private readonly fileStore = new Map<string, StoredFileEntry>();
 
   constructor(spec: DeviceSpec, deps: DeviceRuntimeDeps, now: SimTime) {
     const model = deps.catalog.get(spec.type);
@@ -758,6 +902,132 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
     return resolvePortName({ model: this.model, ports: this.ports }, name);
   }
 
+  // ── P3: the device clock (D19) ──────────────────────────────────────────
+
+  /** @since P3 The device clock at `now`: the rebased clock, else the boot clock; zone from `clock timezone`. */
+  clockView(now: SimTime): DeviceClockView {
+    const base = this.clockBase ?? bootClockBase(this.effectiveCaps, this.bootedAt, now);
+    return clockViewAt(base, now, clockTimezoneOf(this.runningAst.root));
+  }
+
+  /** @since P3 Rebase the device clock (the ntp daemon's `clock` action; D19). */
+  setClock(op: ClockAction, now: SimTime): void {
+    this.rebaseClock('ntp', op, now);
+  }
+
+  /**
+   * @since P3 The `clock` action of `owner` (ntp): rebase the clock at `now` (`rebaseClockBase`; a malformed action is
+   * a runtime debug line and changes nothing), then, when the synchronised state (source `ntp` or `master`) changed,
+   * emit ONE debug event carrying the `ntp` transition (category `ntp events`, subject the reference), recorded and
+   * traced exactly like `ctx.transition`.
+   */
+  private rebaseClock(owner: ProcessName, a: ClockAction, now: SimTime): void {
+    this.clock = now;
+    const before = this.clockView(now);
+    const next = rebaseClockBase(before, a, now);
+    if (next === undefined) {
+      this.runtimeDebug(owner, `clock ${a.op} ignored: the value is not a whole number the clock can hold`, now);
+      return;
+    }
+    this.clockBase = next;
+    const was = isSynchronisedClockSource(before.source);
+    const is = isSynchronisedClockSource(next.source);
+    if (was === is) return;
+    const subject = (is ? (next.reference ?? before.reference) : (before.reference ?? next.reference)) ?? CLOCK_TRANSITION_NO_REFERENCE;
+    const ev: DebugEvent = {
+      at: now,
+      device: this.id,
+      process: owner,
+      category: CLOCK_TRANSITION_CATEGORY,
+      message: is ? clockSynchronisedMessage(subject, next.stratum) : clockUnsynchronisedMessage(subject),
+      fsm: { machine: 'ntp', subject, from: was ? 'synchronised' : 'unsynchronised', to: is ? 'synchronised' : 'unsynchronised' },
+    };
+    this.recordDebug(ev);
+    this.trace.emit({ t: now, kind: 'debug', event: ev });
+  }
+
+  // ── P3 [S24]: the one log path (D20) ────────────────────────────────────
+
+  /**
+   * @since P3 [S24] Emit the unchanged `log` trace event (`mnemonic` only when given) and, when the model runs
+   * `logger`, apply its reaction to `log.record` as one action application.
+   */
+  emitLog(severity: Severity, facility: string, message: string, now: SimTime, mnemonic?: string): void {
+    this.clock = now;
+    const next = this.logRecord(undefined, severity, facility, message, now, mnemonic);
+    if (next !== undefined) this.applyActions(next.process, next.actions, now);
+  }
+
+  /**
+   * @since P3 [S24] Emit the `log` trace event, then return the logger's reaction to `log.record` (to apply depth-first
+   * by the caller), or undefined when the device runs no `logger` or the logger itself is the issuer (a log line of
+   * the logger is never handed back to it).
+   */
+  private logRecord(issuer: ProcessName | undefined, severity: Severity, facility: string, message: string, now: SimTime, mnemonic: string | undefined): FollowUp | undefined {
+    const ev: Extract<TraceEvent, { kind: 'log' }> = { t: now, kind: 'log', device: this.id, severity, facility, message };
+    if (mnemonic !== undefined) ev.mnemonic = mnemonic;
+    this.trace.emit(ev);
+    if (issuer === EMIT_LOG_TARGET) return undefined;
+    const logger = this.processes.get(EMIT_LOG_TARGET);
+    const ctx = this.ctxs.get(EMIT_LOG_TARGET);
+    if (logger === undefined || ctx === undefined || logger.onEvent === undefined) return undefined;
+    const record: LogRecordEvent = { kind: 'log.record', at: now, severity, facility, message };
+    if (mnemonic !== undefined) record.mnemonic = mnemonic;
+    return { process: EMIT_LOG_TARGET, actions: logger.onEvent(ctx, record) };
+  }
+
+  // ── P3 [S32]: the hosts' `files:` store (D21) ───────────────────────────
+
+  /** @since P3 [S32] True when this device keeps a `files:` store: every device with the `host` capability. */
+  private get hasFileStore(): boolean {
+    return this.effectiveCaps.includes('host');
+  }
+
+  /** @since P3 [S32] The files of `fs`, by path (code-unit order); empty on a device without a store. */
+  files(fs: FileSystemId): readonly StoredFileMeta[] {
+    if (fs !== HOST_STORE_FS || !this.hasFileStore) return [];
+    const out: StoredFileMeta[] = [];
+    for (const path of [...this.fileStore.keys()].sort()) {
+      const e = this.fileStore.get(path) as StoredFileEntry;
+      out.push(Object.freeze({ fs, path, size: e.size, modifiedAt: e.modifiedAt }));
+    }
+    return Object.freeze(out);
+  }
+
+  /** @since P3 [S32] One file of `fs` with its content, or undefined. */
+  readFile(fs: FileSystemId, path: string): StoredFile | undefined {
+    if (fs !== HOST_STORE_FS || !this.hasFileStore) return undefined;
+    const e = this.fileStore.get(path);
+    if (e === undefined) return undefined;
+    return Object.freeze({ fs, path, size: e.size, modifiedAt: e.modifiedAt, content: e.content });
+  }
+
+  /**
+   * @since P3 [S32] The `storage` action: write (create or replace; `modifiedAt` = now) or delete one file of the
+   * store. Refused with a runtime debug line on a device without a store, for another file system, a path that is not
+   * a flat name or a write without content; deleting a missing file changes nothing.
+   */
+  private applyStorage(owner: ProcessName, a: Extract<Action, { type: 'storage' }>, now: SimTime): void {
+    if (!this.hasFileStore) {
+      this.runtimeDebug(owner, `storage ${a.op} of ${a.path} ignored: this device keeps no files`, now);
+      return;
+    }
+    if (a.fs !== HOST_STORE_FS || !isStoredFileName(a.path)) {
+      this.runtimeDebug(owner, `storage ${a.op} of ${a.path} ignored: not a file name of ${HOST_STORE_FS}:`, now);
+      return;
+    }
+    if (a.op === 'delete') {
+      this.fileStore.delete(a.path);
+      return;
+    }
+    const file: StoredFileInput | undefined = a.file;
+    if (file === undefined || typeof file.content !== 'string') {
+      this.runtimeDebug(owner, `storage write of ${a.path} ignored: no content`, now);
+      return;
+    }
+    this.fileStore.set(a.path, { content: file.content, size: storedFileSize(file.content), modifiedAt: now });
+  }
+
   // ── run-loop entry points ───────────────────────────────────────────────
 
   onFrameArrival(portId: PortId, pdu: Pdu, corrupted: boolean | undefined, now: SimTime, rx?: FrameRxInfo): void {
@@ -852,7 +1122,7 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
     for (const name of this.processOrder) {
       const factory = this.deps.catalog.process(name);
       if (factory === undefined) {
-        this.trace.emit({ t: now, kind: 'log', device: this.id, severity: 3, facility: FACILITY_SYS, message: `Process ${name} is not available on this platform` });
+        this.emitLog(3, FACILITY_SYS, `Process ${name} is not available on this platform`, now);
         continue;
       }
       const proc = factory();
@@ -995,7 +1265,8 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
         return { process: a.to, actions: target.onRequest(ctx, a.req) };
       }
       case 'drop':
-        this.emitDrop(a.pdu, a.reason, a.detail, a.port);
+        // P3 (D12, D13): the policy's `rule` passes through to the trace event
+        this.emitDrop(a.pdu, a.reason, a.detail, a.port, a.rule);
         return undefined;
       case 'consume':
         this.trace.emit({ t: now, kind: 'pduConsumed', pdu: pduSummary(a.pdu), device: this.id, process: owner });
@@ -1035,8 +1306,8 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
         return undefined;
       }
       case 'log':
-        this.trace.emit({ t: now, kind: 'log', device: this.id, severity: a.severity, facility: a.facility, message: a.message });
-        return undefined;
+        // P3 [S24]: the one log path; the logger's reaction is applied depth-first inside the issuer's budget
+        return this.logRecord(owner, a.severity, a.facility, a.message, now, undefined);
       case 'ingress':
         return this.applyIngress(a.port, a.pdu, a.layer, now);
       case 'medium': {
@@ -1075,9 +1346,45 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
       case 'radio-profile':
         this.radioProfile(owner, a.port, a.bss, a.controller, now);
         return undefined;
+      // ── P3 (ARCHITECTURE-P3 §2.4; W1 device) ──
+      case 'configure':
+        this.scheduleConfigure(owner, a, now);
+        return undefined;
+      case 'clock':
+        this.rebaseClock(owner, a, now);
+        return undefined;
+      case 'virtualChanged':
+        // [S18] the tunnel owner wrote a `tunnels` row: the tunnel's line protocol follows it
+        this.recomputeVirtual(now);
+        return undefined;
+      case 'remoteCli':
+      case 'cliRemote':
+        // [S13] (D14): the Simulation applies it to its CliRuntime in the event's own dispatch
+        this.scheduleEvent({ kind: 'remoteCli', device: this.id, from: owner, act: copyRemoteAct(a) }, now);
+        return undefined;
+      case 'storage':
+        this.applyStorage(owner, a, now);
+        return undefined;
       default:
         return undefined;
     }
+  }
+
+  /** @since P3 Schedule `body` at `now` (zero delay, never periodic) through the existing scheduler dep (D14, D21). */
+  private scheduleEvent(body: SimEventBody, now: SimTime): void {
+    this.deps.scheduler.schedule(now, body);
+  }
+
+  /**
+   * @since P3 The `configure` action (D21): schedule SimEvent `deviceConfigure` at `now` (zero delay, non-periodic) with a
+   * copy of the lines and options; nothing is applied here. In that event's dispatch the Simulation runs
+   * `cliCore.configure` with the origin and delivers `config.result` to `owner`.
+   */
+  private scheduleConfigure(owner: ProcessName, a: Extract<Action, { type: 'configure' }>, now: SimTime): void {
+    const opts: { atomic?: boolean; indentation?: boolean; origin: ConfigOrigin } = { origin: copyOrigin(a.origin) };
+    if (a.atomic !== undefined) opts.atomic = a.atomic;
+    if (a.indentation !== undefined) opts.indentation = a.indentation;
+    this.scheduleEvent({ kind: 'deviceConfigure', device: this.id, from: owner, token: a.token, lines: [...a.lines], opts }, now);
   }
 
   /**
@@ -1135,7 +1442,7 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
     if (port === undefined || port.errDisabled !== undefined) return;
     port.errDisabled = cause;
     this.emitPortState(portId, 'err-disabled');
-    this.trace.emit({ t: now, kind: 'log', device: this.id, severity: 4, facility: FACILITY_LINK, message: errDisabledMessage(portId, cause, detail) });
+    this.emitLog(4, FACILITY_LINK, errDisabledMessage(portId, cause, detail), now);
     if (!this.isVirtual(port)) this.deps.onPortAdmin({ device: this.id, port: portId }, port.adminUp, now);
     this.recomputeVirtual(now);
   }
@@ -1151,7 +1458,7 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
     if (port === undefined || port.errDisabled !== cause) return;
     delete port.errDisabled;
     this.emitPortState(portId, 'err-recovered');
-    this.trace.emit({ t: now, kind: 'log', device: this.id, severity: 5, facility: FACILITY_LINK, message: errRecoveredMessage(portId, cause) });
+    this.emitLog(5, FACILITY_LINK, errRecoveredMessage(portId, cause), now);
     if (!this.isVirtual(port)) this.deps.onPortAdmin({ device: this.id, port: portId }, port.adminUp, now);
     this.recomputeVirtual(now);
   }
@@ -1285,7 +1592,11 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
 
   // ── config ──────────────────────────────────────────────────────────────
 
-  applyConfigLine(context: string[][], line: string[], negate: boolean): { ok: boolean; error?: string } {
+  /**
+   * Apply one configuration line (see the file header). P3 (D21): `origin` (the configure seam's, absent for typed
+   * lines) is copied into every `configChange` event this line produces, so P1/P2 events keep their bytes.
+   */
+  applyConfigLine(context: string[][], line: string[], negate: boolean, origin?: ConfigOrigin): { ok: boolean; error?: string } {
     const now = this.clock;
     if (line.length === 0 || line[0] === undefined || line[0] === '') return { ok: false, error: 'Empty configuration line' };
     const first = context[0];
@@ -1306,7 +1617,7 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
     if (context.length === 0 && key === 'interface') {
       const name = line[1];
       if (name === undefined || name === '') return { ok: false, error: 'An interface name is required' };
-      if (negate) return this.removeVirtualPort(name, now);
+      if (negate) return this.removeVirtualPortWith(name, now, origin);
       if (!this.ports.has(name)) {
         if (!this.isCreatableName(name)) return { ok: false, error: `Unknown interface ${name}` };
         const made = this.ensureVirtualPort(name, now);
@@ -1321,7 +1632,7 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
     // interface special cases decided BEFORE the AST changes
     if (ifacePort !== undefined && key === 'switchport' && line.length === 1) {
       const target: PortRole = negate ? 'routed' : specRole(ifacePort.spec, this.effectiveCaps);
-      const flipped = this.setPortRole(ifacePort.id, target, now);
+      const flipped = this.setPortRoleWith(ifacePort.id, target, now, origin);
       if (!flipped.ok) return flipped;
     }
     if (ifacePort !== undefined && key === 'encapsulation') {
@@ -1359,7 +1670,7 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
 
     if (delta === undefined) return { ok: true };
     this.fanOutConfig(delta, now);
-    this.trace.emit({ t: now, kind: 'configChange', device: this.id, line: line.join(' '), negate, context: context.map((c) => c.slice()) });
+    this.emitConfigChange(line.join(' '), negate, context.map((c) => c.slice()), origin, now);
     // P2 (§3.0 "Virtual oper state"): a recompute site after the lines that change what an SVI, a Port-channel or a
     // subinterface derives its state from (the daemons wrote their rows in the fan-out above)
     if (VIRTUAL_RECOMPUTE_KEYS.includes(key)) this.recomputeVirtual(now);
@@ -1442,7 +1753,7 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
         const made = this.isCreatableName(name) ? this.ensureVirtualPort(name, this.clock) : undefined;
         if (made === undefined || !made.ok) {
           skipped.push(name);
-          this.trace.emit({ t: this.clock, kind: 'log', device: this.id, severity: 4, facility: FACILITY_SYS, message: `Startup configuration refers to an unknown interface ${name}`.trimEnd() });
+          this.emitLog(4, FACILITY_SYS, `Startup configuration refers to an unknown interface ${name}`.trimEnd(), this.clock);
         }
         continue;
       }
@@ -1533,14 +1844,7 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
     if (port.adminUp === adminUp) return;
     port.adminUp = adminUp;
     this.trace.emit({ t: now, kind: 'portState', device: this.id, port: portId, adminUp, operUp: port.operUp, reason: adminUp ? 'admin-up' : 'admin-down' });
-    this.trace.emit({
-      t: now,
-      kind: 'log',
-      device: this.id,
-      severity: 3,
-      facility: FACILITY_LINK,
-      message: adminUp ? `Interface ${portId} administratively enabled` : `Interface ${portId} administratively down`,
-    });
+    this.emitLog(3, FACILITY_LINK, adminUp ? `Interface ${portId} administratively enabled` : `Interface ${portId} administratively down`, now);
     if (ROLE_TRAITS[role].virtual) {
       if (adminUp) this.logUnsupportedVlan(port, now);
       this.recomputeVirtual(now);
@@ -1585,6 +1889,7 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
     this.airResolved = false;
     this.airCache = undefined;
     this.radioProfiles.clear(); // P2 (wireless): a controller profile is RAM
+    this.clockBase = undefined; // P3 (D19): no hardware calendar — the next boot starts unset again (the files stay)
     for (const name of this.tables.names()) this.tables.get(name)?.clear('cleared');
     this.hostname = this.spec.name;
 
@@ -1631,6 +1936,11 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
   // ── roles (§3.10 switchport / no switchport) ────────────────────────────
 
   setPortRole(portId: PortId, role: PortRole, now: SimTime): { ok: boolean; error?: string } {
+    return this.setPortRoleWith(portId, role, now, undefined);
+  }
+
+  /** `setPortRole`; P3 (D21): `origin` is stamped on the address withdrawal's `configChange` (the line's own event). */
+  private setPortRoleWith(portId: PortId, role: PortRole, now: SimTime, origin: ConfigOrigin | undefined): { ok: boolean; error?: string } {
     this.clock = now;
     const port = this.ports.get(portId);
     if (port === undefined) return { ok: false, error: fill(DEVICE_CONFIG_MESSAGES.unknownInterface, { name: portId }) };
@@ -1642,7 +1952,7 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
     // leaving an L3 role withdraws the address (processes see the unset delta and remove C/L routes)
     if (ROLE_TRAITS[current].l3 && !ROLE_TRAITS[role].l3) {
       const configured = this.interfaceNode(portId)?.children.some((c) => c.key === 'ip' && c.children.some((leaf) => leaf.key === 'address')) === true;
-      if (configured || port.l3.ipv4 !== undefined) this.applyConfigLine([['interface', portId]], ['ip', 'address'], true);
+      if (configured || port.l3.ipv4 !== undefined) this.applyConfigLine([['interface', portId]], ['ip', 'address'], true, origin);
     }
     const wasUp = port.operUp;
     if (wasUp) this.fanLinkChange(portId, false, now);
@@ -1693,6 +2003,11 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
   }
 
   removeVirtualPort(name: PortId, now: SimTime): { ok: boolean; error?: string } {
+    return this.removeVirtualPortWith(name, now, undefined);
+  }
+
+  /** `removeVirtualPort`; P3 (D21): `origin` is stamped on every `configChange` of the removal (`no interface N`). */
+  private removeVirtualPortWith(name: PortId, now: SimTime, origin: ConfigOrigin | undefined): { ok: boolean; error?: string } {
     this.clock = now;
     const check = checkVirtualPortRemoval(this.model, this.ports, name);
     if (!check.ok) return { ok: false, error: check.error };
@@ -1704,12 +2019,12 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
       const lines = configTextLinesOf({ key: '', args: [], children: [section] });
       for (const l of lines) {
         if (l.context.length !== 1 || l.negate || l.tokens[0] === 'shutdown') continue;
-        this.applyConfigLine(context, l.tokens, true);
+        this.applyConfigLine(context, l.tokens, true, origin);
       }
       const delta = this.runningAst.unset([], ['interface', name]);
       if (delta !== undefined) {
         this.fanOutConfig(delta, now);
-        this.trace.emit({ t: now, kind: 'configChange', device: this.id, line: `interface ${name}`, negate: true, context: [] });
+        this.emitConfigChange(`interface ${name}`, true, [], origin, now);
       }
     }
     if (port.operUp) {
@@ -1949,11 +2264,14 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
    */
   private virtualLookups(): VirtualOperLookups {
     const bundledMembers = (bundle: PortId): readonly PortId[] => this.bundledMembers(bundle);
-    if (!this.vlanAware) return { bundledMembers };
+    // P3 [S18] (D17): a tunnel port's line protocol is its `tunnels` row (no row, no table: down)
+    const tunnelState = (port: PortId): TunnelRow | undefined => this.tables.get<TunnelRow>('tunnels')?.get(port);
+    if (!this.vlanAware) return { bundledMembers, tunnelState };
     return {
       vlanExists: (vlan) => this.vlanExists(vlan),
       sviCarrier: (port, vlan) => this.sviCarrier(port, vlan),
       bundledMembers,
+      tunnelState,
     };
   }
 
@@ -1966,12 +2284,12 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
     if (this.vlanAware) {
       const vlan = sviVlanOf(port.id);
       if (vlan === undefined || this.vlanExists(vlan)) return;
-      this.trace.emit({ t: now, kind: 'log', device: this.id, severity: 4, facility: FACILITY_SYS, message: vlanMissingMessage(port.id, vlan) });
+      this.emitLog(4, FACILITY_SYS, vlanMissingMessage(port.id, vlan), now);
       return;
     }
     const parsed = parseVirtualPortName(this.model, port.id);
     if (parsed === undefined || parsed.number === SVI_SUPPORTED_VLAN) return;
-    this.trace.emit({ t: now, kind: 'log', device: this.id, severity: 4, facility: FACILITY_SYS, message: vlanUnsupportedMessage(port.id) });
+    this.emitLog(4, FACILITY_SYS, vlanUnsupportedMessage(port.id), now);
   }
 
   private emitPortState(portId: PortId, reason: string | undefined): void {
@@ -1982,13 +2300,27 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
     this.trace.emit(ev);
   }
 
-  private emitDrop(pdu: Pdu, reason: DropReason, detail: string | undefined, port: PortId | undefined): void {
+  private emitDrop(pdu: Pdu, reason: DropReason, detail: string | undefined, port: PortId | undefined, rule?: DropRule): void {
     const ev: Extract<TraceEvent, { kind: 'drop' }> = { t: this.clock, kind: 'drop', pdu: pduSummary(pdu), device: this.id, reason };
     if (port !== undefined) ev.port = port;
     if (detail !== undefined) ev.detail = detail;
     // P2 (§2.7): a dropped background PDU (keepalive, beacon, BPDU at a host, HSRP hello) is marked so the trace
     // filter, the canvas markers and the sim-mode list can hide it by default
     if (pdu.meta.background === true) ev.background = true;
+    // P3 (D12, D13): why a policy dropped it; absent on every P1/P2 drop
+    if (rule !== undefined) ev.rule = rule;
+    // P3 (§2.2): an ACL denial that names a port counts on it (`acl-deny` is first emitted in P3)
+    if (reason === 'acl-deny' && port !== undefined) {
+      const p = this.ports.get(port);
+      if (p !== undefined) p.counters.aclDenies = (p.counters.aclDenies ?? 0) + 1;
+    }
+    this.trace.emit(ev);
+  }
+
+  /** The `configChange` event of one applied line; P3 (D21): `origin` only when the configure seam passed one. */
+  private emitConfigChange(line: string, negate: boolean, context: string[][], origin: ConfigOrigin | undefined, now: SimTime): void {
+    const ev: Extract<TraceEvent, { kind: 'configChange' }> = { t: now, kind: 'configChange', device: this.id, line, negate, context };
+    if (origin !== undefined) ev.origin = copyOrigin(origin);
     this.trace.emit(ev);
   }
 

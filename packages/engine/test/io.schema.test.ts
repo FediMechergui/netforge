@@ -121,7 +121,8 @@ describe('validateTopology / parseTopology — failures with readable messages',
     j.schema = 'netforge.topology/9.9';
     const r = validateTopology(j);
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.errors[0]).toBe('schema: must be one of "netforge.topology/1.0", "netforge.topology/1.1", "netforge.topology/1.2"');
+    // ARCHITECTURE-P3 §9.2 item 15 (W1 io): the message lists the four ids
+    if (!r.ok) expect(r.errors[0]).toBe('schema: must be one of "netforge.topology/1.0", "netforge.topology/1.1", "netforge.topology/1.2", "netforge.topology/1.3"');
   });
 
   it('rejects a non-integer seed', () => {

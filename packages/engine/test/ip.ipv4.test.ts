@@ -401,9 +401,11 @@ describe('ipv4 process shape', () => {
     const ipv4 = createIpv4();
     expect(ipv4.name).toBe('ipv4');
     // P0.5 (§9.2): Ethernet on L3 roles plus HDLC protocol 0x0800 on serial WAN ports.
+    // ARCHITECTURE-P3 §9.2 item 30 (W1 l3 [S18]): the tunnel selector is appended.
     expect(ipv4.handles).toEqual([
       { layer: 'ethernet', ethertype: ETHERTYPE_IPV4, roles: L3_ROLES },
       { layer: 'hdlc', ethertype: HDLC_PROTO_IPV4, roles: ['wan'] },
+      { layer: 'ipv4', roles: ['tunnel'] },
     ]);
     expect(ipv4.onTimer({} as never, 'x')).toEqual([]);
     const snap = ipv4.stateSnapshot();

@@ -146,7 +146,18 @@ export interface PortQosView {
  */
 export interface PortTxQueueView {
   depth: number;
-  frames: readonly { pdu: PduId; summary: PduSummary; txStart: SimTime; bytes: number }[];
+  frames: readonly {
+    pdu: PduId;
+    summary: PduSummary;
+    txStart: SimTime;
+    bytes: number;
+    /**
+     * @since P3 (optional by meaning; W1 contract fix, an additive member for the qos overlay's DSCP letters, D16, §6)
+     * The frame's IPv4/IPv6 DSCP (0-63) when it carries an IP header; absent otherwise. `txBacklog` is display data
+     * that the digest normalisation removes (§4.6), so no golden sees it.
+     */
+    dscp?: number;
+  }[];
 }
 
 /**

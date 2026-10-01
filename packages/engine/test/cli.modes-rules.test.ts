@@ -111,7 +111,10 @@ describe('config rules', () => {
     expect(rf([['interface', 'Gi0/0']], ['ip', 'address', '10.0.0.1', '255.0.0.0'])?.cardinality).toBe('single');
     expect(rf([['ip', 'dhcp', 'pool', 'LAN']], ['network', '10.0.0.0', '255.0.0.0'])?.cardinality).toBe('single');
     expect(rf([], ['switchport'])).toBeUndefined();
-    expect(rf([], ['logging', 'buffered'])).toBeUndefined();
+    // ARCHITECTURE-P3 §9.2 item 20d (W1 cli, the approved [S24] rules of §5.7): `logging buffered` has its rule now;
+    // a global line without a rule is still undefined (snmp-server)
+    expect(rf([], ['logging', 'buffered'])).toEqual({ pattern: ['logging', 'buffered', '<rest>'], contexts: [''], identity: 2, cardinality: 'single' });
+    expect(rf([], ['snmp-server', 'community', 'public'])).toBeUndefined();
     expect(ruleContextKey([['line', 'vty', '0', '4']])).toBe('line');
   });
 

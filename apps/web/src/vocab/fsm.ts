@@ -52,15 +52,18 @@ export const FSM_VOCAB: Readonly<Record<FsmMachine, FsmVocab>> = Object.freeze({
   'capwap-ac': fsm('capwap-ac', 'Controller to access point', CAPWAP_STATES),
   hsrp: fsm('hsrp', 'Standby group', ['initial', 'learn', 'listen', 'speak', 'standby', 'active']),
   pagp: fsm('pagp', 'Port aggregation', MEMBER_STATES),
-  // ── P3 (ARCHITECTURE-P3 §2.4, §2.16, §2.17; the architect's W0 stubs, the contract's own state words) ──
+  // ── P3 (ARCHITECTURE-P3 §2.4, §2.16, §2.17; W1 web-inspector). The contract's own state words: the RFC 2328 ISM and
+  // NSM states (`OspfIsmState`, `OspfNsmState`), the synchronisation the runtime reports for the `clock` action
+  // (§3.7), `TunnelRow.state`, `PppFsmState` for LCP and the NCPs, `PppRow.authLocalState`, the §2.16 EIGRP words
+  // (a neighbour goes down → pending → up) and the §2.17 IKE exchange states. ──
   'ospf-if': fsm('ospf-if', 'OSPF interface', ['down', 'loopback', 'waiting', 'point-to-point', 'drother', 'backup', 'dr']),
   'ospf-nbr': fsm('ospf-nbr', 'OSPF neighbour', ['down', 'attempt', 'init', '2way', 'exstart', 'exchange', 'loading', 'full']),
-  ntp: fsm('ntp', 'Time synchronisation', ['unsynchronised', 'candidate', 'synchronised']),
+  ntp: fsm('ntp', 'Time synchronisation', ['unsynchronised', 'synchronised']),
   tunnel: fsm('tunnel', 'Tunnel', ['down', 'up']),
   'ppp-lcp': fsm('ppp-lcp', 'PPP link control', PPP_STATES),
   'ppp-auth': fsm('ppp-auth', 'PPP authentication', ['pending', 'success', 'failed']),
   'ppp-ncp': fsm('ppp-ncp', 'PPP network control', PPP_STATES),
-  'eigrp-nbr': fsm('eigrp-nbr', 'EIGRP neighbour', ['pending', 'up', 'down']),
+  'eigrp-nbr': fsm('eigrp-nbr', 'EIGRP neighbour', ['down', 'pending', 'up']),
   'eigrp-route': fsm('eigrp-route', 'EIGRP route', ['passive', 'active']),
   ike: fsm('ike', 'IKE negotiation', ['idle', 'init-sent', 'init-answered', 'auth-sent', 'established', 'failed']),
 });

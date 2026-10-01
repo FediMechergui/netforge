@@ -25,7 +25,9 @@
  * counter, privilege 15, never listed, no history, no trace of its own: output is captured per line). Job and
  * interactive specs are refused with `CLI_MESSAGES.notHeadless`. `indentation` uses the ONE indentation walker
  * (cli/config-text.ts) to pick each line's nesting level; `atomic` reverts through `running.diffTree(before)`
- * applied with `DeviceRuntime.applyConfigLine`, so processes see the inverse deltas.
+ * applied with `DeviceRuntime.applyConfigLine`, so processes see the inverse deltas. P3 (D21): `ConfigureOptions.origin`
+ * is kept on the headless session and passed as the fourth argument of `applyConfigLine` for every line it applies
+ * (the revert included); without it the call keeps its three P2 arguments.
  *
  * Module removal (§3.11): `onPortsRemoved` drops sessions whose context names a removed port to `config`.
  *
@@ -96,7 +98,7 @@ import type { Capability, CliGrammar, CliSpec } from '../contracts/catalog.js';
 import type { DeviceModel, DeviceRuntime, PortResolution } from '../contracts/device.js';
 import type { DeviceId, PortId, SessionId } from '../contracts/ids.js';
 import type { PortView } from '../contracts/port.js';
-import type { Action, DebugEvent } from '../contracts/process.js';
+import type { Action, ConfigOrigin, DebugEvent } from '../contracts/process.js';
 import type { Dot11AssocRow, TableName, TableRow, Table } from '../contracts/tables.js';
 import { formatSimTime, type SimTime } from '../contracts/time.js';
 import { walkConfigText } from './config-text.js';
@@ -461,6 +463,11 @@ interface SessionState {
   headless: boolean;
   /** Headless only: configuration changes applied during the call (configChange events). */
   applied: number;
+  /**
+   * @since P3 (D21) Headless only: `ConfigureOptions.origin`, passed as the fourth argument of
+   * `DeviceRuntime.applyConfigLine` for every line this session applies (absent: the three-argument call of P2).
+   */
+  origin?: ConfigOrigin;
   /** Question the next `exec` line answers (§4.10). */
   pending?: PendingInput;
 }
@@ -647,6 +654,13 @@ export function createCliRuntime(deps: CliRuntimeDeps, handlers?: Record<string,
   /** Fingerprint of the running tree; a changed fingerprint means the device emitted a configChange. */
   const runningFingerprint = (dev: DeviceRuntime): string => JSON.stringify(dev.running.toJSON());
 
+  /**
+   * @since P3 (D21) Apply one configuration line for session `s`: with the session's origin as the fourth argument when
+   * it has one (a headless run with `ConfigureOptions.origin`), otherwise exactly the P2 three-argument call.
+   */
+  const applyLine = (s: SessionState, dev: DeviceRuntime, context: string[][], line: string[], negate: boolean): { ok: boolean; error?: string } =>
+    s.origin === undefined ? dev.applyConfigLine(context, line, negate) : dev.applyConfigLine(context, line, negate, s.origin);
+
   /** Run a device configuration operation, counting applied changes for a headless session. */
   const counted = <T>(s: SessionState, dev: DeviceRuntime, op: () => T): T => {
     if (!s.headless) return op();
@@ -691,7 +705,7 @@ export function createCliRuntime(deps: CliRuntimeDeps, handlers?: Record<string,
     const ifaceId = selectedInterface(context);
     const ifaceView = ifaceId === undefined ? undefined : dev.portView(ifaceId);
     const apply = (ctxPath: string[][], line: string[], negate: boolean): { ok: boolean; error?: string } =>
-      counted(s, dev, () => dev.applyConfigLine(ctxPath, line, negate));
+      counted(s, dev, () => applyLine(s, dev, ctxPath, line, negate));
 
     const deviceOps: CommandCtx['device'] = {
       setHostname: (name) => {
@@ -712,7 +726,12 @@ export function createCliRuntime(deps: CliRuntimeDeps, handlers?: Record<string,
         table?.clear('cleared');
       },
       ensureVirtualPort: (name) => counted(s, dev, () => dev.ensureVirtualPort(name, now)),
-      removeVirtualPort: (name) => counted(s, dev, () => dev.removeVirtualPort(name, now)),
+      // P3 (D21): a headless run with an origin removes through `applyConfigLine` (`no interface N`), which stamps the
+      // origin on every configChange of the removal; without one it is exactly the P2 call
+      removeVirtualPort: (name) =>
+        counted(s, dev, () =>
+          s.origin === undefined ? dev.removeVirtualPort(name, now) : dev.applyConfigLine([], ['interface', name], true, s.origin),
+        ),
       setPortRole: (port, role) => counted(s, dev, () => dev.setPortRole(port, role, now)),
     };
     const ctx: CommandCtx = {
@@ -765,6 +784,8 @@ export function createCliRuntime(deps: CliRuntimeDeps, handlers?: Record<string,
       radioView: (port: PortId) => deps.radioView({ device: dev.id, port }),
       air: deps.airView(dev.id),
       secrets: secretsFor(dev.id),
+      // P3 (W1, §2.9, §9.2 item 19): the device clock at the command's time
+      clock: () => dev.clockView(now),
     };
     return ctx;
   };
@@ -1101,6 +1122,8 @@ export function createCliRuntime(deps: CliRuntimeDeps, handlers?: Record<string,
       headless: true,
       applied: 0,
     };
+    // P3 (D21): the origin stays on the headless session and reaches applyConfigLine for every line it applies
+    if (opts.origin !== undefined) s.origin = opts.origin;
     const before = atomic || replayContext ? dev.running.clone() : undefined;
     const levels = opts.indentation === true ? indentationLevels(commands) : undefined;
     /** frames[k] = session state before the latest line at nesting level k ran (indentation mode). */
@@ -1114,7 +1137,7 @@ export function createCliRuntime(deps: CliRuntimeDeps, handlers?: Record<string,
       if (before === undefined || !dev.power || dev.bootedAt === undefined) return false;
       const changes = dev.running.diffTree(before);
       for (const change of changes) {
-        counted(s, dev, () => dev.applyConfigLine(copyContext(change.context), change.line.slice(), change.op === 'unset'));
+        counted(s, dev, () => applyLine(s, dev, copyContext(change.context), change.line.slice(), change.op === 'unset'));
       }
       return changes.length > 0;
     };

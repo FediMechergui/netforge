@@ -11,7 +11,8 @@
  * object. 1.0 → 1.1 is the identity on content plus the schema id, because 1.1 only adds optional sections whose
  * absence means exactly what a 1.0 file meant (default modules, salt 0, no GUI state, cable links, default scale).
  * 1.1 → 1.2 is the identity on content plus the schema id for the same reason: 1.2 only adds `profile`, whose absence
- * means the P1 defaults.
+ * means the P1 defaults. @since P3 1.2 → 1.3 is the identity on content plus the schema id too (ARCHITECTURE-P3 §2.9):
+ * 1.3 only widens `profile` with `'P3'` and adds [S32] `devices[].files`, whose absence means an empty store.
  *
  * Migrations only move forward. A document whose own id is already later than `schemaIdFor(t)` (a hand-written 1.2
  * document without `profile`) keeps its id and its content.
@@ -25,6 +26,7 @@ import {
   TOPOLOGY_SCHEMA_ID_1_0,
   TOPOLOGY_SCHEMA_ID_1_1,
   TOPOLOGY_SCHEMA_ID_1_2,
+  TOPOLOGY_SCHEMA_ID_1_3,
   schemaIdFor,
   type Topology,
   type TopologySchemaId,
@@ -50,6 +52,11 @@ function migrate11to12(t: Topology): Topology {
   return { ...t, schema: TOPOLOGY_SCHEMA_ID_1_2 };
 }
 
+/** @since P3 1.2 → 1.3: identity on content, schema id rewritten (W1 io, ruling R7). */
+function migrate12to13(t: Topology): Topology {
+  return { ...t, schema: TOPOLOGY_SCHEMA_ID_1_3 };
+}
+
 /**
  * Migration steps keyed by their source schema id. The latest id has no entry. Every other id in
  * `TOPOLOGY_SCHEMA_IDS` has exactly one step, and following the steps from any id reaches the latest id.
@@ -57,6 +64,7 @@ function migrate11to12(t: Topology): Topology {
 export const TOPOLOGY_MIGRATIONS: Readonly<Partial<Record<TopologySchemaId, TopologyMigrationStep>>> = Object.freeze({
   [TOPOLOGY_SCHEMA_ID_1_0]: Object.freeze({ from: TOPOLOGY_SCHEMA_ID_1_0, to: TOPOLOGY_SCHEMA_ID_1_1, migrate: migrate10to11 }),
   [TOPOLOGY_SCHEMA_ID_1_1]: Object.freeze({ from: TOPOLOGY_SCHEMA_ID_1_1, to: TOPOLOGY_SCHEMA_ID_1_2, migrate: migrate11to12 }),
+  [TOPOLOGY_SCHEMA_ID_1_2]: Object.freeze({ from: TOPOLOGY_SCHEMA_ID_1_2, to: TOPOLOGY_SCHEMA_ID_1_3, migrate: migrate12to13 }),
 });
 
 /** True when `id` is a schema id this build can load. */

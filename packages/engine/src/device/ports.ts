@@ -22,6 +22,10 @@
  *  - the subinterface factory (`planSubinterface`, `createSubinterfacePortState`): the parent's MAC, ordinal and MTU,
  *    `PortSpec.parent`, administratively up.
  *
+ * P3 [S18] (ARCHITECTURE-P3 D17, §3.10; W1 device): a family's `encap` (the Tunnel family's `tunnel`) is its ports'
+ * encapsulation, and `evaluateVirtualOper` gains the `tunnel` rule over the injected `tunnelState` lookup (the tunnel
+ * owner's `tunnels` row). No P1/P2 model has a family with `encap` or a tunnel port, so every P1/P2 answer is unchanged.
+ *
  * Determinism: every ordering is explicit (indexes and numbers); no Set or object-identity ordering is used.
  */
 import { portMac } from '../contracts/addr.js';
@@ -39,6 +43,7 @@ import {
   type VirtualFamilySpec,
 } from '../contracts/catalog.js';
 import type { ConfigAst } from '../contracts/config.js';
+import type { TunnelDownReason } from '../contracts/tables.js';
 import { parseSubinterfaceName, subinterfacePortName, virtualPortName } from './catalog/names.js';
 
 // ── wording (original, §1.6) ─────────────────────────────────────────────────
@@ -175,7 +180,8 @@ export function isAutoInstance(family: Pick<VirtualFamilySpec, 'auto'>, n: numbe
  * Port spec of a virtual interface instance (§3.10): kind `virtual`, role from the family, encap `ethernet` for
  * SVIs and every bridged family (Port-channel, the controller tunnel: frames cross them and eth-switch / stp treat
  * them as ports) and `none` for loopbacks (role `virtual`), ordinal 0 (base MAC), connector `none`, the family's
- * default admin state.
+ * default admin state. P3 [S18]: a family that names its encapsulation (`VirtualFamilySpec.encap`, the Tunnel
+ * family's `tunnel`) gives it to its ports; every family without one keeps the rule above.
  */
 export function virtualPortSpec(family: VirtualFamilySpec, n: number): PortSpec {
   const name = virtualPortName(family, n);
@@ -186,7 +192,7 @@ export function virtualPortSpec(family: VirtualFamilySpec, n: number): PortSpec 
     speedBps: SPEED_1G,
     role: family.role,
     allowedRoles: [family.role],
-    encap: family.role === 'svi' || ROLE_TRAITS[family.role].bridged ? 'ethernet' : 'none',
+    encap: family.encap ?? (family.role === 'svi' || ROLE_TRAITS[family.role].bridged ? 'ethernet' : 'none'),
     ordinal: 0,
     connector: 'none',
     defaultAdminUp: family.defaultAdminUp,
@@ -479,7 +485,8 @@ export function resetPortForPowerOff(port: PortState, ctx: Pick<PortBuildContext
 /**
  * Why a virtual port is down (or undefined when up). P2 adds `vlan-missing` (VLAN-aware SVI), `no-bundled-member`
  * (Port-channel), `parent-down` and `no-encapsulation` (subinterface) and `err-disabled` (a virtual port an
- * `errDisable` action named).
+ * `errDisable` action named). P3 [S18] adds the tunnel reasons of the tunnel owner's `tunnels` row
+ * (`TunnelDownReason`: `no-source`, `no-destination`, `no-route`, `recursive-routing` and the [C13] IKE reasons).
  */
 export type VirtualDownReason =
   | 'power-off'
@@ -491,7 +498,20 @@ export type VirtualDownReason =
   | 'no-bundled-member'
   | 'parent-down'
   | 'no-encapsulation'
-  | 'err-disabled';
+  | 'err-disabled'
+  | TunnelDownReason;
+
+/**
+ * @since P3 [S18] The reason of a tunnel port that has no `tunnels` row yet (the tunnel owner has not evaluated it, or
+ * does not run): nothing sources it, as `interface Tunnel0` alone leaves it (§3.10 step 1).
+ */
+export const TUNNEL_NO_ROW_REASON: TunnelDownReason = 'no-source';
+
+/** @since P3 [S18] What the tunnel rule reads of a port's `tunnels` row (D17): its state and down reason. */
+export interface TunnelOperState {
+  readonly state: 'up' | 'down';
+  readonly reason?: TunnelDownReason;
+}
 
 /** Device-level inputs of the virtual oper rule. */
 export interface VirtualOperContext {
@@ -518,6 +538,11 @@ export interface VirtualOperLookups {
   readonly sviCarrier?: (port: PortId, vlan: number) => boolean;
   /** Member ports whose `etherchannel` row names `bundle` with state `bundled` (Port-channel rule). */
   readonly bundledMembers?: (bundle: PortId) => readonly PortId[];
+  /**
+   * @since P3 [S18] The `tunnels` row of tunnel port `port` (written by the tunnel owner, read by the tunnel rule), or
+   * undefined when there is none. Without the lookup every tunnel port is down (`TUNNEL_NO_ROW_REASON`).
+   */
+  readonly tunnelState?: (port: PortId) => TunnelOperState | undefined;
 }
 
 /** The only VLAN served by SVIs in P0.5 (VLANs arrive in P2). */
@@ -543,7 +568,9 @@ export function sviVlanOf(name: PortId): number | undefined {
  *  Port-channel (channel)  : some port of `bundledMembers(this)` is operUp (else `no-bundled-member`; no lookup = none);
  *  subinterface (subif)    : the parent (`spec.parent`) exists, is operUp and has the effective role `routed` (else
  *                            `parent-down`), and `dot1q` is set (else `no-encapsulation`);
- *  controller tunnel (wlan-tunnel): up (power and boot only).
+ *  controller tunnel (wlan-tunnel): up (power and boot only);
+ *  tunnel (tunnel, P3 [S18]): up while the tunnel owner's row (`tunnelState`) says `up`; otherwise down with the
+ *                            row's reason (`TUNNEL_NO_ROW_REASON` when there is no row, or it names none).
  * Non-virtual ports are returned as `{ up: port.operUp }` (the link model owns them).
  */
 export function evaluateVirtualOper(
@@ -574,6 +601,12 @@ export function evaluateVirtualOper(
       if (parent === undefined || !parent.operUp || (parent.role ?? specRole(parent.spec, capabilities)) !== 'routed') return { up: false, reason: 'parent-down' };
       if (port.dot1q === undefined) return { up: false, reason: 'no-encapsulation' };
       return { up: true };
+    }
+    // P3 [S18] (D17): the tunnel's line protocol is the tunnel owner's `tunnels` row
+    case 'tunnel': {
+      const row = lookups?.tunnelState?.(port.id);
+      if (row?.state === 'up') return { up: true };
+      return { up: false, reason: row?.reason ?? TUNNEL_NO_ROW_REASON };
     }
     default:
       return { up: true };

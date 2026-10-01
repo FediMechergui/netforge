@@ -41,6 +41,19 @@
  *    `negationRestoresDefault` rules (`slotKeyOf`, `defaultSlotsOf`, `DefaultSlots`). Without `defaults`, `apply` is
  *    exactly `set` / `unset`.
  *
+ * P3 (ARCHITECTURE-P3 D12, §2.11, §5; W1 cli) — sequenced lists:
+ *  - an entry of a `sequenced` rule (global `access-list N …`, the `permit|deny|remark` children of an `ip access-list`
+ *    section) carries `ConfigNode.seq`: the number given (a leading number typed in a list section, `15 permit …`, or
+ *    `apply(…, {seq})`), else the list's highest number + 10 (10 for an empty list). A numbered section and the global
+ *    lines of its number are one list. The entry is placed among its list's siblings by `seq`; a taken number, or an
+ *    entry the list already holds, is a no-op (the handler words the refusal);
+ *  - `no <seq>` in a list section removes that entry (from the section, or from the global lines of the same number);
+ *  - `render` never shows `seq`, so replaying the text (reload, export, the lab clone) renumbers 10, 20, … with the
+ *    global lines first, as a device does after a reload;
+ *  - `diffTree` reproduces the numbers of section entries (it re-adds a renumbered entry with its leading number);
+ *    global lines have no number syntax, so their numbers are not compared.
+ * Without `seq` in any line, every P2 behaviour is unchanged (the numbers are extra data on the nodes).
+ *
  * Storage conventions (shared with every process that consumes `ConfigDelta`):
  *  - a line of a rule with `group` (`ip address A M` under an interface) is stored as a group node
  *    `ip` (no args) with a child `address` whose args are `[A, M]` (path `ip.address`);
@@ -63,14 +76,18 @@ import type {
   DefaultSlots,
 } from '../contracts/config.js';
 import {
+  CONFIG_SEQ_MAX,
+  CONFIG_SEQ_STEP,
   DEFAULT_CONFIG_RULES,
   expandVlanListContext,
   expandVlanListLine,
   groupKeysOf,
   isNegationDefaultLine,
+  isSequencedSectionContext,
   normalizeConfigLine,
   renderSlotOf,
   ruleIdentity,
+  sequencedListOf,
 } from './config-rules.js';
 import { walkConfigText } from './config-text.js';
 
@@ -105,9 +122,33 @@ function prefixEqual(a: readonly string[], b: readonly string[], n: number): boo
   return true;
 }
 
-/** Deep copy of a node (args and children arrays are fresh). */
+/** Deep copy of a node (args and children arrays are fresh; `seq` kept when present). */
 function cloneNode(node: ConfigNode): ConfigNode {
-  return { key: node.key, args: node.args.slice(), children: node.children.map(cloneNode) };
+  const out: ConfigNode = { key: node.key, args: node.args.slice(), children: node.children.map(cloneNode) };
+  if (node.seq !== undefined) out.seq = node.seq;
+  return out;
+}
+
+/** True for a valid sequence number (1 … CONFIG_SEQ_MAX). */
+function validSeq(n: number): boolean {
+  return Number.isSafeInteger(n) && n >= 1 && n <= CONFIG_SEQ_MAX;
+}
+
+/** A typed line after its leading sequence number was taken off (list sections only, D12). */
+interface SeqSplit {
+  /** The entry tokens (the line itself when it carries no number). */
+  line: readonly string[];
+  /** The sequence number the line (or `opts.seq`) gives. */
+  seq?: number;
+  /** A lone number typed in a list section (`20`, as in `no 20`): the entry it names. */
+  bySeq?: number;
+  /** A number out of range (0, or above CONFIG_SEQ_MAX): the line is a no-op. */
+  invalid?: true;
+}
+
+/** Tree JSON with the `seq` of top-level nodes left out (global list lines carry no number syntax, so it is not compared). */
+function diffComparableJson(root: ConfigNode): string {
+  return JSON.stringify({ ...root, children: root.children.map((c) => ({ ...c, seq: undefined })) });
 }
 
 /** Fresh root node. The root has an empty key and is never rendered itself. */
@@ -226,8 +267,10 @@ interface RenderEntry {
 /** One comparable unit of a storage list for `diffTree`. */
 interface DiffEntry {
   kind: 'line' | 'neg' | 'group';
-  /** Unique comparison key within the list. */
+  /** Unique comparison key within the list (with the sequence number of a list-section entry, P3). */
   key: string;
+  /** @since P3 The key without the sequence number (equal to `key` for every other entry). */
+  bare: string;
   /** Full tokens: the line (group leaves include the group key), the negated line, or `[group]`. */
   tokens: string[];
   node: ConfigNode;
@@ -416,11 +459,32 @@ class ConfigAstImpl implements ConfigAst {
   }
 
   set(context: readonly (readonly string[])[], line: readonly string[]): ConfigDelta | undefined {
-    return this.expanded(context, line, (ctx, norm) => this.setOne(ctx, norm));
+    const s = this.splitSeq(context, line, undefined);
+    if (s.invalid === true || s.bySeq !== undefined) return undefined;
+    return this.expanded(context, s.line, (ctx, norm) => this.setOne(ctx, norm, s.seq));
   }
 
   unset(context: readonly (readonly string[])[], line: readonly string[]): ConfigDelta | undefined {
-    return this.expanded(context, line, (ctx, norm) => this.unsetOne(ctx, norm));
+    const s = this.splitSeq(context, line, undefined);
+    if (s.invalid === true) return undefined;
+    if (s.bySeq !== undefined) return this.unsetBySeq(context, s.bySeq);
+    return this.expanded(context, s.line, (ctx, norm) => this.unsetOne(ctx, norm));
+  }
+
+  /**
+   * @since P3 (D12) Take a leading sequence number off a line typed in a list section (`15 permit …` → seq 15; a lone
+   * `20` names entry 20). Elsewhere, or without a number, the line is unchanged and `seq` is `optsSeq`.
+   */
+  private splitSeq(context: readonly (readonly string[])[], line: readonly string[], optsSeq: number | undefined): SeqSplit {
+    const first = line[0];
+    if (first !== undefined && /^\d+$/.test(first) && isSequencedSectionContext(context, this.rules)) {
+      const n = Number(first);
+      if (!validSeq(n)) return { line, invalid: true };
+      if (line.length === 1) return { line, bySeq: n };
+      return { line: line.slice(1), seq: n };
+    }
+    if (optsSeq !== undefined && !validSeq(optsSeq)) return { line, invalid: true };
+    return optsSeq === undefined ? { line } : { line, seq: optsSeq };
   }
 
   /**
@@ -438,11 +502,17 @@ class ConfigAstImpl implements ConfigAst {
     context: readonly (readonly string[])[],
     line: readonly string[],
     negate: boolean,
-    opts: { defaults?: DefaultSlots } = {},
+    opts: { defaults?: DefaultSlots; seq?: number } = {},
   ): ConfigDelta | undefined {
     const defaults = opts.defaults;
-    if (defaults === undefined) return negate ? this.unset(context, line) : this.set(context, line);
-    return this.expanded(context, line, (ctx, norm) => this.applyOne(ctx, norm, negate, defaults));
+    const s = this.splitSeq(context, line, opts.seq);
+    if (s.invalid === true) return undefined;
+    if (s.bySeq !== undefined) return negate ? this.unsetBySeq(context, s.bySeq) : undefined;
+    if (defaults === undefined) {
+      if (negate) return this.expanded(context, s.line, (ctx, norm) => this.unsetOne(ctx, norm));
+      return this.expanded(context, s.line, (ctx, norm) => this.setOne(ctx, norm, s.seq));
+    }
+    return this.expanded(context, s.line, (ctx, norm) => this.applyOne(ctx, norm, negate, defaults, s.seq));
   }
 
   /**
@@ -473,9 +543,12 @@ class ConfigAstImpl implements ConfigAst {
     return { op: first.op, context: copyContext(context), line: normalizeConfigLine(context, line, this.rules) };
   }
 
-  /** `set` of one normalized stored line (no VLAN list left in it or its context). */
-  private setOne(context: readonly (readonly string[])[], norm: readonly string[]): ConfigDelta | undefined {
+  /** `set` of one normalized stored line (no VLAN list left in it or its context); `seq` only for sequenced rules. */
+  private setOne(context: readonly (readonly string[])[], norm: readonly string[], seq?: number): ConfigDelta | undefined {
     const rule = this.rules.ruleFor(context, norm);
+    if (rule?.sequenced !== undefined && rule.section === undefined && rule.group === undefined) {
+      return this.setSequenced(context, rule, norm, seq);
+    }
     const ctxNode = this.walk(context, true) as ConfigNode;
     const delta: ConfigDelta = { op: 'set', context: copyContext(context), line: norm.slice() };
 
@@ -606,16 +679,88 @@ class ConfigAstImpl implements ConfigAst {
     return delta;
   }
 
+  // ── P3 sequenced lists (D12) ──
+
+  /** Every numbered entry of list `listKey`: global lines of that number, then the entries of its sections. */
+  private listEntries(listKey: string): { container: ConfigNode; node: ConfigNode; context: string[][] }[] {
+    const out: { container: ConfigNode; node: ConfigNode; context: string[][] }[] = [];
+    for (const top of this.root.children) {
+      const tokens = [top.key, ...top.args];
+      const rule = this.rules.ruleFor([], tokens);
+      if (rule?.sequenced !== undefined && rule.section === undefined) {
+        if (top.seq !== undefined && sequencedListOf([], tokens, this.rules) === listKey) out.push({ container: this.root, node: top, context: [] });
+        continue;
+      }
+      if (rule?.section === undefined || top.args[top.args.length - 1] !== listKey) continue;
+      const context = [tokens];
+      if (!isSequencedSectionContext(context, this.rules)) continue;
+      for (const c of top.children) if (c.seq !== undefined) out.push({ container: top, node: c, context });
+    }
+    return out;
+  }
+
+  /**
+   * `set` of an entry of a sequenced rule: a no-op when its container already holds the same entry or when the given
+   * number is taken in the list; otherwise numbered (`seq`, or the list's highest + 10) and placed before the first
+   * sibling of the list with a higher number.
+   */
+  private setSequenced(
+    context: readonly (readonly string[])[],
+    rule: ConfigLineRule,
+    norm: readonly string[],
+    seq: number | undefined,
+  ): ConfigDelta | undefined {
+    const ctxNode = this.walk(context, true) as ConfigNode;
+    if (ctxNode.children.some((c) => c.key !== NO_KEY && sameArgs([c.key, ...c.args], norm))) return undefined;
+    const node: ConfigNode = { key: norm[0] as string, args: norm.slice(1), children: [] };
+    const delta: ConfigDelta = { op: 'set', context: copyContext(context), line: norm.slice() };
+    const listKey = sequencedListOf(context, norm, this.rules);
+    if (listKey === undefined) {
+      ctxNode.children.push(node);
+      return delta;
+    }
+    const entries = this.listEntries(listKey);
+    let n: number;
+    if (seq === undefined) {
+      n = entries.reduce((m, e) => Math.max(m, e.node.seq as number), 0) + CONFIG_SEQ_STEP;
+      if (!validSeq(n)) return undefined;
+    } else {
+      if (entries.some((e) => e.node.seq === seq)) return undefined;
+      n = seq;
+    }
+    node.seq = n;
+    const mine = new Set(entries.filter((e) => e.container === ctxNode).map((e) => e.node));
+    const at = ctxNode.children.findIndex((c) => mine.has(c) && (c.seq as number) > n);
+    if (at === -1) ctxNode.children.push(node);
+    else ctxNode.children.splice(at, 0, node);
+    return delta;
+  }
+
+  /** `no <seq>` typed in a list section: remove the entry of that number (a section entry or a global line). */
+  private unsetBySeq(context: readonly (readonly string[])[], seq: number): ConfigDelta | undefined {
+    const entry = context[context.length - 1];
+    const listKey = entry?.[entry.length - 1];
+    if (listKey === undefined) return undefined;
+    const hit = this.listEntries(listKey).find((e) => e.node.seq === seq);
+    if (hit === undefined) return undefined;
+    const idx = hit.container.children.indexOf(hit.node);
+    hit.container.children.splice(idx, 1);
+    const tokens = [hit.node.key, ...hit.node.args];
+    const ident = ruleIdentity(this.rules.ruleFor(hit.context, tokens), tokens);
+    return { op: 'unset', context: copyContext(hit.context), line: tokens, before: tokens.slice(ident) };
+  }
+
   /** One stored line through the completeness rule (see `apply`). */
   private applyOne(
     context: readonly (readonly string[])[],
     norm: readonly string[],
     negate: boolean,
     defaults: DefaultSlots,
+    seq?: number,
   ): ConfigDelta | undefined {
     const rule = this.rules.ruleFor(context, norm);
     if (rule === undefined || rule.section !== undefined || rule.bothForms === true) {
-      return negate ? this.unsetOne(context, norm) : this.setOne(context, norm);
+      return negate ? this.unsetOne(context, norm) : this.setOne(context, norm, seq);
     }
     const ident = ruleIdentity(rule, norm);
     const identity = norm.slice(0, ident);
@@ -626,7 +771,7 @@ class ConfigAstImpl implements ConfigAst {
       if (def !== undefined && def[0] !== NO_KEY) return this.setOne(context, def);
       return this.unsetOne(context, identity);
     }
-    if (def === undefined) return negate ? this.unsetOne(context, norm) : this.setOne(context, norm);
+    if (def === undefined) return negate ? this.unsetOne(context, norm) : this.setOne(context, norm, seq);
 
     if (rule.storeNegation === true) {
       const defIsDefaultState = sameArgs(def, identity);
@@ -850,11 +995,11 @@ class ConfigAstImpl implements ConfigAst {
    * result falls back to removing every top-level entry of `this` and adding every entry of `other`.
    */
   diffTree(other: ConfigAst): ConfigTreeChange[] {
-    const target = JSON.stringify(other.toJSON());
+    const target = diffComparableJson(other.toJSON());
     const work = this.clone();
     const rec = new ChangeRecorder(work);
     this.diffList(rec, [], this.root.children, other.root.children, undefined);
-    if (JSON.stringify(work.toJSON()) === target) return rec.changes;
+    if (diffComparableJson(work.toJSON()) === target) return rec.changes;
 
     const fresh = this.clone();
     const rebuild = new ChangeRecorder(fresh);
@@ -871,23 +1016,32 @@ class ConfigAstImpl implements ConfigAst {
 
   // ── diffTree internals ──
 
-  /** Comparable entries of a storage list (`group` set for the leaves of a group node). */
-  private entriesOf(list: readonly ConfigNode[], group: string | undefined): DiffEntry[] {
+  /**
+   * Comparable entries of a storage list (`group` set for the leaves of a group node). P3: an entry of a list section
+   * (`context` a sequenced section) keys on its sequence number too, so a renumbered entry is re-added with its number.
+   */
+  private entriesOf(list: readonly ConfigNode[], group: string | undefined, context: readonly (readonly string[])[] = []): DiffEntry[] {
+    const numbered = group === undefined && isSequencedSectionContext(context, this.rules);
     return list.map((node): DiffEntry => {
       if (group !== undefined) {
         const tokens = [group, node.key, ...node.args];
-        return { kind: 'line', key: `L ${tokens.join(' ')}`, tokens, node };
+        const key = `L ${tokens.join(' ')}`;
+        return { kind: 'line', key, bare: key, tokens, node };
       }
       if (this.groups.has(node.key) && node.args.length === 0) {
-        return { kind: 'group', key: `G ${node.key}`, tokens: [node.key], node };
+        const key = `G ${node.key}`;
+        return { kind: 'group', key, bare: key, tokens: [node.key], node };
       }
       if (node.key === NO_KEY && node.args.length > 0) {
-        return { kind: 'neg', key: `N ${node.args.join(' ')}`, tokens: node.args.slice(), node };
+        const key = `N ${node.args.join(' ')}`;
+        return { kind: 'neg', key, bare: key, tokens: node.args.slice(), node };
       }
       const tokens = [node.key, ...node.args];
-      return { kind: 'line', key: `L ${tokens.join(' ')}`, tokens, node };
+      const bare = `L ${tokens.join(' ')}`;
+      return { kind: 'line', key: numbered && node.seq !== undefined ? `${bare} #${node.seq}` : bare, bare, tokens, node };
     });
   }
+
 
   /** A plain single-valued, non-section line that a `set` replaces in place. */
   private isReplaceable(context: readonly (readonly string[])[], e: DiffEntry): boolean {
@@ -929,10 +1083,12 @@ class ConfigAstImpl implements ConfigAst {
       for (const leaf of this.entriesOf(e.node.children, e.tokens[0])) this.addEntry(rec, context, leaf);
       return;
     }
-    rec.set(context, e.tokens);
+    // P3 (D12): a numbered entry of a list section is re-added with its number as the leading token
+    const numbered = e.node.seq !== undefined && isSequencedSectionContext(context, this.rules);
+    rec.set(context, numbered ? [String(e.node.seq), ...e.tokens] : e.tokens);
     if (e.node.children.length === 0) return;
     const sub = [...context, e.tokens];
-    for (const child of this.entriesOf(e.node.children, undefined)) this.addEntry(rec, sub, child);
+    for (const child of this.entriesOf(e.node.children, undefined, sub)) this.addEntry(rec, sub, child);
   }
 
   /** Diff one storage list of `this` (`tList`) against the matching list of the target (`oList`). */
@@ -943,8 +1099,8 @@ class ConfigAstImpl implements ConfigAst {
     oList: readonly ConfigNode[],
     group: string | undefined,
   ): void {
-    const eT = this.entriesOf(tList, group);
-    const eO = this.entriesOf(oList, group);
+    const eT = this.entriesOf(tList, group, context);
+    const eO = this.entriesOf(oList, group, context);
     const kept = new Set<number>();
     const pairs: { t: DiffEntry; o: DiffEntry }[] = [];
     const replaced: { t: DiffEntry; o: DiffEntry }[] = [];
@@ -983,13 +1139,15 @@ class ConfigAstImpl implements ConfigAst {
     }
     const additions = eO.slice(k);
     const additionKeys = new Set(additions.map((a) => a.key));
+    // P3: the same entry under another sequence number must leave before its renumbered copy is added
+    const additionBare = new Set(additions.map((a) => a.bare));
     const negations: DiffEntry[] = [];
     const early: DiffEntry[] = [];
     const late: DiffEntry[] = [];
     eT.forEach((t, i) => {
       if (kept.has(i)) return;
       if (t.kind === 'neg') negations.push(t);
-      else if (additionKeys.has(t.key) || additions.some((a) => this.isReplaceable(context, a) && this.sameIdentity(context, t, a))) early.push(t);
+      else if (additionKeys.has(t.key) || additionBare.has(t.bare) || additions.some((a) => this.isReplaceable(context, a) && this.sameIdentity(context, t, a))) early.push(t);
       else late.push(t);
     });
 

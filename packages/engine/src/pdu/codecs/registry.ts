@@ -29,6 +29,9 @@
  *    dhcpv6, capwap, then the approved SHOULD codecs in S-number order (hsrp [S2]; pagp [S3] is appended by its W3
  *    owner). `fillLinkField` is field-aware (dispatch.ts `linkFieldFill`): the 802.3 length rule for ethernet/dot1q
  *    in front of llc, and the llc selector spaces (`ethertype`, `nf.pid`, `llc.sap`).
+ *  • P3 (ARCHITECTURE-P3 §7 W1 pdu, §9.2 item 13): the P3 codecs follow the P2 codecs in the order ospf, ospf-lsa,
+ *    cdp, lldp, ntp, then the approved items' codecs in the ProtoName order of §2.3 (telnet, ssh [S13]; gre [S18];
+ *    ppp, lcp, pap, chap, ipcp, ipv6cp [S19]; syslog [S25]; eigrp [C1]; esp, ikev2 [C13]).
  */
 import type {
   Codec,
@@ -66,13 +69,31 @@ import { dhcpv6Codec } from './dhcpv6.js';
 import { capwapCodec } from './capwap.js';
 import { hsrpCodec } from './hsrp.js'; // [SHOULD S2]
 import { pagpCodec } from './pagp.js'; // [SHOULD S3] (registered by the W3 lag item, a reviewed edit)
+import { ospfCodec, ospfLsaCodec } from './ospf.js';
+import { cdpCodec } from './cdp.js';
+import { lldpCodec } from './lldp.js';
+import { ntpCodec } from './ntp.js';
+import { telnetCodec } from './telnet.js'; // [S13]
+import { sshCodec } from './ssh.js'; // [S13]
+import { greCodec } from './gre.js'; // [S18]
+import { pppCodec } from './ppp.js'; // [S19]
+import { lcpCodec } from './lcp.js'; // [S19]
+import { papCodec } from './pap.js'; // [S19]
+import { chapCodec } from './chap.js'; // [S19]
+import { ipcpCodec } from './ipcp.js'; // [S19]
+import { ipv6cpCodec } from './ipv6cp.js'; // [S19]
+import { syslogCodec } from './syslog.js'; // [S25]
+import { eigrpCodec } from './eigrp.js'; // [C1]
+import { espCodec } from './esp.js'; // [C13]
+import { ikev2Codec } from './ikev2.js'; // [C13]
 import { linkFieldFill } from './dispatch.js';
 
 /**
  * All registered codecs, keyed by protocol name, in registry order: the five P0 codecs, then the P0.5
  * link-layer codecs (hdlc, dot11, dot11-mgmt, llc, eapol), then the P1 codecs in contracts/fields.ts order
  * (ipv6, ipv6-hopopts, ipv6-route, ipv6-frag, ipv6-dstopts, icmpv6, udp, tcp, dhcp, dns, http), then the P2 codecs
- * (dot1q, stp, lacp, dtp, dhcpv6, capwap, hsrp, pagp). Plugins may `set` more.
+ * (dot1q, stp, lacp, dtp, dhcpv6, capwap, hsrp, pagp), then the P3 codecs (ospf, ospf-lsa, cdp, lldp, ntp, then the
+ * approved telnet, ssh, gre, ppp, lcp, pap, chap, ipcp, ipv6cp, syslog, eigrp, esp, ikev2). Plugins may `set` more.
  */
 export const CODECS: Map<ProtoName, Codec> = new Map<ProtoName, Codec>([
   [ethernetCodec.proto, ethernetCodec],
@@ -105,6 +126,26 @@ export const CODECS: Map<ProtoName, Codec> = new Map<ProtoName, Codec>([
   [capwapCodec.proto, capwapCodec],
   [hsrpCodec.proto, hsrpCodec], // [SHOULD S2]
   [pagpCodec.proto, pagpCodec], // [SHOULD S3]
+  // P3 (ARCHITECTURE-P3 §9.2 item 13): appended after the P2 codecs, the MUST codecs first, then the approved items'
+  // codecs in the ProtoName order of §2.3.
+  [ospfCodec.proto, ospfCodec],
+  [ospfLsaCodec.proto, ospfLsaCodec],
+  [cdpCodec.proto, cdpCodec],
+  [lldpCodec.proto, lldpCodec],
+  [ntpCodec.proto, ntpCodec],
+  [telnetCodec.proto, telnetCodec], // [S13]
+  [sshCodec.proto, sshCodec], // [S13]
+  [greCodec.proto, greCodec], // [S18]
+  [pppCodec.proto, pppCodec], // [S19]
+  [lcpCodec.proto, lcpCodec], // [S19]
+  [papCodec.proto, papCodec], // [S19]
+  [chapCodec.proto, chapCodec], // [S19]
+  [ipcpCodec.proto, ipcpCodec], // [S19]
+  [ipv6cpCodec.proto, ipv6cpCodec], // [S19]
+  [syslogCodec.proto, syslogCodec], // [S25]
+  [eigrpCodec.proto, eigrpCodec], // [C1]
+  [espCodec.proto, espCodec], // [C13]
+  [ikev2Codec.proto, ikev2Codec], // [C13]
 ]);
 
 /** Codec for `proto`, or undefined when nothing is registered under that name. */

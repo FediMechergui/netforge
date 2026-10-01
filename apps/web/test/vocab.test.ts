@@ -14,7 +14,22 @@ import {
   PROTO_FIELDS,
   TABLE_DESCRIPTORS,
 } from '@netforge/engine';
-import type { CapwapState, ChannelMemberState, FsmMachine, HsrpRow, PortSecurityRow, StpState } from '@netforge/engine';
+import type {
+  CapwapState,
+  ChannelMemberState,
+  DropReason,
+  EigrpNbrState,
+  EigrpTopologyRow,
+  FsmMachine,
+  HsrpRow,
+  OspfIsmState,
+  OspfNsmState,
+  PortSecurityRow,
+  PppFsmState,
+  PppRow,
+  StpState,
+  TunnelRow,
+} from '@netforge/engine';
 import * as media from '../src/vocab/media.js';
 import * as drops from '../src/vocab/drops.js';
 import * as protocols from '../src/vocab/protocols.js';
@@ -528,6 +543,142 @@ describe('original wording of the P2 tables (D22)', () => {
     for (const v of Object.values(lanes.LANE_VOCAB)) strings.push(v.label, v.hint, v.glyph);
     for (const v of Object.values(fsm.FSM_VOCAB)) strings.push(v.label, ...v.states);
     expect(strings.length).toBeGreaterThan(60);
+    for (const s of strings) expect(s, s).not.toMatch(BANNED);
+  });
+});
+
+// ── P3 vocabulary (ARCHITECTURE-P3 §6 first row, §7 W1 web-inspector, §10.2 `vocab.test.ts`): real entries for the P3
+// unions — the MUST protocols and drop reasons and those of the approved items, the P3 machines with the contract's
+// own state words, the `mgmt` and `wan` lanes, the two desktop panels, `programmable` and `QosMark`. Added cases only;
+// every case above is unchanged.
+describe('P3 vocabulary', () => {
+  const P3_PROTOCOLS = [
+    'ospf', 'ospf-lsa', 'cdp', 'lldp', 'ntp',
+    // the approved items: [S13] [S18] [S19] [S25] [C1] [C13]
+    'telnet', 'ssh', 'gre', 'ppp', 'lcp', 'pap', 'chap', 'ipcp', 'ipv6cp', 'syslog', 'eigrp', 'esp', 'ikev2',
+  ] as const satisfies readonly protocols.KnownProto[];
+  /** Control frames take the hexagon of spec §9.1 (§6: "control frames use the hexagon shape"). */
+  const P3_CONTROL = ['ospf', 'ospf-lsa', 'cdp', 'lldp', 'lcp', 'pap', 'chap', 'ipcp', 'ipv6cp', 'eigrp', 'ikev2'] as const satisfies readonly protocols.KnownProto[];
+
+  it('words every P3 protocol, since P3, with a sentence of its own', () => {
+    for (const p of P3_PROTOCOLS) {
+      const v = protocols.PROTOCOL_VOCAB[p];
+      expect(v.since, p).toBe('P3');
+      expect(v.hint.length, p).toBeGreaterThan(20);
+      expect(v.hint.endsWith('.'), p).toBe(true);
+      expect(v.transparent, p).toBeUndefined();
+    }
+    // Exactly the eighteen P3 names (§9.2 W0 item 1: the five MUST protocols and the thirteen approved ones).
+    expect(protocols.KNOWN_PROTOS.filter((p) => protocols.PROTOCOL_VOCAB[p].since === 'P3')).toEqual([...P3_PROTOCOLS]);
+  });
+
+  it('draws the P3 control frames as hexagons and keeps the letters the brief fixes', () => {
+    for (const p of P3_CONTROL) {
+      expect(protocols.packetShapeFor(p), p).toBe('hexagon');
+      expect(protocols.PROTOCOL_VOCAB[p].layer, p).toBe('control');
+    }
+    expect(protocols.protocolLetter('ospf')).toBe('O');
+    expect(protocols.protocolLetter('ospf-lsa')).toBe('OL');
+    expect(protocols.protocolLetter('eigrp')).toBe('EG');
+    expect(protocols.protocolLetter('esp')).toBe('ES');
+    expect(protocols.protocolLetter('ikev2')).toBe('IK');
+    // The tunnel headers are network-layer envelopes, not control frames.
+    expect(protocols.PROTOCOL_VOCAB.gre.layer).toBe('network');
+    expect(protocols.PROTOCOL_VOCAB.esp.layer).toBe('network');
+    // Unique letters over every protocol, P3 included (also asserted above for the whole table).
+    const letters = protocols.KNOWN_PROTOS.map((p) => protocols.PROTOCOL_VOCAB[p].letter);
+    expect(new Set(letters).size).toBe(letters.length);
+  });
+
+  it('labels the formerly reserved names as the reserved table did, and says what is simulated', () => {
+    for (const p of ['ntp', 'ssh', 'telnet', 'syslog'] as const) {
+      expect(protocols.protocolLabel(p), p).toBe(protocols.RESERVED_PROTOCOL_VOCAB[p]?.label);
+    }
+    expect(protocols.PROTOCOL_VOCAB.esp.hint).toMatch(/simulated/);
+    expect(protocols.PROTOCOL_VOCAB.ssh.hint).toMatch(/simulated/);
+    expect(protocols.PROTOCOL_VOCAB.cdp.hint).toMatch(/NetForge's own format/);
+    expect(protocols.PROTOCOL_VOCAB.pap.hint).toMatch(/in the clear/);
+  });
+
+  it('words the P3 drop reasons', () => {
+    const p3: readonly DropReason[] = ['dhcp-snooping', 'arp-inspection', 'mtu-exceeded', 'policed', 'ipsec-no-sa'];
+    expect(drops.DROP_REASONS.slice(-p3.length)).toEqual([...p3]);
+    for (const r of [...p3, 'acl-deny' as const]) {
+      const v = drops.DROP_VOCAB[r];
+      expect(v.tag.length, r).toBeLessThanOrEqual(32);
+      expect(v.label.length, r).toBeGreaterThan(20);
+      expect(v.hint.length, r).toBeGreaterThan(20);
+    }
+    expect(drops.DROP_VOCAB['acl-deny'].category).toBe('policy');
+    expect(drops.DROP_VOCAB['mtu-exceeded'].category).toBe('network');
+    expect(drops.dropTag('acl-deny', 'NO-WEB-PC1 #10')).toEqual({ title: 'denied by an access list', detail: 'NO-WEB-PC1 #10' });
+    expect(drops.dropTag('mtu-exceeded', 'larger than the tunnel can carry (1476 bytes)')).toEqual({
+      title: 'too big for the tunnel',
+      detail: 'larger than the tunnel can carry (1476 byte…', // clipped at DROP_DETAIL_MAX (44)
+    });
+    expect(drops.dropLabel('ipsec-no-sa')).toMatch(/security association/);
+  });
+
+  it('lists the P3 machines with the contract state words, in the order a learner meets them', () => {
+    const ism: readonly OspfIsmState[] = ['down', 'loopback', 'waiting', 'point-to-point', 'drother', 'backup', 'dr'];
+    expect(fsm.FSM_VOCAB['ospf-if'].states).toEqual(ism);
+    const nsm: readonly OspfNsmState[] = ['down', 'attempt', 'init', '2way', 'exstart', 'exchange', 'loading', 'full'];
+    expect(fsm.FSM_VOCAB['ospf-nbr'].states).toEqual(nsm);
+    expect(fsm.FSM_VOCAB.ntp.states).toEqual(['unsynchronised', 'synchronised']);
+    const tunnel: readonly TunnelRow['state'][] = ['down', 'up'];
+    expect(fsm.FSM_VOCAB.tunnel.states).toEqual(tunnel);
+    const ppp: readonly PppFsmState[] = ['initial', 'starting', 'closed', 'stopped', 'closing', 'stopping', 'req-sent', 'ack-rcvd', 'ack-sent', 'opened'];
+    expect(fsm.FSM_VOCAB['ppp-lcp'].states).toEqual(ppp);
+    expect(fsm.FSM_VOCAB['ppp-ncp'].states).toEqual(ppp);
+    const auth: readonly NonNullable<PppRow['authLocalState']>[] = ['pending', 'success', 'failed'];
+    expect(fsm.FSM_VOCAB['ppp-auth'].states).toEqual(auth);
+    const nbr: readonly (EigrpNbrState | 'down')[] = ['down', 'pending', 'up'];
+    expect(fsm.FSM_VOCAB['eigrp-nbr'].states).toEqual(nbr);
+    const route: readonly EigrpTopologyRow['state'][] = ['passive', 'active'];
+    expect(fsm.FSM_VOCAB['eigrp-route'].states).toEqual(route);
+    expect(fsm.FSM_VOCAB.ike.states).toEqual(['idle', 'init-sent', 'init-answered', 'auth-sent', 'established', 'failed']);
+    // §3.1 step 4: R1's interface goes waiting → drother → backup, so the strip lays them out in that order.
+    expect(fsm.fsmStateIndex('ospf-if', 'waiting')).toBeLessThan(fsm.fsmStateIndex('ospf-if', 'drother'));
+    expect(fsm.fsmStateIndex('ospf-if', 'drother')).toBeLessThan(fsm.fsmStateIndex('ospf-if', 'backup'));
+    expect(fsm.fsmLabel('ospf-nbr')).toBe('OSPF neighbour');
+  });
+
+  it('words the P3 lanes, panels, capability, mutation and trace kind', () => {
+    expect(lanes.LANE_ORDER.slice(-2)).toEqual(['mgmt', 'wan']);
+    expect(lanes.laneLabel('mgmt')).toBe('Management');
+    expect(lanes.laneLabel('wan')).toBe('WAN links');
+    for (const id of ['desktop.traffic', 'desktop.automation'] as const) {
+      const v = categories.GUI_PANEL_VOCAB[id];
+      expect(v.placement, id).toBe('desktop-app');
+      expect(v.hint.length, id).toBeGreaterThan(20);
+    }
+    expect(categories.CAPABILITY_VOCAB.programmable.label).toBe('Programmable host');
+    expect(categories.capabilityWords(['programmable'])).toContain('automation');
+    expect(fields.MUTATION_VOCAB.QosMark).toMatchObject({ reason: 'QosMark', icon: 'Q', derived: false });
+    expect(fields.mutationVocab('QosMark').label).toMatch(/QoS policy/);
+    const icons = Object.values(fields.MUTATION_VOCAB).filter((v) => !v.derived).map((v) => v.icon);
+    expect(new Set(icons).size).toBe(icons.length);
+    expect(traceKinds.TRACE_KIND_VOCAB.frameQueued.group).toBe('packets');
+  });
+
+  it('names no vendor, operating system or analyser in any P3 entry', () => {
+    const BANNED =
+      /cisco|\bios\b|\bnx-?os\b|junos|juniper|arista|huawei|netgear|linksys|tp-?link|ubiquiti|meraki|\baruba\b|mikrotik|catalyst|packet\s*tracer|wireshark|tcpdump|\bwindows\b|\bmac\s?os\b|\blinux\b|\bandroid\b|\biphone\b/i;
+    const strings: string[] = [];
+    for (const p of P3_PROTOCOLS) {
+      const v = protocols.PROTOCOL_VOCAB[p];
+      strings.push(v.label, v.hint, v.letter);
+    }
+    for (const r of ['dhcp-snooping', 'arp-inspection', 'mtu-exceeded', 'policed', 'ipsec-no-sa', 'acl-deny'] as const) {
+      const v = drops.DROP_VOCAB[r];
+      strings.push(v.tag, v.label, v.hint);
+    }
+    const machines: readonly FsmMachine[] = ['ospf-if', 'ospf-nbr', 'ntp', 'tunnel', 'ppp-lcp', 'ppp-auth', 'ppp-ncp', 'eigrp-nbr', 'eigrp-route', 'ike'];
+    for (const m of machines) strings.push(fsm.FSM_VOCAB[m].label, ...fsm.FSM_VOCAB[m].states);
+    for (const l of ['mgmt', 'wan'] as const) strings.push(lanes.LANE_VOCAB[l].label, lanes.LANE_VOCAB[l].hint);
+    for (const g of ['desktop.traffic', 'desktop.automation'] as const) strings.push(categories.GUI_PANEL_VOCAB[g].label, categories.GUI_PANEL_VOCAB[g].hint);
+    strings.push(categories.CAPABILITY_VOCAB.programmable.label, ...categories.CAPABILITY_VOCAB.programmable.words, fields.MUTATION_VOCAB.QosMark.label);
+    expect(strings.length).toBeGreaterThan(100);
     for (const s of strings) expect(s, s).not.toMatch(BANNED);
   });
 });

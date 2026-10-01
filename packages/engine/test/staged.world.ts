@@ -33,6 +33,12 @@
  *     stage P3 right after the last Computers model, until the W6 flip puts the real model in `computers.ts` (then the
  *     real input is used and the test-only one is not added).
  *
+ * The test injector (W1 qa, ARCHITECTURE-P3 §7 W1 qa, D13): when the registry overlay registers a factory named
+ * `injector` (`INJECTOR_PROCESS`; `test/inject.ts` provides it, `withInjector(...)`), the catalog also holds the test-only
+ * host NF-INJECTOR (`INJECTOR_HOST_TYPE`, after every other model): no capability, so no other daemon, four gigabit
+ * ports, and exactly one daemon, the injector, which sends pre-built frames out of a port at a fixed spacing
+ * (`injectFrames`). Without that factory nothing changes (no overlay the P2/P3 pins use registers it).
+ *
  * With the default registry at stage P2 nothing is filtered and the catalog equals the real one, model for model
  * (`device.catalog.p2.test.ts`); at stage P2 `createStagedSimulation` is `createP2Simulation` (`staged.world.test.ts`).
  * The catalog is never validated: a filtered model is not the model its capabilities derive, which `validateCatalog`
@@ -414,6 +420,45 @@ export function stagedModelInputs(stage: BuildStage): readonly ModelInput[] {
   return Object.freeze(out);
 }
 
+// ── the test injector's host (W1 qa: test/inject.ts, ARCHITECTURE-P3 §7 W1 qa, D13) ─────────────────────────────
+
+/** The test-only injector daemon's name (its factory lives in `test/inject.ts`). */
+export const INJECTOR_PROCESS: ProcessName = 'injector';
+/** The type of the test-only injector host. */
+export const INJECTOR_HOST_TYPE = 'pc.nfinjector';
+/** The injector host's ports, in canonical order. */
+export const INJECTOR_HOST_PORTS: readonly string[] = Object.freeze(['GigabitEthernet0', 'GigabitEthernet1', 'GigabitEthernet2', 'GigabitEthernet3']);
+
+/**
+ * The test-only injector host input: no capability (so it derives no daemon, runs no host stack and sends nothing of its
+ * own), four gigabit ports (up by default, role `routed`), category Computers. Built at call time (rule 12).
+ */
+export function injectorHostTestInput(): ModelInput {
+  return {
+    type: INJECTOR_HOST_TYPE,
+    model: 'NF-INJECTOR',
+    description: 'Test-only frame injector: sends pre-built frames out of its ports at a fixed spacing',
+    category: 'computers',
+    icon: 'pc',
+    capabilities: [],
+    ports: INJECTOR_HOST_PORTS.map((name) => hostEth(name, SPEED_1G)),
+    family: 'nf-injector',
+    tags: ['test', 'injector'],
+  };
+}
+
+/** The injector host model at `stage`: `defineModel` of its input, with exactly one daemon, the injector. */
+export function defineInjectorHostModel(stage: BuildStage): DeviceModel {
+  const base = defineModel(injectorHostTestInput(), stage, ALL_MODULES);
+  const processes: readonly ProcessName[] = [INJECTOR_PROCESS];
+  return deepFreeze<DeviceModel>({
+    ...base,
+    processes,
+    tables: deriveStagedTables(processes, base.capabilities, stage),
+    portOwners: derivePortOwners(base.ports, base.virtualFamilies, processes, []),
+  });
+}
+
 /** Options of `createStagedCatalog`. */
 export interface StagedCatalogOptions {
   /** The build stage the models are derived for. */
@@ -429,7 +474,10 @@ export interface StagedCatalogOptions {
  */
 export function createStagedCatalog(opts: StagedCatalogOptions): DeviceCatalog {
   const registry = stagedRegistry(opts.factories);
-  const models = Object.freeze(stagedModelInputs(opts.stage).map((input) => defineStagedModel(input, opts.stage, registry)));
+  const staged = stagedModelInputs(opts.stage).map((input) => defineStagedModel(input, opts.stage, registry));
+  // W1 qa: the injector host exists only when the overlay registers the injector (test/inject.ts)
+  if (Object.prototype.hasOwnProperty.call(registry, INJECTOR_PROCESS)) staged.push(defineInjectorHostModel(opts.stage));
+  const models = Object.freeze(staged);
   const byType = new Map<string, DeviceModel>();
   for (const m of models) byType.set(m.type, m);
   const moduleByType = new Map(ALL_MODULES.map((m) => [m.type, m] as const));

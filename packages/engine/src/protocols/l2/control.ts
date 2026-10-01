@@ -1,6 +1,7 @@
 /**
  * protocols/l2/control.ts — the L2 control-frame table (ARCHITECTURE-P2 D7, §2.4 "The L2 control table", §3.0 steps 2
- * and 5). Its shape is contract: eth-switch dispatches with it, and stp, dtp and etherchannel receive what it names.
+ * and 5; ARCHITECTURE-P3 D18, §3.0 (b), §3.6). Its shape is contract: eth-switch dispatches with it, and stp, dtp,
+ * etherchannel, cdp and lldp receive what it names.
  *
  * Only a VLAN-aware device (`isVlanAware(model)`) uses the table, for frames arriving on a bridged port. Transparent
  * bridges bridge every frame exactly as before and never call it.
@@ -12,14 +13,23 @@
  * | ethertype 0x8809 (untagged), lacp.subtype 1             | 'lacp'       | etherchannel; never bridged  | physical    |
  * | dst NF_L2_CONTROL_MAC, SNAP NF_OUI, PID 1               | 'dtp'        | dtp; never bridged           | physical    |
  * | dst NF_L2_CONTROL_MAC, SNAP NF_OUI, PID 3   [S3]        | 'pagp'       | etherchannel; never bridged  | physical    |
+ * | dst NF_L2_CONTROL_MAC, SNAP NF_OUI, PID 4   (P3)        | 'cdp'        | cdp; never bridged           | physical    |
+ * | dst 01:80:c2:00:00:0e, ethertype 0x88cc     (P3)        | 'lldp'       | lldp; never bridged          | physical    |
  * | any other dst in 01:80:c2:00:00:00–0f                   | 'reserved'   | dropped not-for-me           | —           |
  * | anything else                                           | undefined    | normal bridging              | —           |
  *
  * A class whose daemon is not in `model.processes` is dropped `unsupported-protocol`, detail `<class> is not running
- * on this device` — except 'stp', which is bridged as an ordinary multicast of its VLAN; on a `wireless-controller`
- * (which never relays spanning tree) a BPDU is dropped `not-for-me`, detail `the controller does not relay spanning
- * tree`. (VTP, PID 2, is a COULD item that is not approved: its frames are not classified and bridge like any other
- * multicast.)
+ * on this device` — except 'stp', which is bridged as an ordinary multicast of its VLAN, and the P3 discovery classes
+ * 'cdp' and 'lldp', which drop `not-for-me` with that detail (P3 D18: the controller runs cdp but not lldp); on a
+ * `wireless-controller` (which never relays spanning tree) a BPDU is dropped `not-for-me`, detail `the controller does
+ * not relay spanning tree`. (VTP, PID 2, is a COULD item that is not approved: its frames are not classified and bridge
+ * like any other multicast.)
+ *
+ * P3 (D18): CDP is the original NF discovery format ("CDP" is a name only) under the NF control group with PID 4
+ * (`NF_PID_CDP`); LLDP is IEEE 802.1AB, ethertype 0x88cc to the nearest-bridge group `01:80:c2:00:00:0e` (before P3 such
+ * a frame was 'reserved'; the LLDP ethertype to another group address, or another ethertype to that group, still is).
+ * The two rows apply in every profile: the profile never gates a feature (D2); a P1 or P2 world simply sends neither.
+ * `L2_CONTROL_TABLE` is the full table; `L2_CONTROL` keeps the P2 rows exactly as P2 pinned them.
  *
  * The reserved block: exactly `01:80:c2:00:00:01`–`0f`, as the table says. `01:80:c2:00:00:00` is claimed by the STP
  * row, so a frame to the bridge group address that is not an LLC-0x42 BPDU classifies `undefined` and is bridged as an
@@ -34,18 +44,24 @@ import type { Capability } from '../../contracts/catalog.js';
 import type { ProcessName } from '../../contracts/ids.js';
 import type { DropReason } from '../../contracts/link.js';
 import {
+  ETHERTYPE_LLDP,
   ETHERTYPE_SLOW_PROTOCOLS,
   LLC_SAP_STP,
+  LLDP_NEAREST_BRIDGE_MAC,
   NF_L2_CONTROL_MAC,
   NF_OUI,
+  NF_PID_CDP,
   NF_PID_DTP,
   NF_PID_PAGP,
   STP_GROUP_MAC,
 } from '../../contracts/pdu.js';
 import type { LayerView, PduView } from '../../contracts/pdu.js';
 
-/** Class of an L2 control frame on a bridged port of a VLAN-aware device (§2.4). 'pagp' is [SHOULD S3]. */
-export type L2ControlClass = 'stp' | 'lacp' | 'dtp' | 'pagp' | 'reserved';
+/**
+ * Class of an L2 control frame on a bridged port of a VLAN-aware device (§2.4). 'pagp' is [SHOULD S3]; 'cdp' and
+ * 'lldp' @since P3 (D18).
+ */
+export type L2ControlClass = 'stp' | 'lacp' | 'dtp' | 'pagp' | 'cdp' | 'lldp' | 'reserved';
 
 /** One row of the control table. */
 export interface L2ControlRow {
@@ -62,19 +78,33 @@ export interface L2ControlRow {
   readonly whenAbsent: 'bridge' | 'drop';
 }
 
-/** The control table, in table order (§2.4). */
-export const L2_CONTROL: readonly L2ControlRow[] = Object.freeze([
+/** The full control table, in table order (P2 §2.4; P3 D18 inserts the 'cdp' and 'lldp' rows before 'reserved'). */
+export const L2_CONTROL_TABLE: readonly L2ControlRow[] = Object.freeze([
   Object.freeze({ cls: 'stp', to: 'stp', port: 'logical', whenAbsent: 'bridge' } as const),
   Object.freeze({ cls: 'lacp', to: 'etherchannel', port: 'physical', whenAbsent: 'drop' } as const),
   Object.freeze({ cls: 'dtp', to: 'dtp', port: 'physical', whenAbsent: 'drop' } as const),
   // [S3] PAgP in its NF format (D8)
   Object.freeze({ cls: 'pagp', to: 'etherchannel', port: 'physical', whenAbsent: 'drop' } as const),
+  // P3 D18: discovery, delivered on the physical port and never bridged
+  Object.freeze({ cls: 'cdp', to: 'cdp', port: 'physical', whenAbsent: 'drop' } as const),
+  Object.freeze({ cls: 'lldp', to: 'lldp', port: 'physical', whenAbsent: 'drop' } as const),
   Object.freeze({ cls: 'reserved', port: null, whenAbsent: 'drop' } as const),
 ]) as readonly L2ControlRow[];
 
+/** The classes P3 adds (D18): the discovery protocols. */
+const DISCOVERY_CONTROL_CLASSES: readonly L2ControlClass[] = Object.freeze(['cdp', 'lldp']);
+
+/**
+ * The P2 rows of the control table (P2 §2.4), in table order: `L2_CONTROL_TABLE` without the P3 discovery rows. Kept
+ * exactly as P2 pinned it (`l2.control.test.ts`, the rows case); the dispatch reads `L2_CONTROL_TABLE`.
+ */
+export const L2_CONTROL: readonly L2ControlRow[] = Object.freeze(
+  L2_CONTROL_TABLE.filter((r) => !DISCOVERY_CONTROL_CLASSES.includes(r.cls)),
+);
+
 /** The table row of `cls`. */
 export function l2ControlRow(cls: L2ControlClass): L2ControlRow {
-  return L2_CONTROL.find((r) => r.cls === cls) as L2ControlRow;
+  return L2_CONTROL_TABLE.find((r) => r.cls === cls) as L2ControlRow;
 }
 
 /** True for the classes handled on the physical port at §3.0 step 2 (everything but 'stp'). */
@@ -86,7 +116,7 @@ export function isPhysicalControl(cls: L2ControlClass): boolean {
 export const DETAIL_RESERVED_GROUP = 'reserved link-layer group';
 /** Drop detail of a BPDU at a wireless controller (D17). */
 export const DETAIL_CONTROLLER_NO_STP = 'the controller does not relay spanning tree';
-/** Drop detail of a control class whose daemon does not run here: `<class> is not running on this device`. */
+/** Drop detail of a control class whose daemon does not run here: `<class> is not running on this device` (e.g. `lldp is not running on this device`). */
 export function controlNotRunningDetail(cls: L2ControlClass): string {
   return `${cls} is not running on this device`;
 }
@@ -108,7 +138,8 @@ function firstLayer(frame: Pick<PduView, 'layers'>, proto: string): LayerView | 
 /**
  * Class of a frame (§2.4 table), or undefined for an ordinary frame. Reads only decoded fields: the outer
  * `ethernet.dst` and `ethernet.type`, the first `llc` layer's `dsap`/`oui`/`type` and a `lacp` layer's `subtype`, so a
- * per-VLAN BPDU tagged on a trunk (`[ethernet 0x8100, dot1q, llc, stp]`) classifies like an untagged one.
+ * per-VLAN BPDU tagged on a trunk (`[ethernet 0x8100, dot1q, llc, stp]`) classifies like an untagged one. The P3 rows
+ * need no discovery codec: 'cdp' reads the SNAP PID, 'lldp' the outer destination and ethertype.
  */
 export function classifyControl(frame: Pick<PduView, 'layers'>): L2ControlClass | undefined {
   const eth = frame.layers[0];
@@ -128,9 +159,12 @@ export function classifyControl(frame: Pick<PduView, 'layers'>): L2ControlClass 
     if (llc !== undefined && llc.fields.oui === NF_OUI) {
       if (llc.fields.type === NF_PID_DTP) return 'dtp';
       if (llc.fields.type === NF_PID_PAGP) return 'pagp'; // [S3]
+      if (llc.fields.type === NF_PID_CDP) return 'cdp'; // P3 D18
     }
     return undefined;
   }
+  // P3 D18: LLDP is exactly ethertype 0x88cc (untagged) to the nearest-bridge group; the rest of the block stays reserved
+  if (dst === LLDP_NEAREST_BRIDGE_MAC && eth.fields.type === ETHERTYPE_LLDP) return 'lldp';
   // §2.4 reserves `01:80:c2:00:00:01`–`0f` only: the bridge group address `…:00` is claimed by the STP row above, and
   // a frame to it that is not an LLC-0x42 BPDU falls through to "anything else" and bridges as an ordinary multicast.
   if (dst !== STP_GROUP_MAC && isReservedLinkGroup(dst)) return 'reserved';
@@ -168,7 +202,9 @@ export function controlAction(
     return { kind: 'deliver', to: row.to, port: 'logical' };
   }
   if (!model.processes.includes(row.to)) {
-    return { kind: 'drop', reason: 'unsupported-protocol', detail: controlNotRunningDetail(cls) };
+    // P3 D18: a discovery frame where its daemon does not run is not for this device (not-for-me, same detail)
+    const reason: DropReason = DISCOVERY_CONTROL_CLASSES.includes(cls) ? 'not-for-me' : 'unsupported-protocol';
+    return { kind: 'drop', reason, detail: controlNotRunningDetail(cls) };
   }
   return { kind: 'deliver', to: row.to, port: row.port === 'logical' ? 'logical' : 'physical' };
 }

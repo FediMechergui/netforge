@@ -23,6 +23,7 @@ import { createTable } from '../src/core/table.js';
 import type { MatchContext } from '../src/cli/parser.js';
 import { testPortView } from './cli.parser.fixture.js';
 import { secretsFor } from '../src/cli/runtime.js';
+import { P3_CTX } from './port.fixtures.js';
 
 /** The catalog model with this type id (throws for an unknown type). */
 export function catalogModel(type: string): DeviceModel {
@@ -273,6 +274,8 @@ export function commandCtxFor(model: DeviceModel, opts: CommandCtxOptions = {}):
     radioView: (port) => opts.radioView?.(port),
     air: opts.air ?? { visibleBss: () => [], link: () => undefined },
     secrets: secretsFor('d_1'),
+    // P3 (§9.2 W1 item 19): the required CommandCtx.clock, the unset clock view of P3_CTX
+    clock: P3_CTX.clock,
   };
   if (opts.iface !== undefined) (ctx as { iface?: PortView }).iface = ports.get(opts.iface);
   const table = <R extends TableRow = TableRow>(name: TableName): Table<R> => {

@@ -12,6 +12,10 @@
  *  • P0.5: `onesSum` / `foldOnes` / `finishChecksum` (chained one's-complement sums),
  *    `pseudoHeaderSumV4` / `pseudoHeaderSumV6` (transport pseudo-headers), `crc16X25`
  *    (HDLC FCS) and the little-endian u16 accessors used for it.
+ *  • P3 (ARCHITECTURE-P3 §7 W1 pdu): the Fletcher checksum of ISO 8473 / RFC 905 Annex B (`fletcherCheckbytes`,
+ *    `fletcherValid`) and its OSPF use (`ospfLsaFletcher`, `ospfLsaFletcherValid`: RFC 2328 §12.1.7, the LSA from
+ *    its options byte, the age excluded); byte-oriented FNV-1a 32 (`fnv1aBytes`, `fnv1aU32`) for the simulated
+ *    [C13] ESP integrity check value (D27) and the other FNV-derived wire values of §4.1.
  *
  * Pure functions, no engine state, no allocation on the hot paths.
  */
@@ -114,6 +118,86 @@ export function crc16X25(bytes: Uint8Array, offset = 0, length = bytes.length - 
     c = CRC16_X25_TABLE[(c ^ bytes[i]!) & 0xff]! ^ (c >>> 8);
   }
   return (c ^ 0xffff) & 0xffff;
+}
+
+// ── Fletcher (ISO 8473 / RFC 905 Annex B; OSPF LSAs) ────────────────────────
+
+/**
+ * @since P3 The two Fletcher check octets for `bytes[offset, offset+length)` whose check octets sit at `offset + at`
+ * and `offset + at + 1` (RFC 905 Annex B, the algorithm of RFC 2328 §12.1.7). The sums are taken with those two
+ * octets counted as zero, whatever the buffer holds there. Returns `X << 8 | Y`, written big-endian in place of the
+ * check octets; neither octet is ever 0 (255 stands for 0 modulo 255), so a written checksum is never 0.
+ */
+export function fletcherCheckbytes(bytes: Uint8Array, offset: number, length: number, at: number): number {
+  if (at < 0 || at + 2 > length) throw new RangeError(`fletcherCheckbytes: check octets at ${at} outside ${length} bytes`);
+  let c0 = 0;
+  let c1 = 0;
+  const end = offset + length;
+  const skip = offset + at;
+  for (let i = offset; i < end; i++) {
+    const b = i === skip || i === skip + 1 ? 0 : bytes[i]!;
+    c0 = (c0 + b) % 255;
+    c1 = (c1 + c0) % 255;
+  }
+  let x = ((length - at - 1) * c0 - c1) % 255;
+  if (x <= 0) x += 255;
+  let y = 510 - c0 - x;
+  if (y > 255) y -= 255;
+  return (x << 8) | y;
+}
+
+/** @since P3 True when `bytes[offset, offset+length)`, check octets in place, sums to zero (C0 = C1 = 0 mod 255). */
+export function fletcherValid(bytes: Uint8Array, offset: number, length: number): boolean {
+  let c0 = 0;
+  let c1 = 0;
+  const end = offset + length;
+  for (let i = offset; i < end; i++) {
+    c0 = (c0 + bytes[i]!) % 255;
+    c1 = (c1 + c0) % 255;
+  }
+  return c0 === 0 && c1 === 0;
+}
+
+/**
+ * @since P3 The LS checksum of the OSPF LSA of `length` bytes at `offset` (RFC 2328 §12.1.7): Fletcher over the LSA
+ * from its options byte (the 2-byte LS age is excluded), the checksum field being LSA octets 16–17.
+ */
+export function ospfLsaFletcher(bytes: Uint8Array, offset: number, length: number): number {
+  return fletcherCheckbytes(bytes, offset + 2, length - 2, 14);
+}
+
+/** @since P3 True when the OSPF LSA of `length` bytes at `offset` carries a matching LS checksum (age excluded). */
+export function ospfLsaFletcherValid(bytes: Uint8Array, offset: number, length: number): boolean {
+  if (length < 20) return false;
+  return fletcherValid(bytes, offset + 2, length - 2);
+}
+
+// ── FNV-1a 32 over bytes ────────────────────────────────────────────────────
+
+/** @since P3 FNV-1a 32-bit offset basis. */
+export const FNV1A_OFFSET_BASIS = 0x811c9dc5;
+const FNV1A_PRIME = 0x01000193;
+
+/**
+ * @since P3 FNV-1a 32 over `bytes[offset, offset+length)`, starting from `seed` (the offset basis by default, or a
+ * previous result to chain). Pure integer maths (`Math.imul`); returns an unsigned 32-bit number.
+ */
+export function fnv1aBytes(bytes: Uint8Array, offset = 0, length = bytes.length - offset, seed = FNV1A_OFFSET_BASIS): number {
+  let h = seed >>> 0;
+  const end = offset + length;
+  for (let i = offset; i < end; i++) h = Math.imul(h ^ bytes[i]!, FNV1A_PRIME);
+  return h >>> 0;
+}
+
+/** @since P3 FNV-1a 32 of the four big-endian bytes of `value`, chained from `seed`. */
+export function fnv1aU32(value: number, seed = FNV1A_OFFSET_BASIS): number {
+  const v = value >>> 0;
+  let h = seed >>> 0;
+  h = Math.imul(h ^ (v >>> 24), FNV1A_PRIME);
+  h = Math.imul(h ^ ((v >>> 16) & 0xff), FNV1A_PRIME);
+  h = Math.imul(h ^ ((v >>> 8) & 0xff), FNV1A_PRIME);
+  h = Math.imul(h ^ (v & 0xff), FNV1A_PRIME);
+  return h >>> 0;
 }
 
 // ── IEEE 802.3 CRC-32 ───────────────────────────────────────────────────────

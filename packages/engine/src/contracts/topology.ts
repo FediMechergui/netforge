@@ -16,6 +16,10 @@
  * `migrateTopology` walks a document up to `schemaIdFor(t)` (1.1 → 1.2 is identity + schema rewrite), so a P1
  * document stays 1.1 and exports byte-identically; a 1.0 or 1.1 document never carries `profile` (it is read with
  * its own field set, which strips the key).
+ *
+ * netforge.topology/1.3 (P3, ARCHITECTURE-P3 §2.9) adds `profile: 'P3'` and [S32] `devices[].files` (a host's
+ * `files:` store). 1.2 → 1.3 is identity + schema rewrite; a 1.2 document keeps its `'P2'`-only profile field set (a 1.2
+ * document carrying `'P3'` is refused), and a 1.0–1.2 document never carries `files` (its field set strips it).
  */
 import type { DeviceId, LinkId, PortRef } from './ids.js';
 import type { Impairments, LinkKind, MediaType } from './link.js';
@@ -38,14 +42,17 @@ export const TOPOLOGY_SCHEMA_ID_1_2 = 'netforge.topology/1.2';
  * identity 1.2 → 1.3 migration.
  */
 export const TOPOLOGY_SCHEMA_ID_1_3 = 'netforge.topology/1.3';
-/** Every schema id a loader accepts (older first). */
-export const TOPOLOGY_SCHEMA_IDS = [TOPOLOGY_SCHEMA_ID_1_0, TOPOLOGY_SCHEMA_ID_1_1, TOPOLOGY_SCHEMA_ID_1_2] as const;
+/**
+ * Every schema id a loader accepts (older first). 1.3 appended @since P3 by the W1 io item (ruling R7, a reviewed
+ * additive edit of this file).
+ */
+export const TOPOLOGY_SCHEMA_IDS = [TOPOLOGY_SCHEMA_ID_1_0, TOPOLOGY_SCHEMA_ID_1_1, TOPOLOGY_SCHEMA_ID_1_2, TOPOLOGY_SCHEMA_ID_1_3] as const;
 export type TopologySchemaId = (typeof TOPOLOGY_SCHEMA_IDS)[number];
 /**
- * The newest id this build reads (1.2 @since P2). `migrateTopology` walks a document up to `schemaIdFor(t)`, never
- * further: a P1 document stays 1.1, so it never gains a 1.2 id it does not need.
+ * The newest id this build reads (1.2 @since P2, 1.3 @since P3). `migrateTopology` walks a document up to
+ * `schemaIdFor(t)`, never further: a P1 document stays 1.1 and a P2 document 1.2, so neither gains an id it does not need.
  */
-export const LATEST_TOPOLOGY_SCHEMA_ID: TopologySchemaId = TOPOLOGY_SCHEMA_ID_1_2;
+export const LATEST_TOPOLOGY_SCHEMA_ID: TopologySchemaId = TOPOLOGY_SCHEMA_ID_1_3;
 /**
  * The id of a document with no 1.2 content. P0 value was 1.0; the D11 io wave (P0.5 W1) switched it to
  * TOPOLOGY_SCHEMA_ID_1_1 together with `migrateTopology` (io/migrate.ts) and io/schema.ts accepting every id in
@@ -144,9 +151,13 @@ export interface Topology {
  * @since P2 The lowest schema id that can express `t`: 1.2 iff `t.profile` is present, else 1.1 (ARCHITECTURE-P2
  * §2.9). The exporter writes this, so every P1 document still exports byte-identically as 1.1. EVERY writer that sets
  * `profile` (exportTopology, useCurrentDefaults, the scenario kit's `topology(…, {profile})`) sets
- * `schema = schemaIdFor(t)` in the same step. Pure; reads only `t.profile`.
+ * `schema = schemaIdFor(t)` in the same step.
+ * @since P3 (ARCHITECTURE-P3 §2.9, ruling R7; W1 io) 1.3 iff `t.profile` is 'P3' or a 1.3-only key is present: [S32]
+ * a device whose `files` store holds at least one file (an empty `files` is no content, and the writer drops it). A P1
+ * or P2 document therefore still exports byte-identically as 1.1 or 1.2. Pure; reads `t.profile` and `devices[].files`.
  */
 export function schemaIdFor(t: Topology): TopologySchemaId {
+  if (t.profile === 'P3' || t.devices.some((d) => d.files !== undefined && d.files.length > 0)) return TOPOLOGY_SCHEMA_ID_1_3;
   return t.profile !== undefined ? TOPOLOGY_SCHEMA_ID_1_2 : TOPOLOGY_SCHEMA_ID_1_1;
 }
 

@@ -754,13 +754,14 @@ export interface ProcessCtx {
    */
   radioSettings?(port: PortId): RadioSettings | undefined;
 
-  // ── P3 (ARCHITECTURE-P3 §2.4; optional during the transition, required once implemented: P3_CTX spread) ──
-  /** @since P3 The device clock (D19, contracts/clock.ts). W1 device; required once implemented. */
-  clock?(): DeviceClockView;
-  /** @since P3 [S32] The files of a host's store (hosts' `files:` only in P3a; D21). */
-  files?(fs: FileSystemId): readonly StoredFileMeta[];
-  /** @since P3 [S32] One file of a host's store, or undefined. */
-  readFile?(fs: FileSystemId, path: string): StoredFile | undefined;
+  // ── P3 (ARCHITECTURE-P3 §2.4; required since W1 device — hand-built typed fakes spread `P3_CTX` from
+  //    test/port.fixtures.ts, §0 rule 2, §9.2 item 19) ──
+  /** @since P3 The device clock (D19, contracts/clock.ts). Required since W1 device. */
+  clock(): DeviceClockView;
+  /** @since P3 [S32] The files of a host's store (hosts' `files:` only in P3a; D21). Required since W1 device. */
+  files(fs: FileSystemId): readonly StoredFileMeta[];
+  /** @since P3 [S32] One file of a host's store, or undefined. Required since W1 device. */
+  readFile(fs: FileSystemId, path: string): StoredFile | undefined;
 }
 
 export interface Process {

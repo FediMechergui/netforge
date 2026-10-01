@@ -297,7 +297,10 @@ describe('tcp codec', () => {
     expect(seg(80, 49152, new TextEncoder().encode('HTTP/1.1 200 OK\r\n\r\n'))).toEqual(['ipv4', 'tcp', 'http']);
     expect(seg(49152, 8080, get)).toEqual(['ipv4', 'tcp', 'http']);
     expect(seg(49152, 53, hex('001c1a2b'))[2]).toBe('dns');
-    expect(seg(49152, 23, get)).toEqual(['ipv4', 'tcp', 'payload']); // reserved telnet
+    // ARCHITECTURE-P3 §9.2 item 14: [S13] un-reserves telnet (23), so this segment now decodes as telnet (only the
+    // dispatch changed, not the bytes); ftp (21) is still reserved and keeps the reserved-port case.
+    expect(seg(49152, 23, get)).toEqual(['ipv4', 'tcp', 'telnet']);
+    expect(seg(49152, 21, get)).toEqual(['ipv4', 'tcp', 'payload']); // reserved ftp
     expect(seg(49152, 80, new Uint8Array(0))).toEqual(['ipv4', 'tcp']);
   });
 

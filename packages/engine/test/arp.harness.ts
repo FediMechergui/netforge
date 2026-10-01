@@ -26,7 +26,7 @@ import type { Rng } from '../src/contracts/rng.js';
 import type { ArpRow, CamRow, DeviceTables, LpmResult, RouteRow } from '../src/contracts/tables.js';
 import type { SimTime } from '../src/contracts/time.js';
 import type { TraceEvent } from '../src/contracts/trace.js';
-import { NO_IPV6_CTX, P2_CTX, testPortSpec, p0Tables } from './port.fixtures.js';
+import { NO_IPV6_CTX, P2_CTX, P3_CTX, testPortSpec, p0Tables } from './port.fixtures.js';
 import { NF_2911_INPUT, NF_C2960_INPUT, NF_PC_INPUT } from './device.catalog.p0-inputs.js';
 
 export interface FakePortSpec {
@@ -138,6 +138,7 @@ export function makeHarness(opts: HarnessOptions): Harness {
 
   const ctx: ProcessCtx = {
     ...P2_CTX,
+    ...P3_CTX,
     ...NO_IPV6_CTX,
     get now() { return now; },
     deviceId,

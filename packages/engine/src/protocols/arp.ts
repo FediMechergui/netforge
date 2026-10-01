@@ -19,6 +19,10 @@
  *                 (5 per next hop, oldest dropped `queue-full`), write an Incomplete row, broadcast a request and
  *                 retry every `ARP_REQUEST_RETRY_NS` up to `ARP_REQUEST_RETRIES` requests, then drop the queue
  *                 `arp-unresolved` and remove the row.
+ *      P3 (ARCHITECTURE-P3 §3.0 (a) step 8), after the HDLC branch: [S18] tunnel → no resolution, no framing, `send`
+ *                 on the tunnel port (the runtime hands it to the tunnel owner's egress); an IPv4 multicast next hop
+ *                 (D7) → never resolved, framed to `01:00:5e` + the low 23 bits of the group (RFC 1112) — before the
+ *                 broadcast rule and resolution.
  *  • `arp.gratuitous` request / `garp:<iface>` timer: announce an interface address (never on HDLC ports). P2
  *    (ARCHITECTURE-P2 §2.4, D15): with `address`/`mac` the request announces a VIRTUAL address from its MAC (sha and
  *    the Ethernet source are that MAC), as ipv4 asks after an `ipv4.virtual` add with `local` true.
@@ -27,8 +31,9 @@
  *  • Proxy ARP [S7] (P2 §5.2, D2; the delimited `[S7]` block): on a routing device, a request on an L3 port for a
  *    target that is not on that port's subnet but reachable through ANOTHER interface is answered with the port's
  *    own MAC. The two-state read of `proxyArpEnabled`: a stored `no ip proxy-arp` on the interface means off; an
- *    empty slot means the profile default (`ctx.profile`: on in P2 for a routed interface of a routing device, off
- *    in P1). A typed `ip proxy-arp` clears the slot and stores nothing, so in a P1 world it is a no-op.
+ *    empty slot means the profile default (`ctx.profile`: on in P2 and later profiles for a routed interface of a
+ *    routing device, off in P1). A typed `ip proxy-arp` clears the slot and stores nothing, so in a P1 world it is a
+ *    no-op.
  *  • `arp.probe` request (P1, APIPA conflict detection after RFC 5227 §2.1): `count` probes (default 3) sent
  *    `intervalNs` apart (default 1 s) on the non-periodic timer `arp-probe:<token>` — broadcast requests with
  *    spa 0.0.0.0, sha = the port MAC, tha 0 and tpa = the candidate address; no port address is needed. While the
@@ -54,9 +59,9 @@
  *
  * Debug category: `arp`.
  */
-import { IPV4_ANY, MAC_BROADCAST, MAC_ZERO, broadcastOf, inSubnet, isIpv4, isIpv4Broadcast, normalizeMac } from '../contracts/addr.js';
+import { IPV4_ANY, MAC_BROADCAST, MAC_ZERO, broadcastOf, inSubnet, isIpv4, isIpv4Broadcast, isIpv4Multicast, normalizeMac } from '../contracts/addr.js';
 import type { Ipv4Address, MacAddress } from '../contracts/addr.js';
-import { KIND_ENCAP, L3_ROLES, ROLE_TRAITS, defaultRoleFor, ipDefaultsFor } from '../contracts/catalog.js';
+import { KIND_ENCAP, L3_ROLES, ROLE_TRAITS, defaultRoleFor, ipDefaultsFor, profileIncludes } from '../contracts/catalog.js';
 import type { PortEncap, PortRole } from '../contracts/catalog.js';
 import type { ConfigDelta } from '../contracts/config.js';
 import type { PortId, ProcessName } from '../contracts/ids.js';
@@ -70,6 +75,7 @@ import { SEC } from '../contracts/time.js';
 import type { SimTime } from '../contracts/time.js';
 import { APIPA_PROBES, APIPA_PROBE_INTERVAL_NS } from '../contracts/services.js';
 import type { ArpProbeResultEvent } from '../contracts/transport.js';
+import { ipv4MulticastMac } from '../core/addr6.js';
 import { ipForwardingEnabled, virtualMacFor } from './ipv4.js';
 
 /** Interval of the cache-ageing sweep. */
@@ -134,6 +140,11 @@ function encapOf(view: PortView): PortEncap {
   return view.encap ?? view.spec.encap ?? KIND_ENCAP[view.spec.kind];
 }
 
+/** [S18] A tunnel interface (role or encapsulation `tunnel`): the owner frames what leaves it (ARCHITECTURE-P3 D17). */
+function isTunnelPort(ctx: Pick<ProcessCtx, 'model'>, view: PortView): boolean {
+  return encapOf(view) === 'tunnel' || roleOfView(ctx, view) === 'tunnel';
+}
+
 /** Number of outermost layers of `pdu` that are link framing (0 for a bare IP packet). */
 export function leadingFramingLayers(pdu: Pick<Pdu, 'layers'>): number {
   let n = 0;
@@ -161,9 +172,9 @@ function roleOfView(ctx: Pick<ProcessCtx, 'model'>, view: PortView): PortRole {
 
 /**
  * [S7] The two-state proxy ARP read of `iface` (ARCHITECTURE-P2 §5.2, D2): a stored `no ip proxy-arp` under
- * `interface <iface>` means off; an empty slot means the profile default — on in the P2 profile for a routed (L3)
- * interface of a routing device, off in the P1 profile. `ip proxy-arp` stores nothing (storeNegation), so typing it
- * in a P1 world changes nothing.
+ * `interface <iface>` means off; an empty slot means the profile default — on in the P2 profile and every later one
+ * (P3) for a routed (L3) interface of a routing device, off in the P1 profile. `ip proxy-arp` stores nothing
+ * (storeNegation), so typing it in a P1 world changes nothing.
  */
 export function proxyArpEnabled(ctx: Pick<ProcessCtx, 'config' | 'profile' | 'model' | 'ports'>, iface: PortId): boolean {
   const lower = iface.toLowerCase();
@@ -175,7 +186,8 @@ export function proxyArpEnabled(ctx: Pick<ProcessCtx, 'config' | 'profile' | 'mo
       if (c.key === 'no' && c.args.length === 2 && c.args[0] === 'ip' && c.args[1] === 'proxy-arp') return false;
     }
   }
-  if (ctx.profile !== 'P2' || !ctx.model.ipForwarding) return false;
+  // P3 (ARCHITECTURE-P3 §9.2 item 16): "P2 or later", so proxy ARP stays on in P3 worlds
+  if (!profileIncludes(ctx.profile, 'P2') || !ctx.model.ipForwarding) return false;
   const view = ctx.ports.get(iface);
   return view !== undefined && ROLE_TRAITS[roleOfView(ctx, view)].l3;
 }
@@ -331,6 +343,21 @@ export function createArp(): Process {
     if (encapOf(port) === 'hdlc') {
       frameHdlc(ctx, pdu, cause);
       debug(ctx, `framing for ${nextHop} on ${iface}: serial HDLC link, no address resolution`, { ip: nextHop, iface, pdu: pdu.id });
+      out.push({ type: 'send', port: iface, pdu });
+      return out;
+    }
+    // [S18] A tunnel interface: no resolution and no framing; the send reaches the tunnel owner's egress (gre wraps
+    // GRE or [C13] ESP, strips any framing the packet still carries and applies the D15 MTU fallback).
+    if (isTunnelPort(ctx, port)) {
+      debug(ctx, `sending to ${nextHop} on ${iface}: tunnel interface, the tunnel owner encapsulates`, { ip: nextHop, iface, pdu: pdu.id });
+      out.push({ type: 'send', port: iface, pdu });
+      return out;
+    }
+    // P3 (D7): an IPv4 multicast next hop is never resolved, framed to 01:00:5e + the low 23 bits (RFC 1112).
+    if (isIpv4(nextHop) && isIpv4Multicast(nextHop)) {
+      const group = ipv4MulticastMac(nextHop);
+      debug(ctx, `sending to multicast group ${nextHop} on ${iface} (${group})`, { ip: nextHop, iface, mac: group, pdu: pdu.id });
+      frameEthernet(ctx, pdu, group, iface, cause);
       out.push({ type: 'send', port: iface, pdu });
       return out;
     }

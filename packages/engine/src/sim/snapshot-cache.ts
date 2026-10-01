@@ -40,7 +40,7 @@
  * `forwarding` the VLANs whose `stp` row for this port is `forwarding` (canonical; absent when the port has no stp
  * row at all); `channel` from the port's `etherchannel` row; `security` from its `port-security` row. The view is
  * written only when it differs from the default (config ≠ DEFAULT_SWITCHPORT, oper 'trunk', channel or security
- * present). `SimSnapshot.profile` is 'P2' for a P2 world and absent for a P1 one.
+ * present). `SimSnapshot.profile` is the world's profile for a P2 or P3 world and absent for a P1 one (P3 §9.2 item 16).
  *
  * Determinism: ports in canonical Map order, devices in creation order, tables in declared order.
  */
@@ -424,7 +424,7 @@ export interface SimSnapshotInput extends SnapshotSources {
   readonly sessions: CliSessionView[];
   readonly pduCount: number;
   readonly pendingEvents: number;
-  /** @since P2 The world's defaults profile (D2); absent = 'P1'. Written to the snapshot only when 'P2'. */
+  /** @since P2 The world's defaults profile (D2); absent = 'P1'. Written to the snapshot only when P2 or later (P3). */
   readonly profile?: DefaultsProfile;
 }
 
@@ -449,7 +449,8 @@ export function buildSimSnapshot(input: SimSnapshotInput): SimSnapshot {
   };
   const media = input.links.media(input.now);
   if (mediaHasContent(media)) snap.media = media;
-  // P2 (§2.8, optional by meaning): only a P2 world carries it, so P1 snapshots keep their bytes
-  if (input.profile === 'P2') snap.profile = 'P2';
+  // P2 (§2.8, optional by meaning): only a world of profile P2 or later carries it (P3 §9.2 item 16), so P1 snapshots
+  // keep their bytes
+  if (input.profile !== undefined && input.profile !== 'P1') snap.profile = input.profile;
   return snap;
 }

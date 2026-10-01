@@ -101,25 +101,30 @@ export const PROTOCOL_VOCAB: Readonly<Record<KnownProto, ProtocolVocab>> = Objec
   hsrp: entry('hsrp', 'HSRP', 'HS', 'hexagon', 'ok', 'control', 'P2',
     'Hello messages of routers that share one virtual gateway address, so one can stand in for the other.'),
   pagp: entry('pagp', 'Port aggregation', 'PG', 'hexagon', 'accent', 'control', 'P2', 'A second way for two switches to agree on a bundle of parallel links.'),
-  // ── P3 (ARCHITECTURE-P3 §2.3, §6; the architect's W0 stubs, real wording in W1 web-inspector). Control frames use the
-  // hexagon shape of spec §9.1; letters stay unique. The labels of the formerly reserved names (NTP, Telnet, SSH,
-  // Syslog) are the ones RESERVED_PROTOCOL_VOCAB uses, so `protocolLabel` answers the same. ──
+  // ── P3 (ARCHITECTURE-P3 §2.3, §6; real wording, W1 web-inspector). Control frames — routing, discovery, the PPP
+  // control protocols and their authentication, IKE — use the hexagon shape of spec §9.1; letters stay unique. The
+  // labels of the formerly reserved names (NTP, Telnet, SSH, Syslog) are the ones RESERVED_PROTOCOL_VOCAB uses, so
+  // `protocolLabel` answers the same whether or not a build still lists them as reserved. CDP is a name only: its
+  // frames use NetForge's own format (D23). ──
   ospf: entry('ospf', 'OSPF', 'O', 'hexagon', 'ok', 'control', 'P3', 'Link-state routing messages routers exchange to build one map of their area.'),
   'ospf-lsa': entry('ospf-lsa', 'OSPF LSA', 'OL', 'hexagon', 'textDim', 'control', 'P3', 'One entry of the link-state map: a router, a shared network or an outside route.'),
-  cdp: entry('cdp', 'CDP', 'CD', 'hexagon', 'warn', 'control', 'P3', 'Discovery messages a network device sends so its directly connected neighbours learn who it is.'),
-  lldp: entry('lldp', 'LLDP', 'LD', 'hexagon', 'blueDeep', 'control', 'P3', 'The standard discovery messages a device sends to its directly connected neighbours.'),
+  cdp: entry('cdp', 'CDP', 'CD', 'hexagon', 'warn', 'control', 'P3',
+    "Discovery messages, in NetForge's own format, that tell a device's directly connected neighbours who it is."),
+  lldp: entry('lldp', 'LLDP', 'LD', 'hexagon', 'blueDeep', 'control', 'P3',
+    'The standard (IEEE 802.1AB) discovery messages a device sends to its directly connected neighbours.'),
   ntp: entry('ntp', 'NTP', 'NT', 'capsule', 'yellow', 'application', 'P3', 'Time requests and answers that keep device clocks in step.'),
   telnet: entry('telnet', 'Telnet', 'TN', 'pentagon', 'warn', 'application', 'P3', 'A remote terminal session sent in the clear, passwords included.'),
-  ssh: entry('ssh', 'SSH', 'SH', 'pentagon', 'ok', 'application', 'P3', 'A remote terminal session whose contents are protected on the wire.'),
+  ssh: entry('ssh', 'SSH', 'SH', 'pentagon', 'ok', 'application', 'P3', 'A remote terminal session whose contents are protected on the wire (the protection is simulated).'),
   gre: entry('gre', 'GRE', 'G', 'octagon', 'textDim', 'network', 'P3', 'A tunnel header that carries one packet inside another across a provider network.'),
   ppp: entry('ppp', 'PPP', 'P', 'hexagon', 'err', 'link', 'P3', 'Framing of a serial point-to-point link that can check who is at the other end.'),
   lcp: entry('lcp', 'PPP link control', 'LC', 'hexagon', 'err', 'control', 'P3', 'Messages that open a PPP link and agree its options.'),
-  pap: entry('pap', 'PAP', 'PA', 'diamond', 'warn', 'control', 'P3', 'PPP authentication that sends the password in the clear.'),
-  chap: entry('chap', 'CHAP', 'CH', 'diamond', 'ok', 'control', 'P3', 'PPP authentication by challenge and response; the password never travels.'),
+  pap: entry('pap', 'PAP', 'PA', 'hexagon', 'warn', 'control', 'P3', 'PPP authentication that sends the name and password in the clear.'),
+  chap: entry('chap', 'CHAP', 'CH', 'hexagon', 'ok', 'control', 'P3', 'PPP authentication by challenge and response; the password itself never travels.'),
   ipcp: entry('ipcp', 'IPCP', 'IC', 'hexagon', 'accent', 'control', 'P3', 'Messages that set up IPv4 over a PPP link.'),
   ipv6cp: entry('ipv6cp', 'IPv6CP', 'C6', 'hexagon', 'accent', 'control', 'P3', 'Messages that set up IPv6 over a PPP link.'),
   syslog: entry('syslog', 'Syslog', 'SY', 'capsule', 'textDim', 'application', 'P3', 'Log messages a device sends to a central log server.'),
-  eigrp: entry('eigrp', 'EIGRP', 'EG', 'hexagon', 'purple', 'control', 'P3', 'Distance-vector routing messages with feasible successors kept ready for failover.'),
+  eigrp: entry('eigrp', 'EIGRP', 'EG', 'hexagon', 'purple', 'control', 'P3',
+    'Advanced distance-vector routing messages; each router keeps feasible successors ready for an instant failover.'),
   esp: entry('esp', 'ESP', 'ES', 'octagon', 'purple', 'network', 'P3', 'The encrypted envelope of an IPsec tunnel (the encryption is simulated).'),
   ikev2: entry('ikev2', 'IKEv2', 'IK', 'hexagon', 'yellow', 'control', 'P3', 'Messages two tunnel ends exchange to agree keys and security associations.'),
 });

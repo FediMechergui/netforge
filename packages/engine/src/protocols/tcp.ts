@@ -27,6 +27,16 @@
  * Timers (never periodic): `rto:<id>`, `dack:<id>`, `persist:<id>`, `timewait:<id>`.
  * Debug category 'tcp': every state change logs `{from, to, trigger, pdu}` and rewrites the socket row.
  *
+ * P3 (ARCHITECTURE-P3 §2.4, §2.5; W1 svc):
+ *  • `tls` on `tcp.listen` / `tcp.connect` (D21, optional by meaning): every segment that carries data on such a
+ *    connection (an accepted child inherits its listener's flag) is marked `meta.protected` with `protectedBy:
+ *    'tls'` — a simulated TLS channel with no handshake bytes; handshake, pure ACK, FIN and RST segments are not.
+ *  • ICMP 3/13 ("communication administratively prohibited", an ACL deny, D12) is the soft error `admin-prohibited`:
+ *    recorded, never aborting a connect, reported as the `sock.error` code if the connection then times out.
+ *  • [S13] `tcp.listen {service: true}` (D14): a hidden listener — no `sockets` row, no debug line, no `sock.opened`
+ *    (nor `sock.closed` when it closes), left out of the StateView, so a P1/P2 router whose configuration holds
+ *    `line vty` keeps its bytes. It binds and accepts like any listener; its accepted connections are ordinary ones.
+ *
  * ponytail: one file (the brief's tcp/{fsm,sender,receiver,congestion}.ts split is not needed at this size). Skipped:
  * window scaling, SACK, timestamps, simultaneous open, `tcp.connect.timeoutNs`, RFC 5961 challenge ACKs; our receive
  * window is always 65535 because data goes straight to the owner. Add when a lab needs them.
@@ -34,7 +44,7 @@
 import { isIpv4, isIpv4Broadcast, isIpv4Multicast, type IpAddress, type IpFamily } from '../contracts/addr.js';
 import type { PduId, PortId, ProcessName } from '../contracts/ids.js';
 import type { DropReason } from '../contracts/link.js';
-import { IPPROTO_TCP, type FieldValue, type LayerSpec, type LayerView, type Pdu, type PduMeta } from '../contracts/pdu.js';
+import { ICMP_DEST_UNREACHABLE, ICMP_UNREACH_ADMIN, IPPROTO_TCP, type FieldValue, type LayerSpec, type LayerView, type Pdu, type PduMeta } from '../contracts/pdu.js';
 import type { Action, DebugEvent, Process, ProcessCtx, ProcessRequest, StateView } from '../contracts/process.js';
 import { socketKey, type SocketRow, type Table } from '../contracts/tables.js';
 import type { SimTime } from '../contracts/time.js';
@@ -86,6 +96,10 @@ interface Listener {
   readonly localPort: number;
   readonly backlog: number;
   children: number;
+  /** @since P3 (D21) Accepted connections carry the simulated TLS mark on their data segments. */
+  readonly tls?: true;
+  /** @since P3 [S13] A hidden service listener: no row, no debug, no sock.opened / sock.closed, not in the StateView. */
+  readonly service?: true;
 }
 
 interface Conn {
@@ -98,6 +112,8 @@ interface Conn {
   readonly remotePort: number;
   /** Passive open: the listener this child came from. */
   readonly listener?: SocketId;
+  /** @since P3 (D21) Data segments carry `meta.protected` + `protectedBy: 'tls'`. */
+  readonly tls?: true;
   state: TcpState;
   iss: number;
   sndUna: number;
@@ -181,8 +197,8 @@ export function createTcp(): Process {
 
   const event = (to: ProcessName, ev: ProcessEvent): Action => ({ type: 'event', to, ev });
 
-  function sockError(ctx: ProcessCtx, owner: ProcessName, socket: SocketId, code: SocketErrorCode, detail: string): Action {
-    debug(ctx, `socket ${socket}: ${code} (${detail})`, { socket, code, owner });
+  function sockError(ctx: ProcessCtx, owner: ProcessName, socket: SocketId, code: SocketErrorCode, detail: string, quiet = false): Action {
+    if (!quiet) debug(ctx, `socket ${socket}: ${code} (${detail})`, { socket, code, owner });
     return event(owner, { kind: 'sock.error', socket, code, detail });
   }
 
@@ -289,6 +305,8 @@ export function createTcp(): Process {
       const orig = originalOf(c, seq);
       meta = orig !== undefined ? { tag: 'tcp-retransmit', triggeredBy: orig } : { tag: 'tcp-retransmit' };
     }
+    // P3 (D21): the simulated TLS channel marks every segment that carries data
+    if (c.tls === true && data !== undefined && data.length > 0) meta = { ...meta, protected: true, protectedBy: 'tls' };
     const fields: Record<string, FieldValue> = { seq, flags, ...extra };
     if (flags.includes('A')) fields.ack = c.rcvNxt;
     const out: Action[] = [emit(ctx, c.family, c.localAddr, c.remoteAddr, c.localPort, c.remotePort, fields, data, meta)];
@@ -387,28 +405,36 @@ export function createTcp(): Process {
 
   function listen(ctx: ProcessCtx, req: Extract<ProcessRequest, { kind: 'tcp.listen' }>): Action[] {
     const { owner, socket, family } = req;
+    // [S13] a hidden service listener writes no row and no debug line and gets no sock.opened (D14)
+    const quiet = req.service === true;
     const out: Action[] = [];
-    if (idBusy(ctx, socket, out)) return [sockError(ctx, owner, socket, 'addr-in-use', `socket id ${socket} is already open`)];
-    if (family !== 4 && family !== 6) return [sockError(ctx, owner, socket, 'bad-socket', `unknown address family ${String(family)}`)];
+    if (idBusy(ctx, socket, out)) return [sockError(ctx, owner, socket, 'addr-in-use', `socket id ${socket} is already open`, quiet)];
+    if (family !== 4 && family !== 6) return [sockError(ctx, owner, socket, 'bad-socket', `unknown address family ${String(family)}`, quiet)];
     let localAddr = udpWildcard(family);
     if (req.localAddr !== undefined) {
       const a = canonical(family, req.localAddr);
-      if (a === null) return [sockError(ctx, owner, socket, 'bad-socket', `${req.localAddr} is not an IPv${family} address`)];
-      if (a !== localAddr && !isOwn(ctx, family, a)) return [sockError(ctx, owner, socket, 'no-address', `${a} is not an address of this device`)];
+      if (a === null) return [sockError(ctx, owner, socket, 'bad-socket', `${req.localAddr} is not an IPv${family} address`, quiet)];
+      if (a !== localAddr && !isOwn(ctx, family, a)) return [sockError(ctx, owner, socket, 'no-address', `${a} is not an address of this device`, quiet)];
       localAddr = a;
     }
     let localPort = req.localPort;
     if (localPort === 0) {
       const p = allocateEphemeral(ctx, family, localAddr);
-      if (p === undefined) return [sockError(ctx, owner, socket, 'addr-in-use', 'every ephemeral port is in use')];
+      if (p === undefined) return [sockError(ctx, owner, socket, 'addr-in-use', 'every ephemeral port is in use', quiet)];
       localPort = p;
     } else if (!Number.isInteger(localPort) || localPort < 1 || localPort > 0xffff) {
-      return [sockError(ctx, owner, socket, 'bad-socket', `port ${String(localPort)} is outside 1-65535`)];
+      return [sockError(ctx, owner, socket, 'bad-socket', `port ${String(localPort)} is outside 1-65535`, quiet)];
     }
     const clash = bindConflict(family, localAddr, localPort);
-    if (clash !== undefined) return [sockError(ctx, owner, socket, 'addr-in-use', `port ${localPort} is already bound by ${clash}`)];
+    if (clash !== undefined) return [sockError(ctx, owner, socket, 'addr-in-use', `port ${localPort} is already bound by ${clash}`, quiet)];
     const backlog = Math.max(1, Math.min(req.backlog ?? TCP_LISTEN_BACKLOG, TCP_LISTEN_BACKLOG));
-    listeners.set(socket, { id: socket, owner, family, localAddr, localPort, backlog, children: 0 });
+    const listener: Listener = {
+      id: socket, owner, family, localAddr, localPort, backlog, children: 0,
+      ...(req.tls === true ? { tls: true as const } : {}),
+      ...(quiet ? { service: true as const } : {}),
+    };
+    listeners.set(socket, listener);
+    if (quiet) return out;
     table(ctx)?.set({ key: socketKey('tcp', socket), id: socket, proto: 'tcp', family, localAddr, localPort, state: 'LISTEN', owner, updatedAt: ctx.now });
     debug(ctx, `${socket} CLOSED -> LISTEN on ${flowEndpoint(family, localAddr, localPort)} for ${owner}`, { socket, from: 'CLOSED', to: 'LISTEN', trigger: 'listen' });
     out.push(event(owner, { kind: 'sock.opened', socket, proto: 'tcp', family, localAddr, localPort }));
@@ -416,7 +442,7 @@ export function createTcp(): Process {
   }
 
   function newConn(
-    p: Pick<Conn, 'id' | 'owner' | 'family' | 'localAddr' | 'localPort' | 'remoteAddr' | 'remotePort'> & { listener?: SocketId },
+    p: Pick<Conn, 'id' | 'owner' | 'family' | 'localAddr' | 'localPort' | 'remoteAddr' | 'remotePort'> & { listener?: SocketId; tls?: true },
     iss: number,
   ): Conn {
     const mss = ourMss(p.family);
@@ -491,7 +517,10 @@ export function createTcp(): Process {
     }
     const localPort = allocateEphemeral(ctx, family, src);
     if (localPort === undefined) return [sockError(ctx, owner, socket, 'addr-in-use', 'every ephemeral port is in use')];
-    const c = newConn({ id: socket, owner, family, localAddr: src, localPort, remoteAddr: dst, remotePort: req.dstPort }, isn(ctx));
+    const c = newConn(
+      { id: socket, owner, family, localAddr: src, localPort, remoteAddr: dst, remotePort: req.dstPort, ...(req.tls === true ? { tls: true as const } : {}) },
+      isn(ctx),
+    );
     setState(ctx, c, 'SYN_SENT', 'connect');
     out.push(...sendSyn(ctx, c));
     return out;
@@ -500,9 +529,11 @@ export function createTcp(): Process {
   function send(ctx: ProcessCtx, req: Extract<ProcessRequest, { kind: 'tcp.send' }>): Action[] {
     const c = conns.get(req.socket);
     if (c === undefined || c.closing || !(c.state === 'SYN_SENT' || c.state === 'SYN_RECEIVED' || c.state === 'ESTABLISHED' || c.state === 'CLOSE_WAIT')) {
-      const owner = c?.owner ?? listeners.get(req.socket)?.owner;
+      const l = c === undefined ? listeners.get(req.socket) : undefined;
+      const owner = c?.owner ?? l?.owner;
       if (owner === undefined) return [];
-      return [sockError(ctx, owner, req.socket, 'bad-socket', 'the connection is not open for sending')];
+      // [S13] a hidden listener stays silent here too (D14)
+      return [sockError(ctx, owner, req.socket, 'bad-socket', 'the connection is not open for sending', l?.service === true)];
     }
     if (c.buf.length + req.data.length > TCP_SEND_BUFFER) return [sockError(ctx, c.owner, c.id, 'bad-socket', 'send buffer full')];
     if (req.data.length === 0) return [];
@@ -513,6 +544,7 @@ export function createTcp(): Process {
 
   function closeListener(ctx: ProcessCtx, l: Listener): Action[] {
     listeners.delete(l.id);
+    if (l.service === true) return []; // [S13] hidden: no row to delete, no debug line, no sock.closed
     table(ctx)?.delete(socketKey('tcp', l.id), 'cleared');
     debug(ctx, `${l.id} LISTEN -> CLOSED (close)`, { socket: l.id, from: 'LISTEN', to: 'CLOSED', trigger: 'close' });
     return [event(l.owner, { kind: 'sock.closed', socket: l.id })];
@@ -595,7 +627,13 @@ export function createTcp(): Process {
     do {
       l.children++;
     } while (conns.has(`${l.id}/${l.children}`));
-    const c = newConn({ id: `${l.id}/${l.children}`, owner: l.owner, family, localAddr: dst, localPort: l.localPort, remoteAddr: src, remotePort: srcPort, listener: l.id }, isn(ctx));
+    const c = newConn(
+      {
+        id: `${l.id}/${l.children}`, owner: l.owner, family, localAddr: dst, localPort: l.localPort, remoteAddr: src, remotePort: srcPort, listener: l.id,
+        ...(l.tls === true ? { tls: true as const } : {}),
+      },
+      isn(ctx),
+    );
     c.irs = s.seq;
     c.rcvNxt = seqAdd(s.seq, 1);
     c.sndWnd = s.win;
@@ -881,7 +919,9 @@ export function createTcp(): Process {
     if (qIp === undefined || qTcp?.proto !== 'tcp' || typeof qTcp.fields.srcPort !== 'number' || typeof qTcp.fields.dstPort !== 'number') return out;
     const qFamily: IpFamily = qIp.proto === 'ipv4' ? 4 : 6;
     const c = findConn(qFamily, String(qIp.fields.src), qTcp.fields.srcPort, String(qIp.fields.dst), qTcp.fields.dstPort);
-    const sockCode = udpErrorCodeFor(family, type, code);
+    // P3 (D12): ICMP 3/13, an ACL deny, is the soft error admin-prohibited (it never aborts a connect)
+    const sockCode: SocketErrorCode | undefined =
+      family === 4 && type === ICMP_DEST_UNREACHABLE && code === ICMP_UNREACH_ADMIN ? 'admin-prohibited' : udpErrorCodeFor(family, type, code);
     if (c === undefined || sockCode === undefined) return out;
     const hard = sockCode === 'port-unreachable' || sockCode === 'proto-unreachable';
     if (c.state === 'SYN_SENT' && hard) {
@@ -998,7 +1038,10 @@ export function createTcp(): Process {
       return {
         process: NAME,
         state: {
-          listeners: [...listeners.values()].map((l) => ({ id: l.id, owner: l.owner, family: l.family, localAddr: l.localAddr, localPort: l.localPort, backlog: l.backlog })),
+          // [S13] hidden service listeners never appear (D14)
+          listeners: [...listeners.values()]
+            .filter((l) => l.service !== true)
+            .map((l) => ({ id: l.id, owner: l.owner, family: l.family, localAddr: l.localAddr, localPort: l.localPort, backlog: l.backlog })),
           connections: [...conns.values()].map((c) => ({
             id: c.id,
             owner: c.owner,

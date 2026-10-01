@@ -17,6 +17,10 @@
  * P2 (W6 web-shell, ARCHITECTURE-P2 §6, §11.2): the CCNA 2 labs (`ccna2-lab`) get their own group after the CCNA 1
  * labs, and every course-lab category (`<course>-lab`) takes the generic label "Labs: <course>" from the course its
  * labs name.
+ *
+ * P3 (ARCHITECTURE-P3 D2, §7 W1 web-shell): "Use current defaults" is enabled whenever the world's profile is below
+ * `LATEST_DEFAULTS_PROFILE` and its hint lists what it switches on, from `PROFILE_NOTES` (`currentDefaultsItem`); the
+ * toast after the move lists the same notes.
  */
 import { useRef, useState } from 'react';
 import {
@@ -32,7 +36,7 @@ import {
 } from '@netforge/engine';
 import { defaultSeed, engine } from '../bridge/client';
 import type { EngineError } from '../bridge/errors';
-import { profileForCourse, profileOfSnapshot } from '../learn/course-profile';
+import { currentDefaultsItem, currentDefaultsToast, profileForCourse, profileOfSnapshot } from '../learn/course-profile';
 import { store, useStore } from '../store/store';
 import { Menu, MenuHeading, MenuItem, MenuSeparator } from './Menu';
 import { reportError } from './PlaybackControls';
@@ -188,15 +192,17 @@ export const USE_CURRENT_DEFAULTS_LABEL = 'Use current defaults';
 
 /**
  * @since P2 Move the world to the current defaults (D2): the worker exports it, keeps a multilayer switch routing,
- * marks it a current-defaults world and reloads it. Devices, cables and configurations stay; the epoch changes.
+ * marks it a current-defaults world and reloads it. Devices, cables and configurations stay; the epoch changes. P3: the
+ * toast lists what the move switched on (`PROFILE_NOTES` between the profile before and the one after).
  */
 export async function useCurrentDefaults(): Promise<void> {
   if (!store.getState().ready) return;
   try {
+    const before = profileOfSnapshot(store.getState().snapshot);
     await engine.pause();
     const snap = await engine.useCurrentDefaults();
     store.getState().select(null);
-    store.getState().toast(`Current defaults in use: ${snap.devices.length} devices kept their configuration; spanning tree now runs on the switches.`);
+    store.getState().toast(currentDefaultsToast(snap.devices.length, before, profileOfSnapshot(snap)));
   } catch (err) {
     reportError(err);
   }
@@ -277,6 +283,7 @@ export function scenarioSubtitle(m: ScenarioMeta): string {
 export function FileMenu() {
   const ready = useStore((s) => s.ready);
   const profile = useStore((s) => profileOfSnapshot(s.snapshot));
+  const currentDefaults = currentDefaultsItem(profile);
   const fileInput = useRef<HTMLInputElement>(null);
   const [scenarios, setScenarios] = useState<ScenarioMeta[] | null>(null);
 
@@ -377,12 +384,8 @@ export function FileMenu() {
                 close();
                 void useCurrentDefaults();
               }}
-              disabled={!ready || profile === 'P2'}
-              sub={
-                profile === 'P2'
-                  ? 'Already in use in this world.'
-                  : 'Keep every device and setting; switch on the defaults of the later courses, spanning tree first.'
-              }
+              disabled={!ready || !currentDefaults.enabled}
+              sub={currentDefaults.hint}
             >
               {USE_CURRENT_DEFAULTS_LABEL}
             </MenuItem>

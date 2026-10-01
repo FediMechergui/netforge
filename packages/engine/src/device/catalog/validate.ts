@@ -11,6 +11,7 @@
  * PORT_FAMILIES virtual entries (Vlan → svi, Loopback → virtual) and the P2 families that live only in their family
  * specs, as names.ts resolves them (the short name comes from the spec, not from PORT_FAMILIES): `Port-channel` → channel
  * (define.ts PORT_CHANNEL_FAMILY) and the controller tunnel `Capwap` → wlan-tunnel (define.ts CAPWAP_TUNNEL_FAMILY).
+ * P3 [S18] (ARCHITECTURE-P3 D17; W1 catalog) adds `Tunnel` → tunnel (define.ts TUNNEL_FAMILY), derived at stage P3 only.
  */
 import type { DeviceModel } from '../../contracts/device.js';
 import type { ProcessName } from '../../contracts/ids.js';
@@ -44,7 +45,17 @@ import {
   type SlotType,
   type VirtualFamilySpec,
 } from '../../contracts/catalog.js';
-import { CAPWAP_TUNNEL_FAMILY, DEVICE_KINDS, PORT_CHANNEL_FAMILY, deriveProcesses, deriveTables, kindOfType, modulePortSpecs, moduleReachableProcesses } from './define.js';
+import {
+  CAPWAP_TUNNEL_FAMILY,
+  DEVICE_KINDS,
+  PORT_CHANNEL_FAMILY,
+  TUNNEL_FAMILY,
+  deriveProcesses,
+  deriveTables,
+  kindOfType,
+  modulePortSpecs,
+  moduleReachableProcesses,
+} from './define.js';
 import { portFamilyByLong, portFamilyOf, splitPortName, virtualPortName } from './names.js';
 
 // ── issue vocabulary ─────────────────────────────────────────────────────────
@@ -640,6 +651,8 @@ function virtualFamilyRule(family: string): { readonly short: string; readonly r
   if (fam !== undefined && fam.kind === 'virtual') return { short: fam.short, role: family === 'Vlan' ? 'svi' : 'virtual' };
   if (family === PORT_CHANNEL_FAMILY.family) return { short: PORT_CHANNEL_FAMILY.short, role: PORT_CHANNEL_FAMILY.role };
   if (family === CAPWAP_TUNNEL_FAMILY.family) return { short: CAPWAP_TUNNEL_FAMILY.short, role: CAPWAP_TUNNEL_FAMILY.role };
+  // P3 [S18]: the Tunnel family of routing models (define.ts TUNNEL_FAMILY), derived at stage P3 only
+  if (family === TUNNEL_FAMILY.family) return { short: TUNNEL_FAMILY.short, role: TUNNEL_FAMILY.role };
   return undefined;
 }
 

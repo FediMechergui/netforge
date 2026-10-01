@@ -3,8 +3,9 @@
  * traceroute, IPv6 ND/SLAAC). Original wording only. Fractions are expressed in permille so lease maths
  * stays integer: t1 = floor(leaseNs × 500 / 1000).
  *
- * FTP/TFTP/SMTP/POP3/IMAP/NTP/SNMP/Syslog/Telnet/SSH are RESERVED (D1): their ports are in
- * contracts/fields.ts DISPATCH_TABLE with `reserved`, and decode as payload; no daemons.
+ * FTP/TFTP/SMTP/POP3/IMAP/SNMP are RESERVED (D1): their ports are in contracts/fields.ts DISPATCH_TABLE with
+ * `reserved`, and decode as payload; no daemons. (P3 un-reserves NTP and, with the approved [S13] and [S25], Telnet,
+ * SSH and Syslog: ARCHITECTURE-P3 §2.3, §9.2 item 14.)
  */
 import type { IpAddress, Ipv4Address, MacAddress } from './addr.js';
 import type { SimTime } from './time.js';

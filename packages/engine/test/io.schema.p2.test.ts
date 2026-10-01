@@ -10,6 +10,7 @@ import {
   TOPOLOGY_SCHEMA_ID_1_0,
   TOPOLOGY_SCHEMA_ID_1_1,
   TOPOLOGY_SCHEMA_ID_1_2,
+  TOPOLOGY_SCHEMA_ID_1_3,
   schemaIdFor,
   type Topology,
 } from '../src/contracts/topology.js';
@@ -77,7 +78,8 @@ describe('schemaIdFor and the id constants', () => {
   it('is 1.2 exactly when the document carries a profile; the exporter id stays 1.1', () => {
     expect(TOPOLOGY_SCHEMA_ID_1_2).toBe('netforge.topology/1.2');
     expect(TOPOLOGY_SCHEMA_ID).toBe(TOPOLOGY_SCHEMA_ID_1_1);
-    expect(LATEST_TOPOLOGY_SCHEMA_ID).toBe(TOPOLOGY_SCHEMA_ID_1_2);
+    // ARCHITECTURE-P3 §9.2 item 15 (W1 io): the latest id is 1.3
+    expect(LATEST_TOPOLOGY_SCHEMA_ID).toBe(TOPOLOGY_SCHEMA_ID_1_3);
     expect(schemaIdFor(p1Doc())).toBe(TOPOLOGY_SCHEMA_ID_1_1);
     expect(schemaIdFor({ ...p1Doc(), schema: TOPOLOGY_SCHEMA_ID_1_0 })).toBe(TOPOLOGY_SCHEMA_ID_1_1);
     expect(schemaIdFor({ ...p1Doc(), profile: 'P2' })).toBe(TOPOLOGY_SCHEMA_ID_1_2);
@@ -133,7 +135,10 @@ describe('a P2 document is 1.2', () => {
     const loaded = prepareTopologyLoad(json(p2Doc()), catalog);
     expect(loaded.schema).toBe(LATEST_TOPOLOGY_SCHEMA_ID);
     expect(loaded.profile).toBe('P2');
-    expect(loaded).toEqual(p2Doc());
+    // ARCHITECTURE-P3 §9.2 item 15 (W1 io): the gate normalises the in-memory copy to the latest id, now 1.3; the
+    // exporter still writes schemaIdFor(t), 1.2
+    expect(loaded).toEqual({ ...p2Doc(), schema: TOPOLOGY_SCHEMA_ID_1_3 });
+    expect(schemaIdFor(loaded)).toBe(TOPOLOGY_SCHEMA_ID_1_2);
   });
 
   it('refuses any profile value other than "P2" in a 1.2 document', () => {
@@ -190,7 +195,9 @@ describe('migration 1.1 → 1.2', () => {
     expect(out).not.toBe(input);
     expect(out).toEqual({ ...input, schema: TOPOLOGY_SCHEMA_ID_1_2 });
     expect(JSON.stringify(input)).toBe(before);
-    expect(TOPOLOGY_MIGRATIONS[TOPOLOGY_SCHEMA_ID_1_2]).toBeUndefined();
+    // ARCHITECTURE-P3 §9.2 item 15 (W1 io): 1.2 now has its step to 1.3, and 1.3 (the latest) has none
+    expect(TOPOLOGY_MIGRATIONS[TOPOLOGY_SCHEMA_ID_1_2]?.to).toBe(TOPOLOGY_SCHEMA_ID_1_3);
+    expect(TOPOLOGY_MIGRATIONS[TOPOLOGY_SCHEMA_ID_1_3]).toBeUndefined();
   });
 
   it('migrateTopology walks a document up to schemaIdFor(t) and never down', () => {
@@ -212,7 +219,8 @@ describe('migration 1.1 → 1.2', () => {
 
   it('a 1.2 document without profile loads as P1, and migrateTopologyTo never moves a document backward', () => {
     const loaded = prepareTopologyLoad({ ...json(p1Doc()), schema: TOPOLOGY_SCHEMA_ID_1_2 }, catalog);
-    expect(loaded.schema).toBe(TOPOLOGY_SCHEMA_ID_1_2);
+    // ARCHITECTURE-P3 §9.2 item 15 (W1 io): the gate normalises to the latest id, now 1.3
+    expect(loaded.schema).toBe(TOPOLOGY_SCHEMA_ID_1_3);
     expect('profile' in loaded).toBe(false);
     const p0 = { ...p1Doc(), schema: TOPOLOGY_SCHEMA_ID_1_0 } as Topology;
     expect(migrateTopologyTo(p0, TOPOLOGY_SCHEMA_ID_1_2)).toEqual({ ...p1Doc(), schema: TOPOLOGY_SCHEMA_ID_1_2 });

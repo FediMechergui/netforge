@@ -8,14 +8,20 @@
  *
  * P2 (W6 fix, §9.2 item 22c): while a lab check runs (`lab.checking`, set by the Labs panel and by Simulate → "Check
  * the lab now") the bar says so in words, since the worker posts nothing until the check ends.
+ *
+ * P3 (ARCHITECTURE-P3 D2, §7 W1 web-shell): the chip stays for P1 worlds only; a P2 or P3 world shows nothing.
  */
 import type { Selection, SimSnapshot } from '@netforge/engine';
+import { profileOfSnapshot } from '../learn/course-profile';
 import { selectDevice } from '../store/selectors';
 import { useStore } from '../store/store';
 
-/** @since P2 The chip of a classic-defaults world, or null for a world with the current defaults (or none yet). */
+/**
+ * @since P2 The chip of a classic-defaults world, or null for a world with later defaults (or none yet). P3: P1 worlds
+ * only, so a 'P3' snapshot shows no chip either.
+ */
 export function classicDefaultsChip(snapshot: Pick<SimSnapshot, 'profile'> | null | undefined): { readonly label: string; readonly hint: string } | null {
-  if (snapshot === null || snapshot === undefined || snapshot.profile === 'P2') return null;
+  if (snapshot === null || snapshot === undefined || profileOfSnapshot(snapshot) !== 'P1') return null;
   return {
     label: 'Classic defaults',
     hint: 'This world keeps the defaults of the first course: no spanning tree until you switch it on. File → "Use current defaults" brings in the newer ones.',

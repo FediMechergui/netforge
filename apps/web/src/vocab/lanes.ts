@@ -42,7 +42,7 @@ export const LANE_VOCAB: Readonly<Record<LaneId, LaneVocab>> = Object.freeze({
   security: lane('security', 'Port security', 'PS', 'err', 'A secured port learned an address, saw a violation or was error-disabled.'),
   config: lane('config', 'Configuration', 'C', 'textDim', 'A configuration line was set or removed.'),
   drops: lane('drops', 'Drops', 'X', 'err', 'A packet was discarded.'),
-  // P3 (ARCHITECTURE-P3 §2.12; the architect's W0 stubs, appended in the engine's canonical order)
+  // P3 (ARCHITECTURE-P3 §2.12; W1 web-inspector), appended in the engine's canonical order
   mgmt: lane('mgmt', 'Management', 'MG', 'purple', 'A neighbour was discovered or aged out, a clock was set or synchronised, or a log reached a server.'),
   wan: lane('wan', 'WAN links', 'WN', 'warn', 'A tunnel, a PPP link or an IPsec security association changed state.'),
 });

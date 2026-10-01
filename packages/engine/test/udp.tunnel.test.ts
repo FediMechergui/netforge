@@ -29,7 +29,7 @@ import { createPduFactory } from '../src/pdu/factory.js';
 import { createUdp } from '../src/protocols/udp.js';
 import { AP_ADDR, AP_GW, SETTLE, WLC_MGMT, capwapWorld, ofKind } from './capwap.harness.js';
 import { NF_PC_INPUT } from './device.catalog.p0-inputs.js';
-import { NO_IPV6_CTX, P2_CTX, testPortSpec } from './port.fixtures.js';
+import { NO_IPV6_CTX, P2_CTX, P3_CTX, testPortSpec } from './port.fixtures.js';
 
 const OWN = '192.168.99.5';
 const PEER = '192.168.99.20';
@@ -85,6 +85,7 @@ function harness(): Harness {
   const own = (ip: Ipv4Address): PortId | undefined => (ip === OWN ? 'Gi0' : undefined);
   const ctx: ProcessCtx = {
     ...P2_CTX,
+    ...P3_CTX,
     ...NO_IPV6_CTX,
     now,
     deviceId: device,

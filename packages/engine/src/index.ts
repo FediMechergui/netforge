@@ -36,6 +36,12 @@ export * from './core/rib-arbiter.js';
 export * from './core/scheduler.js';
 export * from './core/table.js';
 export * from './core/vlan-list.js';
+// core — P3 W1 core (ARCHITECTURE-P3 D10, D12, D16)
+export * from './core/ospf-lsa.js';
+export * from './core/ospf-spf.js';
+export * from './core/queueing.js';
+// core — P3 W1 wan [S19]: MD5 for CHAP (ARCHITECTURE-P3 D17)
+export * from './core/md5.js';
 
 // pdu
 export * from './pdu/pdu.js';
@@ -69,6 +75,23 @@ export * from './pdu/codecs/dhcpv6.js';
 export * from './pdu/codecs/capwap.js';
 export * from './pdu/codecs/hsrp.js';
 export * from './pdu/codecs/pagp.js';
+export * from './pdu/codecs/ospf.js';
+export * from './pdu/codecs/cdp.js';
+export * from './pdu/codecs/lldp.js';
+export * from './pdu/codecs/ntp.js';
+export * from './pdu/codecs/telnet.js';
+export * from './pdu/codecs/ssh.js';
+export * from './pdu/codecs/gre.js';
+export * from './pdu/codecs/ppp.js';
+export * from './pdu/codecs/lcp.js';
+export * from './pdu/codecs/pap.js';
+export * from './pdu/codecs/chap.js';
+export * from './pdu/codecs/ipcp.js';
+export * from './pdu/codecs/ipv6cp.js';
+export * from './pdu/codecs/syslog.js';
+export * from './pdu/codecs/eigrp.js';
+export * from './pdu/codecs/esp.js';
+export * from './pdu/codecs/ikev2.js';
 export * from './pdu/vlan.js';
 
 // device + link
@@ -154,6 +177,10 @@ export * from './protocols/l2/lag-hash.js';
 export * from './protocols/l2/membership.js';
 export * from './protocols/l2/port-security.js';
 export * from './protocols/l2/switchport-config.js';
+// P3 W1 l2 (ARCHITECTURE-P3 D13): the pure snooping, DAI and rate-window decisions
+export * from './protocols/l2/rate-window.js';
+export * from './protocols/l2/dhcp-snooping.js';
+export * from './protocols/l2/arp-inspection.js';
 export * from './protocols/stp/cost.js';
 export * from './protocols/stp/ids.js';
 export * from './protocols/stp/vector.js';
@@ -165,6 +192,20 @@ export * from './protocols/stp/rstp.js';
 // protocols — wireless controller and lightweight access point
 export * from './protocols/capwap-wtp.js';
 export * from './protocols/capwap-ac.js';
+// protocols — OSPF pure modules (P3 W1 ospf)
+export * from './protocols/ospf/config.js';
+export * from './protocols/ospf/cost.js';
+export * from './protocols/ospf/dr.js';
+export * from './protocols/ospf/hello-check.js';
+export * from './protocols/ospf/ism.js';
+// protocols — P3 W1 wan [S19] [C13]: the RFC 1661 automaton; IKEv2-lite exchange and derived values (pure)
+export * from './protocols/ppp/fsm.js';
+export * from './protocols/ike/proof.js';
+export * from './protocols/ike/exchange.js';
+// protocols — P3 W1 eigrp [C1]: configuration reader, integer metric, DUAL per destination (pure)
+export * from './protocols/eigrp/config.js';
+export * from './protocols/eigrp/metric.js';
+export * from './protocols/eigrp/dual.js';
 
 // cli
 export * from './cli/runtime.js';
@@ -212,6 +253,8 @@ export * from './sim/snapshot-cache.js';
 // sim — time travel [S1]: the input journal and replays
 export * from './sim/journal.js';
 export * from './sim/replay.js';
+// sim — P3 W1: the defaults ladder (D2)
+export * from './sim/defaults-upgrade.js';
 
 // curriculum
 export * from './contracts/curriculum.js';
@@ -219,3 +262,12 @@ export * from './curriculum/index.js';
 
 // timeline — time travel [S1]: lanes
 export * from './timeline/lanes.js';
+
+// automation — P3 W1 auto (ARCHITECTURE-P3 D21): data formats, the YANG model, the RESTCONF path parser; [S32] NF-Py
+export * from './automation/data/json.js';
+export * from './automation/data/yaml.js';
+export * from './automation/data/xml.js';
+export * from './automation/yang/path.js';
+export * from './automation/yang/model.js';
+export * from './automation/py/lexer.js';
+export * from './automation/py/parser.js';

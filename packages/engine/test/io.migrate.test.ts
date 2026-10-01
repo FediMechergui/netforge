@@ -154,10 +154,11 @@ const messages = (t: Topology, c: DeviceCatalog): string[] => validateTopologyAg
 // ── migrate ─────────────────────────────────────────────────────────────────
 
 describe('migrateTopology', () => {
-  it('the exporter id stays 1.1; the latest id is 1.2', () => {
+  it('the exporter id stays 1.1; the latest id is 1.3', () => {
     expect(TOPOLOGY_SCHEMA_ID).toBe('netforge.topology/1.1');
-    expect(LATEST_TOPOLOGY_SCHEMA_ID).toBe('netforge.topology/1.2');
-    expect(TOPOLOGY_SCHEMA_IDS).toEqual(['netforge.topology/1.0', 'netforge.topology/1.1', 'netforge.topology/1.2']);
+    // ARCHITECTURE-P3 §9.2 item 15 (W1 io): the latest id becomes 1.3 and the list holds the four ids
+    expect(LATEST_TOPOLOGY_SCHEMA_ID).toBe('netforge.topology/1.3');
+    expect(TOPOLOGY_SCHEMA_IDS).toEqual(['netforge.topology/1.0', 'netforge.topology/1.1', 'netforge.topology/1.2', 'netforge.topology/1.3']);
   });
 
   it('1.0 → 1.1 is the identity plus the schema id, and never mutates the input', () => {
@@ -195,7 +196,7 @@ describe('migrateTopology', () => {
 
   it('rejects an unknown schema id with a readable message', () => {
     const bad = { ...p0Topology(), schema: 'netforge.topology/0.9' } as unknown as Topology;
-    expect(() => migrateTopology(bad)).toThrow(/^Cannot migrate a topology with schema "netforge\.topology\/0\.9"; this build reads netforge\.topology\/1\.0, netforge\.topology\/1\.1, netforge\.topology\/1\.2$/);
+    expect(() => migrateTopology(bad)).toThrow(/^Cannot migrate a topology with schema "netforge\.topology\/0\.9"; this build reads netforge\.topology\/1\.0, netforge\.topology\/1\.1, netforge\.topology\/1\.2, netforge\.topology\/1\.3$/);
     expect(isTopologySchemaId('netforge.topology/1.0')).toBe(true);
     expect(isTopologySchemaId('netforge.topology/2.0')).toBe(false);
     expect(isTopologySchemaId(11)).toBe(false);

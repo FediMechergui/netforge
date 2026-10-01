@@ -30,7 +30,10 @@ describe('pagp codec (NF format) [S3]', () => {
 
   it('is registered after hsrp and dispatched by nf.pid 3', () => {
     expect(getCodec('pagp')).toBe(pagpCodec);
-    expect([...CODECS.keys()].slice(-2)).toEqual(['hsrp', 'pagp']);
+    // ARCHITECTURE-P3 §9.2 item 20a (item 13 appends the P3 codecs after the P2 codecs): hsrp and pagp are pinned at
+    // their exact positions (the last two P2 codecs), followed by the first P3 codec
+    expect([...CODECS.keys()].slice(27, 29)).toEqual(['hsrp', 'pagp']);
+    expect([...CODECS.keys()][29]).toBe('ospf');
     expect(lookupNext('nf.pid', NF_PID_PAGP)).toBe('pagp');
   });
 

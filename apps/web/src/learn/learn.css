@@ -222,6 +222,19 @@
   overflow-x: auto;
   font-size: 12.5px;
 }
+/* P3 (W1 web-learn): a code block that names its language gets a small caption above the block. */
+.learn-body .md-code {
+  margin: 8px 0;
+}
+.learn-body .md-code pre {
+  margin: 0;
+}
+.learn-body .md-code-lang {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin: 0 0 3px;
+}
 .learn-body code {
   padding: 0 3px;
   border-radius: var(--radius-sm);

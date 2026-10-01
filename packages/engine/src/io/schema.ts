@@ -19,6 +19,12 @@
  * the identity and a 1.1 document that carries `profile` loads as P1. Unknown
  * keys are stripped at every level.
  *
+ * @since P3 (ARCHITECTURE-P3 §2.9, ruling R7; W1 io) Schema 1.3: `profile` may be 'P2' or 'P3' and a device may
+ * carry [S32] `files` (its `files:` store). A 1.2 document keeps its own field set: `profile` stays the 'P2' literal
+ * (a 1.2 document carrying 'P3' is refused with that field's message) and `files` is stripped, like any key a
+ * version does not have (1.0 and 1.1 lose it too). `topologySchema` reads each document with the object schema of its
+ * version (`topologyObjectSchemaFor`), so every issue path and message of a 1.0–1.2 document is unchanged.
+ *
  * Catalog-aware validation (`validateTopologyAgainstCatalog`) and the atomic
  * load gate (`prepareTopologyLoad`) run before a simulation replaces its world;
  * they report `TopologyLoadProblem`s per device or link.
@@ -54,6 +60,8 @@ import {
   TOPOLOGY_SCHEMA_IDS,
   TOPOLOGY_SCHEMA_ID_1_0,
   TOPOLOGY_SCHEMA_ID_1_1,
+  TOPOLOGY_SCHEMA_ID_1_2,
+  TOPOLOGY_SCHEMA_ID_1_3,
   type NetforgeManifest,
   type Topology,
   type TopologyDevice,
@@ -98,6 +106,30 @@ export const MAX_DISTANCE_M = 100_000;
 export const MAX_LAB_NAME_CHARS = 128;
 /** (1.1) Largest accepted `lab.version`. */
 export const MAX_LAB_VERSION = 1_000_000;
+
+/**
+ * @since P3 [S32] (1.3) Maximum number of files in one device's `files:` store. The store itself has no bound
+ * (device/device.ts); its writers ([S32] `file.write`, script-host) keep within these limits so every export reloads.
+ */
+export const MAX_TOPOLOGY_FILES_PER_DEVICE = 256;
+/** @since P3 [S32] (1.3) Maximum length of a stored file's name, in UTF-16 code units. */
+export const MAX_TOPOLOGY_FILE_NAME_CHARS = 255;
+/** @since P3 [S32] (1.3) Maximum length of one stored file's text, in UTF-16 code units (the startup-config bound). */
+export const MAX_TOPOLOGY_FILE_CHARS = MAX_CONFIG_CHARS;
+
+/**
+ * @since P3 [S32] (1.3) A name the flat `files:` store accepts — exactly the rule of `isStoredFileName`
+ * (device/device.ts), so every file a host holds survives export and reload: not empty, not `.` or `..`, no directory
+ * separator (`/`, `\`) and no control character (U+0000–U+001F, U+007F). The length bound is the schema's own.
+ */
+export function isTopologyFileName(path: string): boolean {
+  if (path === '' || path === '.' || path === '..') return false;
+  for (let i = 0; i < path.length; i++) {
+    const c = path.charCodeAt(i);
+    if (c < 0x20 || c === 0x7f || c === 0x2f || c === 0x5c) return false;
+  }
+  return true;
+}
 
 /** Number of issues quoted in the message of the Error thrown by `parseTopology` / `parseManifest`. */
 const ISSUES_IN_MESSAGE = 5;
@@ -222,6 +254,39 @@ export const topologyDeviceSchema = z.object({
   ui: deviceUiSchema.optional(),
 });
 
+/** @since P3 [S32] (1.3) One file of a host's `files:` store (`TopologyFile`). */
+export const topologyFileSchema = z.object({
+  path: z
+    .string({ invalid_type_error: 'must be a string' })
+    .min(1, 'must not be empty')
+    .max(MAX_TOPOLOGY_FILE_NAME_CHARS, `must be at most ${MAX_TOPOLOGY_FILE_NAME_CHARS} characters`)
+    // an empty name already has its own message
+    .refine((p) => p === '' || isTopologyFileName(p), 'must be a plain file name (no folders, no control characters, not "." or "..")'),
+  content: z
+    .string({ invalid_type_error: 'must be a string' })
+    .max(MAX_TOPOLOGY_FILE_CHARS, `must be at most ${MAX_TOPOLOGY_FILE_CHARS} characters`),
+});
+
+/**
+ * @since P3 [S32] (1.3) A device's `files` list: at most MAX_TOPOLOGY_FILES_PER_DEVICE files with distinct names (the
+ * order is kept; the exporter writes the store's path order).
+ */
+export const topologyFilesSchema = z
+  .array(topologyFileSchema, { invalid_type_error: 'must be an array' })
+  .max(MAX_TOPOLOGY_FILES_PER_DEVICE, `at most ${MAX_TOPOLOGY_FILES_PER_DEVICE} files are allowed`)
+  .superRefine((files, ctx) => {
+    const seen = new Set<string>();
+    files.forEach((f, j) => {
+      if (seen.has(f.path)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: [j, 'path'], message: `file "${f.path}" is listed more than once` });
+      else seen.add(f.path);
+    });
+  });
+
+/** @since P3 (1.3) One entry of `topology.devices` in the 1.3 field set: the 1.1 device plus [S32] `files`. */
+export const topologyDeviceSchemaV13 = topologyDeviceSchema.extend({
+  files: topologyFilesSchema.optional(),
+});
+
 /** One entry of `topology.links` (1.1 field set). `length_m` is range-checked in the topology refinement (radio links are exempt from MAX_LENGTH_M). */
 export const topologyLinkSchema = z.object({
   id: idSchema,
@@ -267,6 +332,15 @@ export const profileSchema = z.literal('P2', {
   errorMap: () => ({ message: 'must be "P2"; leave it out for the classic (P1) defaults' }),
 });
 
+/**
+ * @since P3 (1.3) The world's defaults profile in the 1.3 field set: 'P2' or 'P3' (the "P2 or later" rule of the profile
+ * sweep, ARCHITECTURE-P3 §9.2 item 16); absent still means 'P1'. Like the 1.2 literal, every other value (a string or
+ * not) gets the one message.
+ */
+export const profileSchemaV13 = z.custom<'P2' | 'P3'>((v) => v === 'P2' || v === 'P3', {
+  message: 'must be "P2" or "P3"; leave it out for the classic (P1) defaults',
+});
+
 // ── topology ──────────────────────────────────────────────────────────────
 
 /** Keys introduced by schema 1.1, per level. A 1.0 document never carries them. */
@@ -275,6 +349,8 @@ const V11_DEVICE_KEYS = ['modules', 'hardware', 'ui'] as const;
 const V11_LINK_KEYS = ['kind', 'dce_end', 'distance_m'] as const;
 /** @since P2 Keys introduced by schema 1.2 (root level only). A 1.0 or 1.1 document never carries them. */
 const V12_ROOT_KEYS = ['profile'] as const;
+/** @since P3 Keys introduced by schema 1.3 (device level). A 1.0, 1.1 or 1.2 document never carries them. */
+const V13_DEVICE_KEYS = ['files'] as const;
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -289,16 +365,21 @@ function withoutKeys(v: unknown, keys: readonly string[]): unknown {
 
 /**
  * Read a document with the field set of its own version: copies (never mutates) the input without the keys of every
- * later version — a 1.0 document loses the 1.1 and 1.2 keys, a 1.1 document the 1.2 key `profile`. Any other input
- * (1.2, unknown ids, non-objects) passes through untouched and is judged by the schema.
+ * later version — a 1.0 document loses the 1.1, 1.2 and 1.3 keys, a 1.1 document the 1.2 key `profile` and the 1.3
+ * device key `files`, a 1.2 document the 1.3 device key `files` (@since P3). Any other input (1.3, unknown ids,
+ * non-objects) passes through untouched and is judged by the schema.
  */
 function stripNewerSections(input: unknown): unknown {
   if (!isRecord(input)) return input;
-  if (input['schema'] === TOPOLOGY_SCHEMA_ID_1_1) return withoutKeys(input, V12_ROOT_KEYS);
-  if (input['schema'] !== TOPOLOGY_SCHEMA_ID_1_0) return input;
-  const out = withoutKeys(input, [...V11_ROOT_KEYS, ...V12_ROOT_KEYS]) as Record<string, unknown>;
-  if (Array.isArray(input['devices'])) out['devices'] = input['devices'].map((d: unknown) => withoutKeys(d, V11_DEVICE_KEYS));
-  if (Array.isArray(input['links'])) out['links'] = input['links'].map((l: unknown) => withoutKeys(l, V11_LINK_KEYS));
+  const schema = input['schema'];
+  if (schema !== TOPOLOGY_SCHEMA_ID_1_0 && schema !== TOPOLOGY_SCHEMA_ID_1_1 && schema !== TOPOLOGY_SCHEMA_ID_1_2) return input;
+  const rootKeys: readonly string[] = schema === TOPOLOGY_SCHEMA_ID_1_0 ? [...V11_ROOT_KEYS, ...V12_ROOT_KEYS] : schema === TOPOLOGY_SCHEMA_ID_1_1 ? V12_ROOT_KEYS : [];
+  const deviceKeys: readonly string[] = schema === TOPOLOGY_SCHEMA_ID_1_0 ? [...V11_DEVICE_KEYS, ...V13_DEVICE_KEYS] : V13_DEVICE_KEYS;
+  const out = withoutKeys(input, rootKeys) as Record<string, unknown>;
+  if (Array.isArray(input['devices']) && input['devices'].some((d: unknown) => isRecord(d) && deviceKeys.some((k) => k in d))) {
+    out['devices'] = input['devices'].map((d: unknown) => withoutKeys(d, deviceKeys));
+  }
+  if (schema === TOPOLOGY_SCHEMA_ID_1_0 && Array.isArray(input['links'])) out['links'] = input['links'].map((l: unknown) => withoutKeys(l, V11_LINK_KEYS));
   return out;
 }
 
@@ -387,40 +468,67 @@ function refineTopology(t: RefinableTopology, ctx: z.RefinementCtx): void {
 
 const SCHEMA_ID_MESSAGE = `must be one of ${TOPOLOGY_SCHEMA_IDS.map((id) => `"${id}"`).join(', ')}`;
 
-/** The object schema behind `topologySchema` (1.2 field set, cross-field refinements applied). */
-const topologyObjectSchema = z
-  .object({
-    schema: z.enum(TOPOLOGY_SCHEMA_IDS, {
-      errorMap: () => ({ message: SCHEMA_ID_MESSAGE }),
-    }),
-    seed: z
-      .number({ invalid_type_error: 'must be a number' })
-      .int('must be an integer')
-      .min(Number.MIN_SAFE_INTEGER, 'out of range')
-      .max(Number.MAX_SAFE_INTEGER, 'out of range'),
-    devices: z
-      .array(topologyDeviceSchema, { invalid_type_error: 'must be an array' })
-      .max(MAX_DEVICES, `at most ${MAX_DEVICES} devices are allowed`),
-    links: z
-      .array(topologyLinkSchema, { invalid_type_error: 'must be an array' })
-      .max(MAX_LINKS, `at most ${MAX_LINKS} links are allowed`),
-    objectives: z
-      .array(z.string().max(MAX_ID_CHARS, `must be at most ${MAX_ID_CHARS} characters`))
-      .max(MAX_OBJECTIVES, `at most ${MAX_OBJECTIVES} objectives are allowed`)
-      .optional(),
-    notes: z.string().max(MAX_NOTES_CHARS, `must be at most ${MAX_NOTES_CHARS} characters`).optional(),
-    canvas: canvasSchema.optional(),
-    lab: labSchema.optional(),
-    profile: profileSchema.optional(),
-  })
-  .superRefine(refineTopology);
+/**
+ * The object schema of one field set, cross-field refinements applied: `device` and `profile` are the only members that
+ * differ between versions (@since P3).
+ */
+function topologyObjectSchemaFor<D extends z.ZodTypeAny, P extends z.ZodTypeAny>(device: D, profile: P) {
+  return z
+    .object({
+      schema: z.enum(TOPOLOGY_SCHEMA_IDS, {
+        errorMap: () => ({ message: SCHEMA_ID_MESSAGE }),
+      }),
+      seed: z
+        .number({ invalid_type_error: 'must be a number' })
+        .int('must be an integer')
+        .min(Number.MIN_SAFE_INTEGER, 'out of range')
+        .max(Number.MAX_SAFE_INTEGER, 'out of range'),
+      devices: z
+        .array(device, { invalid_type_error: 'must be an array' })
+        .max(MAX_DEVICES, `at most ${MAX_DEVICES} devices are allowed`),
+      links: z
+        .array(topologyLinkSchema, { invalid_type_error: 'must be an array' })
+        .max(MAX_LINKS, `at most ${MAX_LINKS} links are allowed`),
+      objectives: z
+        .array(z.string().max(MAX_ID_CHARS, `must be at most ${MAX_ID_CHARS} characters`))
+        .max(MAX_OBJECTIVES, `at most ${MAX_OBJECTIVES} objectives are allowed`)
+        .optional(),
+      notes: z.string().max(MAX_NOTES_CHARS, `must be at most ${MAX_NOTES_CHARS} characters`).optional(),
+      canvas: canvasSchema.optional(),
+      lab: labSchema.optional(),
+      profile: profile.optional(),
+    })
+    .superRefine(refineTopology);
+}
+
+/** The object schema of a 1.0–1.2 document (the 1.2 field set; older documents are stripped to theirs first). */
+const topologyObjectSchema = topologyObjectSchemaFor(topologyDeviceSchema, profileSchema);
+/** @since P3 The object schema of a 1.3 document: `profile` 'P2' | 'P3' and device `files`. */
+const topologyObjectSchemaV13 = topologyObjectSchemaFor(topologyDeviceSchemaV13, profileSchemaV13);
+
+/** @since P3 A parsed document of any version (the 1.3 output type is the widest). */
+type VersionedTopology = z.output<typeof topologyObjectSchemaV13>;
+
+/**
+ * @since P3 Judge a (stripped) document with the object schema of its version: 1.3 with the 1.3 field set, anything
+ * else (1.0–1.2, an unknown or missing id) with the 1.2 field set exactly as before, so every issue it reports keeps its
+ * path and message.
+ */
+const versionedTopologySchema = z.unknown().transform((input, ctx): VersionedTopology => {
+  const v13 = isRecord(input) && input['schema'] === TOPOLOGY_SCHEMA_ID_1_3;
+  const result = v13 ? topologyObjectSchemaV13.safeParse(input) : topologyObjectSchema.safeParse(input);
+  if (result.success) return result.data;
+  for (const issue of result.error.issues) ctx.addIssue(issue as z.IssueData);
+  return z.NEVER;
+});
 
 /**
  * Full topology document schema: `schema` (any id in TOPOLOGY_SCHEMA_IDS), `seed`, `devices`, `links`, optional
- * `objectives`/`notes`, the 1.1 sections and the 1.2 `profile`. A 1.0 document is read without its 1.1 and 1.2 keys,
- * a 1.1 document without its 1.2 key.
+ * `objectives`/`notes`, the 1.1 sections, the 1.2 `profile` and (@since P3) the 1.3 `profile` values and device
+ * `files`. A 1.0 document is read without its 1.1, 1.2 and 1.3 keys, a 1.1 document without its 1.2 and 1.3 keys, a 1.2
+ * document without its 1.3 keys.
  */
-export const topologySchema = z.preprocess(stripNewerSections, topologyObjectSchema);
+export const topologySchema = z.preprocess(stripNewerSections, versionedTopologySchema);
 
 /** Type produced by `topologySchema`; structurally identical to the `Topology` contract. */
 export type ParsedTopology = z.output<typeof topologySchema>;
@@ -638,9 +746,9 @@ function resolveEndpoint(dev: ScratchDevice, name: string, catalog: DeviceCatalo
 /**
  * Validate a PARSED topology against a device catalog before any world state changes (§3.14 step 3).
  *
- * Checks, per device in file order: the type exists; every module install (the file's `modules`, or the model's
- * default modules when absent) names a slot of the model, a catalog module, and a module that fits the slot (wording
- * from HARDWARE_MESSAGES). Then, per link in file order: each endpoint's port name resolves on a scratch port set
+ * Checks, per device in file order: the type exists; (@since P3) a device that carries [S32] `files` is a host; every
+ * module install (the file's `modules`, or the model's default modules when absent) names a slot of the model, a
+ * catalog module, and a module that fits the slot (wording from HARDWARE_MESSAGES). Then, per link in file order: each endpoint's port name resolves on a scratch port set
  * made of the fixed ports plus the ports of the valid module installs (`catalog.resolvePort`); virtual interfaces and virtual-role ports cannot terminate a link; and
  * no canonical port is used by two links (catching `Gi0` vs `GigabitEthernet0`) or twice by one link.
  *
@@ -655,6 +763,10 @@ export function validateTopologyAgainstCatalog(t: Topology, catalog: DeviceCatal
     if (model === undefined) {
       problems.push({ device: d.id, message: `${deviceLabel(d)} has type "${d.type}", which this build's catalog does not contain` });
       continue;
+    }
+    if (d.files !== undefined && d.files.length > 0 && !expandCapabilities(model.capabilities).includes('host')) {
+      // @since P3 [S32]: the `files:` store belongs to hosts only (D21)
+      problems.push({ device: d.id, message: `${deviceLabel(d)} carries files, but a ${model.model} has no files: store (only hosts keep files)` });
     }
     const ports = new Map<PortId, { readonly spec: PortSpec }>();
     for (const spec of model.ports) ports.set(spec.name, { spec });
@@ -719,7 +831,7 @@ export function topologyLoadError(problems: readonly TopologyLoadProblem[]): Top
 /**
  * The atomic load gate (§3.14 steps 1–4): parse (any accepted schema id; each id with its own field set) →
  * `migrateTopologyTo(latest)` → `validateTopologyAgainstCatalog`. Returns the migrated topology (schema = latest, 1.2
- * @since P2; `profile` present only when a 1.2 document carried it) when it can be loaded; otherwise
+ * @since P2, 1.3 @since P3; `profile` present only when a 1.2 or 1.3 document carried it) when it can be loaded; otherwise
  * throws a `TopologyLoadError` whose `problems` carry every schema issue (with the device or link id when known) or
  * every catalog problem. Pure: never mutates `json`, never touches a simulation.
  */

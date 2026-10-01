@@ -13,6 +13,8 @@
  * `accessPort`, `trunkPort`) write the canonical §5.1 lines, and the fault helpers (`errDisableFault`,
  * `cableCutFault`, `configFragmentFault` — the three hidden faults of §11.2) build `ScenarioInfo.faults` entries,
  * which the worker injects right after the world is loaded (so a lab can boot with a fault the student has to find).
+ * P3 (ARCHITECTURE-P3 §9.2 item 16, W1 sim): the profile rule reads "P2 or later" — `{ profile: 'P3' }` (every CCNA 3
+ * lab) writes `profile: 'P3'` and `schema = schemaIdFor(t)` (1.3) in the same step; `'P1'` or no option writes neither.
  *
  * ponytail: internal to the scenario tree (sim/scenarios/index.ts does not re-export it), so the generic names
  * `device` and `link` cannot collide in the engine barrel.
@@ -89,14 +91,14 @@ export function radioLink(id: string, aDev: string, aPort: string, bDev: string,
 
 /** @since P2 Options of `topology`. */
 export interface TopologyOptions {
-  /** The world's defaults profile (D2). 'P2' writes `profile: 'P2'` and schema 1.2; absent or 'P1' writes neither. */
+  /** The world's defaults profile (D2). 'P2' writes `profile: 'P2'` and schema 1.2, 'P3' `profile: 'P3'` and schemaIdFor's id (1.3); absent or 'P1' writes neither. */
   readonly profile?: DefaultsProfile;
 }
 
 /**
  * Assemble a topology; `seed` is stamped into the file (the Simulation keeps its own). With `{ profile: 'P2' }` (every
- * CCNA 2 lab) the topology carries `profile: 'P2'` and `schema = schemaIdFor(t)` in the same step (§2.9); without it
- * the result is the P1 topology it always was (schema 1.1, no `profile`).
+ * CCNA 2 lab) or `{ profile: 'P3' }` (every CCNA 3 lab) the topology carries that `profile` and `schema = schemaIdFor(t)`
+ * in the same step (§2.9); without it the result is the P1 topology it always was (schema 1.1, no `profile`).
  */
 export function topology(
   seed: number,
@@ -107,8 +109,9 @@ export function topology(
   opts: TopologyOptions = {},
 ): Topology {
   const t: Topology = { schema: TOPOLOGY_SCHEMA_ID, seed, devices: [...devices], links: [...links], objectives: [...objectives], notes };
-  if (opts.profile === 'P2') {
-    t.profile = 'P2';
+  // P3 §9.2 item 16: a profile of P2 or later is written with the schema that can express it, in the same step.
+  if (opts.profile !== undefined && opts.profile !== 'P1') {
+    t.profile = opts.profile;
     t.schema = schemaIdFor(t);
   }
   return t;

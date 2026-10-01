@@ -120,6 +120,33 @@ describe('ip.proxy-arp [S7] answering', () => {
   });
 });
 
+// ── P3 (ARCHITECTURE-P3 §7 W1 l3, §9.2 item 16): the profile default is "P2 or later", so proxy ARP stays on in P3 ──
+
+describe('ip.proxy-arp [S7] in the P3 profile (W1 l3)', () => {
+  it('reads the empty slot as on in P3 exactly as in P2; a stored no ip proxy-arp still turns it off; P1 stays off', () => {
+    const h = router();
+    expect(proxyArpEnabled(inProfile(h, 'P3'), GI0)).toBe(true);
+    expect(proxyArpEnabled(inProfile(h, 'P3'), GI1)).toBe(true);
+    expect(proxyArpEnabled(inProfile(h, 'P1'), GI0)).toBe(false);
+    h.ctx.config.unset([['interface', GI0]], ['ip', 'proxy-arp']);
+    expect(proxyArpEnabled(inProfile(h, 'P3'), GI0)).toBe(false);
+    expect(proxyArpEnabled(inProfile(h, 'P3'), GI1)).toBe(true);
+    expect(proxyArpEnabled(inProfile(router('pc'), 'P3'), GI0)).toBe(false);
+  });
+
+  it('answers in P3 with the port MAC, byte for byte as in P2', () => {
+    const replies = (profile: DefaultsProfile) => {
+      const h = router();
+      const out = sends(createArp().onPdu(inProfile(h, profile), request(h, '10.0.1.7'), GI0));
+      return out.map((s) => ({ port: s.port, eth: s.pdu.layer('ethernet')!.fields, arp: s.pdu.layer('arp')!.fields, bytes: Array.from(s.pdu.bytes) }));
+    };
+    const p3 = replies('P3');
+    expect(p3).toHaveLength(1);
+    expect(p3[0]!.arp).toMatchObject({ op: ARP_OP_REPLY, sha: MAC_R0, spa: '10.0.1.7', tha: MAC_PC, tpa: '10.0.0.5' });
+    expect(p3).toEqual(replies('P2'));
+  });
+});
+
 // ── a real world (test/p2.world.ts): a proxy reply for a target behind a recursive static ───────────────────────
 
 describe('ip.proxy-arp [S7] on a real world', () => {

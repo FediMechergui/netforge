@@ -47,13 +47,13 @@ describe('pure entry import lint', () => {
   const files = closure(ENTRY);
   const rel = Array.from(files.keys()).map((f) => relative(SRC, f).split(sep).join('/'));
 
-  it('reaches only contracts, core, capture/filter and cli/format', () => {
+  it('reaches only contracts, core, capture/filter, cli/format and (P3) automation', () => {
     const offending = rel.filter((f) => FORBIDDEN_DIRS.some((d) => f.startsWith(`${d}/`)));
     expect(offending).toEqual([]);
     expect(rel).not.toContain('index.ts');
     for (const f of rel) {
       expect(
-        f === 'pure.ts' || f.startsWith('contracts/') || f.startsWith('core/') || f.startsWith('capture/filter/') || f === 'cli/format.ts',
+        f === 'pure.ts' || f.startsWith('contracts/') || f.startsWith('core/') || f.startsWith('capture/filter/') || f === 'cli/format.ts' || f.startsWith('automation/'),
         `unexpected module in the pure closure: ${f}`,
       ).toBe(true);
     }
@@ -63,6 +63,8 @@ describe('pure entry import lint', () => {
     expect(rel).toEqual(expect.arrayContaining([
       'core/addr6.ts', 'capture/filter/parser.ts', 'capture/filter/eval.ts', 'capture/filter/complete.ts',
       'capture/filter/fields.ts', 'capture/filter/lexer.ts', 'cli/format.ts', 'contracts/addr.ts',
+      'automation/data/json.ts', 'automation/data/yaml.ts', 'automation/data/xml.ts', 'automation/yang/model.ts',
+      'automation/yang/path.ts', 'automation/py/lexer.ts', 'automation/py/parser.ts',
     ]));
   });
 

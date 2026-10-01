@@ -494,8 +494,11 @@ export interface CommandCtx {
   readonly secrets: { hash(plain: string): string; verify(stored: string, plain: string): boolean };
 
   // ── P3 (ARCHITECTURE-P3 §2.9; optional during the transition, required once implemented) ──
-  /** @since P3 The device clock (`show clock`, `show ntp status`, the [S24] timestamps render; D19). */
-  clock?(): DeviceClockView;
+  /**
+   * @since P3 The device clock (`show clock`, `show ntp status`, the [S24] timestamps render; D19). Required since W1
+   * (§0 rule 2, §9.2 item 19).
+   */
+  clock(): DeviceClockView;
   /** @since P3 A port's QoS marking counters (display; M13). */
   qosCounters?(port: PortId): PortSnapshot['qos'];
   /** @since P3 [S20] The held queues of a scheduler port (`show policy-map interface`). */

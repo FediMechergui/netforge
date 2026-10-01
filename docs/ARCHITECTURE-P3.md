@@ -4373,6 +4373,55 @@ brief. Where a ruling and an earlier line of this document differ, the ruling wi
     with `DETAIL_RESERVED_GROUP`), and a new case pins LLDP at a switch that does not run `lldp`: drop `not-for-me`,
     detail exactly `lldp is not running on this device`.
 
+**W1 additions (recorded at the W1 fix and integrate step, 2026-10-01).** Pins the W1 items forced without a line above;
+each keeps its assertion's strength.
+
+20a. pdu (knock-ons of items 13 and 14): `pdu.codecs.p2.test.ts:69` and `lag.pagp.test.ts:33` pinned the registry's
+     tail (`slice(-8)`, `slice(-2)`); each keeps its exact array at the P2 codecs' position (`slice(21, 29)`,
+     `slice(27, 29)`) and gains `[...CODECS.keys()][29]` `toBe('ospf')`. `pdu.codecs.transport.test.ts:300` used TCP 23
+     as the reserved example: it now decodes exactly `['ipv4', 'tcp', 'telnet']` ([S13]), and the reserved case moves to
+     TCP 21, exactly `['ipv4', 'tcp', 'payload']` (ftp stays reserved).
+20b. io (knock-ons of item 15: the load gate normalises the in-memory copy to the latest id, the exporter still writes
+     `schemaIdFor`): `io.schema.p2.test.ts:138-141` — the loaded P2 document `toEqual({...p2Doc(), schema: 1.3})`, plus
+     `schemaIdFor(loaded)` exactly 1.2; `:198-200` — `TOPOLOGY_MIGRATIONS[1.2].to` is 1.3 and `TOPOLOGY_MIGRATIONS[1.3]`
+     is undefined; `:222-223` — `loaded.schema` is 1.3.
+20c. l3 (M4, the §2.3 row for 89; item 30 covers only the approved 47, 50 and 88): `ip.upper.test.ts:24-31` —
+     `IPV4_UPPER` exactly `[[1,'icmpv4'],[6,'tcp'],[17,'udp'],[47,'gre'],[50,'gre'],[88,'eigrp'],[89,'ospf']]`;
+     `ipv4UpperEntry(89)` (was undefined) `toEqual({protocol: 89, process: 'ospf', label: 'ospf'})`; the unknown-protocol
+     case keeps an exact `toBeUndefined()`, on 253.
+20d. cli (the approved [S24] rules of §5.7): `cli.modes-rules.test.ts:114` used `logging buffered` as a global line
+     without a rule; it now `toEqual` the rule `{pattern: ['logging', 'buffered', '<rest>'], contexts: [''], identity: 2,
+     cardinality: 'single'}`, and the no-rule case keeps an exact `toBeUndefined()`, on `snmp-server community public`.
+20e. Item 19, the typed fakes the compiler found when `CommandCtx.clock` became required (W1 fix): `cli.p05.fixture.ts`
+     and `cli.show.fixture.ts` gain `clock: P3_CTX.clock` (the unset view); assertions unchanged.
+
+**W1 rulings (architect, 2026-10-01)**
+
+- **R14.** The W1 fix's `pathOrder` option in `core/rib-arbiter.ts` (equal-AD, equal-metric paths of one owner install
+  in batch order; absent = the P1/P2 order) is accepted as a reviewed additive edit of the l3/core owner's file.
+- **R15.** `CommandCtx.clock` is required (the W1 fix applied rule 2 early). `PortTxQueueView` frame entries gain
+  `dscp?` (optional by meaning; written by the W2 snapshot cache; normalised away with `txBacklog` in the goldens) —
+  §2.15 lists it.
+- **R16.** `L2_CONTROL` keeps the five P2 rows (pinned by `l2.control.test.ts:101-107`) and the seven-row
+  `L2_CONTROL_TABLE` (adding cdp and lldp before reserved) is what dispatch reads; D18's wording "L2_CONTROL gains
+  cdp and lldp" is read as "the control table". No migration.
+- **R17.** A switch that opens an outbound client session ([S13] `telnet`/`ssh` from its own CLI) wakes its dormant
+  transport for that session, like a configured service, so the reply is not dropped (D22). Owner: the [S13] item of
+  W2/W3, with a case in `ip.switch-transport.test.ts`.
+- **R18.** `LabCheckResult` gains `misconception?` (optional by meaning, the analytics tag of the envelope), and the
+  widened `route` / `table` assertion members are implemented by the W2 **sim** grader item (with their wrong-answer
+  cases in `sim.lab-checks.p3.test.ts`).
+- **R19.** `CourseObjective` / `ObjectiveHandsOn` stay in `curriculum/ccna3/objectives.ts` (data-module types; the W8
+  gate decides whether they move to `contracts/curriculum.ts`).
+- **R20.** The device `storage` action enforces the io limits (256 files per device, 255-character names, 1 MiB per
+  file) — owner: the [S32] writer item of W2.
+- **R21.** The ESP SA key id is an encode-only input of the `esp` codec (`keyId`, never decoded, not in
+  `PROTO_FIELDS`); the ICV keeps an unkeyed integrity word and a chain word so wire damage shows, and the tunnel tail
+  checks the keyed word with `espIcvKeyMatches` (§2.17 note). The [C13]/[S18] tunnel owner puts `keyId` from
+  `tunnel.sa` into the pushed `esp` layer.
+- **R22.** The web `RESERVED_PROTOCOL_VOCAB` drops ntp, ssh, telnet and syslog (now decoded) — owner: the W2 web
+  item.
+
 **W2**
 
 21. Help lists (W2 cli, and again W3 cli): `goldens/cli-help.p05.json` regenerated, guarded by

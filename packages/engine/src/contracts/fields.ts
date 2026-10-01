@@ -427,19 +427,8 @@ export const PROTO_FIELDS: Readonly<Record<string, ProtoFieldTable>> = Object.fr
     f('partnerDevice', 'mac', 'Partner device address as the sender knows it.'),
     f('partnerPort', 'uint', 'Partner port number as the sender knows it.', u(16)),
   ], 'Original NF format (D8): 802.3 + LLC/SNAP with the NF OUI and PID 3, to the NF L2 control group.'),
-  // P3: the P3 protocols' tables are held in P3_PROTO_FIELDS below until their codecs land (W1 pdu).
-});
-
-/**
- * @since P3 The field tables of the P3 protocols (ARCHITECTURE-P3 §2.3, §2.16, §2.17), written in W0 and held OUTSIDE
- * `PROTO_FIELDS` so that W0 changes no behaviour (§0 rule 3): `PROTO_FIELDS` is a runtime list that NetScope's display
- * filter registry (`capture/filter/fields.ts` `buildRegistry`), the pdu field lookup and the web field formatters
- * iterate, so a table there would make the filter accept `ospf`, `ntp`, `ssh` … in P1/P2 worlds and match nothing.
- * Nothing reads this constant. Each W1 pdu codec item MOVES its protocol's table from here into `PROTO_FIELDS`, in the
- * same change as its codec, registry line and dispatch line (rule 18), and the W2 capture items build their display
- * fields on it; when the last codec has landed this constant is empty and is deleted.
- */
-export const P3_PROTO_FIELDS: Readonly<Record<string, ProtoFieldTable>> = Object.freeze({
+  // ── P3 (ARCHITECTURE-P3 §2.3, §2.16, §2.17). Written by the architect in W0 outside this record (P3_PROTO_FIELDS, so W0
+  // changed no behaviour) and moved here by the W1 pdu item together with their codecs (ruling R11). ──
   ospf: table('ospf', 'P3', [
     f('version', 'uint', 'OSPF version (2).', u(8, { required: true, default: 2 })),
     f('type', 'uint', 'Packet type: 1 hello, 2 database description, 3 link-state request, 4 link-state update, 5 link-state acknowledgement.', u(8, REQ)),
@@ -656,7 +645,9 @@ const d = (space: DispatchSpace, key: number, proto: ProtoName, since: BuildStag
  * Ethertype (ethernet.type, llc.type, hdlc.protocol), IP protocol (ipv4.protocol, ipv6.nextHeader) and well-known port
  * dispatch. P2 adds the spaces 'llc.sap' (non-SNAP llc.dsap) and 'nf.pid' (llc.type when llc.oui is NF_OUI); a
  * P2 entry whose codec is not registered yet decodes as payload (dispatch.ts), so the entries are decode-neutral
- * until their codec lands.
+ * until their codec lands. P3 adds the space 'ppp.proto' ([S19] ppp.protocol), the P3 entries, and un-reserves
+ * UDP 123 (ntp), [S25] UDP 514 (syslog) and [S13] TCP 22/23 (ssh/telnet); UDP 69, 161 and TCP 21 stay reserved.
+ * Dispatch does not depend on a world's profile: only decoding changes, never bytes (ARCHITECTURE-P3 §9.2 item 14).
  */
 export const DISPATCH_TABLE: readonly DispatchEntry[] = Object.freeze([
   d('ethertype', 0x0800, 'ipv4', 'P0'),
@@ -678,12 +669,12 @@ export const DISPATCH_TABLE: readonly DispatchEntry[] = Object.freeze([
   d('tcp.port', 80, 'http', 'P1'),
   d('tcp.port', 8080, 'http', 'P1'),
   d('udp.port', 69, 'tftp', 'P1', true),
-  d('udp.port', 123, 'ntp', 'P1', true),
+  d('udp.port', 123, 'ntp', 'P1'), // reserved until P3: decoded by the W1 pdu ntp codec (ARCHITECTURE-P3 §2.3)
   d('udp.port', 161, 'snmp', 'P1', true),
-  d('udp.port', 514, 'syslog', 'P1', true),
+  d('udp.port', 514, 'syslog', 'P1'), // [S25] reserved until P3
   d('tcp.port', 21, 'ftp', 'P1', true),
-  d('tcp.port', 22, 'ssh', 'P1', true),
-  d('tcp.port', 23, 'telnet', 'P1', true),
+  d('tcp.port', 22, 'ssh', 'P1'), // [S13] reserved until P3
+  d('tcp.port', 23, 'telnet', 'P1'), // [S13] reserved until P3
   d('tcp.port', 25, 'smtp', 'P1', true),
   d('tcp.port', 110, 'pop3', 'P1', true),
   d('tcp.port', 143, 'imap', 'P1', true),
@@ -698,4 +689,20 @@ export const DISPATCH_TABLE: readonly DispatchEntry[] = Object.freeze([
   d('udp.port', 5247, 'capwap', 'P2'),
   d('udp.port', 1985, 'hsrp', 'P2'), // [SHOULD S2]
   d('nf.pid', 0x0003, 'pagp', 'P2'), // [SHOULD S3]
+  // ── P3 (ARCHITECTURE-P3 §2.3, §2.16, §2.17): added by the W1 pdu item with their codecs (rule 18) ──
+  d('ipproto', 89, 'ospf', 'P3'),
+  d('nf.pid', 0x0004, 'cdp', 'P3'),
+  d('ethertype', 0x88cc, 'lldp', 'P3'),
+  d('tcp.port', 443, 'http', 'P3'), // HTTP decoded on 443; the inspector shows it under the TLS banner (D21)
+  d('ipproto', 47, 'gre', 'P3'), // [S18]
+  d('ppp.proto', 0x0021, 'ipv4', 'P3'), // [S19] the ppp.proto space (PPP_PROTO)
+  d('ppp.proto', 0x0057, 'ipv6', 'P3'), // [S19]
+  d('ppp.proto', 0xc021, 'lcp', 'P3'), // [S19]
+  d('ppp.proto', 0xc023, 'pap', 'P3'), // [S19]
+  d('ppp.proto', 0xc223, 'chap', 'P3'), // [S19]
+  d('ppp.proto', 0x8021, 'ipcp', 'P3'), // [S19]
+  d('ppp.proto', 0x8057, 'ipv6cp', 'P3'), // [S19]
+  d('ipproto', 88, 'eigrp', 'P3'), // [C1]
+  d('ipproto', 50, 'esp', 'P3'), // [C13]
+  d('udp.port', 500, 'ikev2', 'P3'), // [C13]
 ]);

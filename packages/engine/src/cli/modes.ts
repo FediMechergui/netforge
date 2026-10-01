@@ -162,9 +162,15 @@ export function isSubinterfaceName(name: string): boolean {
   return /^[A-Za-z][A-Za-z-]*\d[\d/]*\.\d+$/.test(name);
 }
 
+/** @since P3 Second token of a `router …` context entry that `config-router` stands for (ARCHITECTURE-P3 §2.11). */
+export const OSPF_ROUTER_KEYWORD = 'ospf';
+
 /**
  * @since P2 Refinement of modes that share a context key with another mode (`interface`, §2.11): true when `entry`
  * belongs to `mode` specifically, false when it does not, undefined for a mode without a refinement.
+ * @since P3 (ARCHITECTURE-P3 §2.11, W1 cli) `config-router` is refined to entries whose second token is `ospf`
+ * (`router ospf 1`); [C1] `router eigrp <as>` has its own context key (`router eigrp`, mode `config-router-eigrp`), and a
+ * `router` entry of any other protocol maps to no mode.
  */
 function refinementAccepts(mode: CliMode, entry: readonly string[]): boolean | undefined {
   switch (mode) {
@@ -172,6 +178,8 @@ function refinementAccepts(mode: CliMode, entry: readonly string[]): boolean | u
       return entry[0] === 'interface' && entry[1] !== undefined && isSubinterfaceName(entry[1]);
     case 'config-if-range':
       return entry[0] === 'interface' && entry[1] === INTERFACE_RANGE_KEYWORD;
+    case 'config-router':
+      return entry[0] === 'router' && entry[1] === OSPF_ROUTER_KEYWORD;
     default:
       return undefined;
   }
@@ -183,6 +191,8 @@ function refinementAccepts(mode: CliMode, entry: readonly string[]): boolean | u
  * else a mode without a refinement; non-reserved before reserved at each step, declaration order within. Undefined
  * when no mode has the key. Since the W2 cli item entered `config-subif` and `config-if-range`, a subinterface entry
  * and an `interface range …` entry map to those modes; every other `interface` entry still maps to `config-if`.
+ * P3: `router ospf <pid>` maps to `config-router` (reserved until the W2 cli item enters it, so it is found as the
+ * reserved fallback), `router eigrp <as>` to `config-router-eigrp` through its own key, any other `router` entry to none.
  */
 export function modeForContextEntry(entry: readonly string[]): CliMode | undefined {
   const key = contextKeyOf(entry);

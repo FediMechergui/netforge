@@ -188,8 +188,21 @@ describe('§3.0 step 2 — physical control dispatch', () => {
     const h = p2SwitchHarness();
     const sw = createEthSwitch();
     sw.init!(h.ctx);
-    const pdu = h.ctx.newPdu([{ proto: 'ethernet', fields: { dst: '01:80:c2:00:00:0e', src: MAC_A, type: 0x88cc } }, { proto: 'payload', fields: { bytes: new Uint8Array(4) } }]);
+    // ARCHITECTURE-P3 §9.2 item 20 (W1 l2): 01:80:c2:00:00:0e with 0x88cc is LLDP now; this reserved example replaces it
+    const pdu = h.ctx.newPdu([{ proto: 'ethernet', fields: { dst: '01:80:c2:00:00:0f', src: MAC_A, type: 0x0800 } }, { proto: 'payload', fields: { bytes: new Uint8Array(4) } }]);
     expect(sw.onPdu(h.ctx, pdu, FA1)).toEqual([expect.objectContaining({ type: 'drop', reason: 'not-for-me', detail: DETAIL_RESERVED_GROUP })]);
+  });
+
+  it('an LLDP frame at a switch that does not run lldp is dropped not-for-me (ARCHITECTURE-P3 §9.2 item 20, D18)', () => {
+    const h = p2SwitchHarness();
+    const sw = createEthSwitch();
+    sw.init!(h.ctx);
+    expect(VLAN_AWARE_MODEL.processes).not.toContain('lldp');
+    const pdu = h.ctx.newPdu([{ proto: 'ethernet', fields: { dst: '01:80:c2:00:00:0e', src: MAC_A, type: 0x88cc } }, { proto: 'payload', fields: { bytes: new Uint8Array(4) } }]);
+    expect(sw.onPdu(h.ctx, pdu, FA1)).toEqual([
+      expect.objectContaining({ type: 'drop', reason: 'not-for-me', detail: 'lldp is not running on this device', port: FA1 }),
+    ]);
+    expect(h.tables.cam.size).toBe(0);
   });
 });
 

@@ -11,7 +11,9 @@
  *    Never generated for broadcast/multicast destinations, for a source of 0.0.0.0 or in answer
  *    to another ICMP error (RFC 1122 §3.2.2). The error's source is the original destination
  *    when that is one of our addresses (protocol / port unreachable), else the address of the
- *    ingress port, else the address towards the original source.
+ *    ingress port, else the address towards the original source. [S18] (ARCHITECTURE-P3 D15): an `icmp.error` with
+ *    `param` for type 3 code 4 writes the next-hop MTU into the low 16 bits of `unused` (RFC 1191); without it (every
+ *    P1/P2 error) `unused` stays 0.
  *  • Error fan-back (ARCHITECTURE-P1 §4.2): a received error is dispatched on the QUOTED datagram —
  *    quoted ICMP → the ping job or probe that sent it; quoted UDP / TCP → delivered (the whole error
  *    PDU) to the `udp` / `tcp` daemon through the protocols/ip-upper.ts table, which turns it into a
@@ -50,6 +52,7 @@ import {
   ICMP_ECHO_REQUEST,
   ICMP_QUOTE_PAYLOAD_BYTES,
   ICMP_TIME_EXCEEDED,
+  ICMP_UNREACH_FRAG_NEEDED,
   IPPROTO_ICMP,
   type LayerView,
   type Pdu,
@@ -522,21 +525,20 @@ export function createIcmpv4(): Process {
     const tag = req.type === ICMP_TIME_EXCEEDED ? 'ttl-exceeded' : req.type === ICMP_DEST_UNREACHABLE ? 'unreachable' : `icmp-type-${req.type}`;
     const meta: Partial<PduMeta> =
       original.meta.flow !== undefined ? { triggeredBy: original.id, tag, flow: original.meta.flow } : { triggeredBy: original.id, tag };
+    // [S18] (D15, RFC 1191): "fragmentation needed" carries the next-hop MTU in the low 16 bits of `unused`
+    const mtu = req.param !== undefined && req.type === ICMP_DEST_UNREACHABLE && req.code === ICMP_UNREACH_FRAG_NEEDED ? req.param & 0xffff : undefined;
     const error = ctx.newPdu(
       [
         { proto: 'ipv4', fields: { src, dst: origSrc, protocol: IPPROTO_ICMP, ttl: ttlFor(ctx) } },
-        { proto: 'icmpv4', fields: { type: req.type, code: req.code, unused: 0 } },
+        { proto: 'icmpv4', fields: { type: req.type, code: req.code, unused: mtu ?? 0 } },
         { proto: 'payload', fields: { data: quote } },
       ],
       meta,
     );
     errorsSent++;
-    debug(ctx, `error type ${req.type} code ${req.code} ${src} > ${origSrc} quoting ${origSrc} > ${origDst}`, {
-      original: original.id,
-      error: error.id,
-      type: req.type,
-      code: req.code,
-    });
+    const data: Record<string, unknown> = { original: original.id, error: error.id, type: req.type, code: req.code };
+    if (mtu !== undefined) data.mtu = mtu;
+    debug(ctx, `error type ${req.type} code ${req.code} ${src} > ${origSrc} quoting ${origSrc} > ${origDst}${mtu !== undefined ? ` (next-hop MTU ${mtu})` : ''}`, data);
     return [{ type: 'request', to: 'ipv4', req: { kind: 'ipv4.send', pdu: error, cause: `icmp ${tag}` } }];
   }
 

@@ -27,7 +27,7 @@ import { createPduFactory } from '../src/pdu/factory.js';
 import { createVlan } from '../src/protocols/vlan.js';
 import { NF_C2960_INPUT } from './device.catalog.p0-inputs.js';
 import { defineP2Model, p2Registry } from './p2.world.js';
-import { NO_IPV6_CTX, P2_CTX, testPortSpec } from './port.fixtures.js';
+import { NO_IPV6_CTX, P2_CTX, P3_CTX, testPortSpec } from './port.fixtures.js';
 
 export const DEVICE = 'd_sw1';
 export const FA1 = 'FastEthernet0/1';
@@ -142,6 +142,7 @@ export function p2SwitchHarness(opts: P2SwitchHarnessOptions = {}): P2SwitchHarn
 
   const ctx: ProcessCtx = {
     ...P2_CTX,
+    ...P3_CTX,
     ...NO_IPV6_CTX,
     get now() { return now; },
     deviceId: DEVICE,

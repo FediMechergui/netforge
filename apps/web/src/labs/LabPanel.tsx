@@ -28,7 +28,7 @@ import { errorText } from '../desktop/shared';
 import { useStore } from '../store/store';
 import type { LabUiState } from '../store/types';
 import { LAB_CHECK_ANNOUNCEMENT, LabBrowser, LabWorkingNote, useWorkElapsed, type LabWork } from './LabBrowser';
-import { inlineText, parseMarkdown, type ConceptLinkTool, type MdBlock, type MdInline } from './markdown';
+import { MD_CODE_LANG_LABEL, inlineText, parseMarkdown, type ConceptLinkTool, type MdBlock, type MdInline } from './markdown';
 
 // ── markdown rendering ───────────────────────────────────────────────────────
 
@@ -68,7 +68,12 @@ export function renderInline(nodes: readonly MdInline[], onConcept?: (tool: Conc
   });
 }
 
-/** Instruction blocks as React elements. Headings start at `baseLevel` so they nest under the panel heading. */
+/**
+ * Instruction blocks as React elements. Headings start at `baseLevel` so they nest under the panel heading.
+ * @since P3 (W1 web-learn) A code block with a `lang` is a labelled group: a small caption naming the language, then the
+ * same `<pre>` with the body as one text child (React escapes it), marked `data-lang` for the stylesheet; without `lang`
+ * the block renders exactly as before. The language changes the label only, never how the body is shown.
+ */
 export function Markdown({ blocks, onConcept, baseLevel = 4 }: { blocks: readonly MdBlock[]; onConcept?: (tool: ConceptLinkTool) => void; baseLevel?: number }) {
   return (
     <>
@@ -79,10 +84,17 @@ export function Markdown({ blocks, onConcept, baseLevel = 4 }: { blocks: readonl
           case 'paragraph':
             return <p key={i}>{renderInline(block.children, onConcept)}</p>;
           case 'code':
-            return (
+            return block.lang === undefined ? (
               <pre key={i} className="mono">
                 {block.text}
               </pre>
+            ) : (
+              <div key={i} className="md-code" data-lang={block.lang} role="group" aria-label={`${MD_CODE_LANG_LABEL[block.lang]} code`}>
+                <div className="md-code-lang dim" aria-hidden="true">
+                  {MD_CODE_LANG_LABEL[block.lang]}
+                </div>
+                <pre className="mono">{block.text}</pre>
+              </div>
             );
           case 'list':
             return block.ordered ? (

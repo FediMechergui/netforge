@@ -55,12 +55,15 @@ const echoSpecs = (payloadLen = 56, ttl = 128): LayerSpec[] => [
 ];
 
 describe('pdu/codecs registry', () => {
-  it('registers the five P0 codecs in insertion order, then the P0.5 link codecs, then the P1 codecs (§9.2), then the P2 codecs (P2 §9 item 4)', () => {
+  it('registers the five P0 codecs in insertion order, then the P0.5 link codecs, then the P1 codecs (§9.2), then the P2 codecs (P2 §9 item 4), then the P3 codecs (P3 §9.2 item 13)', () => {
     expect([...CODECS.keys()]).toEqual([
       'ethernet', 'arp', 'ipv4', 'icmpv4', 'payload',
       'hdlc', 'dot11', 'dot11-mgmt', 'llc', 'eapol',
       'ipv6', 'ipv6-hopopts', 'ipv6-route', 'ipv6-frag', 'ipv6-dstopts', 'icmpv6', 'udp', 'tcp', 'dhcp', 'dns', 'http',
       'dot1q', 'stp', 'lacp', 'dtp', 'dhcpv6', 'capwap', 'hsrp', 'pagp',
+      // ARCHITECTURE-P3 §9.2 item 13: the MUST codecs, then the approved ones in the ProtoName order of §2.3
+      'ospf', 'ospf-lsa', 'cdp', 'lldp', 'ntp',
+      'telnet', 'ssh', 'gre', 'ppp', 'lcp', 'pap', 'chap', 'ipcp', 'ipv6cp', 'syslog', 'eigrp', 'esp', 'ikev2',
     ]);
     expect(getCodec('ethernet')).toBe(ethernetCodec);
     expect(getCodec('arp')).toBe(arpCodec);

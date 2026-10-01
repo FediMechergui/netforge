@@ -21,10 +21,14 @@ const all = { processes: ['icmpv4', 'icmpv6', 'nd', 'udp', 'tcp'] };
 
 describe('ip-upper table', () => {
   it('maps IPv4 protocols 1, 6 and 17', () => {
-    expect(IPV4_UPPER.map((e) => [e.protocol, e.process])).toEqual([[1, 'icmpv4'], [6, 'tcp'], [17, 'udp']]);
+    // ARCHITECTURE-P3 §2.3: 89 → ospf (M4, §9.2 item 20c) and the approved [S18] 47, [C13] 50, [C1] 88 (§9.2 item 30).
+    expect(IPV4_UPPER.map((e) => [e.protocol, e.process])).toEqual([
+      [1, 'icmpv4'], [6, 'tcp'], [17, 'udp'], [47, 'gre'], [50, 'gre'], [88, 'eigrp'], [89, 'ospf'],
+    ]);
     expect(IPV6_UPPER.map((e) => [e.protocol, e.process])).toEqual([[6, 'tcp'], [17, 'udp'], [58, 'icmpv6']]);
     expect(ipv4UpperEntry(17)).toEqual({ protocol: 17, process: 'udp', label: 'udp' });
-    expect(ipv4UpperEntry(89)).toBeUndefined();
+    expect(ipv4UpperEntry(89)).toEqual({ protocol: 89, process: 'ospf', label: 'ospf' });
+    expect(ipv4UpperEntry(253)).toBeUndefined();
     expect(Object.isFrozen(IPV4_UPPER)).toBe(true);
   });
 

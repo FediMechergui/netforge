@@ -538,8 +538,8 @@ export const MUTATION_VOCAB: Readonly<Record<MutationReason, MutationVocab>> = O
   Encapsulate: mutation('Encapsulate', '+', 'Header pushed around the packet'),
   Other: mutation('Other', '•', 'Field changed'),
   Decapsulate: mutation('Decapsulate', '−', 'Header removed from around the packet'),
-  // P3 (ARCHITECTURE-P3 §2.3; the architect's W0 stub)
-  QosMark: mutation('QosMark', 'Q', 'Marking rewritten by a QoS policy'),
+  // P3 (ARCHITECTURE-P3 §2.3, D16; W1 web-inspector): `set dscp` / `set cos` of a policy-map class
+  QosMark: mutation('QosMark', 'Q', 'Priority marking rewritten by a QoS policy'),
 });
 
 /** Vocabulary entry of a mutation reason ('Other' for unknown strings). */

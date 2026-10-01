@@ -75,6 +75,33 @@
  *    of that interface, else drop `no-route`. Source 0.0.0.0 is accepted only with `iface` (DHCP). A limited
  *    broadcast without `iface` drops `no-route` ('limited broadcast needs an egress interface').
  *
+ * P3 (ARCHITECTURE-P3 D8, D11, D22, §3.0 (a); W1 l3):
+ *  • `ipv4.routes {owner, rows}` (D8) REPLACES the owner's candidate set: rows sharing a key are equal-cost paths,
+ *    offered to the arbiter as `${owner}|${slot}` (an unchanged row keeps its slot, a changed one takes its own index,
+ *    `planSlots`), so a changed next hop is a re-offer in place (one tableWrite). The installed `paths` follow the
+ *    batch order (§4.5: OSPF sends them in canonical next-hop order), through the arbiter's `pathOrder` on each slot's
+ *    batch position, whatever the offer history (a flapped path returns in a fresh slot); a batch that only reorders
+ *    unchanged paths offers and writes nothing. Keys are applied in ascending (network u32, prefix
+ *    length) order: re-offer changed slots, offer new ones, withdraw vanished ones; then `settleStatics` once; no
+ *    decision event; one 'ip routing' debug line per installed-row change. Rows are stamped `owner` (the process) and
+ *    `updatedAt` = now. An owner's paths through an interface that goes down are withdrawn at link-down (before the
+ *    daemon recomputes); the next batch offers them again when it still carries them.
+ *  • Multipath: `O` and [C1] `EIGRP` rows share a prefix up to `IPV4_MAX_PATHS` (with `ip route` lines, as in P2).
+ *  • `routeCause` renders `ospf 1: O 10.3.0.0/24 [110/3] via 10.0.12.2` ([C1] `eigrp 100: D …`), the process number
+ *    read from the configuration when a ctx is given.
+ *  • `ipv4.ribWatch {owner, keys?, lpm?}` registers (replaces) the owner's watch, answered at once and after every
+ *    handler that changed a watched result with ProcessEvent `ipv4.ribChanged` to that owner only (`{key, row?}` per
+ *    exact key, `{lpm: {address, row?}}` per longest-match address; `row` absent = none). Both lists empty = stop.
+ *    A world that registers no watch never sees the event.
+ *  • The dormant switch transport (D22): on a device whose udp / tcp come only from `managed-switch`
+ *    (`dormantTransportEligible`), protocols 17 / 6 are treated as having no listener — P2's `unsupported-protocol`
+ *    and ICMP 3/2 — until a `DORMANT_TRANSPORT_OWNERS` line is stored (protocols/ip-upper.ts). Internal state (not in
+ *    the StateView, no handle), recomputed at `init` and in every `onConfig`.
+ *  • `ipv4.send` with `iface` and a multicast destination and no `nextHop`: the next hop is the group itself (arp's
+ *    IPv4-multicast framing rule then frames it to `01:00:5e` + the low 23 bits).
+ *  • [S18] a third wire selector `{layer: 'ipv4', roles: ['tunnel']}`: the tunnel owner's `ingress {port: 'Tunnel0',
+ *    layer: 'ipv4'}` reaches ipv4.
+ *
  * Debug categories: 'ip packet' (rx / deliver / forward / send / drop) and 'ip routing' (route add / remove, lease).
  *
  * stateSnapshot():
@@ -113,12 +140,14 @@ import {
   type LayerView,
   type Pdu,
 } from '../contracts/pdu.js';
+import type { DeviceModel } from '../contracts/device.js';
 import type { PortIpv4Address, VirtualIpv4 } from '../contracts/port.js';
 import type { Action, DebugEvent, DemuxSelector, Process, ProcessCtx, ProcessRequest, StateView } from '../contracts/process.js';
 import { AD_DHCP, AD_STATIC, routeKey, type RouteRow } from '../contracts/tables.js';
 import type { SimTime } from '../contracts/time.js';
+import type { RibChangedEvent } from '../contracts/transport.js';
 import { createRibArbiter, type RibArbiter, type RibDecision, type RibRemoveReason } from '../core/rib-arbiter.js';
-import { ipv4UpperProcess } from './ip-upper.js';
+import { dormantTransportEligible, ipv4UpperProcess, transportWakeLine } from './ip-upper.js';
 
 /** Process name, as registered in the protocol registry. */
 const NAME = 'ipv4';
@@ -173,10 +202,16 @@ const leaseOwner = (port: PortId): string => `${LEASE_ROUTE_OWNER}|${port}`;
 /** Arbiter candidate label of a static route line. */
 const staticOwner = (line: string): string => `${STATIC_OWNER_PREFIX}${line}`;
 
-/** Wire selectors: Ethernet type 0x0800 on every L3 role, HDLC protocol 0x0800 on serial WAN ports (§3.9). */
+/**
+ * Wire selectors: Ethernet type 0x0800 on every L3 role, HDLC protocol 0x0800 on serial WAN ports (§3.9); [S18] a bare
+ * IPv4 packet the tunnel owner injects on a tunnel port (`ingress {port, layer: 'ipv4'}`, ARCHITECTURE-P3 D17).
+ */
 export const IPV4_HANDLES: readonly DemuxSelector[] = Object.freeze([
   Object.freeze({ layer: 'ethernet', ethertype: ETHERTYPE_IPV4, roles: L3_ROLES }),
   Object.freeze({ layer: 'hdlc', ethertype: HDLC_PROTO_IPV4, roles: Object.freeze(['wan'] as PortRole[]) }),
+  // ── [S18] the tunnel tail ──
+  Object.freeze({ layer: 'ipv4', roles: Object.freeze(['tunnel'] as PortRole[]) }),
+  // ── end [S18] ──
 ]) as readonly DemuxSelector[];
 
 /** A configured or leased interface address, applied while the port is L3 and installed while it is also up. */
@@ -230,9 +265,93 @@ interface Egress {
   iface: PortId;
 }
 
+/** @since P3 One registered RIB watch (D8): what the owner watches and the last answer it got for each item. */
+interface RibWatch {
+  readonly keys: readonly string[];
+  readonly lpm: readonly Ipv4Address[];
+  /** Fingerprint of the last answer per exact key ('' = no row). */
+  readonly lastKeys: Map<string, string>;
+  /** Fingerprint of the last answer per address ('' = no route). */
+  readonly lastLpm: Map<Ipv4Address, string>;
+}
+
+/** @since P3 Arbiter owner of slot `slot` of `owner`'s `ipv4.routes` set (D8). */
+export const routeSlotOwner = (owner: ProcessName, slot: number): string => `${owner}|${slot}`;
+
+/** (network u32, prefix length) of a RIB key `a.b.c.d/len`, for the D8 batch order. */
+function keyOrder(key: string): [number, number] {
+  const slash = key.indexOf('/');
+  const net = slash < 0 ? key : key.slice(0, slash);
+  const len = slash < 0 ? 32 : Number(key.slice(slash + 1));
+  return [isIpv4(net) ? ipv4ToU32(net) : 0, Number.isFinite(len) ? len : 0];
+}
+
+/** Ascending (network u32, prefix length), then the key text (a total, deterministic order). */
+function compareKeys(a: string, b: string): number {
+  const [na, la] = keyOrder(a);
+  const [nb, lb] = keyOrder(b);
+  if (na !== nb) return na - nb;
+  if (la !== lb) return la - lb;
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/** A row's content, key order independent, without its timestamp and owner stamp ('' for none). */
+function rowFingerprint(row: RouteRow | undefined, withOwner: boolean): string {
+  if (row === undefined) return '';
+  const rec = row as unknown as Record<string, unknown>;
+  const parts: string[] = [];
+  for (const k of Object.keys(rec).sort()) {
+    if (k === 'updatedAt' || (!withOwner && k === 'owner') || rec[k] === undefined) continue;
+    parts.push(`${k}=${JSON.stringify(rec[k])}`);
+  }
+  return parts.join('|');
+}
+
+/** `10.0.12.2` or, for a multipath row, every path's next hop (or interface), comma-joined. */
+function hopsOf(row: RouteRow): string {
+  if (row.paths !== undefined && row.paths.length > 1) return row.paths.map((p) => p.nextHop ?? p.iface ?? '?').join(', ');
+  return row.nextHop ?? row.iface ?? '?';
+}
+
+/** `O 10.3.0.0/24 via 10.0.12.2 [110/3]` — one installed row in an 'ip routing' line. */
+function installedText(row: RouteRow): string {
+  return `${routeSourceCode(row)} ${row.key} via ${hopsOf(row)} [${row.ad}/${row.metric}]`;
+}
+
 /** `"10.0.0.1 > 10.0.0.2 ttl 128 proto 1"` — the packet half of every 'ip packet' line. */
 function describe(ip: LayerView): string {
   return `${String(ip.fields.src)} > ${String(ip.fields.dst)} ttl ${String(ip.fields.ttl)} proto ${String(ip.fields.protocol)}`;
+}
+
+/**
+ * @since P3 The `show ip route` code of a row (D11): `C`, `L`, `S` / `S*`, `D*` (the DHCP default), `O`, `O E2`,
+ * `O*E2`, [C1] `D` / `D*` for an `'EIGRP'` row (the machine source keeps the two apart; D11).
+ */
+export function routeSourceCode(route: Pick<RouteRow, 'source' | 'routeType' | 'isDefault' | 'network' | 'prefixLen'>): string {
+  const star = route.isDefault === true || (route.prefixLen === 0 && route.network === '0.0.0.0');
+  switch (route.source) {
+    case 'O':
+      if (route.routeType === 'E2') return star ? 'O*E2' : 'O E2';
+      return star ? 'O*' : 'O';
+    case 'EIGRP':
+      return star ? 'D*' : 'D';
+    case 'S':
+    case 'D':
+      return star ? `${route.source}*` : route.source;
+    default:
+      return route.source;
+  }
+}
+
+/**
+ * @since P3 The number of the configured routing process of `protocol` (`router ospf 1` → '1', [C1] `router eigrp 100`
+ * → '100'), read from the running configuration; undefined when none is stored.
+ */
+export function routingProcessId(ctx: Pick<ProcessCtx, 'config'>, protocol: 'ospf' | 'eigrp'): string | undefined {
+  for (const node of ctx.config.root.children) {
+    if (node.key === 'router' && node.args[0] === protocol && node.args[1] !== undefined) return node.args[1];
+  }
+  return undefined;
 }
 
 /**
@@ -240,8 +359,10 @@ function describe(ip: LayerView): string {
  * Static: `ip route N M [IF] [NH] [AD]` (a P1 row has one of IF/NH and distance 1, so its text is unchanged); a
  * default route offered by the `host` daemon (`route.owner === 'host'`) is `ip default-gateway GW`; a DHCP default:
  * `dhcp default route via GW`; connected / local: `connected via <iface>`.
+ * P3 (D11): an OSPF row renders `ospf 1: O 10.3.0.0/24 [110/3] via 10.0.12.2` and a [C1] EIGRP row `eigrp 100: D
+ * 10.4.0.0/24 [90/3328] via 10.0.12.2`; the process number comes from `ctx`'s configuration (left out without a ctx).
  */
-export function routeCause(route: RouteRow): string {
+export function routeCause(route: RouteRow, ctx?: Pick<ProcessCtx, 'config'>): string {
   if (route.source === 'S') {
     if (route.owner === 'host' && route.isDefault && route.nextHop !== undefined) return `ip default-gateway ${route.nextHop}`;
     const via = [route.iface, route.nextHop].filter((x): x is string => x !== undefined).join(' ');
@@ -249,6 +370,11 @@ export function routeCause(route: RouteRow): string {
     return `ip route ${route.network} ${prefixLenToMask(route.prefixLen)} ${via === '' ? '?' : via}${ad}`;
   }
   if (route.source === 'D') return `dhcp default route via ${route.nextHop ?? route.iface ?? '?'}`;
+  if (route.source === 'O' || route.source === 'EIGRP') {
+    const protocol = route.source === 'O' ? 'ospf' : 'eigrp';
+    const id = ctx === undefined ? undefined : routingProcessId(ctx, protocol);
+    return `${protocol}${id === undefined ? '' : ` ${id}`}: ${routeSourceCode(route)} ${route.network}/${route.prefixLen} [${route.ad}/${route.metric}] via ${route.nextHop ?? route.iface ?? '?'}`;
+  }
   return `connected via ${route.iface ?? '?'}`;
 }
 
@@ -410,6 +536,22 @@ export function createIpv4(): Process {
   const virtuals = new Map<PortId, VirtualIpv4[]>();
   /** Joined groups per interface [S2]. */
   const groups = new Map<PortId, JoinedGroup[]>();
+  /**
+   * @since P3 `ipv4.routes` candidate sets (D8): owner → key → the rows by slot as the owner sent them (a slot is
+   * `undefined` after its path was withdrawn at link-down). Owners in first-batch order.
+   */
+  const routeSets = new Map<ProcessName, Map<string, (RouteRow | undefined)[]>>();
+  /**
+   * @since P3 D8, §4.5: owner → key → each slot's position in the owner's latest batch. The arbiter's `pathOrder`
+   * installs one owner's equal-cost paths in batch order (OSPF's canonical next-hop order), not in offer history.
+   */
+  const routeOrder = new Map<ProcessName, Map<string, (number | undefined)[]>>();
+  /** @since P3 RIB watches by owner (D8), in registration order. */
+  const watches = new Map<ProcessName, RibWatch>();
+  /** @since P3 D22: a `DORMANT_TRANSPORT_OWNERS` line is stored, so a managed switch's udp/tcp answer. */
+  let transportAwake = false;
+  /** @since P3 D22: which of udp / tcp are dormant-eligible on the model last seen (recomputed when the model changes). */
+  let dormantModel: { model: DeviceModel; udp: boolean; tcp: boolean } | undefined;
   const ring: DebugEvent[] = [];
   let arbiter: RibArbiter<RouteRow> | undefined;
   let forwarding = false;
@@ -441,12 +583,29 @@ export function createIpv4(): Process {
         table: ctx.tables.rib,
         stampOwner: false,
         maxPaths: IPV4_MAX_PATHS,
-        // [S6] only `ip route` lines share a prefix; offered rows (owner set), C/L and D rows install alone
-        multipathEligible: (row) => row.source === 'S' && row.owner === undefined,
-        pathCause: (row) => routeCause(row),
+        // [S6] `ip route` lines share a prefix; P3 (D8) so do OSPF paths and [C1] EIGRP successors; offered
+        // `ipv4.route` rows (owner set), C/L and D rows install alone
+        multipathEligible: (row) => (row.source === 'S' && row.owner === undefined) || row.source === 'O' || row.source === 'EIGRP',
+        pathCause: (row) => routeCause(row, ctx),
+        // P3 (D8, §4.5): two paths of one `ipv4.routes` owner install in its batch order; every other pair keeps the
+        // P1/P2 offer order (no batch in a P1/P2 world, so their bytes are unchanged)
+        pathOrder: (a, aOwner, b, bOwner) => {
+          if (a.owner === undefined || a.owner !== b.owner) return 0;
+          const pa = batchPosition(a, aOwner);
+          const pb = batchPosition(b, bOwner);
+          return pa === undefined || pb === undefined ? 0 : pa - pb;
+        },
       });
     }
     return arbiter;
+  }
+
+  /** P3 (D8): the batch position of an `ipv4.routes` slot candidate (`${owner}|${slot}`), else undefined. */
+  function batchPosition(row: RouteRow, arbOwner: ProcessName): number | undefined {
+    const owner = row.owner;
+    if (owner === undefined || !arbOwner.startsWith(`${owner}|`)) return undefined;
+    const slot = Number(arbOwner.slice(owner.length + 1));
+    return Number.isInteger(slot) ? routeOrder.get(owner)?.get(row.key)?.[slot] : undefined;
   }
 
   /** Recompute the effective forwarding flag (model data and the `ip routing` line). */
@@ -508,7 +667,7 @@ export function createIpv4(): Process {
       };
       const d = arb.offer(row, owner);
       if (d.afterOwner === owner) debug(ctx, CAT_ROUTING, `add C ${row.key} via ${port}`, { key: row.key, source: 'C', iface: port });
-      else debug(ctx, CAT_ROUTING, `C ${row.key} via ${port} kept as a candidate: ${d.after ? routeCause(d.after) : 'another route'} is installed`, { key: row.key, source: 'C', iface: port });
+      else debug(ctx, CAT_ROUTING, `C ${row.key} via ${port} kept as a candidate: ${d.after ? routeCause(d.after, ctx) : 'another route'} is installed`, { key: row.key, source: 'C', iface: port });
     }
     const local: RouteRow = {
       key: routeKey(entry.address, 32),
@@ -522,7 +681,7 @@ export function createIpv4(): Process {
     };
     const dl = arb.offer(local, owner);
     if (dl.afterOwner === owner) debug(ctx, CAT_ROUTING, `add L ${local.key} via ${port}`, { key: local.key, source: 'L', iface: port });
-    else debug(ctx, CAT_ROUTING, `L ${local.key} via ${port} kept as a candidate: ${dl.after ? routeCause(dl.after) : 'another route'} is installed`, { key: local.key, source: 'L', iface: port });
+    else debug(ctx, CAT_ROUTING, `L ${local.key} via ${port} kept as a candidate: ${dl.after ? routeCause(dl.after, ctx) : 'another route'} is installed`, { key: local.key, source: 'L', iface: port });
     if (entry.router !== undefined) {
       const dflt: RouteRow = {
         key: DEFAULT_KEY,
@@ -541,7 +700,7 @@ export function createIpv4(): Process {
       if (dd.afterOwner === leaseOwner(port)) {
         debug(ctx, CAT_ROUTING, `add D ${DEFAULT_KEY} via ${entry.router} on ${port} (distance ${AD_DHCP})`, { key: DEFAULT_KEY, source: 'D', nextHop: entry.router, iface: port });
       } else {
-        debug(ctx, CAT_ROUTING, `D ${DEFAULT_KEY} via ${entry.router} kept as a candidate: ${dd.after ? routeCause(dd.after) : 'another route'} is preferred`, {
+        debug(ctx, CAT_ROUTING, `D ${DEFAULT_KEY} via ${entry.router} kept as a candidate: ${dd.after ? routeCause(dd.after, ctx) : 'another route'} is preferred`, {
           key: DEFAULT_KEY, source: 'D', nextHop: entry.router, iface: port,
         });
       }
@@ -807,7 +966,7 @@ export function createIpv4(): Process {
       const extra = paths !== undefined && paths.length > 1 ? ` (equal-cost path ${paths.length} of ${paths.length})` : '';
       debug(ctx, CAT_ROUTING, `add S ${s.key} via ${via}${s.isDefault ? ' (default)' : ''}${s.ad !== AD_STATIC ? ` (distance ${s.ad})` : ''}${extra}`, data);
     } else {
-      debug(ctx, CAT_ROUTING, `S ${s.key} via ${via} kept as a candidate: ${d.after ? routeCause(d.after) : 'another route'} is installed`, data);
+      debug(ctx, CAT_ROUTING, `S ${s.key} via ${via} kept as a candidate: ${d.after ? routeCause(d.after, ctx) : 'another route'} is installed`, data);
     }
   }
 
@@ -904,6 +1063,263 @@ export function createIpv4(): Process {
     if (d.after !== undefined) ev.current = d.after;
     settleStatics(ctx);
     return [{ type: 'event', to: req.owner, ev }];
+  }
+
+  // ── P3: route batches and the RIB watch (D8) ──────────────────────────────
+
+  /** One 'ip routing' line for a change of the installed row of `key` (none when it did not change). */
+  function reportInstalled(ctx: ProcessCtx, key: string, before: RouteRow | undefined, after: RouteRow | undefined, why: string): void {
+    if (before === after) return;
+    if (after === undefined && before !== undefined) {
+      debug(ctx, CAT_ROUTING, `remove ${installedText(before)} (${why})`, { key, source: before.source, nextHop: before.nextHop, iface: before.iface, reason: why });
+    } else if (after !== undefined && before === undefined) {
+      debug(ctx, CAT_ROUTING, `add ${installedText(after)} (${why})`, { key, source: after.source, nextHop: after.nextHop, iface: after.iface, ad: after.ad, metric: after.metric });
+    } else if (after !== undefined && before !== undefined) {
+      debug(ctx, CAT_ROUTING, `change ${installedText(after)} (${why}; was ${installedText(before)})`, {
+        key, source: after.source, nextHop: after.nextHop, iface: after.iface, ad: after.ad, metric: after.metric,
+      });
+    }
+  }
+
+  /** The row `owner` offers for one slot: the owner's row stamped with the owner and now, never carrying `paths`. */
+  function slotRow(ctx: ProcessCtx, owner: ProcessName, r: RouteRow): RouteRow {
+    const row: RouteRow = { ...r, owner, updatedAt: ctx.now };
+    if ('paths' in row) delete row.paths;
+    return row;
+  }
+
+  /** A row `ipv4.routes` can offer: a canonical key for its network and prefix length, finite AD and metric. */
+  function validBatchRow(r: RouteRow): boolean {
+    return (
+      isIpv4(r.network) && Number.isInteger(r.prefixLen) && r.prefixLen >= 0 && r.prefixLen <= 32 &&
+      r.key === routeKey(networkOf(r.network, r.prefixLen), r.prefixLen) && r.network === networkOf(r.network, r.prefixLen) &&
+      Number.isFinite(r.ad) && Number.isFinite(r.metric)
+    );
+  }
+
+  /**
+   * The slots of one key after a batch (D8): a new row identical to a stored one keeps that stored slot (no write); every
+   * other new row takes its own index when that slot is free, else the lowest free slot — a changed next hop in a
+   * single-path set is a re-offer of slot 0 in place (one tableWrite). Returns the new slot array, each slot's position
+   * in the batch (`order`, read by the arbiter's `pathOrder`) and the steps in the D8 order: re-offers of changed
+   * slots, offers into empty slots, withdrawals of vanished ones.
+   */
+  function planSlots(old: readonly (RouteRow | undefined)[], fresh: readonly RouteRow[]): {
+    slots: (RouteRow | undefined)[];
+    order: (number | undefined)[];
+    reoffer: number[];
+    offer: number[];
+    withdraw: number[];
+  } {
+    const oldFp = old.map((r) => (r === undefined ? undefined : rowFingerprint(r, false)));
+    const claimed = new Set<number>();
+    const placed: (number | undefined)[] = fresh.map(() => undefined);
+    const newFp = fresh.map((r) => rowFingerprint(r, false));
+    // 1. unchanged rows keep their slot: the same index first, then any other stored slot holding the same row
+    for (let j = 0; j < fresh.length; j++) {
+      if (oldFp[j] !== undefined && oldFp[j] === newFp[j] && !claimed.has(j)) {
+        placed[j] = j;
+        claimed.add(j);
+      }
+    }
+    for (let j = 0; j < fresh.length; j++) {
+      if (placed[j] !== undefined) continue;
+      const k = oldFp.findIndex((fp, i) => fp !== undefined && fp === newFp[j] && !claimed.has(i));
+      if (k >= 0) {
+        placed[j] = k;
+        claimed.add(k);
+      }
+    }
+    // 2. the others: their own index when free, else the lowest free slot
+    for (let j = 0; j < fresh.length; j++) {
+      if (placed[j] !== undefined) continue;
+      let k = claimed.has(j) ? -1 : j;
+      if (k < 0) for (k = 0; claimed.has(k); k++);
+      placed[j] = k;
+      claimed.add(k);
+    }
+    const size = Math.max(old.length, ...placed.map((k) => (k ?? 0) + 1));
+    const slots: (RouteRow | undefined)[] = Array.from({ length: size }, () => undefined);
+    const order: (number | undefined)[] = Array.from({ length: size }, () => undefined);
+    const reoffer: number[] = [];
+    const offer: number[] = [];
+    for (let j = 0; j < fresh.length; j++) {
+      const k = placed[j]!;
+      slots[k] = fresh[j];
+      order[k] = j;
+      if (oldFp[k] === newFp[j]) continue;
+      if (oldFp[k] !== undefined) reoffer.push(k);
+      else offer.push(k);
+    }
+    const withdraw: number[] = [];
+    for (let k = 0; k < old.length; k++) if (oldFp[k] !== undefined && !claimed.has(k)) withdraw.push(k);
+    reoffer.sort((a, b) => a - b);
+    offer.sort((a, b) => a - b);
+    // trailing empty slots carry nothing
+    while (slots.length > 0 && slots[slots.length - 1] === undefined) slots.pop();
+    order.length = slots.length;
+    return { slots, order, reoffer, offer, withdraw };
+  }
+
+  /**
+   * `ipv4.routes {owner, rows}` (D8): replace `owner`'s candidate set. Keys in ascending (network u32, prefix length)
+   * order; per key, re-offer the changed slots, offer the new ones, withdraw the vanished ones (`planSlots`);
+   * `settleStatics` once; no decision event.
+   */
+  function routesRequest(ctx: ProcessCtx, req: Extract<ProcessRequest, { kind: 'ipv4.routes' }>): Action[] {
+    const owner = req.owner;
+    const arb = rib(ctx);
+    const next = new Map<string, RouteRow[]>();
+    for (const r of req.rows) {
+      if (!validBatchRow(r)) {
+        debug(ctx, CAT_ROUTING, `ignored route ${String(r.key)} from ${owner}: invalid network, prefix length or distance`, { key: r.key, owner });
+        continue;
+      }
+      const copy: RouteRow = { ...r };
+      const list = next.get(r.key);
+      if (list === undefined) next.set(r.key, [copy]);
+      else list.push(copy);
+    }
+    const prev = routeSets.get(owner) ?? new Map<string, (RouteRow | undefined)[]>();
+    const set = new Map<string, (RouteRow | undefined)[]>();
+    const order = new Map<string, (number | undefined)[]>();
+    routeOrder.set(owner, order);
+    const keys = Array.from(new Set([...prev.keys(), ...next.keys()])).sort(compareKeys);
+    for (const key of keys) {
+      const plan = planSlots(prev.get(key) ?? [], next.get(key) ?? []);
+      // the batch positions first, so every settle of this key orders the owner's paths by the new batch
+      if (plan.slots.length > 0) order.set(key, plan.order);
+      const before = arb.installed(key);
+      for (const k of plan.reoffer) arb.offer(slotRow(ctx, owner, plan.slots[k]!), routeSlotOwner(owner, k));
+      for (const k of plan.offer) arb.offer(slotRow(ctx, owner, plan.slots[k]!), routeSlotOwner(owner, k));
+      for (const k of plan.withdraw) arb.withdraw(key, routeSlotOwner(owner, k), ctx.now, 'cleared');
+      reportInstalled(ctx, key, before, arb.installed(key), owner);
+      if (plan.slots.length > 0) set.set(key, plan.slots);
+    }
+    if (set.size === 0) {
+      routeSets.delete(owner);
+      routeOrder.delete(owner);
+    } else routeSets.set(owner, set);
+    settleStatics(ctx);
+    return [];
+  }
+
+  /**
+   * D8: at link-down, withdraw every `ipv4.routes` path through `port` (before the owner recomputes); the slot is
+   * forgotten, so the owner's next batch offers it again if it still carries it.
+   */
+  function withdrawPathsVia(ctx: ProcessCtx, port: PortId): void {
+    if (routeSets.size === 0) return;
+    const arb = rib(ctx);
+    let changed = false;
+    for (const [owner, set] of routeSets) {
+      for (const key of Array.from(set.keys()).sort(compareKeys)) {
+        const slots = set.get(key)!;
+        const before = arb.installed(key);
+        let hit = false;
+        for (let i = 0; i < slots.length; i++) {
+          if (slots[i]?.iface !== port) continue;
+          slots[i] = undefined;
+          arb.withdraw(key, routeSlotOwner(owner, i), ctx.now, 'link-down');
+          hit = true;
+        }
+        if (!hit) continue;
+        changed = true;
+        reportInstalled(ctx, key, before, arb.installed(key), `${owner}: ${port} went down`);
+      }
+    }
+    if (changed) settleStatics(ctx);
+  }
+
+  /** The current answer of a watch item. */
+  const keyAnswer = (ctx: ProcessCtx, key: string): RouteRow | undefined => ctx.tables.rib.get(key);
+  const lpmAnswer = (ctx: ProcessCtx, address: Ipv4Address): RouteRow | undefined => ctx.lpm(address).winner;
+
+  function keyEvent(owner: ProcessName, key: string, row: RouteRow | undefined): Action {
+    const ev: RibChangedEvent = row === undefined ? { kind: 'ipv4.ribChanged', key } : { kind: 'ipv4.ribChanged', key, row: { ...row } };
+    return { type: 'event', to: owner, ev };
+  }
+
+  function lpmEvent(owner: ProcessName, address: Ipv4Address, row: RouteRow | undefined): Action {
+    const ev: RibChangedEvent = { kind: 'ipv4.ribChanged', lpm: row === undefined ? { address } : { address, row: { ...row } } };
+    return { type: 'event', to: owner, ev };
+  }
+
+  /** `ipv4.ribWatch` (D8): register (replace) the owner's watch and answer every item at once; empty lists stop it. */
+  function ribWatchRequest(ctx: ProcessCtx, req: Extract<ProcessRequest, { kind: 'ipv4.ribWatch' }>): Action[] {
+    const keys = Array.from(new Set(req.keys ?? []));
+    const lpm = Array.from(new Set((req.lpm ?? []).filter((a) => isIpv4(a))));
+    if (keys.length === 0 && lpm.length === 0) {
+      watches.delete(req.owner);
+      return [];
+    }
+    const w: RibWatch = { keys, lpm, lastKeys: new Map(), lastLpm: new Map() };
+    watches.set(req.owner, w);
+    const out: Action[] = [];
+    for (const key of keys) {
+      const row = keyAnswer(ctx, key);
+      w.lastKeys.set(key, rowFingerprint(row, true));
+      out.push(keyEvent(req.owner, key, row));
+    }
+    for (const address of lpm) {
+      const row = lpmAnswer(ctx, address);
+      w.lastLpm.set(address, rowFingerprint(row, true));
+      out.push(lpmEvent(req.owner, address, row));
+    }
+    return out;
+  }
+
+  /** `ipv4.ribChanged` for every watched item whose answer changed since it was last sent (nothing without watches). */
+  function watchEvents(ctx: ProcessCtx): Action[] {
+    if (watches.size === 0) return [];
+    const out: Action[] = [];
+    for (const [owner, w] of watches) {
+      for (const key of w.keys) {
+        const row = keyAnswer(ctx, key);
+        const fp = rowFingerprint(row, true);
+        if (w.lastKeys.get(key) === fp) continue;
+        w.lastKeys.set(key, fp);
+        out.push(keyEvent(owner, key, row));
+      }
+      for (const address of w.lpm) {
+        const row = lpmAnswer(ctx, address);
+        const fp = rowFingerprint(row, true);
+        if (w.lastLpm.get(address) === fp) continue;
+        w.lastLpm.set(address, fp);
+        out.push(lpmEvent(owner, address, row));
+      }
+    }
+    return out;
+  }
+
+  /** `actions` followed by the watch answers the handler's RIB changes caused (the same array when there are none). */
+  function withWatches(ctx: ProcessCtx, actions: Action[]): Action[] {
+    if (watches.size === 0) return actions;
+    const evs = watchEvents(ctx);
+    return evs.length === 0 ? actions : [...actions, ...evs];
+  }
+
+  // ── P3: the dormant switch transport (D22) ────────────────────────────────
+
+  /** Re-read the stored configuration: is a line of `DORMANT_TRANSPORT_OWNERS` present? Only on an eligible device. */
+  function syncTransport(ctx: ProcessCtx): void {
+    const e = dormantEligibility(ctx);
+    if (!e.udp && !e.tcp) return;
+    transportAwake = transportWakeLine(ctx.config.root) !== undefined;
+  }
+
+  function dormantEligibility(ctx: ProcessCtx): { udp: boolean; tcp: boolean } {
+    if (dormantModel === undefined || dormantModel.model !== ctx.model) {
+      dormantModel = { model: ctx.model, udp: dormantTransportEligible(ctx.model, 'udp'), tcp: dormantTransportEligible(ctx.model, 'tcp') };
+    }
+    return dormantModel;
+  }
+
+  /** D22: `target` (udp or tcp) is dormant on this device — treated as having no listener. */
+  function transportDormant(ctx: ProcessCtx, target: ProcessName): boolean {
+    if (transportAwake || (target !== 'udp' && target !== 'tcp')) return false;
+    const e = dormantEligibility(ctx);
+    return target === 'udp' ? e.udp : e.tcp;
   }
 
   // ── NAT roles, virtual addresses and groups (D14, D15, S2) ────────────────
@@ -1045,9 +1461,9 @@ export function createIpv4(): Process {
     const paths = route.paths;
     if (paths !== undefined && paths.length > 1) {
       const path = paths[ecmpIndex(src, dst, paths.length)]!;
-      return { egress: resolveVia(ctx, route.key, path.nextHop ?? dst, path.iface, 0), cause: path.cause ?? routeCause(route) };
+      return { egress: resolveVia(ctx, route.key, path.nextHop ?? dst, path.iface, 0), cause: path.cause ?? routeCause(route, ctx) };
     }
-    return { egress: resolveVia(ctx, route.key, route.nextHop ?? dst, route.iface, 0), cause: routeCause(route) };
+    return { egress: resolveVia(ctx, route.key, route.nextHop ?? dst, route.iface, 0), cause: routeCause(route, ctx) };
   }
 
   function icmpError(original: Pdu, type: number, code: number, inPort?: PortId): Action {
@@ -1109,7 +1525,9 @@ export function createIpv4(): Process {
    */
   function deliverLocal(ctx: ProcessCtx, pdu: Pdu, ip: LayerView, port: PortId, fromWire: boolean, prefix: string): Action[] {
     const protocol = Number(ip.fields.protocol);
-    const target = ipv4UpperProcess(ctx.model, protocol);
+    const upper = ipv4UpperProcess(ctx.model, protocol);
+    // D22: a managed switch's udp/tcp answer nothing until a P3 service line is stored (P2's path, byte for byte)
+    const target = upper !== undefined && transportDormant(ctx, upper) ? undefined : upper;
     if (target !== undefined) {
       delivered++;
       debug(ctx, CAT_PACKET, `${prefix}${describe(ip)}${fromWire ? ` to ${target}` : `: own address, delivered locally`}`, { pdu: pdu.id, port });
@@ -1148,6 +1566,10 @@ export function createIpv4(): Process {
       if (isIpv4Broadcast(dst)) {
         nextHop = dst;
         via = 'limited broadcast';
+      } else if (isIpv4Multicast(dst)) {
+        // P3 (D7): a group on the given interface is never routed; arp frames it to 01:00:5e + the low 23 bits
+        nextHop = dst;
+        via = 'multicast group';
       } else if (l3 !== undefined && (inSubnet(dst, l3.address, l3.prefixLen) || (l3.prefixLen < 31 && dst === broadcastOf(l3.address, l3.prefixLen)))) {
         nextHop = dst;
         via = 'connected';
@@ -1156,7 +1578,7 @@ export function createIpv4(): Process {
           const e = resolveEgress(ctx, c, src, dst).egress;
           if (e !== undefined && e.iface === iface && e.nextHop !== dst) {
             nextHop = e.nextHop;
-            via = routeCause(c);
+            via = routeCause(c, ctx);
             break;
           }
         }
@@ -1201,6 +1623,72 @@ export function createIpv4(): Process {
     return [{ type: 'request', to: 'arp', req: { kind: 'arp.sendVia', pdu, nextHop: egress.nextHop, iface: egress.iface, cause } }];
   }
 
+  /** `onConfig` of the P1/P2 lines (the P3 transport and watch steps wrap it). */
+  function configDelta(ctx: ProcessCtx, delta: ConfigDelta): Action[] {
+    const line = delta.line;
+    const ctxHead = delta.context[0];
+    const ifacePort = delta.context.length === 1 && ctxHead !== undefined && ctxHead[0] === 'interface' ? ctxHead[1] : undefined;
+    if (ifacePort !== undefined && isSwitchportLine(line)) {
+      // The runtime changed the role before fanning the line out: re-evaluate the port.
+      return reconcile(ctx, ifacePort, portUp(ctx, ifacePort));
+    }
+    if (line[0] !== 'ip') return [];
+    if (ifacePort !== undefined && line[1] === 'address') {
+      if (delta.op === 'set') {
+        if (line[2] === 'dhcp' && line.length === 3) return setDhcp(ctx, ifacePort);
+        if (line.length < 4) return [];
+        return setAddress(ctx, ifacePort, line[2]!, line[3]!);
+      }
+      return unsetAddress(ctx, ifacePort);
+    }
+    if (ifacePort !== undefined && line[1] === 'nat') {
+      const port = findPort(ctx, ifacePort) ?? ifacePort;
+      setNatRole(ctx, port, line[2], delta.op === 'set');
+      return [];
+    }
+    if (delta.context.length === 0 && line[1] === 'route') {
+      if (delta.op === 'set') {
+        if (line.length >= 5) addStatic(ctx, line.slice(2));
+      } else {
+        unsetStaticLine(ctx, line);
+      }
+      return [];
+    }
+    if (delta.context.length === 0 && line[1] === 'routing' && line.length === 2) {
+      debug(ctx, CAT_ROUTING, `IP routing ${forwarding ? 'on' : 'off'}${!ctx.model.ipForwarding ? ' (this device does not forward)' : ''}`, { forwarding });
+    }
+    return [];
+  }
+
+  /** `onRequest` without the watch step. */
+  function request(ctx: ProcessCtx, req: ProcessRequest): Action[] {
+    switch (req.kind) {
+      case 'ipv4.send':
+        return send(ctx, req);
+      case 'ipv4.route':
+        return routeRequest(ctx, req);
+      case 'ipv4.lease':
+        return req.op === 'bind' ? bindLease(ctx, req) : unbindLease(ctx, req);
+      case 'ipv4.resume': {
+        const ip = req.pdu.layer('ipv4');
+        if (!ip) return [drop(ctx, req.pdu, 'other', 'ipv4.resume without an IPv4 header', req.inPort)];
+        debug(ctx, CAT_PACKET, `resume ${describe(ip)} on ${req.inPort} after translation`, { pdu: req.pdu.id, port: req.inPort });
+        return receiveLocalOrForward(ctx, req.pdu, ip, req.inPort);
+      }
+      case 'ipv4.virtual':
+        return virtualRequest(ctx, req);
+      case 'ipv4.group':
+        return groupRequest(ctx, req);
+      // ── P3 (D8) ──
+      case 'ipv4.routes':
+        return routesRequest(ctx, req);
+      case 'ipv4.ribWatch':
+        return ribWatchRequest(ctx, req);
+      default:
+        return [];
+    }
+  }
+
   // ── the process ───────────────────────────────────────────────────────────
 
   return {
@@ -1209,7 +1697,8 @@ export function createIpv4(): Process {
 
     init(ctx: ProcessCtx): Action[] {
       syncForwarding(ctx);
-      return syncFromConfig(ctx);
+      syncTransport(ctx);
+      return withWatches(ctx, syncFromConfig(ctx));
     },
 
     onPdu(ctx: ProcessCtx, pdu: Pdu, port: PortId): Action[] {
@@ -1234,67 +1723,21 @@ export function createIpv4(): Process {
 
     onConfig(ctx: ProcessCtx, delta: ConfigDelta): Action[] {
       syncForwarding(ctx);
-      const line = delta.line;
-      const ctxHead = delta.context[0];
-      const ifacePort = delta.context.length === 1 && ctxHead !== undefined && ctxHead[0] === 'interface' ? ctxHead[1] : undefined;
-      if (ifacePort !== undefined && isSwitchportLine(line)) {
-        // The runtime changed the role before fanning the line out: re-evaluate the port.
-        return reconcile(ctx, ifacePort, portUp(ctx, ifacePort));
-      }
-      if (line[0] !== 'ip') return [];
-      if (ifacePort !== undefined && line[1] === 'address') {
-        if (delta.op === 'set') {
-          if (line[2] === 'dhcp' && line.length === 3) return setDhcp(ctx, ifacePort);
-          if (line.length < 4) return [];
-          return setAddress(ctx, ifacePort, line[2]!, line[3]!);
-        }
-        return unsetAddress(ctx, ifacePort);
-      }
-      if (ifacePort !== undefined && line[1] === 'nat') {
-        const port = findPort(ctx, ifacePort) ?? ifacePort;
-        setNatRole(ctx, port, line[2], delta.op === 'set');
-        return [];
-      }
-      if (delta.context.length === 0 && line[1] === 'route') {
-        if (delta.op === 'set') {
-          if (line.length >= 5) addStatic(ctx, line.slice(2));
-        } else {
-          unsetStaticLine(ctx, line);
-        }
-        return [];
-      }
-      if (delta.context.length === 0 && line[1] === 'routing' && line.length === 2) {
-        debug(ctx, CAT_ROUTING, `IP routing ${forwarding ? 'on' : 'off'}${!ctx.model.ipForwarding ? ' (this device does not forward)' : ''}`, { forwarding });
-      }
-      return [];
+      syncTransport(ctx);
+      return withWatches(ctx, configDelta(ctx, delta));
     },
 
     onLinkChange(ctx: ProcessCtx, port: PortId, up: boolean): Action[] {
-      return reconcile(ctx, port, up);
+      const actions = reconcile(ctx, port, up);
+      if (!up) withdrawPathsVia(ctx, port);
+      return withWatches(ctx, actions);
     },
 
     onRequest(ctx: ProcessCtx, req: ProcessRequest): Action[] {
       syncForwarding(ctx);
-      switch (req.kind) {
-        case 'ipv4.send':
-          return send(ctx, req);
-        case 'ipv4.route':
-          return routeRequest(ctx, req);
-        case 'ipv4.lease':
-          return req.op === 'bind' ? bindLease(ctx, req) : unbindLease(ctx, req);
-        case 'ipv4.resume': {
-          const ip = req.pdu.layer('ipv4');
-          if (!ip) return [drop(ctx, req.pdu, 'other', 'ipv4.resume without an IPv4 header', req.inPort)];
-          debug(ctx, CAT_PACKET, `resume ${describe(ip)} on ${req.inPort} after translation`, { pdu: req.pdu.id, port: req.inPort });
-          return receiveLocalOrForward(ctx, req.pdu, ip, req.inPort);
-        }
-        case 'ipv4.virtual':
-          return virtualRequest(ctx, req);
-        case 'ipv4.group':
-          return groupRequest(ctx, req);
-        default:
-          return [];
-      }
+      const actions = request(ctx, req);
+      // only these requests change the RIB (a packet send, resume, virtual address or group never does)
+      return req.kind === 'ipv4.route' || req.kind === 'ipv4.lease' || req.kind === 'ipv4.routes' ? withWatches(ctx, actions) : actions;
     },
 
     stateSnapshot(): StateView {

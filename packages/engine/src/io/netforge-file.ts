@@ -4,7 +4,7 @@
  *
  * A `.netforge` file is a ZIP archive (fflate) holding
  *   manifest.json           format version, app version, timestamps, checksum
- *   topology.json           devices, links, positions — with device configs stripped
+ *   topology.json           devices, links, positions — with device configs stripped (host files, @since P3, inline)
  *   configs/<id>.cfg        rendered startup-config of each device that has one (human-diffable)
  *   configs/<id>.running.cfg rendered running-config of each device booted at save time
  * (`.` in an id is written as `%2E`, so a literal `.running.cfg` suffix is unambiguous)
@@ -124,6 +124,8 @@ function canonicalDevice(d: TopologyDevice, withConfig: boolean): TopologyDevice
   if (d.modules !== undefined) out.modules = d.modules.map((m) => ({ slot: m.slot, module: m.module }));
   if (d.hardware !== undefined && d.hardware.macSalt !== undefined) out.hardware = { macSalt: d.hardware.macSalt };
   if (d.ui !== undefined) out.ui = canonicalUi(d.ui);
+  // @since P3 [S32] (1.3): the host's `files:` store, after every 1.1 key; an empty store is no content and is dropped
+  if (d.files !== undefined && d.files.length > 0) out.files = d.files.map((f) => ({ path: f.path, content: f.content }));
   return out;
 }
 
@@ -154,13 +156,17 @@ function canonicalLink(l: TopologyLink): TopologyLink {
  * Rebuild a topology with a fixed key order and no undefined-valued keys, so two equal topologies always serialise
  * to the same bytes. Whitelists (every other key is dropped):
  *   root    schema, seed, devices, links, objectives, notes, canvas, lab, profile
- *   device  id, type, name, position, power, config, runningConfig, modules, hardware (macSalt), ui
+ *   device  id, type, name, position, power, config, runningConfig, modules, hardware (macSalt), ui, files
+ *   file    path, content
  *   link    id, a, b, media, length_m, impairments, kind, dce_end, distance_m
- * The 1.1 keys come after every P0 key, and the 1.2 key `profile` (@since P2) after every 1.1 key, so a document
- * without them serialises exactly as before (a P1 document is byte-identical). A `hardware` block without `macSalt`
- * is dropped. `withConfig=false` strips `devices[].config` and `devices[].runningConfig` (the archive keeps configs in
+ * The 1.1 keys come after every P0 key, the 1.2 key `profile` (@since P2) after every 1.1 key, and the 1.3 device key
+ * `files` (@since P3, [S32]) after every 1.1 device key, so a document without them serialises exactly as before (a P1
+ * document is byte-identical, and so is a P2 one). A `hardware` block without `macSalt` is dropped, and so is an empty
+ * `files` list (an empty store is no content: `schemaIdFor` does not count it). The files stay inline in
+ * `topology.json` (the archive has no entry of its own for them). `withConfig=false` strips `devices[].config` and `devices[].runningConfig` (the archive keeps configs in
  * `configs/`). The schema id is copied as is (writers never migrate): a writer that sets `profile` also sets
- * `schema = schemaIdFor(t)` (ARCHITECTURE-P2 §2.9), because a document read as 1.1 drops `profile`.
+ * `schema = schemaIdFor(t)` (ARCHITECTURE-P2 §2.9), because a document read as 1.1 drops `profile`; likewise a writer
+ * that sets host `files` (ARCHITECTURE-P3 §2.9), because a document read as 1.0–1.2 drops them.
  */
 export function canonicalTopology(t: Topology, withConfig = true): Topology {
   const out: Topology = {

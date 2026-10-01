@@ -34,6 +34,15 @@
  *   portOwners      : ROLE_EGRESS_OWNER also names `etherchannel` for `channel` and `capwap-ac` for `wlan-tunnel`.
  * The CLI rule of `wireless-controller` (a GUI appliance: no shell, the NFOS grammar for headless configure) holds at
  * every stage, like the home router's; no model carried the capability before the W6 catalog item.
+ *
+ * P3 derivations (ARCHITECTURE-P3 D2, D17, §2.1; W1 catalog), made ONLY at build stage P3, so every model or fixture
+ * defined at stage P2 or earlier keeps exactly its keys and families:
+ *   cdpDefault      = true when `!nat-gateway && ((cli.shell === 'nfos' && (routing || managed-switch)) ||
+ *                     wireless-controller)` (`deriveCdpDefault`, the D2 rule); absent otherwise;
+ *   virtualFamilies : [S18] TUNNEL_FAMILY (`interface Tunnel<n>`, role `tunnel`, encapsulation `tunnel`) last, for a
+ *                     model with `routing` that is not a home router (`withTunnelFamily`);
+ *   portOwners      : [S18] the `tunnel` role's owner is the tunnel owner `gre` (`P3_ROLE_EGRESS_OWNER`, read by
+ *                     `roleEgressOwner`), so a model derives it only when it runs `gre`.
  */
 import type { DeviceKind, DeviceModel } from '../../contracts/device.js';
 import type { PortId, ProcessName } from '../../contracts/ids.js';
@@ -225,6 +234,36 @@ export const ROLE_EGRESS_OWNER: Readonly<Partial<Record<PortRole, ProcessName>>>
   svi: 'eth-switch',
   channel: 'etherchannel',
   'wlan-tunnel': 'capwap-ac',
+});
+
+/**
+ * @since P3 [S18] The egress owners of the P3 roles: a tunnel port belongs to the tunnel owner `gre` (D17; [C13] in
+ * both modes, D27). This is the brief's `ROLE_EGRESS_OWNER.tunnel = 'gre'`, kept in its own record because the exact
+ * P2 record above is pinned with `toEqual` (`device.catalog.define.p2.test.ts:180`) and §9 lists no migration for it;
+ * every derivation reads the two through `roleEgressOwner`.
+ */
+export const P3_ROLE_EGRESS_OWNER: Readonly<Partial<Record<PortRole, ProcessName>>> = Object.freeze({
+  tunnel: 'gre',
+});
+
+/** @since P3 The process that owns egress of `role` (ROLE_EGRESS_OWNER, then P3_ROLE_EGRESS_OWNER); undefined when none. */
+export function roleEgressOwner(role: PortRole): ProcessName | undefined {
+  return ROLE_EGRESS_OWNER[role] ?? P3_ROLE_EGRESS_OWNER[role];
+}
+
+/**
+ * @since P3 [S18] Tunnel interfaces of a routing model (D17, §3.10): `interface Tunnel<n>`, short `Tu`, 0–2147483647,
+ * role `tunnel`, encapsulation `tunnel` ("the owner frames it"), created administratively up (its line protocol stays
+ * down until the tunnel owner's `tunnels` row says up). No automatic instance.
+ */
+export const TUNNEL_FAMILY: VirtualFamilySpec = Object.freeze({
+  family: 'Tunnel',
+  short: 'Tu',
+  role: 'tunnel',
+  min: 0,
+  max: 2147483647,
+  defaultAdminUp: true,
+  encap: 'tunnel',
 });
 
 /**
@@ -506,6 +545,30 @@ export function deriveProfileConfig(
   return p2.length === 0 ? undefined : { P2: p2 };
 }
 
+// ── P3 derivations (stage P3 only; ARCHITECTURE-P3 D2, D17) ─────────────────
+
+/**
+ * @since P3 The D2 rule of the one MUST invisible default: CDP runs by default in a P3 world on routers, managed and
+ * multilayer switches with a CLI, and the controller — `!nat-gateway && ((cli.shell === 'nfos' && (routing ||
+ * managed-switch)) || wireless-controller)`. Never home routers (`nat-gateway`, shell `none`), lightweight APs, hosts
+ * or other GUI-only devices. `caps` must be EXPANDED; `cli` is the model's CLI spec.
+ */
+export function deriveCdpDefault(caps: readonly Capability[], cli: Pick<CliSpec, 'shell'>): boolean {
+  const has = (c: Capability): boolean => caps.includes(c);
+  if (has('nat-gateway')) return false;
+  return (cli.shell === 'nfos' && (has('routing') || has('managed-switch'))) || has('wireless-controller');
+}
+
+/**
+ * @since P3 [S18] Virtual families of a routing model that is not a home router (other models: `families`
+ * unchanged): TUNNEL_FAMILY last unless the list already has a Tunnel family. Idempotent.
+ */
+export function withTunnelFamily(caps: readonly Capability[], families: readonly VirtualFamilySpec[]): readonly VirtualFamilySpec[] {
+  if (!caps.includes('routing') || caps.includes('nat-gateway')) return families;
+  if (families.some((f) => f.family === TUNNEL_FAMILY.family)) return families;
+  return [...families, TUNNEL_FAMILY];
+}
+
 /**
  * Modules that fit at least one of `slots` (SLOT_ACCEPTS), in `modules` order.
  */
@@ -573,9 +636,9 @@ export function deriveHostPorts(caps: readonly Capability[], ports: readonly Por
 
 /**
  * Egress owners: for every role with trait egress 'owner' that appears on a fixed port (role or allowed role) or a
- * virtual family, ROLE_EGRESS_OWNER[role] when that daemon is in `processes` or in `moduleProcesses` (daemons an
- * installable module adds, e.g. eth-switch from a router's switch module). Roles without an owner are left out
- * (validation reports them).
+ * virtual family, `roleEgressOwner(role)` (ROLE_EGRESS_OWNER; P3: P3_ROLE_EGRESS_OWNER) when that daemon is in
+ * `processes` or in `moduleProcesses` (daemons an installable module adds, e.g. eth-switch from a router's switch
+ * module). Roles without an owner are left out (validation reports them).
  */
 export function derivePortOwners(
   ports: readonly PortSpec[],
@@ -592,7 +655,7 @@ export function derivePortOwners(
   const out: Partial<Record<PortRole, ProcessName>> = {};
   for (const role of PORT_ROLES) {
     if (!present.has(role) || ROLE_TRAITS[role].egress !== 'owner') continue;
-    const owner = ROLE_EGRESS_OWNER[role];
+    const owner = roleEgressOwner(role);
     if (owner !== undefined && (processes.includes(owner) || moduleProcesses.includes(owner))) out[role] = owner;
   }
   return out;
@@ -659,8 +722,11 @@ export function defineModel(input: ModelInput, stage: BuildStage, modules: reado
   const ports = input.ports.map((p, i) => resolvePortSpec(p, i + 1, capabilities));
   const slots: SlotSpec[] = (input.slots ?? []).map((s, i) => ({ ...s, slotIndex: s.slotIndex ?? i }));
   const p2 = stageIncluded('P2', stage);
+  const p3 = stageIncluded('P3', stage);
   const baseFamilies = input.virtualFamilies ?? withModuleSwitchFamilies(capabilities, slots, deriveVirtualFamilies(capabilities), modules);
-  const virtualFamilies = p2 ? withControllerFamilies(capabilities, withManagedSwitchFamilies(capabilities, baseFamilies)) : baseFamilies;
+  const p2Families = p2 ? withControllerFamilies(capabilities, withManagedSwitchFamilies(capabilities, baseFamilies)) : baseFamilies;
+  // P3 [S18]: the Tunnel family of routing models, at stage P3 only
+  const virtualFamilies = p3 ? withTunnelFamily(capabilities, p2Families) : p2Families;
   const moduleProcesses = moduleReachableProcesses(capabilities, slots, processes, stage, modules);
   const cli = input.cli ?? deriveCliSpec(capabilities);
   const tags: string[] = [];
@@ -713,6 +779,8 @@ export function defineModel(input: ModelInput, stage: BuildStage, modules: reado
       model.profileConfig = copy;
     }
   }
+  // P3 (D2): the CDP default, added only when it applies, so every other model keeps exactly its P2 keys
+  if (p3 && deriveCdpDefault(capabilities, cli)) model.cdpDefault = true;
   return deepFreeze(model);
 }
 

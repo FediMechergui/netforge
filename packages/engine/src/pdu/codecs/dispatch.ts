@@ -28,6 +28,9 @@
  *    explicit). `linkFieldFill` also completes an EMPTY llc spec for a next proto that only the `llc.sap` space
  *    (DSAP = SSAP = key) or the `nf.pid` space (oui NF_OUI, type = key) names.
  *
+ * P3 (ARCHITECTURE-P3 §2.3): `LINK_FIELDS` gains [S18] `gre.protocolType` (ethertype space) and [S19] `ppp.protocol`
+ * (the new `ppp.proto` space).
+ *
  * Pure data; iteration order is table order (deterministic).
  */
 import type { DispatchSpace, FieldValue, ProtoName } from '../../contracts/pdu.js';
@@ -58,6 +61,9 @@ export const LINK_FIELDS: Readonly<Record<string, LinkField>> = Object.freeze({
   'ipv6-route': Object.freeze({ field: 'nextHeader', space: 'ipproto' }),
   'ipv6-frag': Object.freeze({ field: 'nextHeader', space: 'ipproto' }),
   'ipv6-dstopts': Object.freeze({ field: 'nextHeader', space: 'ipproto' }),
+  // P3 (ARCHITECTURE-P3 §2.3): the approved items' selectors
+  gre: Object.freeze({ field: 'protocolType', space: 'ethertype' }), // [S18]
+  ppp: Object.freeze({ field: 'protocol', space: 'ppp.proto' }), // [S19]
 });
 
 const FORWARD = new Map<DispatchSpace, Map<number, ProtoName>>();

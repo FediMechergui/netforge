@@ -26,6 +26,21 @@
  *    stores the sections `vlan 10` and `vlan 20`; `spanning-tree vlan 10,20 priority 4096` stores one line per VLAN);
  *    `expandVlanListLine` is the one place that splits such a line.
  *
+ * P3 (ARCHITECTURE-P3 §5, D2, D12, D14, D16, D18, D19, D21; W1 cli), in delimited blocks below:
+ *  - the MUST lines of §5.1–§5.6: OSPF (`router ospf` keeps the generic `router <protocol>` rule of identity 2, with
+ *    `ROUTER_CHILD_ORDER`), the ACL lines (`sequenced`: global `access-list N …` per list number, section entries per
+ *    section; the extended section; remarks), `ip access-group` (a multi line: the handler removes the same-direction
+ *    line first, D12), device access (`username … privilege …` with `secretToken` 5, SSH, `transport input`,
+ *    `access-class`), hardening, QoS marking (`class-map`, `policy-map` / `class`, `service-policy <dir>` as a
+ *    per-direction slot), discovery (`cdp run` / `cdp enable` are `bothForms`; `no lldp transmit|receive` and `no cdp
+ *    advertise-v2` stored negations), time and the device API;
+ *  - the approved items' rules (§5 "The approved items' rules"): [C1] `router eigrp` with `EIGRP_CHILD_ORDER` and
+ *    interface `delay`; [S18]/[C13] tunnel lines and the three crypto sections; [S19] the serial PPP lines; [S20]/[S21]
+ *    the queueing actions and interface `fair-queue` (`SCHEDULER_PHY_LINES`); [S24]/[S25] the `logging …` lines and the
+ *    identity-3 `service timestamps <kind>` rule.
+ * No P1 or P2 grammar line matches a P3 rule, and every P3 key is new in the child orders, so every P1/P2 rendering
+ * and storage is unchanged.
+ *
  * Pure data and pure functions; no state, no I/O.
  */
 import type { ConfigLineRule, ConfigRenderSlot, ConfigRuleSet } from '../contracts/config.js';
@@ -55,6 +70,7 @@ export const INTERFACE_CHILD_ORDER: readonly string[] = [
   'encapsulation',
   'clock',
   'bandwidth',
+  'delay', // [C1] (P3: a key no P1/P2 interface section holds)
   'keepalive',
   'no keepalive',
   'ip',
@@ -70,6 +86,17 @@ export const INTERFACE_CHILD_ORDER: readonly string[] = [
   'tx-power',
   'peer-key',
   'beacons',
+  // ── P3 (§5): keys no P1/P2 interface section holds, so every P1/P2 rendering keeps its order ──
+  'ppp', // [S19]
+  'peer', // [S19] `peer neighbor-route`
+  'no peer', // [S19] its stored negation
+  'tunnel', // [S18] / [C13]
+  'service-policy',
+  'fair-queue', // [S21]
+  'cdp',
+  'no cdp',
+  'lldp',
+  'no lldp',
   'shutdown',
   'duplex',
   'speed',
@@ -78,8 +105,41 @@ export const INTERFACE_CHILD_ORDER: readonly string[] = [
 /** Canonical order of lines inside an `ip dhcp pool` section. */
 export const DHCP_POOL_CHILD_ORDER: readonly string[] = ['network', 'default-router', 'dns-server', 'domain-name', 'lease'];
 
-/** Canonical order of lines inside a `line` section. */
-export const LINE_CHILD_ORDER: readonly string[] = ['password', 'login', 'exec-timeout'];
+/**
+ * Canonical order of lines inside a `line` section. P3 appends `access-class` and `transport` (§5.2, D14), keys no P1/P2
+ * line section holds.
+ */
+export const LINE_CHILD_ORDER: readonly string[] = ['password', 'login', 'exec-timeout', 'access-class', 'transport'];
+
+/**
+ * @since P3 (§5, W1 cli) Canonical order of the children of `router ospf <pid>` (keys; a stored `no passive-interface X`
+ * follows the positive `passive-interface` lines). `area` is kept for the lines of later stages ([S5], [C4], [C5]).
+ */
+export const ROUTER_CHILD_ORDER: readonly string[] = [
+  'router-id',
+  'auto-cost',
+  'area',
+  'passive-interface',
+  'no passive-interface',
+  'network',
+  'default-information',
+  'maximum-paths',
+];
+
+/**
+ * @since P3 [C1] (§2.16) Canonical order of the children of `router eigrp <as>`: `eigrp router-id`, `metric weights`,
+ * `network`, `passive-interface`, `maximum-paths` (keys; `no auto-summary` is accepted and never stored).
+ */
+export const EIGRP_CHILD_ORDER: readonly string[] = ['eigrp', 'metric', 'network', 'passive-interface', 'no passive-interface', 'maximum-paths'];
+
+/** @since P3 (§5.4) Canonical order of the children of a `class` section under `policy-map` (mode `config-pmap-c`). */
+export const POLICY_CLASS_CHILD_ORDER: readonly string[] = ['set', 'priority', 'bandwidth', 'shape', 'police', 'fair-queue', 'queue-limit'];
+
+/** @since P3 [C13] (§5.7) Canonical order of the children of `crypto ikev2 profile <p>`. */
+export const IKEV2_PROFILE_CHILD_ORDER: readonly string[] = ['match', 'authentication', 'keyring'];
+
+/** @since P3 [C13] (§5.7) Canonical order of the children of a keyring's `peer <n>` section. */
+export const IKEV2_PEER_CHILD_ORDER: readonly string[] = ['address', 'pre-shared-key'];
 
 /** @since P2 Canonical order of lines inside a `vlan <v>` section (mode `config-vlan`). */
 export const VLAN_CHILD_ORDER: readonly string[] = ['name'];
@@ -122,6 +182,30 @@ const POOL6 = ['ipv6 dhcp pool'] as const;
 const NACL = ['ip access-list standard'] as const;
 const WLAN = ['wlan'] as const;
 const WLC_IF = ['wlc-interface'] as const;
+// P3 contexts (context keys of contracts/cli.ts MODES; `router` is the OSPF process after the §2.11 refinement)
+const ROUTER = ['router'] as const;
+const EIGRP = ['router eigrp'] as const;
+const ACL_SECTIONS = ['ip access-list standard', 'ip access-list extended'] as const;
+const CMAP = ['class-map'] as const;
+const PMAP = ['policy-map'] as const;
+const PMAP_CLASS = ['class'] as const;
+const IKE_KEYRING = ['crypto ikev2 keyring'] as const;
+const IKE_PEER = ['peer'] as const;
+const IKE_PROFILE = ['crypto ikev2 profile'] as const;
+const IPSEC_PROFILE = ['crypto ipsec profile'] as const;
+
+/** @since P3 (D12) Sequencing of the entries of an `ip access-list` section (one sequence per section). */
+const SEQ_SECTION = { sequenced: { list: 'section' } } as const;
+/** @since P3 (D12) Sequencing of the global `access-list <n> …` lines (one sequence per list number, token 1). */
+const SEQ_BY_NUMBER = { sequenced: { list: { token: 1 } } } as const;
+
+/**
+ * @since P3 Render placement of the P3 sections that precede the interfaces (class-map, policy-map and [C13] the three
+ * crypto sections), after the DHCP pools (orders 1, 2) in the `dhcp` slot.
+ */
+const QOS_CMAP_SECTION = { renderSlot: 'dhcp', order: 3 } as const;
+const QOS_PMAP_SECTION = { renderSlot: 'dhcp', order: 4 } as const;
+const CRYPTO_SECTION = { renderSlot: 'dhcp', order: 5 } as const;
 
 /** Build one rule from a space-separated pattern. */
 function rule(
@@ -146,6 +230,9 @@ export const CONFIG_LINE_RULES: readonly ConfigLineRule[] = Object.freeze([
   rule('enable password <rest>', G, 2, 'single', { renderSlot: 'enable', secretToken: 2 }),
   rule('username <name> secret <rest>', G, 2, 'single', { renderSlot: 'username', secretToken: 3 }),
   rule('username <name> password <rest>', G, 2, 'single', { renderSlot: 'username', secretToken: 3 }),
+  // P3 (§5.2, D14): the privilege forms keep identity 2 (one slot per user) with the secret at token 5
+  rule('username <name> privilege <level> secret <rest>', G, 2, 'single', { renderSlot: 'username', secretToken: 5 }),
+  rule('username <name> privilege <level> password <rest>', G, 2, 'single', { renderSlot: 'username', secretToken: 5 }),
   rule('banner <type> <rest>', G, 2, 'single', { renderSlot: 'banner', freeTextFrom: 2 }),
   rule('no <rest>', ANY, 1, 'multi', { renderSlot: 'global-no' }),
 
@@ -155,8 +242,10 @@ export const CONFIG_LINE_RULES: readonly ConfigLineRule[] = Object.freeze([
     impliedDefault: { line: ['shutdown'], negated: true },
     renderSlot: 'interface',
   }),
+  // P3 (§5): the identity stays 2, so `router ospf 1` and [C1] `router eigrp 100` are different slots; a second OSPF
+  // process is refused by the handler (`ospfOneProcess`), never stored here. Children render in ROUTER_CHILD_ORDER.
   rule('router <protocol> <rest>', G, 2, 'single', {
-    section: { mode: 'config-router', separator: true },
+    section: { mode: 'config-router', separator: true, childOrder: ROUTER_CHILD_ORDER },
     renderSlot: 'router',
   }),
   rule('line <type> <first> <last>', G, 3, 'single', {
@@ -276,7 +365,8 @@ export const CONFIG_LINE_RULES: readonly ConfigLineRule[] = Object.freeze([
   rule('ip nat inside source list <acl> <rest>', G, 6, 'single', { group: 'ip', renderSlot: 'ip-post' }),
   rule('ip nat inside source static <rest>', G, 5, 'multi', { group: 'ip', renderSlot: 'ip-post' }), // incl. [S9] tcp|udp
   rule('ip nat translation <timeout> <seconds>', G, 4, 'single', { group: 'ip', renderSlot: 'ip-post' }), // [S9]
-  rule('access-list <number> <rest>', G, 2, 'multi', { renderSlot: 'ip-post', order: 1 }),
+  // P3 (D12): numbered entries are sequenced per list number (ConfigNode.seq, never rendered)
+  rule('access-list <number> <rest>', G, 2, 'multi', { renderSlot: 'ip-post', order: 1, ...SEQ_BY_NUMBER }),
   rule('ip access-list standard <name>', G, 4, 'single', {
     section: { mode: 'config-std-nacl', separator: true },
     renderSlot: 'ip-post',
@@ -290,8 +380,9 @@ export const CONFIG_LINE_RULES: readonly ConfigLineRule[] = Object.freeze([
   rule('voice vlan <vlan>', G, 2, 'single'), // [S4] the IP phone's Voice VLAN field (§5.5)
 
   // ── P2 §5.2 routing and services (sub-modes) ──
-  rule('permit <rest>', NACL, 1, 'multi'),
-  rule('deny <rest>', NACL, 1, 'multi'),
+  // P3 (D12): the entries of a standard or extended section are sequenced per section
+  rule('permit <rest>', ACL_SECTIONS, 1, 'multi', SEQ_SECTION),
+  rule('deny <rest>', ACL_SECTIONS, 1, 'multi', SEQ_SECTION),
   rule('address prefix <prefix> <rest>', POOL6, 2, 'single'),
   rule('dns-server <address>', POOL6, 1, 'multi'),
   rule('domain-name <name>', POOL6, 1, 'single'),
@@ -337,6 +428,156 @@ export const CONFIG_LINE_RULES: readonly ConfigLineRule[] = Object.freeze([
   rule('interface <name>', WLAN, 1, 'single'),
   rule('radio <band>', WLAN, 1, 'single'),
   rule('shutdown', WLAN, 1, 'single'),
+
+  // ── P3 §5.1 routing: OSPF (MUST) ──
+  rule('router-id <address>', ROUTER, 1, 'single'),
+  // multi, identity 3: `no network A W` removes that network whatever its area; the handler refuses A W in another area
+  rule('network <address> <wildcard> area <area>', ROUTER, 3, 'multi'),
+  rule('passive-interface default', ROUTER, 2, 'single'),
+  // both forms, so the stored negation that `passive-interface default` needs (`no passive-interface X`) survives
+  // replay (reload, export, the clone); the handler clears it when the default goes and needs none without it
+  rule('passive-interface <interface>', ROUTER, 2, 'multi', { bothForms: true }),
+  rule('auto-cost reference-bandwidth <mbps>', ROUTER, 2, 'single'),
+  rule('default-information originate <rest>', ROUTER, 2, 'single'),
+  rule('maximum-paths <paths>', ROUTER, 1, 'single'),
+  // interface: `ip ospf <pid> area <a>` is one slot per interface (identity 2 under the `ip ospf` leaf), so another
+  // pid's line is replaced; the per-setting lines have identity 3
+  rule('ip ospf <pid> area <area>', IF, 2, 'single', { group: 'ip' }),
+  rule('ip ospf cost <cost>', IF, 3, 'single', { group: 'ip' }),
+  rule('ip ospf priority <priority>', IF, 3, 'single', { group: 'ip' }),
+  rule('ip ospf hello-interval <seconds>', IF, 3, 'single', { group: 'ip' }),
+  rule('ip ospf dead-interval <seconds>', IF, 3, 'single', { group: 'ip' }),
+  rule('ip ospf network <type>', IF, 3, 'single', { group: 'ip' }),
+
+  // ── P3 §5.2 ACLs and device access (MUST) ──
+  rule('access-list <number> remark <rest>', G, 2, 'multi', { renderSlot: 'ip-post', order: 1, freeTextFrom: 3, ...SEQ_BY_NUMBER }),
+  rule('ip access-list extended <name>', G, 4, 'single', {
+    section: { mode: 'config-ext-nacl', separator: true },
+    renderSlot: 'ip-post',
+    order: 2,
+  }),
+  rule('remark <rest>', ACL_SECTIONS, 1, 'multi', { freeTextFrom: 1, ...SEQ_SECTION }),
+  // one line per direction: the handler removes the same-direction line before storing (D12), so the AST keeps a multi
+  // line whose value is the whole `<list> <dir>` pair
+  rule('ip access-group <list> <direction>', IF, 2, 'multi', { group: 'ip' }),
+  rule('access-class <list> <direction>', LINE, 1, 'single'),
+  rule('transport input <rest>', LINE, 2, 'single'),
+  rule('crypto key generate rsa <rest>', G, 4, 'single', { renderSlot: 'ip-pre', order: 1 }),
+  rule('ip ssh version <version>', G, 3, 'single', { group: 'ip', renderSlot: 'ip-pre', order: 2 }),
+  rule('ip ssh time-out <seconds>', G, 3, 'single', { group: 'ip', renderSlot: 'ip-pre', order: 2 }),
+  rule('ip ssh authentication-retries <count>', G, 3, 'single', { group: 'ip', renderSlot: 'ip-pre', order: 2 }),
+
+  // ── P3 §5.3 access-layer hardening (MUST) ──
+  rule('ip dhcp snooping', G, 3, 'single', { group: 'ip', renderSlot: 'ip-pre' }),
+  rule('ip dhcp snooping vlan <vlan-list>', G, 5, 'single', { group: 'ip', renderSlot: 'ip-pre' }),
+  rule('ip dhcp snooping verify mac-address', G, 5, 'single', { group: 'ip', renderSlot: 'ip-pre', storeNegation: true }),
+  rule('ip dhcp snooping information option', G, 5, 'single', { group: 'ip', renderSlot: 'ip-pre', storeNegation: true }),
+  rule('ip source binding <mac> vlan <vlan> <address> interface <interface>', G, 6, 'single', { group: 'ip', renderSlot: 'ip-pre' }),
+  rule('ip arp inspection vlan <vlan-list>', G, 5, 'single', { group: 'ip', renderSlot: 'ip-pre' }),
+  rule('ip dhcp snooping trust', IF, 4, 'single', { group: 'ip' }),
+  rule('ip dhcp snooping limit rate <pps>', IF, 5, 'single', { group: 'ip' }),
+  rule('ip arp inspection trust', IF, 4, 'single', { group: 'ip' }),
+  rule('ip arp inspection limit <rest>', IF, 4, 'single', { group: 'ip' }),
+
+  // ── P3 §5.4 QoS marking (MUST) ──
+  rule('class-map <rest>', G, 2, 'single', { section: { mode: 'config-cmap', separator: true }, ...QOS_CMAP_SECTION }),
+  rule('match <rest>', CMAP, 2, 'multi'),
+  rule('policy-map <name>', G, 2, 'single', { section: { mode: 'config-pmap', separator: true }, ...QOS_PMAP_SECTION }),
+  rule('class <name>', PMAP, 2, 'single', { section: { mode: 'config-pmap-c', separator: false, childOrder: POLICY_CLASS_CHILD_ORDER } }),
+  rule('set <rest>', PMAP_CLASS, 2, 'single'),
+  // one policy per direction (a per-direction slot; not a PHY_CONFIG_KEYS line in the MUST plan, D16)
+  rule('service-policy <direction> <name>', IF, 2, 'single'),
+
+  // ── P3 §5.5 discovery and time (MUST) ──
+  rule('cdp run', G, 2, 'single', { renderSlot: 'global-no', bothForms: true }),
+  rule('cdp timer <seconds>', G, 2, 'single', { renderSlot: 'global-no' }),
+  rule('cdp holdtime <seconds>', G, 2, 'single', { renderSlot: 'global-no' }),
+  rule('cdp advertise-v2', G, 2, 'single', { renderSlot: 'global-no', storeNegation: true }),
+  rule('cdp enable', IF, 2, 'single', { bothForms: true }),
+  rule('lldp run', G, 2, 'single', { renderSlot: 'global-no' }),
+  rule('lldp timer <seconds>', G, 2, 'single', { renderSlot: 'global-no' }),
+  rule('lldp holdtime <seconds>', G, 2, 'single', { renderSlot: 'global-no' }),
+  rule('lldp reinit <seconds>', G, 2, 'single', { renderSlot: 'global-no' }),
+  rule('lldp transmit', IF, 2, 'single', { storeNegation: true }),
+  rule('lldp receive', IF, 2, 'single', { storeNegation: true }),
+  rule('clock timezone <rest>', G, 2, 'single', { renderSlot: 'hostname', order: 1 }),
+  // one slot per server address (identity 3), so `prefer` or `source` replaces that server's line
+  rule('ntp server <address> <rest>', G, 3, 'single'),
+  rule('ntp master <rest>', G, 2, 'single'),
+  rule('ntp source <interface>', G, 2, 'single'),
+
+  // ── P3 §5.6 device API (MUST) ──
+  rule('ip http secure-server', G, 3, 'single', { group: 'ip', renderSlot: 'ip-post' }),
+  rule('ip http authentication <kind>', G, 3, 'single', { group: 'ip', renderSlot: 'ip-post' }),
+  rule('restconf', G, 1, 'single'),
+
+  // ── [C1] EIGRP (§2.16, §5.1) ──
+  rule('router eigrp <as>', G, 2, 'single', {
+    section: { mode: 'config-router-eigrp', separator: true, childOrder: EIGRP_CHILD_ORDER },
+    renderSlot: 'router',
+  }),
+  rule('network <address> <rest>', EIGRP, 2, 'multi'),
+  rule('eigrp router-id <address>', EIGRP, 2, 'single'),
+  rule('passive-interface default', EIGRP, 2, 'single'),
+  rule('passive-interface <interface>', EIGRP, 2, 'multi', { bothForms: true }),
+  rule('metric weights <rest>', EIGRP, 2, 'single'),
+  rule('maximum-paths <paths>', EIGRP, 1, 'single'),
+  rule('delay <tens-of-us>', IF, 1, 'single'),
+  rule('ip hello-interval eigrp <as> <seconds>', IF, 4, 'single', { group: 'ip' }),
+  rule('ip hold-time eigrp <as> <seconds>', IF, 4, 'single', { group: 'ip' }),
+
+  // ── [S18] GRE tunnel interface and [C13] its IPsec mode (§5.7) ──
+  rule('tunnel source <source>', IF, 2, 'single'),
+  rule('tunnel destination <address>', IF, 2, 'single'),
+  rule('tunnel mode <rest>', IF, 2, 'single'),
+  rule('tunnel protection <rest>', IF, 2, 'single'),
+  rule('ip mtu <bytes>', IF, 2, 'single', { group: 'ip' }),
+  rule('ip tcp adjust-mss <bytes>', IF, 3, 'single', { group: 'ip' }),
+
+  // ── [C13] the crypto sections (§2.17, §5.7) ──
+  rule('crypto ikev2 keyring <name>', G, 4, 'single', { section: { mode: 'config-ikev2-keyring', separator: true }, ...CRYPTO_SECTION }),
+  rule('peer <name>', IKE_KEYRING, 2, 'single', {
+    section: { mode: 'config-ikev2-keyring-peer', separator: false, childOrder: IKEV2_PEER_CHILD_ORDER },
+  }),
+  rule('address <address>', IKE_PEER, 1, 'single'),
+  rule('pre-shared-key <rest>', IKE_PEER, 1, 'single', { secretToken: 1 }),
+  rule('crypto ikev2 profile <name>', G, 4, 'single', {
+    section: { mode: 'config-ikev2-profile', separator: true, childOrder: IKEV2_PROFILE_CHILD_ORDER },
+    renderSlot: 'dhcp',
+    order: 6,
+  }),
+  rule('match identity remote address <address> <rest>', IKE_PROFILE, 5, 'single'),
+  rule('authentication local <method>', IKE_PROFILE, 2, 'single'),
+  rule('authentication remote <method>', IKE_PROFILE, 2, 'single'),
+  rule('keyring local <name>', IKE_PROFILE, 2, 'single'),
+  rule('crypto ipsec profile <name>', G, 4, 'single', { section: { mode: 'config-ipsec-profile', separator: true }, renderSlot: 'dhcp', order: 7 }),
+  rule('set ikev2-profile <name>', IPSEC_PROFILE, 2, 'single'),
+
+  // ── [S19] PPP on serial interfaces (§5.7; the global `username <n> password <pw>` form is the P0 rule above) ──
+  rule('ppp authentication <rest>', IF, 2, 'single'),
+  rule('ppp pap sent-username <name> password <rest>', IF, 3, 'single', { secretToken: 5 }),
+  rule('peer neighbor-route', IF, 2, 'single', { storeNegation: true }),
+
+  // ── [S20]/[S21] queueing actions under `policy-map` / `class`, and interface WFQ (§5.4) ──
+  rule('priority <rest>', PMAP_CLASS, 1, 'single'),
+  rule('bandwidth <rest>', PMAP_CLASS, 1, 'single'),
+  rule('queue-limit <packets>', PMAP_CLASS, 1, 'single'),
+  rule('fair-queue', PMAP_CLASS, 1, 'single'),
+  rule('police <rest>', PMAP_CLASS, 1, 'single'),
+  rule('shape average <rest>', PMAP_CLASS, 2, 'single'),
+  rule('fair-queue', IF, 1, 'single'),
+
+  // ── [S24]/[S25] logging (§5.7): tail slot, like every rule-less line before them ──
+  rule('service timestamps <kind> <rest>', G, 3, 'single', { renderSlot: 'service' }),
+  rule('logging buffered <rest>', G, 2, 'single'),
+  rule('logging console <rest>', G, 2, 'single', { bothForms: true }),
+  rule('logging monitor <rest>', G, 2, 'single'),
+  rule('logging host <address>', G, 2, 'multi'),
+  rule('logging trap <level>', G, 2, 'single'),
+  rule('logging source-interface <interface>', G, 2, 'single'),
+  rule('logging facility <facility>', G, 2, 'single'),
+  // `logging <addr>` (the alias of `logging host <addr>`); every keyword form above is more specific
+  rule('logging <address>', G, 2, 'multi'),
 
   // ── generic group folding (any other `ip …` / `ipv6 …` line) ──
   rule('ip <setting> <rest>', ANY, 2, 'multi', { group: 'ip', renderSlot: 'ip-pre' }),
@@ -428,6 +669,71 @@ export function createConfigRuleSet(rules: readonly ConfigLineRule[]): ConfigRul
 
 /** The rule set built from `CONFIG_LINE_RULES`; the default for every ConfigAst and text walker. */
 export const DEFAULT_CONFIG_RULES: ConfigRuleSet = createConfigRuleSet(CONFIG_LINE_RULES);
+
+// ── P3: sequencing (D12) and the scheduler lines ([S20]/[S21]) ────────────────────────────────────────────────────
+
+/** @since P3 (D12) Step between two sequence numbers: a new entry gets the list's highest number + 10 (10 when empty). */
+export const CONFIG_SEQ_STEP = 10;
+/** @since P3 (D12) Highest sequence number an entry may carry (a positive 32-bit signed integer). */
+export const CONFIG_SEQ_MAX = 2_147_483_647;
+
+/** Context keys whose entries are sequenced per section, per rule set (built on first use). */
+const SECTION_SEQUENCED_KEYS = new WeakMap<ConfigRuleSet, ReadonlySet<string>>();
+
+function sectionSequencedKeys(rules: ConfigRuleSet): ReadonlySet<string> {
+  let keys = SECTION_SEQUENCED_KEYS.get(rules);
+  if (keys === undefined) {
+    const set = new Set<string>();
+    for (const r of rules.rules) if (r.sequenced?.list === 'section') for (const c of r.contexts) set.add(c);
+    keys = set;
+    SECTION_SEQUENCED_KEYS.set(rules, keys);
+  }
+  return keys;
+}
+
+/**
+ * @since P3 (D12) True when lines typed in `context` are entries of a sequenced list section (`ip access-list
+ * standard|extended <name>`): there a leading number is the entry's sequence number (`15 permit …`) and a lone number
+ * names an entry (`no 20`).
+ */
+export function isSequencedSectionContext(context: readonly (readonly string[])[], rules: ConfigRuleSet = DEFAULT_CONFIG_RULES): boolean {
+  return context.length > 0 && sectionSequencedKeys(rules).has(ruleContextKey(context));
+}
+
+/**
+ * @since P3 (D12) The list a sequenced line belongs to: the section's name (the last token of the innermost context
+ * entry) for a section entry, the rule's `{token}` for a global line (`access-list 10 …` → '10'). A numbered section
+ * and the global lines of its number are one list. Undefined for a line whose rule is not sequenced.
+ */
+export function sequencedListOf(
+  context: readonly (readonly string[])[],
+  line: readonly string[],
+  rules: ConfigRuleSet = DEFAULT_CONFIG_RULES,
+): string | undefined {
+  const seq = rules.ruleFor(context, line)?.sequenced;
+  if (seq === undefined) return undefined;
+  if (seq.list === 'section') {
+    const entry = context[context.length - 1];
+    return entry === undefined ? undefined : entry[entry.length - 1];
+  }
+  return line[seq.list.token];
+}
+
+/**
+ * @since P3 [S20]/[S21] (§5 "The approved items' rules") The interface lines whose change the link model must see on a
+ * PHYSICAL port besides `PHY_CONFIG_KEYS` (device/device.ts): the output policy (`service-policy output …`, a
+ * per-direction slot, so only this direction) and interface WFQ (`fair-queue`). The device applies it to physical ports
+ * only, as it does for `PHY_CONFIG_KEYS`; no P1/P2 line matches, and the MUST plan never calls it.
+ */
+export const SCHEDULER_PHY_LINES: readonly (readonly string[])[] = Object.freeze([
+  Object.freeze(['service-policy', 'output']),
+  Object.freeze(['fair-queue']),
+]);
+
+/** @since P3 [S20]/[S21] True when `line` (without `no`) starts with one of `SCHEDULER_PHY_LINES`. */
+export function isSchedulerPhyLine(line: readonly string[]): boolean {
+  return SCHEDULER_PHY_LINES.some((p) => p.length <= line.length && p.every((t, i) => line[i] === t));
+}
 
 /** Group keys (`ip`, `ipv6`) declared by a rule set, in first-declaration order. */
 export function groupKeysOf(rules: ConfigRuleSet): ReadonlySet<string> {

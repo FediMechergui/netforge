@@ -66,7 +66,10 @@ describe('P2 codec registry and dispatch', () => {
     expect(getCodec('dhcpv6')).toBe(dhcpv6Codec);
     expect(getCodec('capwap')).toBe(capwapCodec);
     expect(getCodec('hsrp')).toBe(hsrpCodec);
-    expect([...CODECS.keys()].slice(-8)).toEqual(['dot1q', 'stp', 'lacp', 'dtp', 'dhcpv6', 'capwap', 'hsrp', 'pagp']);
+    // ARCHITECTURE-P3 §9.2 item 13 appends the P3 codecs after the P2 codecs, so the P2 block is pinned at its exact
+    // position (after the 21 P0–P1 codecs) instead of as the registry's tail; the P3 tail is pinned by pdu.codecs.test.ts.
+    expect([...CODECS.keys()].slice(21, 29)).toEqual(['dot1q', 'stp', 'lacp', 'dtp', 'dhcpv6', 'capwap', 'hsrp', 'pagp']);
+    expect([...CODECS.keys()][29]).toBe('ospf');
   });
 
   it('dispatches the P2 keys in their spaces (§2.3)', () => {

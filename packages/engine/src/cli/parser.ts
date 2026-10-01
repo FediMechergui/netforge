@@ -58,6 +58,16 @@
  *     with a range end for its last number. Every port must exist on the device (virtual interfaces are not created
  *     by a range); the value is the canonical port ids in typed order without duplicates, joined by
  *     `IF_RANGE_SEPARATOR` (`splitInterfaceRange` reads it back).
+ *
+ * P3 arg rules (ARCHITECTURE-P3 §5.1, §5.2, D12; W1 cli) — no new ArgType, two readings of existing members:
+ *   • a number or a name: an `int` arg that carries `choices` also accepts one of them (exact, or an unambiguous prefix,
+ *     any letter case), valued by the choice's own spelling; a number keeps the `min`/`max` rule. `?` lists the range
+ *     and every name. ACL port names (`portNameArg`, `www` = 80) and ICMP message names (`icmpNameArg`, `echo-reply`)
+ *     are such args; their names are core/acl's tables (`cliAclPortNames`, `cliIcmpMessageNames`).
+ *   • dotted or a number: an `ipv4` arg that carries `max` also accepts a whole number from `min` (default 0) to `max`,
+ *     kept as that number (`area 0`), while dotted text is normalised as before (`area 0.0.0.0`). `?` lists both forms.
+ *     The OSPF area is such an arg (`ospfAreaArg`, 0-4294967295); `ospfAreaDotted` gives either form's dotted id.
+ *   No P1/P2 arg carries `choices` on an `int` or bounds on an `ipv4`, so every P1/P2 match, message and help is unchanged.
  */
 import type {
   ArgSpec,
@@ -76,6 +86,7 @@ import type { PortId } from '../contracts/ids.js';
 import type { PortView } from '../contracts/port.js';
 import { maskToPrefixLen, normalizeMac, parseCidr, parseIpv4, u32ToIpv4 } from '../contracts/addr.js';
 import { normalizeIpv6 } from '../core/addr6.js';
+import { ACL_ICMP_NAMES, ACL_TCP_PORT_NAMES, ACL_UDP_PORT_NAMES } from '../core/acl.js';
 import { HANDLERS, LITERAL_HELP, PSEUDO_HELP } from './grammar.js';
 import { isConfigClassMode, isDoBlocked } from './modes.js';
 import {
@@ -197,6 +208,16 @@ export const MSG_BAD_IF_RANGE = '% Expected interfaces or ranges such as fa0/1 -
 export const MSG_IF_RANGE_REVERSED = '% A range must end at or above the number it starts from.';
 /** @since P2 Message for an `if-range` item naming a port the device does not have. */
 export const MSG_IF_RANGE_MISSING = (port: string): string => `% ${port} does not exist on this device.`;
+
+/** @since P3 Message for an `int` arg with names that is neither a number in range nor one of its names. */
+export const MSG_BAD_NAMED_NUMBER = (arg: ArgSpec): string =>
+  `% Expected a whole number ${intRange(arg)} or one of the names ? lists at the marked position.`;
+/** @since P3 Message for a prefix that matches several names of an `int` arg with names. */
+export const MSG_AMBIGUOUS_NAME = (text: string, names: readonly string[]): string =>
+  `% Ambiguous name "${text}": could be ${names.join(', ')}.`;
+/** @since P3 Message for an `ipv4` arg with bounds (dotted or a number). */
+export const MSG_BAD_DOTTED_OR_NUMBER = (arg: ArgSpec): string =>
+  `% Expected a dotted value (A.B.C.D) or a whole number ${intRange({ ...arg, min: arg.min ?? 0 })} at the marked position.`;
 
 /** @since P2 Separator of the canonical port ids in an `if-range` value. */
 export const IF_RANGE_SEPARATOR = ',';
@@ -416,17 +437,26 @@ export function validateArg(arg: ArgSpec, text: string, ctx: MatchContext, opts:
     case 'rest':
       return { ok: true, value: text };
     case 'int': {
-      if (!/^-?\d+$/.test(text)) return { ok: false, message: `% Expected a whole number ${intRange(arg)} at the marked position.` };
+      // P3: an `int` arg with names also accepts one of them (module header)
+      const named = arg.choices !== undefined && arg.choices.length > 0;
+      const bad = named ? MSG_BAD_NAMED_NUMBER(arg) : `% Expected a whole number ${intRange(arg)} at the marked position.`;
+      if (!/^-?\d+$/.test(text)) return named ? nameOf(arg, text, bad) : { ok: false, message: bad };
       const v = Number(text);
       if ((arg.min !== undefined && v < arg.min) || (arg.max !== undefined && v > arg.max)) {
-        return { ok: false, message: `% Expected a whole number ${intRange(arg)} at the marked position.` };
+        return { ok: false, message: bad };
       }
       return { ok: true, value: String(v) };
     }
     case 'ipv4': {
       const v = parseIpv4(text);
-      if (v === null) return { ok: false, message: '% Expected an IPv4 address in dotted-decimal form (A.B.C.D) at the marked position.' };
-      return { ok: true, value: u32ToIpv4(v) };
+      if (v !== null) return { ok: true, value: u32ToIpv4(v) };
+      // P3: an `ipv4` arg with bounds also accepts a whole number (module header)
+      if (arg.max === undefined) return { ok: false, message: '% Expected an IPv4 address in dotted-decimal form (A.B.C.D) at the marked position.' };
+      if (/^\d{1,10}$/.test(text)) {
+        const n = Number(text);
+        if (n >= (arg.min ?? 0) && n <= arg.max) return { ok: true, value: String(n) };
+      }
+      return { ok: false, message: MSG_BAD_DOTTED_OR_NUMBER(arg) };
     }
     case 'ipv4-mask': {
       const len = maskToPrefixLen(text);
@@ -592,6 +622,84 @@ export function resolveInterfaceRange(
     }
   }
   return { ok: true, ports: out };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// P3 value helpers (pure): named numbers and dotted-or-number ids
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The name of an `int` arg with names that `text` stands for: exact first, else the one name it prefixes. */
+function nameOf(arg: ArgSpec, text: string, bad: string): ArgCheck {
+  const names = arg.choices ?? [];
+  const lower = text.toLowerCase();
+  const exact = names.find((c) => c.toLowerCase() === lower);
+  if (exact !== undefined) return { ok: true, value: exact };
+  const prefixed = lower.length === 0 ? [] : names.filter((c) => c.toLowerCase().startsWith(lower));
+  if (prefixed.length === 1) return { ok: true, value: prefixed[0] as string };
+  if (prefixed.length > 1) return { ok: false, message: MSG_AMBIGUOUS_NAME(text, prefixed) };
+  return { ok: false, message: bad };
+}
+
+/**
+ * @since P3 (D12) The port names an extended access-list entry accepts after `eq|neq|lt|gt|range` for `proto`, in name
+ * order: exactly the names of core/acl's `ACL_TCP_PORT_NAMES` / `ACL_UDP_PORT_NAMES`, read at call time (rule 12), so
+ * every name `show access-lists` and the running configuration print (`aclEntryText`) is accepted when typed back.
+ */
+export function cliAclPortNames(proto: 'tcp' | 'udp'): readonly string[] {
+  return (proto === 'tcp' ? ACL_TCP_PORT_NAMES : ACL_UDP_PORT_NAMES).map(([name]) => name).sort();
+}
+
+/**
+ * @since P3 (D12) The ICMP message names an extended access-list entry accepts after `icmp <src> <dst>`, in name order:
+ * exactly the names of core/acl's `ACL_ICMP_NAMES` (a name fixes the type, and the code when it has one), read at call
+ * time.
+ */
+export function cliIcmpMessageNames(): readonly string[] {
+  return ACL_ICMP_NAMES.map(([name]) => name).sort();
+}
+
+/** @since P3 Largest OSPF area id typed as a number (a 32-bit id). */
+export const OSPF_AREA_MAX = 4_294_967_295;
+
+/**
+ * @since P3 (D12) An ACL port arg: a number 0-65535 or one of the protocol's port names (`www`, `domain`, …); the
+ * value is the number as typed (without leading zeros) or the name's spelling.
+ */
+export function portNameArg(proto: 'tcp' | 'udp', help: string, optional = false): ArgSpec {
+  const arg: ArgSpec = { type: 'int', help, min: 0, max: 65535, choices: [...cliAclPortNames(proto)] };
+  return optional ? { ...arg, optional: true } : arg;
+}
+
+/** @since P3 (D12) An ICMP message arg: a type number 0-255 or one of `cliIcmpMessageNames()`. */
+export function icmpNameArg(help: string, optional = false): ArgSpec {
+  const arg: ArgSpec = { type: 'int', help, min: 0, max: 255, choices: [...cliIcmpMessageNames()] };
+  return optional ? { ...arg, optional: true } : arg;
+}
+
+/** @since P3 (§5.1) An OSPF area arg: a number 0-4294967295 (kept as typed) or dotted (normalised). */
+export function ospfAreaArg(help: string): ArgSpec {
+  return { type: 'ipv4', help, min: 0, max: OSPF_AREA_MAX };
+}
+
+/**
+ * @since P3 (§2.6 `OspfAreaId`) The dotted id of an area typed as a number or in dotted form (`0` and `0.0.0.0` →
+ * '0.0.0.0', `10` → '0.0.0.10'); null for anything else.
+ */
+export function ospfAreaDotted(text: string): string | null {
+  const v = parseIpv4(text);
+  if (v !== null) return u32ToIpv4(v);
+  if (!/^\d{1,10}$/.test(text)) return null;
+  const n = Number(text);
+  return n <= OSPF_AREA_MAX ? u32ToIpv4(n) : null;
+}
+
+/** @since P3 (D12) The port number of a numeric or named ACL port for `proto`; undefined for an unknown name. */
+export function aclPortNumber(proto: 'tcp' | 'udp', text: string): number | undefined {
+  if (/^\d{1,5}$/.test(text)) {
+    const n = Number(text);
+    return n <= 65535 ? n : undefined;
+  }
+  return (proto === 'tcp' ? ACL_TCP_PORT_NAMES : ACL_UDP_PORT_NAMES).find(([name]) => name === text)?.[1];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1337,6 +1445,20 @@ function optionsFor(c: Cand, typed: string, ctx: MatchContext, acc: ItemAcc): { 
       if (arg.type === 'choice') {
         for (const ch of arg.choices ?? []) if (matchesTyped(ch, typed)) addItem(acc, ch, arg.help, true, false);
         return { freeText: false, cr };
+      }
+      if (arg.type === 'int' && arg.choices !== undefined && arg.choices.length > 0) {
+        // P3: a number or a name — every name, and the number range
+        for (const ch of arg.choices) if (matchesTyped(ch, typed)) addItem(acc, ch, arg.help, true, false);
+        if (typed === '') addItem(acc, placeholderFor(arg), arg.help, true, true);
+        return { freeText: true, cr };
+      }
+      if (arg.type === 'ipv4' && arg.max !== undefined) {
+        // P3: dotted or a number — both forms
+        if (typed === '') {
+          addItem(acc, placeholderFor(arg), arg.help, true, true);
+          addItem(acc, `<${arg.min ?? 0}-${arg.max}>`, arg.help, true, true);
+        }
+        return { freeText: true, cr };
       }
       if (arg.type === 'interface' || arg.type === 'if-range') {
         const names = interfaceNames(arg, ctx);

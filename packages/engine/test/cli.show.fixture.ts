@@ -11,7 +11,7 @@ import { emptyCounters, SPEED_100M, SPEED_1G } from '../src/contracts/port.js';
 import { createTable } from '../src/core/table.js';
 import { createConfigAst } from '../src/cli/config-ast.js';
 import { KIND_ENCAP, defaultRoleFor } from '../src/contracts/catalog.js';
-import { testModel, testPortSpec, p0Tables } from './port.fixtures.js';
+import { P3_CTX, testModel, testPortSpec, p0Tables } from './port.fixtures.js';
 import { secretsFor } from '../src/cli/runtime.js';
 
 export interface FakePortInit {
@@ -184,6 +184,8 @@ export function fakeCtx(init: FakeCtxInit = {}): FakeCtx {
     radioView: () => undefined,
     air: { visibleBss: () => [], link: () => undefined },
     secrets: secretsFor('d_1'),
+    // P3 (§9.2 W1 item 19): the required CommandCtx.clock, the unset clock view of P3_CTX
+    clock: P3_CTX.clock,
   };
   return { ctx, configCalls, arp, cam, rib };
 }

@@ -13,6 +13,13 @@
  * Subset: `#`…`######` headings, `-`/`*`/`+` and `1.` lists, ``` fenced code, blank-line separated paragraphs,
  * `` `code` ``, `**strong**`, `*em*` / `_em_` and `[text](target)`.
  *
+ * @since P3 (ARCHITECTURE-P3 §2.14, D24, §11.3; W1 web-learn) A fence may name the language of its block — ```json,
+ * ```yaml, ```xml, ```http, ```python or ```text — and the code block then carries `lang`. It is DISPLAY-ONLY: a label
+ * and a class for the renderer. It never changes how the body is read: the body of a fence is literal text whatever
+ * the language, so a JSON body that holds `[x](https://…)` or `<b>` stays characters, never a link or markup. Any other
+ * info string (an unknown language, a second word) is ignored exactly as before, so a fence without a known language
+ * gives the same `{kind: 'code', text}` node as in P1/P2.
+ *
  * ponytail: one flat list level (an indented item joins the list it follows rather than nesting), no tables,
  * block quotes, images, footnotes, reference links, HTML entities or backslash escapes — none of them appear in
  * the CCNA 1 lab text, and every one of them would be one more thing to prove safe; an unterminated fence runs
@@ -52,12 +59,27 @@ export type MdInline =
   | { kind: 'strong'; children: MdInline[] }
   | { kind: 'link'; target: MdLinkTarget; children: MdInline[] };
 
-/** One block of instructions. */
+/** @since P3 The languages a code fence may name (display-only, §2.14). */
+export const MD_CODE_LANGS = ['json', 'yaml', 'xml', 'http', 'python', 'text'] as const;
+/** @since P3 One language a code fence may name. */
+export type MdCodeLang = (typeof MD_CODE_LANGS)[number];
+
+/** @since P3 The label a renderer shows above a code block of each language. */
+export const MD_CODE_LANG_LABEL: Readonly<Record<MdCodeLang, string>> = Object.freeze({
+  json: 'JSON',
+  yaml: 'YAML',
+  xml: 'XML',
+  http: 'HTTP',
+  python: 'Python',
+  text: 'Text',
+});
+
+/** One block of instructions. `lang` (P3) is present only when the fence named a language of `MD_CODE_LANGS`. */
 export type MdBlock =
   | { kind: 'heading'; level: 1 | 2 | 3 | 4 | 5 | 6; children: MdInline[] }
   | { kind: 'paragraph'; children: MdInline[] }
   | { kind: 'list'; ordered: boolean; items: MdInline[][] }
-  | { kind: 'code'; text: string };
+  | { kind: 'code'; text: string; lang?: MdCodeLang };
 
 /** Longest instructions text the parser reads; the rest is dropped (a lab is a page, not a book). */
 export const MARKDOWN_MAX_CHARS = 20_000;
@@ -66,6 +88,19 @@ const HEADING = /^(#{1,6})[ \t]+(.*)$/;
 const BULLET = /^[ \t]*[-*+][ \t]+(.*)$/;
 const ORDERED = /^[ \t]*\d{1,9}[.)][ \t]+(.*)$/;
 const FENCE = /^[ \t]*(?:```|~~~)/;
+/** An opening fence and its info string: the language is the whole info string, one word of letters. */
+const FENCE_LANG = /^[ \t]*(?:```|~~~)[ \t]*([A-Za-z]+)[ \t]*$/;
+
+/**
+ * @since P3 The display language an opening fence line names, or undefined: only a single word of `MD_CODE_LANGS`
+ * (any case) counts; anything else in the info string is ignored, as it always was.
+ */
+export function fenceLang(line: string): MdCodeLang | undefined {
+  const m = FENCE_LANG.exec(line.replace(/\r$/, ''));
+  if (m === null) return undefined;
+  const word = (m[1] ?? '').toLowerCase();
+  return (MD_CODE_LANGS as readonly string[]).includes(word) ? (word as MdCodeLang) : undefined;
+}
 
 /**
  * The allowed target of `[text](href)`, or null when the link is not allowed. Only `concept:<id>` for an id of
@@ -94,6 +129,7 @@ export function parseMarkdown(text: string): MdBlock[] {
       continue;
     }
     if (FENCE.test(line)) {
+      const lang = fenceLang(line);
       const body: string[] = [];
       i++;
       while (i < lines.length && !FENCE.test((lines[i] ?? '').replace(/\r$/, ''))) {
@@ -101,7 +137,7 @@ export function parseMarkdown(text: string): MdBlock[] {
         i++;
       }
       i++; // the closing fence (or the end of the text)
-      blocks.push({ kind: 'code', text: body.join('\n') });
+      blocks.push(lang === undefined ? { kind: 'code', text: body.join('\n') } : { kind: 'code', text: body.join('\n'), lang });
       continue;
     }
     const heading = HEADING.exec(line);

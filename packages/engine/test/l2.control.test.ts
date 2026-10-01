@@ -11,6 +11,7 @@ import {
   LLC_SAP_STP,
   NF_L2_CONTROL_MAC,
   NF_OUI,
+  NF_PID_CDP,
   NF_PID_DTP,
   NF_PID_PAGP,
   SLOW_PROTOCOLS_MAC,
@@ -54,6 +55,8 @@ describe('classifyControl (§2.4 table)', () => {
     expect(classifyControl(LACPDU)).toBe('lacp');
     expect(classifyControl(DTP)).toBe('dtp');
     expect(classifyControl(PAGP)).toBe('pagp');
+    // ARCHITECTURE-P3 §9.2 item 20 (W1 l2): the NF CDP frame (PID 4 under the NF control group) is its own class
+    expect(classifyControl(frame(eth(NF_L2_CONTROL_MAC, 40), snap(NF_OUI, NF_PID_CDP), layer('cdp', { version: 2 })))).toBe('cdp');
     // the LACP row keys on the ethertype and the subtype, not on the destination
     expect(classifyControl(frame(eth('02:00:00:00:00:02', ETHERTYPE_SLOW_PROTOCOLS), layer('lacp', { subtype: 1 })))).toBe('lacp');
   });
@@ -65,7 +68,8 @@ describe('classifyControl (§2.4 table)', () => {
     // a tagged slow-protocols frame is not LACP
     expect(classifyControl(frame(eth(SLOW_PROTOCOLS_MAC, 0x8100), layer('dot1q', { vid: 1, type: ETHERTYPE_SLOW_PROTOCOLS }), layer('lacp', { subtype: 1 })))).toBe('reserved');
     expect(classifyControl(frame(eth('01:80:c2:00:00:01', 0x8808)))).toBe('reserved');
-    expect(classifyControl(frame(eth('01:80:c2:00:00:0e', 0x88cc)))).toBe('reserved');
+    // ARCHITECTURE-P3 §9.2 item 20 (W1 l2): LLDP (ethertype 0x88cc to 01:80:c2:00:00:0e) is now its own class
+    expect(classifyControl(frame(eth('01:80:c2:00:00:0e', 0x88cc)))).toBe('lldp');
     expect(classifyControl(frame(eth('01:80:c2:00:00:0f', 0x0800)))).toBe('reserved');
   });
 
