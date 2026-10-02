@@ -102,6 +102,23 @@
  *  • [S18] a third wire selector `{layer: 'ipv4', roles: ['tunnel']}`: the tunnel owner's `ingress {port: 'Tunnel0',
  *    layer: 'ipv4'}` reaches ipv4.
  *
+ * P3 (ARCHITECTURE-P3 D12, §3.0 (a) steps 2, 6 and 7; W2 l3) — the ACL hooks, copied from NAT's pattern; they exist
+ * only while an `ip access-group <list> in|out` line is stored AND the model runs `acl`, so a world without the line
+ * runs P2's path byte for byte:
+ *  • `ip access-group` per interface and direction is read from the configuration (`readAccessGroups`, the reader acl
+ *    uses too) at every delta of the line, at an interface removal and at boot; a changed binding is one 'ip routing'
+ *    debug line. Internal state, not in the StateView (§9.1).
+ *  • Inbound: right after the header checksum and the rx line, BEFORE the NAT inbound hook and the for-me test, a
+ *    packet on a port with an inbound list goes to acl as `acl.filter {family 4, dir 'in', iface, pdu, onPermit:
+ *    request ipv4 'ipv4.resume' {pdu, inPort, after: 'acl-in'}}`. The resumed packet continues at the NAT inbound hook
+ *    and is never filtered again (traffic to the router itself is filtered too).
+ *  • Outbound (transit packets only, after routing and the TTL decrement): when the egress port has an outbound list,
+ *    a NAT inside → outside packet goes to nat with `filterOut: true` (nat translates, then hands it to acl); any other
+ *    packet goes to acl as `acl.filter {dir 'out', iface: egress, inPort: the ingress port, pdu, onPermit: request arp
+ *    'arp.sendVia'}`. Locally originated packets (`ipv4.send`) never pass the outbound hook.
+ *  • [S19] a wire selector `{layer: 'ppp', ethertype: 0x0021, roles: ['wan']}` (placed after the HDLC one): an IPv4
+ *    packet in a PPP frame on a serial WAN port reaches ipv4.
+ *
  * Debug categories: 'ip packet' (rx / deliver / forward / send / drop) and 'ip routing' (route add / remove, lease).
  *
  * stateSnapshot():
@@ -132,6 +149,7 @@ import type { DropReason } from '../contracts/link.js';
 import {
   ETHERTYPE_IPV4,
   HDLC_PROTO_IPV4,
+  PPP_PROTO,
   ICMP_DEST_UNREACHABLE,
   ICMP_TIME_EXCEEDED,
   ICMP_TTL_EXCEEDED_TRANSIT,
@@ -147,6 +165,7 @@ import { AD_DHCP, AD_STATIC, routeKey, type RouteRow } from '../contracts/tables
 import type { SimTime } from '../contracts/time.js';
 import type { RibChangedEvent } from '../contracts/transport.js';
 import { createRibArbiter, type RibArbiter, type RibDecision, type RibRemoveReason } from '../core/rib-arbiter.js';
+import { readAccessGroups, type AclInterfaceGroups } from './acl.js';
 import { dormantTransportEligible, ipv4UpperProcess, transportWakeLine } from './ip-upper.js';
 
 /** Process name, as registered in the protocol registry. */
@@ -172,6 +191,8 @@ export const IPV4_MAX_PATHS = 4;
 export const IP_ROUTING_OFF_DETAIL = 'IP routing is switched off on this device (ip routing)';
 /** @since P2 The daemon that answers the NAT hooks (D14). */
 const NAT_PROCESS: ProcessName = 'nat';
+/** @since P3 The daemon that answers the ACL hooks (D12). */
+const ACL_HOOK_PROCESS: ProcessName = 'acl';
 
 /**
  * Decision of an `ipv4.route` offer or withdrawal, delivered to the offering daemon with Action `event`
@@ -203,12 +224,16 @@ const leaseOwner = (port: PortId): string => `${LEASE_ROUTE_OWNER}|${port}`;
 const staticOwner = (line: string): string => `${STATIC_OWNER_PREFIX}${line}`;
 
 /**
- * Wire selectors: Ethernet type 0x0800 on every L3 role, HDLC protocol 0x0800 on serial WAN ports (§3.9); [S18] a bare
- * IPv4 packet the tunnel owner injects on a tunnel port (`ingress {port, layer: 'ipv4'}`, ARCHITECTURE-P3 D17).
+ * Wire selectors: Ethernet type 0x0800 on every L3 role, HDLC protocol 0x0800 on serial WAN ports (§3.9); [S19] PPP
+ * protocol 0x0021 on serial WAN ports (ARCHITECTURE-P3 D17, §9.2 item 30); [S18] a bare IPv4 packet the tunnel owner
+ * injects on a tunnel port (`ingress {port, layer: 'ipv4'}`, ARCHITECTURE-P3 D17).
  */
 export const IPV4_HANDLES: readonly DemuxSelector[] = Object.freeze([
   Object.freeze({ layer: 'ethernet', ethertype: ETHERTYPE_IPV4, roles: L3_ROLES }),
   Object.freeze({ layer: 'hdlc', ethertype: HDLC_PROTO_IPV4, roles: Object.freeze(['wan'] as PortRole[]) }),
+  // ── [S19] PPP framing on a serial WAN port ──
+  Object.freeze({ layer: 'ppp', ethertype: PPP_PROTO.ipv4, roles: Object.freeze(['wan'] as PortRole[]) }),
+  // ── end [S19] ──
   // ── [S18] the tunnel tail ──
   Object.freeze({ layer: 'ipv4', roles: Object.freeze(['tunnel'] as PortRole[]) }),
   // ── end [S18] ──
@@ -532,6 +557,8 @@ export function createIpv4(): Process {
   const dhcpPorts: PortId[] = [];
   /** `ip nat inside|outside` per interface (D14). */
   const natRoles = new Map<PortId, 'inside' | 'outside'>();
+  /** @since P3 `ip access-group` per interface and direction (D12), by port id; empty in a world without the line. */
+  let aclGroups: ReadonlyMap<PortId, AclInterfaceGroups> = new Map();
   /** Virtual addresses per interface (D15), ordered by (owner, address). */
   const virtuals = new Map<PortId, VirtualIpv4[]>();
   /** Joined groups per interface [S2]. */
@@ -1339,6 +1366,42 @@ export function createIpv4(): Process {
     return natRoles.size > 0 && hasProcess(ctx, NAT_PROCESS);
   }
 
+  // ── P3: the ACL hooks (D12) ───────────────────────────────────────────────
+
+  /**
+   * Re-read every `ip access-group` binding from the configuration (the reader acl uses, so the two never disagree);
+   * one 'ip routing' line per (port, direction) whose list changed. Nothing is logged in a world without the line.
+   */
+  function syncAccessGroups(ctx: ProcessCtx): void {
+    const next = new Map<PortId, AclInterfaceGroups>();
+    for (const [name, g] of readAccessGroups(ctx.config)) next.set(findPort(ctx, name) ?? name, g);
+    const ports = Array.from(new Set([...aclGroups.keys(), ...next.keys()]));
+    for (const port of ports) {
+      for (const dir of ['in', 'out'] as const) {
+        const before = aclGroups.get(port)?.[dir];
+        const after = next.get(port)?.[dir];
+        if (before === after) continue;
+        const word = dir === 'in' ? 'inbound' : 'outbound';
+        if (after === undefined) debug(ctx, CAT_ROUTING, `interface ${port} no longer filters ${word} packets (access list ${before ?? '?'})`, { port, dir });
+        else debug(ctx, CAT_ROUTING, `interface ${port} filters ${word} packets with access list ${after}`, { port, dir, list: after });
+      }
+    }
+    aclGroups = next;
+  }
+
+  /** The list bound on `port` for `dir`, when the hooks exist (a line is stored and the model runs acl). */
+  function aclListOn(ctx: ProcessCtx, port: PortId, dir: 'in' | 'out'): string | undefined {
+    if (aclGroups.size === 0 || !hasProcess(ctx, ACL_HOOK_PROCESS)) return undefined;
+    return aclGroups.get(port)?.[dir];
+  }
+
+  /** Is this delta an `ip access-group` line, or the removal of an interface that carried a binding? */
+  function isAccessGroupDelta(delta: ConfigDelta): boolean {
+    const head = delta.context[0];
+    if (delta.context.length === 1 && head !== undefined && head[0] === 'interface') return delta.line[0] === 'ip' && delta.line[1] === 'access-group';
+    return delta.context.length === 0 && delta.op === 'unset' && delta.line[0] === 'interface' && aclGroups.size > 0;
+  }
+
   function virtualRequest(ctx: ProcessCtx, req: Extract<ProcessRequest, { kind: 'ipv4.virtual' }>): Action[] {
     if (!ctx.ports.has(req.iface) || !isIpv4(req.address)) {
       debug(ctx, CAT_ROUTING, `ignored virtual address ${req.address} on ${req.iface}: ${ctx.ports.has(req.iface) ? 'invalid address' : 'unknown interface'}`, { port: req.iface, address: req.address });
@@ -1511,11 +1574,23 @@ export function createIpv4(): Process {
       iface: egress.iface,
       inPort: port,
     });
+    // P3 (D12): the outbound list of the egress port, when the hooks exist
+    const outList = aclListOn(ctx, egress.iface, 'out');
     if (natHooked(ctx) && natRoles.get(port) === 'inside' && natRoles.get(egress.iface) === 'outside') {
       debug(ctx, CAT_PACKET, `translating ${describe(pdu.layer('ipv4') ?? ip)} on the way out ${egress.iface} (ip nat inside → outside)`, { pdu: pdu.id, inPort: port, iface: egress.iface });
-      return [{ type: 'request', to: NAT_PROCESS, req: { kind: 'nat.outbound', pdu, inPort: port, iface: egress.iface, nextHop: egress.nextHop, cause } }];
+      // §3.0 (a) step 6: NAT translates first, then hands the packet to the outbound list (filterOut)
+      const req: Extract<ProcessRequest, { kind: 'nat.outbound' }> = outList === undefined
+        ? { kind: 'nat.outbound', pdu, inPort: port, iface: egress.iface, nextHop: egress.nextHop, cause }
+        : { kind: 'nat.outbound', pdu, inPort: port, iface: egress.iface, nextHop: egress.nextHop, cause, filterOut: true };
+      return [{ type: 'request', to: NAT_PROCESS, req }];
     }
-    return [{ type: 'request', to: 'arp', req: { kind: 'arp.sendVia', pdu, nextHop: egress.nextHop, iface: egress.iface, cause } }];
+    const sendVia: Action = { type: 'request', to: 'arp', req: { kind: 'arp.sendVia', pdu, nextHop: egress.nextHop, iface: egress.iface, cause } };
+    if (outList !== undefined) {
+      // §3.0 (a) step 7: the outbound list; a deny's ICMP is sourced from the ingress port (inPort)
+      debug(ctx, CAT_PACKET, `filtering ${describe(pdu.layer('ipv4') ?? ip)} on the way out ${egress.iface} (ip access-group ${outList} out)`, { pdu: pdu.id, inPort: port, iface: egress.iface, list: outList });
+      return [{ type: 'request', to: ACL_HOOK_PROCESS, req: { kind: 'acl.filter', family: 4, dir: 'out', iface: egress.iface, inPort: port, pdu, onPermit: sendVia } }];
+    }
+    return [sendVia];
   }
 
   /**
@@ -1538,6 +1613,16 @@ export function createIpv4(): Process {
       actions.push(icmpError(pdu, ICMP_DEST_UNREACHABLE, ICMP_UNREACH_PROTOCOL, port));
     }
     return actions;
+  }
+
+  /** The receive path after the inbound list (P3, D12): the NAT inbound hook (D14), else the for-me test. */
+  function afterInboundAcl(ctx: ProcessCtx, pdu: Pdu, ip: LayerView, port: PortId): Action[] {
+    if (natHooked(ctx) && natRoles.get(port) === 'outside') {
+      // D14: an outside port hands the packet to nat BEFORE the for-me test; it comes back as ipv4.resume
+      debug(ctx, CAT_PACKET, `translating ${describe(ip)} from ${port} before the local test (ip nat outside)`, { pdu: pdu.id, port });
+      return [{ type: 'request', to: NAT_PROCESS, req: { kind: 'nat.inbound', pdu, inPort: port } }];
+    }
+    return receiveLocalOrForward(ctx, pdu, ip, port);
   }
 
   /** The for-me test and what follows it (the receive path after any NAT inbound translation). */
@@ -1672,6 +1757,11 @@ export function createIpv4(): Process {
       case 'ipv4.resume': {
         const ip = req.pdu.layer('ipv4');
         if (!ip) return [drop(ctx, req.pdu, 'other', 'ipv4.resume without an IPv4 header', req.inPort)];
+        if (req.after === 'acl-in') {
+          // P3 (D12): the packet passed the inbound list; it continues at the NAT inbound hook, never filtered again
+          debug(ctx, CAT_PACKET, `resume ${describe(ip)} on ${req.inPort} after the inbound access list`, { pdu: req.pdu.id, port: req.inPort });
+          return afterInboundAcl(ctx, req.pdu, ip, req.inPort);
+        }
         debug(ctx, CAT_PACKET, `resume ${describe(ip)} on ${req.inPort} after translation`, { pdu: req.pdu.id, port: req.inPort });
         return receiveLocalOrForward(ctx, req.pdu, ip, req.inPort);
       }
@@ -1698,6 +1788,7 @@ export function createIpv4(): Process {
     init(ctx: ProcessCtx): Action[] {
       syncForwarding(ctx);
       syncTransport(ctx);
+      syncAccessGroups(ctx);
       return withWatches(ctx, syncFromConfig(ctx));
     },
 
@@ -1709,12 +1800,15 @@ export function createIpv4(): Process {
         return [drop(ctx, pdu, 'bad-checksum', ip.error ?? 'IPv4 header checksum mismatch', port)];
       }
       debug(ctx, CAT_PACKET, `rx ${describe(ip)} on ${port}`, { pdu: pdu.id, port });
-      if (natHooked(ctx) && natRoles.get(port) === 'outside') {
-        // D14: an outside port hands the packet to nat BEFORE the for-me test; it comes back as ipv4.resume
-        debug(ctx, CAT_PACKET, `translating ${describe(ip)} from ${port} before the local test (ip nat outside)`, { pdu: pdu.id, port });
-        return [{ type: 'request', to: NAT_PROCESS, req: { kind: 'nat.inbound', pdu, inPort: port } }];
+      const inList = aclListOn(ctx, port, 'in');
+      if (inList !== undefined) {
+        // P3 (D12, §3.0 (a) step 2): the inbound list runs BEFORE NAT inbound and the for-me test; acl answers with
+        // the resume (after 'acl-in') or a drop
+        debug(ctx, CAT_PACKET, `filtering ${describe(ip)} on ${port} (ip access-group ${inList} in)`, { pdu: pdu.id, port, list: inList });
+        const onPermit: Action = { type: 'request', to: NAME, req: { kind: 'ipv4.resume', pdu, inPort: port, after: 'acl-in' } };
+        return [{ type: 'request', to: ACL_HOOK_PROCESS, req: { kind: 'acl.filter', family: 4, dir: 'in', iface: port, pdu, onPermit } }];
       }
-      return receiveLocalOrForward(ctx, pdu, ip, port);
+      return afterInboundAcl(ctx, pdu, ip, port);
     },
 
     onTimer(): Action[] {
@@ -1724,6 +1818,7 @@ export function createIpv4(): Process {
     onConfig(ctx: ProcessCtx, delta: ConfigDelta): Action[] {
       syncForwarding(ctx);
       syncTransport(ctx);
+      if (isAccessGroupDelta(delta)) syncAccessGroups(ctx);
       return withWatches(ctx, configDelta(ctx, delta));
     },
 

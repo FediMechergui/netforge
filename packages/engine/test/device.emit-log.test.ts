@@ -12,7 +12,7 @@ import type { TraceEvent } from '../src/contracts/trace.js';
 import type { LogRecordEvent } from '../src/contracts/transport.js';
 import { ALL_MODEL_INPUTS } from '../src/device/catalog.js';
 import { defineModel } from '../src/device/catalog/define.js';
-import { errDisabledMessage, errRecoveredMessage } from '../src/device/device.js';
+import { errDisabledMessage, errRecoveredMessage, systemStartedMessage } from '../src/device/device.js';
 import { vlanMissingMessage, vlanUnsupportedMessage } from '../src/device/ports.js';
 import { boot, harness } from './device.harness.js';
 import { bootP3, modelCatalog, p3Harness, stubDaemon } from './device.p3.harness.js';
@@ -26,6 +26,14 @@ function p2Log(t: number, severity: Severity, facility: string, message: string,
 }
 
 const logs = (events: readonly TraceEvent[]): LogEvent[] => events.filter((e): e is LogEvent => e.kind === 'log');
+
+/**
+ * §9.2 item 30c (W2 device [S25]): the one log a P3 world's router writes at boot, the extended-logging start line
+ * (`%SYS-5-BOOTED`), as its trace bytes and as the `log.record` the logger receives.
+ */
+const bootLine = (t: number): string =>
+  JSON.stringify({ t, kind: 'log', device: 'd_1', severity: 5, facility: 'SYS', message: systemStartedMessage('NF-2911'), mnemonic: 'BOOTED' });
+const bootRecord = (at: number): LogRecordEvent => ({ kind: 'log.record', at, severity: 5, facility: 'SYS', message: systemStartedMessage('NF-2911'), mnemonic: 'BOOTED' });
 
 describe('every runtime log site keeps its P2 trace bytes (D20)', () => {
   it('boot: a daemon without a factory', () => {
@@ -96,11 +104,15 @@ describe('log.record reaches the logger only when the model runs it ([S24])', ()
     const h = p3Harness({ catalog: createStagedCatalog({ stage: 'P3', factories: { logger: logger.factory } }), type: 'router.nf2911', profile: 'P3' });
     bootP3(h);
     expect(h.device.model.processes).toContain('logger');
-    expect(logs(h.events)).toEqual([]); // every daemon is available: nothing logged at boot
+    // every daemon is available: nothing logged at boot but the P3 world's extended-logging start line (§9.2 item 30c)
+    const booted = h.device.bootedAt as number;
+    expect(logs(h.events).map((e) => JSON.stringify(e))).toEqual([bootLine(booted)]);
+    expect(logger.received).toEqual([bootRecord(booted)]);
+    const afterBoot = h.events.length;
     const t = 400 * SEC;
     h.device.emitLog(3, 'LINK', 'Interface GigabitEthernet0/2 changed state to down', t, 'UPDOWN');
     h.device.emitLog(5, 'SYS', 'no mnemonic here', t + 1);
-    expect(logs(h.events).map((e) => JSON.stringify(e))).toEqual([
+    expect(logs(h.events.slice(afterBoot)).map((e) => JSON.stringify(e))).toEqual([
       JSON.stringify({ t, kind: 'log', device: 'd_1', severity: 3, facility: 'LINK', message: 'Interface GigabitEthernet0/2 changed state to down', mnemonic: 'UPDOWN' }),
       p2Log(t + 1, 5, 'SYS', 'no mnemonic here'),
     ]);
@@ -108,8 +120,8 @@ describe('log.record reaches the logger only when the model runs it ([S24])', ()
       { kind: 'log.record', at: t, severity: 3, facility: 'LINK', message: 'Interface GigabitEthernet0/2 changed state to down', mnemonic: 'UPDOWN' },
       { kind: 'log.record', at: t + 1, severity: 5, facility: 'SYS', message: 'no mnemonic here' },
     ];
-    expect(logger.received).toEqual(expected);
-    expect(Object.keys(logger.received[1]!)).toEqual(['kind', 'at', 'severity', 'facility', 'message']);
+    expect(logger.received.slice(1)).toEqual(expected);
+    expect(Object.keys(logger.received[2]!)).toEqual(['kind', 'at', 'severity', 'facility', 'message']);
     // the runtime's own sites go through the same path, with their P2 bytes
     const from = h.events.length;
     h.device.setPortAdmin('GigabitEthernet0/0', true, t + 2);
@@ -123,17 +135,21 @@ describe('log.record reaches the logger only when the model runs it ([S24])', ()
     });
     const h = p3Harness({ catalog: createStagedCatalog({ stage: 'P3', factories: { logger: logger.factory } }), type: 'router.nf2911', profile: 'P3' });
     bootP3(h);
+    // §9.2 item 30c: the boot start line (W2 device [S25]) and the logger's own reaction to it come first
+    const boot = systemStartedMessage('NF-2911');
+    expect(logs(h.events).map((e) => e.message)).toEqual([boot, `seen: ${boot}`]);
+    const afterBoot = h.events.length;
     const t = 500 * SEC;
     h.device.applyActions('ipv4', [
       { type: 'log', severity: 6, facility: 'IP', message: 'first' },
       { type: 'log', severity: 6, facility: 'IP', message: 'second' },
     ], t);
-    expect(logs(h.events).map((e) => e.message)).toEqual(['first', 'seen: first', 'second', 'seen: second']);
-    expect(logger.received.map((e) => (e as LogRecordEvent).message)).toEqual(['first', 'second']);
+    expect(logs(h.events.slice(afterBoot)).map((e) => e.message)).toEqual(['first', 'seen: first', 'second', 'seen: second']);
+    expect(logger.received.map((e) => (e as LogRecordEvent).message)).toEqual([boot, 'first', 'second']);
     // a log line of the logger itself is traced and not handed back
     h.device.applyActions('logger', [{ type: 'log', severity: 4, facility: 'LOGGER', message: 'own line' }], t + 1);
     expect(logs(h.events).at(-1)!.message).toBe('own line');
-    expect(logger.received).toHaveLength(2);
+    expect(logger.received).toHaveLength(3);
   });
 
   it('a model without logger delivers nothing, even with a logger factory registered', () => {
@@ -150,6 +166,7 @@ describe('log.record reaches the logger only when the model runs it ([S24])', ()
     bootP3(p3);
     expect(p3.device.model.processes).not.toContain('logger');
     p3.device.emitLog(3, 'LINK', 'z', 60 * SEC);
-    expect(logs(p3.events).map((e) => JSON.stringify(e))).toEqual([p2Log(60 * SEC, 3, 'LINK', 'z')]);
+    // §9.2 item 30c: the P3 world's boot start line is traced too (no logger to receive it), then the emitted line
+    expect(logs(p3.events).map((e) => JSON.stringify(e))).toEqual([bootLine(p3.device.bootedAt as number), p2Log(60 * SEC, 3, 'LINK', 'z')]);
   });
 });

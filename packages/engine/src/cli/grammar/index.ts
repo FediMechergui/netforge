@@ -48,6 +48,16 @@ import { ACL_GRAMMAR, ACL_HANDLERS } from './acl.js';
 import { DHCPV6_DEBUG_CATEGORIES, DHCPV6_DEBUG_OBJECTIVES, DHCPV6_GRAMMAR, DHCPV6_HANDLERS } from './dhcpv6.js';
 import { HSRP_DEBUG_CATEGORIES, HSRP_DEBUG_OBJECTIVES, HSRP_GRAMMAR, HSRP_HANDLERS } from './hsrp.js';
 import { WLC_DEBUG_CATEGORIES, WLC_DEBUG_OBJECTIVES, WLC_GRAMMAR, WLC_HANDLERS } from './wlc.js';
+// P3 (ARCHITECTURE-P3 §7 W2 cli): the MUST fragments (cli part 1) and the approved items' aggregate (cli part 2)
+import { OSPF_GRAMMAR, OSPF_HANDLERS } from './ospf.js';
+import { ACL_P3_GRAMMAR, ACL_P3_HANDLERS } from './acl.js';
+import { HARDENING_GRAMMAR, HARDENING_HANDLERS } from './hardening.js';
+import { QOS_GRAMMAR, QOS_HANDLERS } from './qos.js';
+import { DISCOVERY_GRAMMAR, DISCOVERY_HANDLERS } from './discovery.js';
+import { TIME_GRAMMAR, TIME_HANDLERS } from './time.js';
+import { API_GRAMMAR, API_HANDLERS } from './api.js';
+import { SSH_GRAMMAR, SSH_HANDLERS } from './ssh.js';
+import { P3_APPROVED_GRAMMAR_FRAGMENTS, P3_APPROVED_HANDLER_IDS, P3_APPROVED_LITERAL_HELP } from './p3-approved.js';
 
 export * from './core-exec.js';
 export * from './show.js';
@@ -78,6 +88,13 @@ export * from './acl.js';
 export * from './dhcpv6.js';
 export * from './hsrp.js';
 export * from './wlc.js';
+export * from './ospf.js';
+export * from './hardening.js';
+export * from './qos.js';
+export * from './discovery.js';
+export * from './time.js';
+export * from './api.js';
+export * from './ssh.js';
 
 /**
  * @since P2 (ARCHITECTURE-P2 §5.4; W3 cli) The debug categories of the P2 daemons, in the §5.4 table order. Each is
@@ -167,9 +184,50 @@ export const P2_GRAMMAR_FRAGMENTS: Readonly<Record<string, readonly CommandSpec[
 /** @since P2 Every P2 spec, in `P2_GRAMMAR_FRAGMENTS` order. */
 export const P2_GRAMMAR: readonly CommandSpec[] = Object.freeze(Object.values(P2_GRAMMAR_FRAGMENTS).flat());
 
+// ── P3 (ARCHITECTURE-P3 §7 W2 cli; folded into GRAMMAR in W2, §9.2 W2 items 21 and 22) ───────────────────────────
+// Unlike P2 (whose fragments waited beside the table for the W4 flip), the P3 grammar joins `GRAMMAR` in W2: the help
+// goldens are regenerated in W2 (§9.2 item 21) and the modes the fragments enter lose `reserved` in the same change
+// (item 22). The specs are scoped by capability literals, so a model offers a P3 line exactly when it has the
+// capability, whatever the daemons registered so far (the W4 flip registers them). `P3_GRAMMAR_FRAGMENTS` holds the
+// MUST fragments (cli part 1), in this order; `P3_APPROVED_GRAMMAR_FRAGMENTS` (cli/grammar/p3-approved.ts, cli part
+// 2) follows them.
+
+/** @since P3 Handler ids of the P3 MUST fragments (W2 cli part 1). */
+export const P3_HANDLERS = Object.freeze({
+  ...OSPF_HANDLERS,
+  ...ACL_P3_HANDLERS,
+  ...HARDENING_HANDLERS,
+  ...QOS_HANDLERS,
+  ...DISCOVERY_HANDLERS,
+  ...TIME_HANDLERS,
+  ...API_HANDLERS,
+  ...SSH_HANDLERS,
+});
+
+/** @since P3 Union of every handler id in `P3_HANDLERS`. */
+export type P3HandlerId = (typeof P3_HANDLERS)[keyof typeof P3_HANDLERS];
+
+/** @since P3 The P3 MUST grammar fragments by name, in table order. */
+export const P3_GRAMMAR_FRAGMENTS: Readonly<Record<string, readonly CommandSpec[]>> = Object.freeze({
+  ospf: OSPF_GRAMMAR,
+  'acl-p3': ACL_P3_GRAMMAR,
+  hardening: HARDENING_GRAMMAR,
+  qos: QOS_GRAMMAR,
+  discovery: DISCOVERY_GRAMMAR,
+  time: TIME_GRAMMAR,
+  api: API_GRAMMAR,
+  ssh: SSH_GRAMMAR,
+});
+
+/** @since P3 Every P3 spec (the MUST fragments, then the approved items'), in table order. */
+export const P3_GRAMMAR: readonly CommandSpec[] = Object.freeze([
+  ...Object.values(P3_GRAMMAR_FRAGMENTS).flat(),
+  ...Object.values(P3_APPROVED_GRAMMAR_FRAGMENTS).flat(),
+]);
+
 /**
  * Handler ids resolved by the CLI runtime's registry: the union of every fragment, P1 and (since the W4 fold, §9.2
- * item 18) P2. Never rename.
+ * item 18) P2, and (since the W2 fold of ARCHITECTURE-P3) P3 with the approved items'. Never rename.
  */
 export const HANDLERS = Object.freeze({
   ...CORE_EXEC_HANDLERS,
@@ -188,6 +246,8 @@ export const HANDLERS = Object.freeze({
   ...LINE_AUTH_HANDLERS,
   ...HOST_SHELL_HANDLERS,
   ...P2_HANDLERS,
+  ...P3_HANDLERS,
+  ...P3_APPROVED_HANDLER_IDS,
 });
 
 /** Union of every handler id in `HANDLERS`. */
@@ -217,9 +277,12 @@ export const GRAMMAR_FRAGMENTS: Readonly<Record<string, readonly CommandSpec[]>>
   'line-auth': LINE_AUTH_GRAMMAR,
   'host-shell': HOST_SHELL_GRAMMAR,
   ...P2_GRAMMAR_FRAGMENTS,
+  // P3 (ARCHITECTURE-P3 §7 W2 cli): the MUST fragments, then the approved items'
+  ...P3_GRAMMAR_FRAGMENTS,
+  ...P3_APPROVED_GRAMMAR_FRAGMENTS,
 });
 
-/** The full built-in command table: every fragment concatenated in `GRAMMAR_FRAGMENTS` order (P1, then P2). */
+/** The full built-in command table: every fragment concatenated in `GRAMMAR_FRAGMENTS` order (P1, then P2, then P3). */
 export const GRAMMAR: readonly CommandSpec[] = Object.freeze(Object.values(GRAMMAR_FRAGMENTS).flat());
 
 /**
@@ -252,6 +315,8 @@ export const DEBUG_CATEGORIES: readonly string[] = Object.freeze(DEBUG_CATEGORY_
  * position). The last literal of a command shows `spec.help`. Original wording.
  */
 export const LITERAL_HELP: Readonly<Record<string, string>> = Object.freeze({
+  // P3 approved items (cli/grammar/p3-approved.ts) first, so a key the P1/P2/P3 MUST tables define keeps their text
+  ...P3_APPROVED_LITERAL_HELP,
   show: 'Display device information',
   ip: 'Internet protocol settings',
   ipv6: 'Internet protocol version 6 settings',
@@ -330,6 +395,42 @@ export const LITERAL_HELP: Readonly<Record<string, string>> = Object.freeze({
   prefix: 'Address prefix settings',
   // P2 (ARCHITECTURE-P2 §5.3; W5 cli)
   capwap: 'Controller link settings',
+  // P3 (ARCHITECTURE-P3 §5.1-§5.6, §5.8; W2 cli part 1)
+  ospf: 'OSPF routing',
+  'access-group': 'Filter the interface with an access list',
+  'access-lists': 'Access lists and their entries',
+  'access-class': 'Restrict remote sessions with an access list',
+  any: 'Any address',
+  host: 'One host address',
+  established: 'Only segments of connections already open',
+  snooping: 'DHCP snooping settings',
+  inspection: 'ARP inspection settings',
+  binding: 'Address bindings',
+  trust: 'Trust this port',
+  limit: 'Rate limit settings',
+  'class-map': 'Traffic classes',
+  'policy-map': 'Policies for traffic classes',
+  match: 'What to match',
+  set: 'Set a value',
+  precedence: 'IP precedence',
+  'service-policy': 'Attach a policy to this interface',
+  flow: 'Generated traffic flows',
+  start: 'Start a flow',
+  rate: 'A rate limit',
+  size: 'Datagram size',
+  cdp: 'CDP neighbour discovery settings',
+  lldp: 'LLDP neighbour discovery settings',
+  ntp: 'Time synchronisation (NTP)',
+  timezone: 'Local time zone',
+  crypto: 'Keys and encryption settings',
+  key: 'Key settings',
+  generate: 'Create a key pair',
+  rsa: 'An RSA key pair',
+  ssh: 'Secure shell settings',
+  transport: 'Remote session protocols',
+  input: 'Incoming direction',
+  'secure-server': 'The encrypted web server',
+  authentication: 'How peers or users are checked',
 });
 
 /** Help for the parser's pseudo-keywords. Original wording. */

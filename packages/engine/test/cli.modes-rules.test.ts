@@ -62,7 +62,14 @@ describe('modes', () => {
     // ARCHITECTURE-P2 §9.2 W2 item 12b: the W2 cli item entered config-subif, config-vlan and config-if-range;
     // the W3 cli item entered config-dhcpv6 and config-std-nacl; the W5 cli item config-wlan and config-wlc-if
     // (declaration order)
-    expect(modesOfClass('config')).toEqual(['config', 'config-if', 'config-line', 'dhcp-config', 'config-subif', 'config-vlan', 'config-if-range', 'config-dhcpv6', 'config-std-nacl', 'config-wlan', 'config-wlc-if']);
+    // ARCHITECTURE-P3 §9.2 item 22 (the W2 cli items): config-router loses `reserved` and config-ext-nacl, config-cmap,
+    // config-pmap, config-pmap-c join, with the approved config-router-eigrp [C1] and the four [C13] crypto modes
+    expect(modesOfClass('config')).toEqual([
+      'config', 'config-if', 'config-line', 'dhcp-config', 'config-router', 'config-subif', 'config-vlan', 'config-if-range',
+      'config-dhcpv6', 'config-std-nacl', 'config-wlan', 'config-wlc-if', 'config-ext-nacl', 'config-cmap', 'config-pmap',
+      'config-pmap-c', 'config-router-eigrp', 'config-ikev2-keyring', 'config-ikev2-keyring-peer', 'config-ikev2-profile',
+      'config-ipsec-profile',
+    ]);
     expect(modesOfClass('exec', { grammar: 'host' })).toEqual(['user-exec']);
   });
 

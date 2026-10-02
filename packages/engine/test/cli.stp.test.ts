@@ -22,6 +22,7 @@ import {
   P2_GRAMMAR,
   P2_GRAMMAR_FRAGMENTS,
   P2_HANDLERS,
+  P3_GRAMMAR,
   STP_CLEAR_DETECTED_REQUEST,
 } from '../src/cli/grammar/index.js';
 import { HANDLER_REGISTRY, P2_HANDLER_REGISTRY } from '../src/cli/handlers/index.js';
@@ -425,13 +426,17 @@ describe('the W3 fragments, folded into the table by W4 (ARCHITECTURE-P2 §7 W3 
   it('adds its fragments after the W2 ones (then the W5 `wlc` fragment closes the table) after the unchanged P1 fragment keys, and their handler ids are in HANDLERS', () => {
     // ARCHITECTURE-P2 §7 W5 cli: the `wlc` fragment is folded in after the W3 ones
     expect(Object.keys(P2_GRAMMAR_FRAGMENTS).slice(4)).toEqual([...W3, 'wlc']);
+    // ARCHITECTURE-P3 §9.2 W2 item 21b: the P3 fragments (W2 cli) follow the P2 ones, so the P2 block ends where they begin
     expect(Object.keys(GRAMMAR_FRAGMENTS)).toEqual([
       'core-exec', 'show', 'config-global', 'config-if', 'svi', 'switchport', 'serial', 'wireless', 'modules',
       'ipv6', 'dhcp', 'dns', 'services', 'transport', 'traceroute', 'line-auth', 'host-shell',
       'vlan', 'switchport-p2', 'subif', 'routing', ...W3, 'wlc',
+      'ospf', 'acl-p3', 'hardening', 'qos', 'discovery', 'time', 'api', 'ssh', 'eigrp', 'wan', 'crypto', 'qos-queueing', 'logging', 'remote', 'devhost',
     ]);
     for (const id of Object.values(P2_HANDLERS)) expect(Object.values(HANDLERS), id).toContain(id);
-    expect(GRAMMAR.slice(GRAMMAR.length - P2_GRAMMAR.length)).toEqual(P2_GRAMMAR);
+    const p2End = GRAMMAR.length - P3_GRAMMAR.length;
+    expect(GRAMMAR.slice(p2End - P2_GRAMMAR.length, p2End)).toEqual(P2_GRAMMAR);
+    expect(GRAMMAR.slice(p2End)).toEqual(P3_GRAMMAR);
     expect(BUILTIN_GRAMMAR).toBe(GRAMMAR);
     for (const name of W3) {
       for (const s of P2_GRAMMAR_FRAGMENTS[name] ?? []) {

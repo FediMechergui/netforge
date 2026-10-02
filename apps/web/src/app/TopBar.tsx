@@ -10,6 +10,13 @@
  * matching overlay is on, a VLAN selector (`VLAN_SELECTOR_MENU`) listing the VLAN ids the world knows. Web-canvas
  * (W3) draws from the same slice.
  *
+ * @since P3 (ARCHITECTURE-P3 §2.14, §6; W2 web-shell) The "Routing, WAN and QoS overlays" section edits the slice's
+ * P3 keys: four toggles (`ROUTING_OVERLAY_MENU`: the QoS queues, [S1] OSPF, [S18]/[S19] WAN, [C1] EIGRP) and, while
+ * the matching overlay is on, the [S1] area selector and the [C1] destination selector (`ROUTING_SELECTOR_MENU`),
+ * listing what the world's OSPF and EIGRP rows name. Web-canvas (W3) draws the four overlays from the same slice.
+ * The concept tools listed come from the concept registry (`conceptMenuEntries`), so a tool registered in
+ * `concept/ConceptView.tsx` appears here without a menu edit.
+ *
  * @since course `CoursesButton` is the door back to the course layer (learn/LearnShell): the lesson that was open,
  * or the landing page.
  */
@@ -17,10 +24,13 @@ import { DEFAULT_METRES_PER_UNIT, type SimSnapshot } from '@netforge/engine';
 import { engine, defaultSeed } from '../bridge/client';
 import type { PlaybackMode } from '../bridge/protocol';
 import { OVERLAY_MODULES, VLAN_OVERLAY, type OverlayId } from '../canvas/overlays/registry';
+import { eigrpPrefixesOf } from '../canvas/overlays/eigrp-model';
+import { ospfAreasOf } from '../canvas/overlays/ospf-model';
+import { CONCEPT_TOOLS, isConceptToolBuilt } from '../concept/ConceptView';
 import { DOCK_MIN_HEIGHT, DOCK_OPEN_HEIGHT, DOCK_TABS, INSPECTOR_HIDDEN_BELOW, INSPECTOR_OPEN_WIDTH } from '../dock/registry';
 import { showDockTab } from '../shared/openDeviceSurface';
 import { store, useStore } from '../store/store';
-import type { ConceptTool, WirelessOverlayState } from '../store/types';
+import type { ConceptTool, TopoOverlayState, WirelessOverlayState } from '../store/types';
 import { LAB_CHECK_ANNOUNCEMENT } from '../labs/LabBrowser';
 import { FileMenu } from './FileMenu';
 import { HOTKEYS } from './hotkeys';
@@ -111,6 +121,101 @@ export function vlanChoices(snapshot: Pick<SimSnapshot, 'devices'> | null | unde
   return out.sort((a, b) => a - b);
 }
 
+// ── P3 (W2 web-shell): the "Routing, WAN and QoS overlays" menu over the slice's P3 keys ────────────────────────
+// Its own section and constants, so the P2 "Switching overlays" menu keeps mirroring the canvas registry's P2
+// entries. Ids follow the same `topo-overlay-<overlay id>` rule (the W3 registry ids are qos, ospf, wan and eigrp).
+
+/** @since P3 The P3 overlays of the `topoOverlays` slice (§2.14 order). */
+export type RoutingOverlayKey = 'qos' | 'ospf' | 'wan' | 'eigrp';
+
+/** @since P3 A P3 toggle of the `topoOverlays` slice as the View menu lists it. */
+export interface RoutingOverlayMenuEntry {
+  /** Stable id (`data-menu-id`): `topo-overlay-<key>`. */
+  readonly id: `topo-overlay-${RoutingOverlayKey}`;
+  readonly key: RoutingOverlayKey;
+  readonly label: string;
+  readonly hint: string;
+}
+
+/** @since P3 The routing, WAN and QoS overlay toggles, in menu order (exhaustive over the slice's P3 booleans). */
+export const ROUTING_OVERLAY_MENU: readonly RoutingOverlayMenuEntry[] = Object.freeze([
+  Object.freeze<RoutingOverlayMenuEntry>({
+    id: 'topo-overlay-qos',
+    key: 'qos',
+    label: 'Queues and link load',
+    hint: 'Stacks the frames waiting at each congested port and wraps each cable in a sleeve as thick as its load.',
+  }),
+  Object.freeze<RoutingOverlayMenuEntry>({
+    id: 'topo-overlay-ospf',
+    key: 'ospf',
+    label: 'OSPF adjacencies',
+    hint: 'Draws how far each neighbour relationship has come, the DR and BDR letters, interface costs and areas.',
+  }),
+  Object.freeze<RoutingOverlayMenuEntry>({
+    id: 'topo-overlay-wan',
+    key: 'wan',
+    label: 'WAN links and tunnels',
+    hint: 'Shows the phases a PPP link has passed and draws each tunnel over the network that carries it.',
+  }),
+  Object.freeze<RoutingOverlayMenuEntry>({
+    id: 'topo-overlay-eigrp',
+    key: 'eigrp',
+    label: 'EIGRP successors',
+    hint: 'For one destination, marks the route each router uses and the backup routes it keeps ready.',
+  }),
+]);
+
+/** @since P3 A routing selector of the slice: which area or destination an overlay draws (null = `none`). */
+export interface RoutingSelectorMenuEntry {
+  /** Stable id (`data-menu-id` of its heading; each choice is `<id>-<value>` or `<id>-none`). */
+  readonly id: 'ospf-area' | 'eigrp-prefix';
+  readonly key: Extract<keyof TopoOverlayState, 'ospfArea' | 'eigrpPrefix'>;
+  readonly shows: Extract<RoutingOverlayKey, 'ospf' | 'eigrp'>;
+  readonly label: string;
+  /** The label of the null choice. */
+  readonly none: string;
+  readonly hint: string;
+  /** The text of one choice. */
+  choiceLabel(value: string): string;
+  /** The values the world offers, in display order (resolved at call time, rule 12). */
+  values(snapshot: SimSnapshot): string[];
+}
+
+/** @since P3 The two routing selectors, in menu order (exhaustive over the slice's P3 selector keys). */
+export const ROUTING_SELECTOR_MENU: readonly RoutingSelectorMenuEntry[] = Object.freeze([
+  Object.freeze<RoutingSelectorMenuEntry>({
+    id: 'ospf-area',
+    key: 'ospfArea',
+    shows: 'ospf',
+    label: 'OSPF area',
+    none: 'Every area',
+    hint: 'Keep only the marks of one area; the others fade out.',
+    choiceLabel: (area) => `Area ${area}`,
+    values: (snapshot) => ospfAreasOf(snapshot),
+  }),
+  Object.freeze<RoutingSelectorMenuEntry>({
+    id: 'eigrp-prefix',
+    key: 'eigrpPrefix',
+    shows: 'eigrp',
+    label: 'EIGRP destination',
+    none: 'First destination',
+    hint: 'The destination whose route and backup routes the overlay marks.',
+    choiceLabel: (prefix) => prefix,
+    values: (snapshot) => eigrpPrefixesOf(snapshot),
+  }),
+]);
+
+/**
+ * @since P3 The choices a routing selector offers: what the world's rows name, in their order, at most
+ * `VLAN_MENU_MAX` of them — plus `current` when it is set and not among them, so a persisted choice from another
+ * world can always be seen and cleared. No snapshot: only `current`.
+ */
+export function routingChoices(entry: RoutingSelectorMenuEntry, snapshot: SimSnapshot | null | undefined, current: string | null): string[] {
+  const out = snapshot == null ? [] : entry.values(snapshot).slice(0, VLAN_MENU_MAX);
+  if (current !== null && !out.includes(current)) out.push(current);
+  return out;
+}
+
 /** Canvas scale presets (metres per canvas unit). */
 export const CANVAS_SCALE_PRESETS: readonly number[] = Object.freeze([0.1, 0.25, 0.5, 1, 2]);
 
@@ -125,6 +230,18 @@ export const CONCEPT_MENU: readonly ConceptMenuEntry[] = Object.freeze([
   { tool: 'subnetting', label: 'Subnetting workbench', hint: 'Masks, host counts and VLSM practice.' },
   { tool: 'ipv6', label: 'IPv6 explorer', hint: 'Compression steps and EUI-64 addresses.' },
 ]);
+
+/**
+ * @since P3 (D24) The concept tools the View menu lists: `CONCEPT_MENU` first, then every other tool of the concept
+ * registry (`CONCEPT_TOOLS`) that this build has, with the registry's label and hint. Read at call time (rule 12).
+ */
+export function conceptMenuEntries(): ConceptMenuEntry[] {
+  const out: ConceptMenuEntry[] = [...CONCEPT_MENU];
+  for (const t of CONCEPT_TOOLS) {
+    if (isConceptToolBuilt(t.id) && !out.some((e) => e.tool === t.id)) out.push({ tool: t.id, label: t.label, hint: t.hint });
+  }
+  return out;
+}
 
 /** @since P1 What `stepToNext` reports when it found no matching event (§4.11 item 4). */
 export function stepEndedText(ended: 'horizon' | 'maxEvents' | 'idle' | undefined): string {
@@ -273,6 +390,30 @@ function RadioItem({ checked, label, onPick, id }: RadioItemProps) {
   );
 }
 
+interface RoutingSelectorProps {
+  entry: RoutingSelectorMenuEntry;
+  value: string | null;
+  choices: readonly string[];
+  onPick: (v: string | null) => void;
+}
+
+/** @since P3 A routing selector of the "Routing, WAN and QoS overlays" menu: the null choice first, then the world's. */
+function RoutingSelector({ entry, value, choices, onPick }: RoutingSelectorProps) {
+  return (
+    <>
+      <MenuHeading>
+        <span title={entry.hint} data-menu-id={entry.id}>
+          {entry.label}
+        </span>
+      </MenuHeading>
+      <RadioItem id={`${entry.id}-none`} checked={value === null} label={entry.none} onPick={() => onPick(null)} />
+      {choices.map((v) => (
+        <RadioItem key={v} id={`${entry.id}-${v}`} checked={value === v} label={entry.choiceLabel(v)} onPick={() => onPick(v)} />
+      ))}
+    </>
+  );
+}
+
 interface VlanSelectorProps {
   entry: VlanSelectorMenuEntry;
   value: number | null;
@@ -351,6 +492,20 @@ function ViewMenu() {
             <VlanSelector key={sel.id} entry={sel} value={topo[sel.key]} choices={vlanChoices(snapshot, topo[sel.key])} onPick={(v) => setTopoOverlay(sel.key, v)} />
           ))}
           <MenuSeparator />
+          <MenuHeading>Routing, WAN and QoS overlays</MenuHeading>
+          {ROUTING_OVERLAY_MENU.map((o) => (
+            <CheckItem key={o.id} id={o.id} checked={topo[o.key]} label={o.label} hint={o.hint} onToggle={() => setTopoOverlay(o.key, !topo[o.key])} />
+          ))}
+          {ROUTING_SELECTOR_MENU.filter((sel) => topo[sel.shows]).map((sel) => (
+            <RoutingSelector
+              key={sel.id}
+              entry={sel}
+              value={topo[sel.key]}
+              choices={routingChoices(sel, snapshot, topo[sel.key])}
+              onPick={(v) => setTopoOverlay(sel.key, v)}
+            />
+          ))}
+          <MenuSeparator />
           <MenuHeading>Canvas scale</MenuHeading>
           {CANVAS_SCALE_PRESETS.map((m) => (
             <MenuItem
@@ -367,7 +522,7 @@ function ViewMenu() {
           ))}
           <MenuSeparator />
           <MenuHeading>Concept tools</MenuHeading>
-          {CONCEPT_MENU.map((c) => (
+          {conceptMenuEntries().map((c) => (
             <MenuItem
               key={c.tool}
               hint={view === 'concept' && conceptTool === c.tool ? 'open' : undefined}

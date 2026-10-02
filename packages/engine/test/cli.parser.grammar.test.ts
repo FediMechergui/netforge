@@ -98,6 +98,36 @@ const EXPECTED_IDS = [
   'config.wlc-interface', 'wlc-if.vlan', 'wlc-if.address', 'wlc-if.gateway', 'wlc-if.dhcp-server',
   'config.wlan', 'wlan.security', 'wlan.passphrase', 'wlan.interface', 'wlan.radio', 'wlan.shutdown',
   'config.capwap-enable', 'config.capwap-controller', 'show.capwap',
+  // ARCHITECTURE-P3 §9.2 W2 item 21b: W2 cli part 1, the MUST fragments (OSPF, ACLs, hardening, QoS, discovery, time,
+  // the device API and the host shell's REST and flow jobs, SSH)
+  'config.router-ospf', 'ospf.router-id', 'ospf.network', 'ospf.passive-interface', 'ospf.auto-cost',
+  'ospf.default-information', 'ospf.maximum-paths', 'if.ip-ospf', 'show.ip-ospf', 'show.ip-ospf-neighbor',
+  'show.ip-ospf-interface', 'exec.clear-ip-ospf-process', 'config.access-list-entry', 'config.access-list-remark',
+  'config.ip-access-list-extended', 'nacl.entry-p3', 'nacl.remark', 'nacl.seq', 'config.ip-access-list-resequence',
+  'if.ip-access-group', 'exec.clear-access-list-counters', 'show.ip-interface', 'config.ip-dhcp-snooping',
+  'config.ip-source-binding', 'config.ip-arp-inspection', 'if.ip-dhcp-snooping', 'if.ip-arp-inspection',
+  'config.class-map', 'cmap.match', 'config.policy-map', 'pmap.class', 'pmap-c.set', 'if.service-policy',
+  'show.class-map', 'show.policy-map', 'show.policy-map-interface', 'host.flow-start', 'host.flow-voice',
+  'host.flow-stop', 'host.flow-show', 'config.cdp', 'if.cdp-enable', 'config.lldp', 'if.lldp',
+  'config.clock-timezone', 'config.ntp-server', 'config.ntp-master', 'config.ntp-source', 'exec.clock-set',
+  'show.clock', 'host.service-ntp', 'config.ip-http-secure-server', 'config.ip-http-authentication',
+  'config.restconf', 'host.rest', 'config.crypto-key-generate', 'config.crypto-key-zeroize', 'config.ip-ssh',
+  'config.username-privilege', 'line.transport-input', 'line.access-class',
+  // and the approved items' fragments ([C1] EIGRP, [S18]/[S19] WAN, [C13] crypto, [S20]/[S21] queueing, [S24]/[S25]
+  // logging, [S13] remote sessions, [S32] the dev-host shell)
+  'config.router-eigrp', 'eigrp.network', 'eigrp.router-id', 'eigrp.passive-interface',
+  'eigrp.passive-interface-default', 'eigrp.metric-weights', 'eigrp.maximum-paths', 'eigrp.auto-summary', 'if.delay',
+  'if.ip-hello-interval-eigrp', 'if.ip-hold-time-eigrp', 'if.tunnel-source', 'if.tunnel-destination',
+  'if.tunnel-mode', 'if.tunnel-protection', 'if.ip-mtu', 'if.ip-tcp-adjust-mss', 'if.ppp-authentication',
+  'if.ppp-pap-sent-username', 'if.peer-neighbor-route', 'config.username-password', 'config.crypto-ikev2-keyring',
+  'keyring.peer', 'keyring-peer.address', 'keyring-peer.pre-shared-key', 'config.crypto-ikev2-profile',
+  'ikev2-profile.match-identity', 'ikev2-profile.authentication', 'ikev2-profile.keyring',
+  'config.crypto-ipsec-profile', 'ipsec-profile.set-ikev2-profile', 'pmap-c.priority', 'pmap-c.bandwidth',
+  'pmap-c.queue-limit', 'pmap-c.fair-queue', 'pmap-c.police', 'pmap-c.shape', 'if.fair-queue',
+  'config.logging-buffered', 'config.logging-console', 'config.logging-monitor', 'config.logging-host',
+  'config.logging-trap', 'config.logging-source-interface', 'config.logging-facility', 'config.service-timestamps',
+  'exec.terminal-monitor', 'host.service-syslog', 'exec.telnet', 'exec.ssh', 'host.python', 'host.type', 'host.del',
+  'host.dir',
 ];
 
 /** Test label of a context (the device kind is no longer part of MatchContext: scope is grammar and capabilities). */
@@ -140,12 +170,17 @@ describe('HANDLERS', () => {
       'vlan', 'switchport-p2', 'subif', 'routing',
       'spanning-tree', 'etherchannel', 'port-security', 'errdisable', 'nat', 'acl', 'dhcpv6', 'hsrp',
       'wlc',
+      // ARCHITECTURE-P3 §9.2 W2 item 21b: the P3 fragments (the MUST ones of W2 cli part 1, then the approved items')
+      'ospf', 'acl-p3', 'hardening', 'qos', 'discovery', 'time', 'api', 'ssh',
+      'eigrp', 'wan', 'crypto', 'qos-queueing', 'logging', 'remote', 'devhost',
     ]);
   });
 });
 
 describe('spec structure', () => {
   it('every <arg> in a path has an ArgSpec with help, and every ArgSpec is referenced', () => {
+    /** ARCHITECTURE-P3 §9.2 W2 item 21b: the handler and mode of every spec whose path begins with an argument. */
+    const leading = new Set<string>();
     for (const s of GRAMMAR) {
       const named = new Set<string>();
       for (const el of s.path) {
@@ -164,8 +199,20 @@ describe('spec structure', () => {
       expect(s.help.length, s.path.join(' ')).toBeGreaterThan(0);
       expect(s.objectives?.length ?? 0, s.path.join(' ')).toBeGreaterThan(0);
       expect(s.path.length).toBeGreaterThan(0);
-      expect(isArgToken(s.path[0]!), s.path.join(' ')).toBe(false);
+      // ARCHITECTURE-P3 §9.2 W2 item 21b (§5.2): a path begins with a keyword, except exactly the sequenced lines of a
+      // named ACL (`[<seq>] permit|deny …` and `<seq>` alone), whose first element is the entry's sequence number
+      if (isArgToken(s.path[0]!)) {
+        expect(s.path[0], s.path.join(' ')).toBe('<seq>');
+        expect(s.args?.seq, s.path.join(' ')).toEqual({ type: 'int', help: 'Sequence number of the entry (its place in the list)', min: 1, max: 2147483647 });
+        leading.add(`${s.handler} ${String(s.mode)}`);
+      }
     }
+    expect([...leading].sort()).toEqual([
+      `${HANDLERS.naclEntryP3} config-ext-nacl`,
+      `${HANDLERS.naclEntryP3} config-std-nacl`,
+      `${HANDLERS.naclSeq} config-ext-nacl`,
+      `${HANDLERS.naclSeq} config-std-nacl`,
+    ]);
   });
 
   it('host-shell commands are user-exec at privilege 15; other user-exec commands privilege 1; the rest privilege 15', () => {

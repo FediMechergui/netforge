@@ -14,7 +14,13 @@
  *                  that many; otherwise `exists` (default true) → some row matches (or none, when false).
  *   fhrp [S2]    → the `hsrp` row of (iface, group): `state`, `virtualIp`, `priority`, `preempt`.
  *
- * The P3 members of `route` (`metric`, `routeType`, `minPaths`, optional by meaning) are not read by this W1 file.
+ * P3 (ARCHITECTURE-P3 §2.10, ruling R18; W2 sim): the widened `route` members, each optional by meaning (absent = the
+ * P2 check and detail, byte for byte), each one more expected item of the winner:
+ *   metric    → the winner's `metric` equals it;
+ *   routeType → 'E2' (the only approved value): the winner is an OSPF external type-2 route (`RouteRow.routeType`);
+ *               an IPv6 row has no route type, so it never matches;
+ *   minPaths  → the winner has at least that many installed paths (`paths.length` of a multipath row, else 1).
+ * A failing one names what was expected and what the winner has, after the P2 items.
  */
 import { parseIpv4, u32ToIpv4 } from '../../contracts/addr.js';
 import type { DeviceRuntime } from '../../contracts/device.js';
@@ -86,6 +92,12 @@ function exitInterfaces(dev: DeviceRuntime, family: 4 | 6, route: AnyRoute): Por
   return out;
 }
 
+/** @since P3 (R18) The installed paths of a route: its multipath `paths` (two or more), else the one it is. */
+function pathCount(route: AnyRoute): number {
+  const n = route.paths?.length ?? 0;
+  return n > 0 ? n : 1;
+}
+
 /** `10.3.1.0/24 (S, distance 1, via 10.8.0.2, out GigabitEthernet0/1)` for a detail. */
 function routeText(r: AnyRoute, exits: readonly PortId[]): string {
   const via = [r.nextHop === undefined ? '' : `via ${r.nextHop}`, exits.length === 0 ? '' : `out ${exits.join(', ')}`].filter((s) => s !== '').join(', ');
@@ -121,6 +133,16 @@ export function checkRoute(sim: Simulation, a: Extract<LabAssertion, { kind: 'ro
     if (!exits.includes(port.id)) problems.push(`interface ${a.iface}`);
   }
   if (a.ad !== undefined && winner.ad !== a.ad) problems.push(`distance ${a.ad}`);
+  // P3 (R18): the widened members, after the P2 ones
+  if (a.metric !== undefined && winner.metric !== a.metric) problems.push(`metric ${a.metric} (it has ${winner.metric})`);
+  if (a.routeType !== undefined) {
+    const type = (winner as Partial<RouteRow>).routeType;
+    if (type !== a.routeType) problems.push(`route type ${a.routeType} (it is ${type === undefined ? 'not an external route' : type})`);
+  }
+  if (a.minPaths !== undefined) {
+    const paths = pathCount(winner);
+    if (paths < a.minPaths) problems.push(`at least ${a.minPaths} equal-cost paths (it has ${paths})`);
+  }
   if (problems.length === 0) return PASS;
   return fail(`${a.device} reaches ${dst} through ${routeText(winner, exits)}; expected ${problems.join(', ')}.`);
 }

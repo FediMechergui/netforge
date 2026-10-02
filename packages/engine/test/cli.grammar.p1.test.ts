@@ -218,7 +218,8 @@ describe('passwords, banners and lines', () => {
     expect(ok(inLine, 'login').spec.handler).toBe(HANDLERS.lineLogin);
     expect(ok(inLine, 'login local').args.method).toBe('local');
     expect(ok(inLine, 'exec-timeout 5 30').args).toEqual({ minutes: '5', seconds: '30' });
-    expect(tokens(inLine, '')).toEqual(['do', 'end', 'exec-timeout', 'exit', 'login', 'no', 'password']);
+    // ARCHITECTURE-P3 §9.2 W2 item 21b: the §5.2 device-access lines `access-class` and `transport input` join the line
+    expect(tokens(inLine, '')).toEqual(['access-class', 'do', 'end', 'exec-timeout', 'exit', 'login', 'no', 'password', 'transport']);
   });
 
   it('enable is interactive, so a settings panel refuses it', () => {

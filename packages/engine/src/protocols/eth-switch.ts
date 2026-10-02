@@ -56,6 +56,18 @@
  *     `stp-discarding` 'learning', anything else drops `stp-discarding` with the state (or 'not a spanning-tree port');
  *  7. PORT SECURITY — with a `port-security` row for L (§3.8): allow, learn a secure row (sticky → a `configLine`
  *     action with the sticky line), or a `port-security` drop plus the mode's effects;
+ *  7b. DHCP SNOOPING (@since P3, ARCHITECTURE-P3 D13, §3.4 steps 1–5) — a DHCP message in a VLAN with `ip dhcp
+ *     snooping` and `ip dhcp snooping vlan <v>`, decided by `protocols/l2/dhcp-snooping.ts`: L's rate limit (more than
+ *     `limit rate` messages in one sim-time second → drop and err-disable L, cause `dhcp-rate-limit`), server messages
+ *     refused on untrusted ports, the MAC check (chaddr = Ethernet source), a binding from an ACK on a trusted port (the
+ *     client port is the CAM row of (V, chaddr)), removed by a NAK or by a RELEASE from the binding's port. Drops are
+ *     reason `dhcp-snooping` with their `rule`;
+ *  7c. DYNAMIC ARP INSPECTION (@since P3, D13, §3.4 steps 6–8) — an ARP in a VLAN with `ip arp inspection vlan <v>`,
+ *     decided by `protocols/l2/arp-inspection.ts`: L's rate limit (15 pps on an untrusted port by default; exceeded →
+ *     drop and err-disable L, cause `arp-inspection`); a trusted L passes uninspected; an untrusted L needs a binding
+ *     (V, sender MAC, sender IP, L) in `dhcp-snooping`, else drop `arp-inspection` with its rule and a severity-4 log
+ *     (facility DAI, at most five per VLAN per second). The VLAN's `arp-inspection` row counts each ARP inspected on an
+ *     untrusted port. Steps 7b/7c are skipped for a frame that only learns (step 6);
  *  8. LEARN `camKey(V, src)` → L (static and secure rows are never overwritten; group sources never learned);
  *  9. SVI — a unicast for the MAC of `Vlan<V>` (or one of its `virtual4` MACs): down → drop `<svi> is down`; up →
  *     the tag is popped (cause `interface Vlan<V>`) and the frame re-enters on the SVI (`ingress`);
@@ -79,7 +91,18 @@
  * PORT SECURITY rows (`port-security` table, key = port) exist only for ports with `switchport port-security`; the
  * daemon keeps `count` equal to the secure CAM rows of the port. A shutdown-mode violation err-disables the port
  * (`errDisable` action, cause `psecure-violation`) and, when `errdisable recovery cause psecure-violation` is
- * configured, arms the periodic timer `errdisable:<port>` (§4.2) that issues `errRecover`.
+ * configured, arms the periodic timer `errdisable:<port>` (§4.2) that issues `errRecover`. @since P3 the same timer
+ * recovers the two causes of steps 7b/7c (`errdisable recovery cause dhcp-rate-limit|arp-inspection`): the timer
+ * recovers whichever of the three causes the port holds (one cause per port at a time; step 7 runs first, D13).
+ *
+ * SNOOPING STATE (@since P3, D13). The `dhcp-snooping` bindings (key `${vlan}|${mac}`) and the per-VLAN
+ * `arp-inspection` counters are tables this daemon writes; a model declares them only from stage P3 and only with
+ * `managed-switch` (the stage-filtered derivation, ARCHITECTURE-P3 §2.6), and without them steps 7b/7c read and write
+ * nothing. Bindings are learned from an ACK on a trusted port (7b) or one this switch's own SVI sends (a relay or a
+ * server on a multilayer switch, in `onEgressVlanAware`), expire at lease end in the `cam-sweep`, go at link-down of
+ * their port, and the static ones are derived from the `ip source binding …` lines idempotently (like secure rows).
+ * The rate and log windows (aligned to sim-time seconds, evaluated lazily, no timer) are private state; the StateView
+ * and every P2 debug line are unchanged, so a switch without the lines takes the P2 path byte for byte (§4.3).
  *
  * `stateSnapshot()` (stable shape, identical on both paths):
  *   { process: 'eth-switch', state: { vlan: 1, ageingNs, entries, floods, forwards, filtered, learned, moved, aged } }
@@ -87,7 +110,8 @@
  * `floods`.
  *
  * Debug categories: 'ethernet switching' (matches `debug ethernet switching`; every bridging message, unchanged),
- * 'port-security' (the port-security messages only, §5.4).
+ * 'port-security' (the port-security messages only, §5.4), @since P3 'ip dhcp snooping' and 'ip arp inspection' (the
+ * snooping and DAI messages only, ARCHITECTURE-P3 §5.8).
  */
 import { MAC_BROADCAST } from '../contracts/addr.js';
 import type { MacAddress } from '../contracts/addr.js';
@@ -96,15 +120,46 @@ import type { PortEncap, PortRole } from '../contracts/catalog.js';
 import type { ConfigDelta } from '../contracts/config.js';
 import type { PortId } from '../contracts/ids.js';
 import type { Pdu } from '../contracts/pdu.js';
-import type { PortView, SwitchportConfig } from '../contracts/port.js';
+import type { ErrDisableCause, PortView, SwitchportConfig } from '../contracts/port.js';
 import type { Action, DebugEvent, DemuxSelector, Process, ProcessCtx, StateView } from '../contracts/process.js';
 import { CAM_AGEING_NS, camKey, stpKey, vlanKey } from '../contracts/tables.js';
-import type { CamRow, DeviceTables, DtpRow, EtherchannelRow, PortSecurityRow, StpBridgeRow, StpPortRow, VlanRow } from '../contracts/tables.js';
+import type {
+  ArpInspectionRow,
+  CamRow,
+  DeviceTables,
+  DhcpSnoopingRow,
+  DtpRow,
+  EtherchannelRow,
+  PortSecurityRow,
+  StpBridgeRow,
+  StpPortRow,
+  Table,
+  VlanRow,
+} from '../contracts/tables.js';
 import type { ProcessEvent } from '../contracts/transport.js';
 import { SEC } from '../contracts/time.js';
 import type { SimTime } from '../contracts/time.js';
 import { vlanPopOp, vlanPushOp } from '../pdu/vlan.js';
+import {
+  ARP_INSPECTION_DEBUG_CATEGORY,
+  applyArpInspectionVerdict,
+  arpInspectViewOf,
+  arpInspectionActive,
+  decideArpInspection,
+  readArpInspection,
+} from './l2/arp-inspection.js';
 import { classifyControl, controlAction } from './l2/control.js';
+import {
+  DHCP_SNOOPING_DEBUG_CATEGORY,
+  bindingsOnPort,
+  decideDhcpSnooping,
+  dhcpSnoopMessageOf,
+  dhcpSnoopingActive,
+  dhcpSnoopingKey,
+  readDhcpSnooping,
+  staticBindingRows,
+} from './l2/dhcp-snooping.js';
+import type { DhcpSnoopingConfig, DhcpSnoopingVerdict } from './l2/dhcp-snooping.js';
 import {
   carries,
   channelOperOf,
@@ -132,6 +187,7 @@ import {
   readPortSecurity,
   stickyConfigLine,
 } from './l2/port-security.js';
+import type { RateWindow } from './l2/rate-window.js';
 import { interfaceOfContext, isControllerModel, isMembershipLine, readAllSwitchports, readSwitchport, readVoiceVlan } from './l2/switchport-config.js';
 
 /** Process name registered by the catalog for bridging models. */
@@ -304,6 +360,12 @@ class EthSwitch implements Process {
   private aged = 0;
   /** @since P2 Ports whose `errdisable:<port>` recovery timer is armed. */
   private readonly recoveryArmed = new Set<PortId>();
+  /** @since P3 Step 7b: the DHCP rate window of each logical port with a limit (D13; aligned to sim-time seconds). */
+  private readonly dhcpWindows = new Map<PortId, RateWindow>();
+  /** @since P3 Step 7c: the ARP rate window of each logical port with a limit. */
+  private readonly arpWindows = new Map<PortId, RateWindow>();
+  /** @since P3 Step 7c: the invalid-ARP log window of each inspected VLAN (at most five lines per second). */
+  private readonly daiLogWindows = new Map<number, RateWindow>();
 
   init(ctx: ProcessCtx): Action[] {
     this.capture(ctx);
@@ -484,6 +546,7 @@ class EthSwitch implements Process {
         mac: row.mac, port: row.port, vlan: row.vlan,
       });
     }
+    this.expireBindings(ctx);
     return [{ type: 'timer', key: CAM_SWEEP_TIMER, delay: CAM_SWEEP_INTERVAL_NS, periodic: true }];
   }
 
@@ -906,6 +969,12 @@ class EthSwitch implements Process {
       prefix.push(...psec.actions);
     }
 
+    // 7b / 7c. DHCP snooping, dynamic ARP inspection (ARCHITECTURE-P3 D13); not for a frame that only learns
+    if (!learnOnly) {
+      const hardened = this.dhcpSnoopingStep(ctx, pdu, logical, port, vlan) ?? this.arpInspectionStep(ctx, pdu, logical, port, vlan);
+      if (hardened !== undefined) return [...prefix, ...hardened];
+    }
+
     // 8. learn
     this.learnIn(ctx, vlan, src, logical);
     if (learnOnly) {
@@ -1015,6 +1084,7 @@ class EthSwitch implements Process {
       this.emit(ctx, `dropped pdu ${pdu.id} sent on ${port}: ${DETAIL_NO_VLAN}`, { port, pdu: pdu.id });
       return [{ type: 'drop', pdu, reason: 'other', detail: DETAIL_NO_VLAN, port }];
     }
+    this.snoopSviEgress(ctx, pdu, port, vlan);
     const w = this.world(ctx);
     const stpRuns = w.stpBridge?.has(vlanKey(vlan)) ?? false;
     const dst = eth.fields.dst as MacAddress;
@@ -1070,6 +1140,7 @@ class EthSwitch implements Process {
       return [];
     }
     if (line[0] === 'errdisable' && line[1] === 'recovery') return this.syncRecoveryTimers(ctx);
+    if (line[0] === 'ip' && line[1] === 'source' && line[2] === 'binding') this.syncStaticBindings(ctx);
     return [];
   }
 
@@ -1083,6 +1154,7 @@ class EthSwitch implements Process {
           mac: row.mac, port: row.port, vlan: row.vlan,
         });
       }
+      this.removeBindingsOnLinkDown(ctx, port);
     }
     this.refreshPortSecurityRow(ctx, port, up);
     return [];
@@ -1130,6 +1202,8 @@ class EthSwitch implements Process {
       }
       table.delete(port, 'cleared');
       this.emit(ctx, `port security switched off on ${port}`, { port }, PORT_SECURITY_DEBUG_CATEGORY);
+      // @since P3 a port err-disabled by step 7b/7c keeps its recovery timer (that cause is not port security's)
+      if (isSnoopingCause(ctx.ports.get(port)?.errDisabled)) return [];
       return this.recoveryFor(ctx, port, false);
     }
     const desired = configuredSecureAddresses(cfg);
@@ -1256,13 +1330,16 @@ class EthSwitch implements Process {
     return { actions, stop: true };
   }
 
-  /** Arm (`wanted`) or cancel the recovery timer of `port` for `psecure-violation`, per the `errdisable recovery` lines. */
-  private recoveryFor(ctx: ProcessCtx, port: PortId, wanted: boolean): Action[] {
-    const rec = errdisableRecovery(ctx.config, 'psecure-violation');
+  /**
+   * Arm (`wanted`) or cancel the recovery timer of `port` for `cause` (`psecure-violation`; @since P3 also the two
+   * causes of steps 7b/7c), per the `errdisable recovery` lines. The debug line goes to the cause's category.
+   */
+  private recoveryFor(ctx: ProcessCtx, port: PortId, wanted: boolean, cause: ErrDisableCause = 'psecure-violation'): Action[] {
+    const rec = errdisableRecovery(ctx.config, cause);
     const armed = this.recoveryArmed.has(port);
     if (wanted && rec.enabled) {
       this.recoveryArmed.add(port);
-      this.emit(ctx, `${port} recovers from err-disable in ${rec.intervalNs / SEC} s`, { port, intervalNs: rec.intervalNs }, PORT_SECURITY_DEBUG_CATEGORY);
+      this.emit(ctx, `${port} recovers from err-disable in ${rec.intervalNs / SEC} s`, { port, intervalNs: rec.intervalNs }, recoveryCategory(cause));
       return [{ type: 'timer', key: errdisableTimerKey(port), delay: rec.intervalNs, periodic: true }];
     }
     if (armed) {
@@ -1272,26 +1349,223 @@ class EthSwitch implements Process {
     return [];
   }
 
-  /** After an `errdisable recovery …` line: arm the timer of every psecure-err-disabled port, or cancel every armed one. */
+  /**
+   * After an `errdisable recovery …` line: arm the timer of every port err-disabled by one of this daemon's causes
+   * whose recovery is on, or cancel every other armed one.
+   */
   private syncRecoveryTimers(ctx: ProcessCtx): Action[] {
-    const rec = errdisableRecovery(ctx.config, 'psecure-violation');
     const actions: Action[] = [];
     for (const view of ctx.ports.values()) {
-      const disabled = view.errDisabled === 'psecure-violation';
-      if (disabled && rec.enabled && !this.recoveryArmed.has(view.id)) actions.push(...this.recoveryFor(ctx, view.id, true));
-      else if ((!disabled || !rec.enabled) && this.recoveryArmed.has(view.id)) actions.push(...this.recoveryFor(ctx, view.id, false));
+      const cause = ownErrDisableCause(view.errDisabled);
+      const enabled = cause !== undefined && errdisableRecovery(ctx.config, cause).enabled;
+      if (enabled && !this.recoveryArmed.has(view.id)) actions.push(...this.recoveryFor(ctx, view.id, true, cause));
+      else if (!enabled && this.recoveryArmed.has(view.id)) actions.push(...this.recoveryFor(ctx, view.id, false));
     }
     return actions;
   }
 
-  /** The `errdisable:<port>` timer fired: recover the port when it is still err-disabled for a violation. */
+  /** The `errdisable:<port>` timer fired: recover the port when it is still err-disabled by one of this daemon's causes. */
   private onRecoveryTimer(ctx: ProcessCtx, port: PortId): Action[] {
     this.recoveryArmed.delete(port);
     const view = ctx.ports.get(port);
-    if (view === undefined || view.errDisabled !== 'psecure-violation') return [];
-    this.emit(ctx, `recovering ${port} from err-disable`, { port }, PORT_SECURITY_DEBUG_CATEGORY);
-    return [{ type: 'errRecover', port, cause: 'psecure-violation' }];
+    const cause = ownErrDisableCause(view?.errDisabled);
+    if (view === undefined || cause === undefined) return [];
+    this.emit(ctx, `recovering ${port} from err-disable`, { port }, recoveryCategory(cause));
+    return [{ type: 'errRecover', port, cause }];
   }
+
+  // ─────────────────────────────── DHCP snooping and DAI (ARCHITECTURE-P3 D13, §3.4) ───────────────────────────────
+
+  /**
+   * @since P3 Step 7b for a frame on logical port `port` (arrival port `physical`) in `vlan`. Undefined = the frame
+   * goes on (after any binding write); otherwise the actions to return: the `dhcp-snooping` drop with its rule, and for
+   * the rate limit the err-disable of `port` and its recovery timer. Without the `dhcp-snooping` table, for a frame
+   * that is not DHCP, or in a VLAN without the snooping lines, nothing is read, counted or written (the P2 path).
+   */
+  private dhcpSnoopingStep(ctx: ProcessCtx, pdu: Pdu, port: PortId, physical: PortId, vlan: number): Action[] | undefined {
+    const table = ctx.tables.get<DhcpSnoopingRow>('dhcp-snooping');
+    if (table === undefined) return undefined;
+    const msg = dhcpSnoopMessageOf(pdu);
+    if (msg === undefined) return undefined;
+    const config = readDhcpSnooping(ctx.config);
+    if (!dhcpSnoopingActive(config, vlan)) return undefined;
+    const verdict = decideDhcpSnooping({
+      config,
+      port,
+      vlan,
+      msg,
+      now: ctx.now,
+      window: this.dhcpWindows.get(port),
+      binding: table.get(dhcpSnoopingKey(vlan, msg.chaddr)),
+      clientPort: msg.server && msg.type === 'ACK' ? ctx.tables.cam.get(camKey(vlan, msg.chaddr))?.port : undefined,
+    });
+    if (verdict.kind === 'skip') return undefined;
+    if (verdict.window !== undefined) this.dhcpWindows.set(port, verdict.window);
+    const data = { port, vlan, pdu: pdu.id, type: msg.type };
+    if (verdict.kind === 'forward') {
+      this.snoopingBookkeeping(ctx, table, verdict, data);
+      return undefined;
+    }
+    this.emit(ctx, verdict.debug, data, DHCP_SNOOPING_DEBUG_CATEGORY);
+    const actions: Action[] = [{ type: 'drop', pdu, reason: verdict.reason, detail: verdict.detail, port: physical, rule: verdict.rule }];
+    if (verdict.kind === 'err-disable') {
+      actions.push({ type: 'errDisable', port, cause: verdict.errDisable.cause, detail: verdict.errDisable.detail });
+      actions.push(...this.recoveryFor(ctx, port, true, verdict.errDisable.cause));
+    }
+    return actions;
+  }
+
+  /** @since P3 A forwarded DHCP message's binding write or removal and its debug line (step 7b and the SVI egress). */
+  private snoopingBookkeeping(
+    ctx: ProcessCtx,
+    table: Table<DhcpSnoopingRow>,
+    verdict: Extract<DhcpSnoopingVerdict, { kind: 'forward' }>,
+    data: Record<string, unknown>,
+  ): void {
+    if (verdict.bind !== undefined) table.set(verdict.bind);
+    if (verdict.unbind !== undefined) table.delete(verdict.unbind, 'cleared');
+    if (verdict.debug !== undefined) this.emit(ctx, verdict.debug, data, DHCP_SNOOPING_DEBUG_CATEGORY);
+  }
+
+  /**
+   * @since P3 D13: a DHCP server message this switch's own SVI `svi` sends in `vlan` (a relay, or a server on a
+   * multilayer switch) is a trusted source: an ACK binds its client (the port of the CAM row of (vlan, chaddr)), a NAK
+   * removes the client's learned binding. It never changes how the frame is forwarded.
+   */
+  private snoopSviEgress(ctx: ProcessCtx, pdu: Pdu, svi: PortId, vlan: number): void {
+    const table = ctx.tables.get<DhcpSnoopingRow>('dhcp-snooping');
+    if (table === undefined) return;
+    const msg = dhcpSnoopMessageOf(pdu);
+    if (msg === undefined || !msg.server) return;
+    const config = readDhcpSnooping(ctx.config);
+    if (!dhcpSnoopingActive(config, vlan)) return;
+    const trusted: DhcpSnoopingConfig = { ...config, ports: [...config.ports.filter((p) => p.port !== svi), { port: svi, trusted: true }] };
+    const verdict = decideDhcpSnooping({
+      config: trusted,
+      port: svi,
+      vlan,
+      msg,
+      now: ctx.now,
+      binding: table.get(dhcpSnoopingKey(vlan, msg.chaddr)),
+      clientPort: msg.type === 'ACK' ? ctx.tables.cam.get(camKey(vlan, msg.chaddr))?.port : undefined,
+    });
+    if (verdict.kind === 'forward') this.snoopingBookkeeping(ctx, table, verdict, { port: svi, vlan, pdu: pdu.id, type: msg.type });
+  }
+
+  /**
+   * @since P3 Step 7c for an ARP on logical port `port` (arrival port `physical`) in `vlan`. Undefined = the ARP goes on
+   * (after the VLAN row counted it, when inspected); otherwise the `arp-inspection` drop with its rule and the log the
+   * VLAN's log window allows, or for the rate limit the err-disable of `port` and its recovery timer. Without the
+   * `arp-inspection` and `dhcp-snooping` tables, for a frame that is not ARP, or in a VLAN that is not inspected,
+   * nothing is read, counted or written (the P2 path).
+   */
+  private arpInspectionStep(ctx: ProcessCtx, pdu: Pdu, port: PortId, physical: PortId, vlan: number): Action[] | undefined {
+    const rows = ctx.tables.get<ArpInspectionRow>('arp-inspection');
+    const bindings = ctx.tables.get<DhcpSnoopingRow>('dhcp-snooping');
+    if (rows === undefined || bindings === undefined) return undefined;
+    const arp = arpInspectViewOf(pdu);
+    if (arp === undefined) return undefined;
+    const config = readArpInspection(ctx.config);
+    if (!arpInspectionActive(config, vlan)) return undefined;
+    const verdict = decideArpInspection({
+      config,
+      port,
+      vlan,
+      arp,
+      now: ctx.now,
+      window: this.arpWindows.get(port),
+      binding: bindings.get(dhcpSnoopingKey(vlan, arp.sha)),
+      logWindow: this.daiLogWindows.get(vlan),
+    });
+    if (verdict.kind === 'skip') return undefined;
+    if (verdict.window !== undefined) this.arpWindows.set(port, verdict.window);
+    if (verdict.kind === 'drop') this.daiLogWindows.set(vlan, verdict.logWindow);
+    const row = applyArpInspectionVerdict(rows.get(vlanKey(vlan)), vlan, verdict, ctx.now);
+    if (row !== undefined) rows.set(row);
+    if (verdict.kind === 'forward') return undefined;
+    this.emit(ctx, verdict.debug, { port, vlan, pdu: pdu.id, sender: arp.sha, claims: arp.spa }, ARP_INSPECTION_DEBUG_CATEGORY);
+    const actions: Action[] = [{ type: 'drop', pdu, reason: verdict.reason, detail: verdict.detail, port: physical, rule: verdict.rule }];
+    if (verdict.kind === 'drop') {
+      if (verdict.log !== undefined) actions.push({ type: 'log', severity: verdict.log.severity, facility: verdict.log.facility, message: verdict.log.message });
+      return actions;
+    }
+    actions.push({ type: 'errDisable', port, cause: verdict.errDisable.cause, detail: verdict.errDisable.detail });
+    actions.push(...this.recoveryFor(ctx, port, true, verdict.errDisable.cause));
+    return actions;
+  }
+
+  /** @since P3 The `cam-sweep` also ends the learned bindings whose lease is over (D13, §4.2). */
+  private expireBindings(ctx: ProcessCtx): void {
+    const table = ctx.tables.get<DhcpSnoopingRow>('dhcp-snooping');
+    if (table === undefined) return;
+    for (const row of table.expire(ctx.now)) {
+      this.emit(ctx, `binding ${row.mac} ${row.ip} on ${row.port} (vlan ${row.vlan}) removed: its lease ended`, {
+        mac: row.mac, ip: row.ip, port: row.port, vlan: row.vlan,
+      }, DHCP_SNOOPING_DEBUG_CATEGORY);
+    }
+  }
+
+  /** @since P3 Link-down of `port` removes the learned bindings on it; static bindings stay (D13, §3.4 step 4). */
+  private removeBindingsOnLinkDown(ctx: ProcessCtx, port: PortId): void {
+    const table = ctx.tables.get<DhcpSnoopingRow>('dhcp-snooping');
+    if (table === undefined) return;
+    for (const key of bindingsOnPort(table.rows(), port)) {
+      const row = table.delete(key, 'link-down');
+      if (row === undefined) continue;
+      this.emit(ctx, `binding ${row.mac} ${row.ip} on ${port} (vlan ${row.vlan}) removed: link down`, {
+        mac: row.mac, ip: row.ip, port, vlan: row.vlan,
+      }, DHCP_SNOOPING_DEBUG_CATEGORY);
+    }
+  }
+
+  /**
+   * @since P3 Derive the static bindings (`ip source binding <mac> vlan <v> <ip> interface <if>`) from the running
+   * config, idempotently: a binding already as configured changes nothing; a new or changed line writes its row
+   * (replacing a learned binding of the same VLAN and MAC); a removed line deletes its row. A line naming no port of
+   * this device is ignored.
+   */
+  private syncStaticBindings(ctx: ProcessCtx): void {
+    const table = ctx.tables.get<DhcpSnoopingRow>('dhcp-snooping');
+    if (table === undefined) return;
+    const desired = staticBindingRows(readDhcpSnooping(ctx.config), ctx.now).filter((d) => ctx.ports.has(d.port));
+    for (const row of table.find((r) => r.kind === 'static')) {
+      if (desired.some((d) => sameBinding(d, row))) continue;
+      table.delete(row.key, 'cleared');
+      this.emit(ctx, `static binding ${row.mac} ${row.ip} on ${row.port} (vlan ${row.vlan}) removed: its line is gone`, {
+        mac: row.mac, ip: row.ip, port: row.port, vlan: row.vlan,
+      }, DHCP_SNOOPING_DEBUG_CATEGORY);
+    }
+    for (const d of desired) {
+      const have = table.get(d.key);
+      if (have !== undefined && sameBinding(d, have)) continue;
+      table.set(d);
+      this.emit(ctx, `static binding ${d.mac} ${d.ip} on ${d.port} (vlan ${d.vlan})`, {
+        mac: d.mac, ip: d.ip, port: d.port, vlan: d.vlan,
+      }, DHCP_SNOOPING_DEBUG_CATEGORY);
+    }
+  }
+}
+
+/** @since P3 The err-disable causes this daemon raises and recovers (step 7, D13 steps 7b/7c); undefined for any other. */
+function ownErrDisableCause(cause: string | undefined): ErrDisableCause | undefined {
+  return cause === 'psecure-violation' || isSnoopingCause(cause) ? (cause as ErrDisableCause) : undefined;
+}
+
+/** @since P3 True for the causes of steps 7b/7c (`dhcp-rate-limit`, `arp-inspection`). */
+function isSnoopingCause(cause: string | undefined): boolean {
+  return cause === 'dhcp-rate-limit' || cause === 'arp-inspection';
+}
+
+/** @since P3 The debug category of a cause's recovery lines (port security's for `psecure-violation`, as in P2). */
+function recoveryCategory(cause: ErrDisableCause): string {
+  if (cause === 'dhcp-rate-limit') return DHCP_SNOOPING_DEBUG_CATEGORY;
+  if (cause === 'arp-inspection') return ARP_INSPECTION_DEBUG_CATEGORY;
+  return PORT_SECURITY_DEBUG_CATEGORY;
+}
+
+/** @since P3 True when two static bindings agree on every column a learner reads (no write needed). */
+function sameBinding(a: DhcpSnoopingRow, b: DhcpSnoopingRow): boolean {
+  return a.kind === b.kind && a.mac === b.mac && a.ip === b.ip && a.vlan === b.vlan && a.port === b.port;
 }
 
 /** True when two `port-security` rows differ only in `updatedAt` (no write needed). */

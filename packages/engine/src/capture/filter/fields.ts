@@ -1,312 +1,119 @@
 /**
- * capture/filter/fields.ts — the NetScope display-filter field registry (contracts/capture.ts `DisplayFieldDef`).
+ * capture/filter/fields.ts — the NetScope display-filter field registry (contracts/capture.ts `DisplayFieldDef`): the
+ * index file of `capture/filter/fields/<proto>.ts` (ARCHITECTURE-P3 §0 rule 18, §7 W2 capture).
  *
- * Pure and DOM-free (also exported by the `pure` entry). The registry is generated from `PROTO_FIELDS`:
- *  • every protocol table gives a protocol entry (`tcp`, type 'protocol') and one entry per canonical field
- *    (`tcp.srcPort`, `ipv4.src`, …) typed from its FieldType (uint/int → number, bytes → string);
- *  • `frame.*` fields read the record metadata (number, lengths, relative time, interface, direction);
- *  • a familiar alias table (`ip.addr`, `eth.src`, `tcp.port`, `tcp.flags.syn`, `dns.qry.name`, …) maps short names
- *    onto canonical paths, some through a small derivation (flag letters, DNS question text, HTTP kind).
+ * Pure and DOM-free (also exported by the `pure` entry). The registry is assembled here, in this order:
+ *  • `frame` and its `frame.*` fields (record metadata: number, lengths, relative time, interface, direction);
+ *  • every PROTO_FIELDS table, in table order: a protocol entry (`tcp`, type 'protocol', with the help text its
+ *    protocol file gives) and one entry per canonical field (`tcp.srcPort`, `ipv4.src`, …) typed from its FieldType
+ *    (uint/int → number, bytes → string), so a protocol without a file still filters;
+ *  • then, file by file in PROTOCOL_FILES order: the familiar protocol names (`eth`, `ip`, …), then the familiar field
+ *    names over canonical paths (`ip.addr`, `tcp.port`, `ospf.msg`, …), then the derived fields (flag letters, list
+ *    entries, message kinds).
+ * The P0–P2 files keep the historical order, so every P1/P2 entry keeps its relative place; the P3 files follow in
+ * ProtoName order. A protocol owner edits only its own file (plus its one import and list line here).
  *
  * Accessors return every value of a field in the frame, outermost layer first, so a quoted datagram inside an ICMP
  * error contributes its addresses too (multi-valued fields; `==` means any, `!=` means none).
  */
 import type { DisplayFieldDef } from '../../contracts/capture.js';
-import type { FieldType } from '../../contracts/fields.js';
 import { PROTO_FIELDS } from '../../contracts/fields.js';
-import type { FieldValue, LayerView } from '../../contracts/pdu.js';
+import {
+  canonicalAccessor,
+  def,
+  mapFieldType,
+  protocolAccessor,
+  splitPath,
+  valuesAccessor,
+  type DisplayFieldAccessor,
+  type DisplayFieldType,
+  type ProtoDisplayFields,
+} from './fields/kit.js';
+import { FRAME_FIELD_VALUES, frameAccessors } from './fields/frame.js';
+import { ETHERNET_DISPLAY_FIELDS } from './fields/ethernet.js';
+import { ARP_DISPLAY_FIELDS } from './fields/arp.js';
+import { IPV4_DISPLAY_FIELDS } from './fields/ipv4.js';
+import { IPV6_DISPLAY_FIELDS } from './fields/ipv6.js';
+import { ICMPV4_DISPLAY_FIELDS } from './fields/icmpv4.js';
+import { ICMPV6_DISPLAY_FIELDS } from './fields/icmpv6.js';
+import { TCP_DISPLAY_FIELDS } from './fields/tcp.js';
+import { UDP_DISPLAY_FIELDS } from './fields/udp.js';
+import { DNS_DISPLAY_FIELDS } from './fields/dns.js';
+import { DHCP_DISPLAY_FIELDS } from './fields/dhcp.js';
+import { DOT11_MGMT_DISPLAY_FIELDS } from './fields/dot11-mgmt.js';
+import { DOT11_DISPLAY_FIELDS } from './fields/dot11.js';
+import { HTTP_DISPLAY_FIELDS } from './fields/http.js';
+import { PAYLOAD_DISPLAY_FIELDS } from './fields/payload.js';
+import { HDLC_DISPLAY_FIELDS } from './fields/hdlc.js';
+import { LLC_DISPLAY_FIELDS } from './fields/llc.js';
+import { EAPOL_DISPLAY_FIELDS } from './fields/eapol.js';
+import { IPV6_EXT_DISPLAY_FIELDS } from './fields/ipv6-ext.js';
+import { OSPF_DISPLAY_FIELDS } from './fields/ospf.js';
+import { OSPF_LSA_DISPLAY_FIELDS } from './fields/ospf-lsa.js';
+import { CDP_DISPLAY_FIELDS } from './fields/cdp.js';
+import { LLDP_DISPLAY_FIELDS } from './fields/lldp.js';
+import { NTP_DISPLAY_FIELDS } from './fields/ntp.js';
+import { TELNET_DISPLAY_FIELDS } from './fields/telnet.js';
+import { SSH_DISPLAY_FIELDS } from './fields/ssh.js';
+import { GRE_DISPLAY_FIELDS } from './fields/gre.js';
+import { PPP_DISPLAY_FIELDS } from './fields/ppp.js';
+import { LCP_DISPLAY_FIELDS } from './fields/lcp.js';
+import { PAP_DISPLAY_FIELDS } from './fields/pap.js';
+import { CHAP_DISPLAY_FIELDS } from './fields/chap.js';
+import { IPCP_DISPLAY_FIELDS } from './fields/ipcp.js';
+import { IPV6CP_DISPLAY_FIELDS } from './fields/ipv6cp.js';
+import { SYSLOG_DISPLAY_FIELDS } from './fields/syslog.js';
+import { EIGRP_DISPLAY_FIELDS } from './fields/eigrp.js';
+import { ESP_DISPLAY_FIELDS } from './fields/esp.js';
+import { IKEV2_DISPLAY_FIELDS } from './fields/ikev2.js';
 
-/** The value type a display field compares as. */
-export type DisplayFieldType = DisplayFieldDef['type'];
+export type { DisplayFieldAccessor, DisplayFieldType, DisplayFilterFrame, DisplayScalar } from './fields/kit.js';
 
-/** Frame metadata plus decoded layers that a display filter runs over (built by the capture store per record). */
-export interface DisplayFilterFrame {
-  /** frame.number: 1-based (record index + 1). */
-  number: number;
-  /** frame.len: original length on the wire. */
-  len: number;
-  /** Nanoseconds since the first record of the capture (frame.time_relative is shown in seconds). */
-  timeRelativeNs: number;
-  /** frame.interface: index of the capture interface. */
-  iface: number;
-  /** frame.interface_name: display name of the capture interface. */
-  ifaceName?: string;
-  /** frame.direction. */
-  dir?: 'tx' | 'rx' | 'unknown';
-  /** frame.corrupted. */
-  corrupted?: boolean;
-  /** Decoded layers, outermost first. */
-  layers: readonly LayerView[];
-  /** Captured bytes: frame.cap_len and `<protocol> contains "text"` read them. */
-  bytes?: Uint8Array;
-}
+/**
+ * Every per-protocol file, in registry order: P0–P2 first (the order their familiar names had before the W2 split),
+ * then the P3 protocols in ProtoName order (§2.3: the MUST five, then the approved [S13] [S18] [S19] [S25] [C1] [C13]).
+ */
+const PROTOCOL_FILES: readonly ProtoDisplayFields[] = Object.freeze([
+  ETHERNET_DISPLAY_FIELDS,
+  ARP_DISPLAY_FIELDS,
+  IPV4_DISPLAY_FIELDS,
+  IPV6_DISPLAY_FIELDS,
+  ICMPV4_DISPLAY_FIELDS,
+  ICMPV6_DISPLAY_FIELDS,
+  TCP_DISPLAY_FIELDS,
+  UDP_DISPLAY_FIELDS,
+  DNS_DISPLAY_FIELDS,
+  DHCP_DISPLAY_FIELDS,
+  DOT11_MGMT_DISPLAY_FIELDS,
+  DOT11_DISPLAY_FIELDS,
+  HTTP_DISPLAY_FIELDS,
+  PAYLOAD_DISPLAY_FIELDS,
+  HDLC_DISPLAY_FIELDS,
+  LLC_DISPLAY_FIELDS,
+  EAPOL_DISPLAY_FIELDS,
+  IPV6_EXT_DISPLAY_FIELDS,
+  // ── P3 ──
+  OSPF_DISPLAY_FIELDS,
+  OSPF_LSA_DISPLAY_FIELDS,
+  CDP_DISPLAY_FIELDS,
+  LLDP_DISPLAY_FIELDS,
+  NTP_DISPLAY_FIELDS,
+  TELNET_DISPLAY_FIELDS, // [S13]
+  SSH_DISPLAY_FIELDS, // [S13]
+  GRE_DISPLAY_FIELDS, // [S18]
+  PPP_DISPLAY_FIELDS, // [S19]
+  LCP_DISPLAY_FIELDS, // [S19]
+  PAP_DISPLAY_FIELDS, // [S19]
+  CHAP_DISPLAY_FIELDS, // [S19]
+  IPCP_DISPLAY_FIELDS, // [S19]
+  IPV6CP_DISPLAY_FIELDS, // [S19]
+  SYSLOG_DISPLAY_FIELDS, // [S25]
+  EIGRP_DISPLAY_FIELDS, // [C1]
+  ESP_DISPLAY_FIELDS, // [C13]
+  IKEV2_DISPLAY_FIELDS, // [C13]
+]);
 
-/** One extracted field value. Byte fields stay `Uint8Array`. */
-export type DisplayScalar = number | string | boolean | Uint8Array;
-
-/** A resolved field: its definition, a presence test and a value extractor. */
-export interface DisplayFieldAccessor {
-  readonly def: DisplayFieldDef;
-  /** Every value of the field in the frame (empty when absent). Protocol fields return each layer's bytes. */
-  values(frame: DisplayFilterFrame): DisplayScalar[];
-  /** True when the field (or protocol) occurs in the frame. */
-  present(frame: DisplayFilterFrame): boolean;
-}
-
-const PROTOCOL_HELP: Readonly<Record<string, string>> = Object.freeze({
-  ethernet: 'Ethernet II frame.',
-  arp: 'Address Resolution Protocol.',
-  ipv4: 'Internet Protocol version 4.',
-  icmpv4: 'ICMP for IPv4 (echo, unreachable, time exceeded).',
-  payload: 'Bytes no decoder claimed.',
-  hdlc: 'Serial HDLC framing.',
-  dot11: 'IEEE 802.11 wireless frame.',
-  'dot11-mgmt': 'IEEE 802.11 management body (beacons, probes, authentication, association).',
-  llc: 'LLC/SNAP header after an 802.11 data header.',
-  eapol: 'EAP over LAN key exchange.',
-  ipv6: 'Internet Protocol version 6.',
-  'ipv6-hopopts': 'IPv6 hop-by-hop options header.',
-  'ipv6-route': 'IPv6 routing header.',
-  'ipv6-frag': 'IPv6 fragment header.',
-  'ipv6-dstopts': 'IPv6 destination options header.',
-  icmpv6: 'ICMP for IPv6 (echo, neighbor discovery, router discovery, errors).',
-  udp: 'User Datagram Protocol.',
-  tcp: 'Transmission Control Protocol.',
-  dhcp: 'Dynamic Host Configuration Protocol (IPv4).',
-  dns: 'Domain Name System.',
-  http: 'Hypertext Transfer Protocol.',
-});
-
-function mapFieldType(t: FieldType): DisplayFieldType {
-  switch (t) {
-    case 'uint':
-    case 'int':
-      return 'number';
-    case 'bool':
-      return 'bool';
-    case 'mac':
-      return 'mac';
-    case 'ipv4':
-      return 'ipv4';
-    case 'ipv6':
-      return 'ipv6';
-    case 'string':
-    case 'bytes':
-      return 'string';
-  }
-}
-
-function def(name: string, reads: readonly string[], type: DisplayFieldType, help: string): DisplayFieldDef {
-  return Object.freeze({ name, reads: Object.freeze([...reads]), type, help });
-}
-
-function scalar(v: FieldValue | undefined): DisplayScalar | undefined {
-  if (v === undefined || v === null) return undefined;
-  return v;
-}
-
-/** Values of canonical path `proto.field` over every layer of `proto`, outermost first. */
-function canonicalValues(frame: DisplayFilterFrame, proto: string, field: string): DisplayScalar[] {
-  const out: DisplayScalar[] = [];
-  for (const layer of frame.layers) {
-    if (layer.proto !== proto) continue;
-    const v = scalar(layer.fields[field]);
-    if (v !== undefined) out.push(v);
-  }
-  return out;
-}
-
-function splitPath(path: string): [string, string] {
-  const dot = path.indexOf('.');
-  return [path.slice(0, dot), path.slice(dot + 1)];
-}
-
-function layerPresent(frame: DisplayFilterFrame, proto: string): boolean {
-  for (const layer of frame.layers) if (layer.proto === proto) return true;
-  return false;
-}
-
-function layerBytes(frame: DisplayFilterFrame, proto: string): Uint8Array[] {
-  const out: Uint8Array[] = [];
-  const bytes = frame.bytes;
-  if (bytes === undefined) return out;
-  for (const layer of frame.layers) {
-    if (layer.proto !== proto) continue;
-    const start = Math.min(Math.max(layer.offset, 0), bytes.length);
-    const end = Math.min(start + Math.max(layer.length, 0), bytes.length);
-    out.push(bytes.subarray(start, end));
-  }
-  return out;
-}
-
-function valuesAccessor(d: DisplayFieldDef, values: (frame: DisplayFilterFrame) => DisplayScalar[]): DisplayFieldAccessor {
-  return Object.freeze({ def: d, values, present: (frame: DisplayFilterFrame) => values(frame).length > 0 });
-}
-
-function canonicalAccessor(d: DisplayFieldDef): DisplayFieldAccessor {
-  const paths = d.reads.map(splitPath);
-  return valuesAccessor(d, (frame) => {
-    if (paths.length === 1) {
-      const [p, f] = paths[0] as [string, string];
-      return canonicalValues(frame, p, f);
-    }
-    const out: DisplayScalar[] = [];
-    for (const [p, f] of paths) out.push(...canonicalValues(frame, p, f));
-    return out;
-  });
-}
-
-function protocolAccessor(d: DisplayFieldDef, proto: string): DisplayFieldAccessor {
-  return Object.freeze({
-    def: d,
-    values: (frame: DisplayFilterFrame) => layerBytes(frame, proto),
-    present: (frame: DisplayFilterFrame) => layerPresent(frame, proto),
-  });
-}
-
-/** Map every layer of `proto` through `pick` (undefined results are skipped). */
-function derived(proto: string, pick: (layer: LayerView) => DisplayScalar | DisplayScalar[] | undefined): (frame: DisplayFilterFrame) => DisplayScalar[] {
-  return (frame) => {
-    const out: DisplayScalar[] = [];
-    for (const layer of frame.layers) {
-      if (layer.proto !== proto) continue;
-      const v = pick(layer);
-      if (v === undefined) continue;
-      if (Array.isArray(v)) out.push(...v);
-      else out.push(v);
-    }
-    return out;
-  };
-}
-
-function textField(layer: LayerView, field: string): string | undefined {
-  const v = layer.fields[field];
-  return typeof v === 'string' ? v : undefined;
-}
-
-/** TCP flag letter as a boolean for every tcp layer. */
-function tcpFlag(letter: string): (layer: LayerView) => DisplayScalar | undefined {
-  return (layer) => {
-    const flags = layer.fields['flags'];
-    if (typeof flags !== 'string') return undefined;
-    return flags.includes(letter);
-  };
-}
-
-/** Entries of a DNS record list ('name TYPE …' joined by ';'). */
-function dnsEntries(layer: LayerView, field: string): string[][] {
-  const text = textField(layer, field);
-  if (text === undefined || text.length === 0) return [];
-  const out: string[][] = [];
-  for (const entry of text.split(';')) {
-    const parts = entry.trim().split(/\s+/).filter((p) => p.length > 0);
-    if (parts.length > 0) out.push(parts);
-  }
-  return out;
-}
-
-function dnsAnswerData(type: string): (layer: LayerView) => DisplayScalar[] {
-  return (layer) => {
-    const out: DisplayScalar[] = [];
-    for (const field of ['answers', 'authorities', 'additionals']) {
-      for (const parts of dnsEntries(layer, field)) {
-        if ((parts[1] ?? '').toUpperCase() !== type) continue;
-        const data = parts.slice(3).join(' ');
-        if (data.length > 0) out.push(data);
-      }
-    }
-    return out;
-  };
-}
-
-function httpKind(kind: 'request' | 'response', field?: string): (layer: LayerView) => DisplayScalar | undefined {
-  return (layer) => {
-    if (layer.fields['kind'] !== kind) return undefined;
-    if (field === undefined) return true;
-    return scalar(layer.fields[field]);
-  };
-}
-
-function httpHeader(name: string): (layer: LayerView) => DisplayScalar[] {
-  const lower = name.toLowerCase();
-  return (layer) => {
-    const headers = textField(layer, 'headers');
-    if (headers === undefined) return [];
-    const out: DisplayScalar[] = [];
-    for (const line of headers.split('\n')) {
-      const colon = line.indexOf(':');
-      if (colon <= 0) continue;
-      if (line.slice(0, colon).trim().toLowerCase() === lower) out.push(line.slice(colon + 1).trim());
-    }
-    return out;
-  };
-}
-
-/** Alias: short name → canonical path(s), with the same type as the canonical field. */
-interface PlainAlias {
-  name: string;
-  reads: readonly string[];
-  help: string;
-}
-
-const PLAIN_ALIASES: readonly PlainAlias[] = [
-  { name: 'eth.src', reads: ['ethernet.src'], help: 'Source MAC address (ethernet.src).' },
-  { name: 'eth.dst', reads: ['ethernet.dst'], help: 'Destination MAC address (ethernet.dst).' },
-  { name: 'eth.addr', reads: ['ethernet.src', 'ethernet.dst'], help: 'Either MAC address of the frame.' },
-  { name: 'eth.type', reads: ['ethernet.type'], help: 'Ethertype of the payload (ethernet.type).' },
-  { name: 'arp.opcode', reads: ['arp.op'], help: 'ARP operation: 1 request, 2 reply (arp.op).' },
-  { name: 'arp.src.hw_mac', reads: ['arp.sha'], help: 'Sender MAC address (arp.sha).' },
-  { name: 'arp.src.proto_ipv4', reads: ['arp.spa'], help: 'Sender IPv4 address (arp.spa).' },
-  { name: 'arp.dst.hw_mac', reads: ['arp.tha'], help: 'Target MAC address (arp.tha).' },
-  { name: 'arp.dst.proto_ipv4', reads: ['arp.tpa'], help: 'Target IPv4 address (arp.tpa).' },
-  { name: 'ip.src', reads: ['ipv4.src'], help: 'IPv4 source address (ipv4.src).' },
-  { name: 'ip.dst', reads: ['ipv4.dst'], help: 'IPv4 destination address (ipv4.dst).' },
-  { name: 'ip.addr', reads: ['ipv4.src', 'ipv4.dst'], help: 'Either IPv4 address of the packet.' },
-  { name: 'ip.ttl', reads: ['ipv4.ttl'], help: 'IPv4 time to live (ipv4.ttl).' },
-  { name: 'ip.proto', reads: ['ipv4.protocol'], help: 'IPv4 upper-layer protocol number (ipv4.protocol).' },
-  { name: 'ip.len', reads: ['ipv4.totalLength'], help: 'IPv4 total length (ipv4.totalLength).' },
-  { name: 'ip.id', reads: ['ipv4.id'], help: 'IPv4 identification (ipv4.id).' },
-  { name: 'ip.dsfield.dscp', reads: ['ipv4.dscp'], help: 'IPv4 DSCP value (ipv4.dscp).' },
-  { name: 'ipv6.addr', reads: ['ipv6.src', 'ipv6.dst'], help: 'Either IPv6 address of the packet.' },
-  { name: 'ipv6.hlim', reads: ['ipv6.hopLimit'], help: 'IPv6 hop limit (ipv6.hopLimit).' },
-  { name: 'ipv6.nxt', reads: ['ipv6.nextHeader'], help: 'IPv6 next header (ipv6.nextHeader).' },
-  { name: 'ipv6.plen', reads: ['ipv6.payloadLength'], help: 'IPv6 payload length (ipv6.payloadLength).' },
-  { name: 'icmp.type', reads: ['icmpv4.type'], help: 'ICMP type (icmpv4.type).' },
-  { name: 'icmp.code', reads: ['icmpv4.code'], help: 'ICMP code (icmpv4.code).' },
-  { name: 'icmp.ident', reads: ['icmpv4.id'], help: 'ICMP echo identifier (icmpv4.id).' },
-  { name: 'icmp.seq', reads: ['icmpv4.seq'], help: 'ICMP echo sequence number (icmpv4.seq).' },
-  { name: 'icmpv6.nd.ns.target_address', reads: ['icmpv6.target'], help: 'Neighbor solicitation/advertisement target (icmpv6.target).' },
-  { name: 'tcp.port', reads: ['tcp.srcPort', 'tcp.dstPort'], help: 'Either TCP port.' },
-  { name: 'tcp.srcport', reads: ['tcp.srcPort'], help: 'TCP source port (tcp.srcPort).' },
-  { name: 'tcp.dstport', reads: ['tcp.dstPort'], help: 'TCP destination port (tcp.dstPort).' },
-  { name: 'tcp.window_size', reads: ['tcp.window'], help: 'TCP receive window (tcp.window).' },
-  { name: 'udp.port', reads: ['udp.srcPort', 'udp.dstPort'], help: 'Either UDP port.' },
-  { name: 'udp.srcport', reads: ['udp.srcPort'], help: 'UDP source port (udp.srcPort).' },
-  { name: 'udp.dstport', reads: ['udp.dstPort'], help: 'UDP destination port (udp.dstPort).' },
-  { name: 'dns.flags.response', reads: ['dns.qr'], help: 'The DNS message is a response (dns.qr).' },
-  { name: 'dns.flags.rcode', reads: ['dns.rcode'], help: 'DNS response code: 0 no error, 2 server failure, 3 no such name (dns.rcode).' },
-  { name: 'dhcp.type', reads: ['dhcp.messageType'], help: 'DHCP message type, e.g. "DISCOVER" (dhcp.messageType).' },
-  { name: 'dhcp.ip.your', reads: ['dhcp.yiaddr'], help: 'Address offered to the client (dhcp.yiaddr).' },
-  { name: 'dhcp.ip.client', reads: ['dhcp.ciaddr'], help: 'Client address (dhcp.ciaddr).' },
-  { name: 'dhcp.ip.relay', reads: ['dhcp.giaddr'], help: 'Relay agent address (dhcp.giaddr).' },
-  { name: 'dhcp.hw.mac_addr', reads: ['dhcp.chaddr'], help: 'Client hardware address (dhcp.chaddr).' },
-  { name: 'wlan.ssid', reads: ['dot11-mgmt.ssid'], help: 'Wireless network name (dot11-mgmt.ssid).' },
-  { name: 'wlan.bssid', reads: ['dot11-mgmt.bssid'], help: 'Wireless BSSID (dot11-mgmt.bssid).' },
-  { name: 'wlan.ra', reads: ['dot11.addr1'], help: 'Wireless receiver address (dot11.addr1).' },
-  { name: 'wlan.ta', reads: ['dot11.addr2'], help: 'Wireless transmitter address (dot11.addr2).' },
-  { name: 'http.request.uri', reads: ['http.target'], help: 'Request target, e.g. "/index.html" (http.target).' },
-  { name: 'http.response.phrase', reads: ['http.reason'], help: 'Response reason phrase (http.reason).' },
-  { name: 'http.file_data', reads: ['http.body'], help: 'HTTP message body (http.body).' },
-];
-
-const PROTOCOL_ALIASES: readonly { name: string; proto: string }[] = [
-  { name: 'eth', proto: 'ethernet' },
-  { name: 'ip', proto: 'ipv4' },
-  { name: 'icmp', proto: 'icmpv4' },
-  { name: 'wlan', proto: 'dot11' },
-  { name: 'data', proto: 'payload' },
-];
-
+/** Display type of a canonical path; throws for a path PROTO_FIELDS does not define. */
 function canonicalFieldType(path: string): DisplayFieldType {
   const [proto, field] = splitPath(path);
   const spec = PROTO_FIELDS[proto]?.fields.find((f) => f.name === field);
@@ -314,71 +121,24 @@ function canonicalFieldType(path: string): DisplayFieldType {
   return mapFieldType(spec.type);
 }
 
-function frameAccessors(): DisplayFieldAccessor[] {
-  const out: DisplayFieldAccessor[] = [];
-  const add = (name: string, type: DisplayFieldType, help: string, pick: (frame: DisplayFilterFrame) => DisplayScalar | undefined): void => {
-    const d = def(name, [name], type, help);
-    out.push(valuesAccessor(d, (frame) => {
-      const v = pick(frame);
-      return v === undefined ? [] : [v];
-    }));
-  };
-  const frameDef = def('frame', ['frame'], 'protocol', 'Every captured frame.');
-  out.push(Object.freeze({
-    def: frameDef,
-    values: (frame: DisplayFilterFrame) => (frame.bytes === undefined ? [] : [frame.bytes]),
-    present: () => true,
-  }));
-  add('frame.number', 'number', 'Frame number in the capture, starting at 1.', (f) => f.number);
-  add('frame.len', 'number', 'Frame length on the wire, in bytes.', (f) => f.len);
-  add('frame.cap_len', 'number', 'Bytes captured for this frame.', (f) => (f.bytes === undefined ? f.len : f.bytes.length));
-  add('frame.time_relative', 'number', 'Seconds since the first frame of the capture.', (f) => f.timeRelativeNs / 1_000_000_000);
-  add('frame.interface', 'number', 'Index of the capture interface that saw the frame.', (f) => f.iface);
-  add('frame.interface_name', 'string', 'Name of the capture interface, e.g. "PC1 Gi0".', (f) => f.ifaceName);
-  add('frame.direction', 'string', 'Direction at the capture point: "tx", "rx" or "unknown".', (f) => f.dir ?? 'unknown');
-  add('frame.corrupted', 'bool', 'The frame was damaged on the medium.', (f) => f.corrupted === true);
-  return out;
+function knownProto(proto: string, what: string): void {
+  if (PROTO_FIELDS[proto] === undefined) throw new Error(`display filter ${what} names an unknown protocol ${proto}`);
 }
 
-function derivedAccessors(): DisplayFieldAccessor[] {
-  const out: DisplayFieldAccessor[] = [];
-  const add = (name: string, reads: readonly string[], type: DisplayFieldType, help: string, values: (frame: DisplayFilterFrame) => DisplayScalar[]): void => {
-    out.push(valuesAccessor(def(name, reads, type, help), values));
-  };
-  const flags: readonly [string, string, string][] = [
-    ['fin', 'F', 'FIN: the sender has finished sending.'],
-    ['syn', 'S', 'SYN: synchronise sequence numbers (connection open).'],
-    ['reset', 'R', 'RST: reset the connection.'],
-    ['rst', 'R', 'RST: reset the connection (same as tcp.flags.reset).'],
-    ['push', 'P', 'PSH: push buffered data to the application.'],
-    ['ack', 'A', 'ACK: the acknowledgement number is valid.'],
-    ['urg', 'U', 'URG: the urgent pointer is valid.'],
-    ['ece', 'E', 'ECE: ECN echo.'],
-    ['cwr', 'C', 'CWR: congestion window reduced.'],
-  ];
-  for (const [name, letter, help] of flags) {
-    add(`tcp.flags.${name}`, ['tcp.flags'], 'bool', `TCP flag ${help} Compare with 1 or 0.`, derived('tcp', tcpFlag(letter)));
+/** Protocol help text by canonical protocol name, merged from the protocol files (each protocol in one file only). */
+function buildProtocolHelp(): Readonly<Record<string, string>> {
+  const out: Record<string, string> = {};
+  for (const file of PROTOCOL_FILES) {
+    for (const [proto, help] of Object.entries(file.help ?? {})) {
+      knownProto(proto, 'help');
+      if (out[proto] !== undefined) throw new Error(`display filter help for ${proto} is given twice`);
+      out[proto] = help;
+    }
   }
-  add('tcp.len', ['tcp'], 'number', 'TCP segment payload length, in bytes.', derived('tcp', (layer) => Math.max(0, layer.length - layer.headerLength - (layer.trailerLength ?? 0))));
-  add('udp.len', ['udp'], 'number', 'UDP payload length, in bytes.', derived('udp', (layer) => Math.max(0, layer.length - layer.headerLength - (layer.trailerLength ?? 0))));
-  add('dns.qry.name', ['dns.questions'], 'string', 'Name asked for in a DNS question, e.g. "www.lab.nf".', derived('dns', (layer) => dnsEntries(layer, 'questions').map((p) => p[0] as string)));
-  add('dns.qry.type', ['dns.questions'], 'string', 'Record type asked for in a DNS question, e.g. "A" or "AAAA".', derived('dns', (layer) => dnsEntries(layer, 'questions').filter((p) => p.length > 1).map((p) => (p[1] as string).toUpperCase())));
-  add('dns.resp.name', ['dns.answers'], 'string', 'Owner name of a DNS answer record.', derived('dns', (layer) => dnsEntries(layer, 'answers').map((p) => p[0] as string)));
-  add('dns.a', ['dns.answers', 'dns.authorities', 'dns.additionals'], 'ipv4', 'IPv4 address carried by a DNS A record.', derived('dns', dnsAnswerData('A')));
-  add('dns.aaaa', ['dns.answers', 'dns.authorities', 'dns.additionals'], 'ipv6', 'IPv6 address carried by a DNS AAAA record.', derived('dns', dnsAnswerData('AAAA')));
-  add('dns.cname', ['dns.answers', 'dns.authorities', 'dns.additionals'], 'string', 'Canonical name carried by a DNS CNAME record.', derived('dns', dnsAnswerData('CNAME')));
-  add('http.request', ['http.kind'], 'bool', 'The HTTP message is a request.', derived('http', httpKind('request')));
-  add('http.response', ['http.kind'], 'bool', 'The HTTP message is a response.', derived('http', httpKind('response')));
-  add('http.request.method', ['http.method'], 'string', 'Request method, e.g. "GET".', derived('http', httpKind('request', 'method')));
-  add('http.request.version', ['http.version'], 'string', 'Version of an HTTP request.', derived('http', httpKind('request', 'version')));
-  add('http.response.code', ['http.status'], 'number', 'Response status code, e.g. 200 or 404.', derived('http', httpKind('response', 'status')));
-  add('http.response.version', ['http.version'], 'string', 'Version of an HTTP response.', derived('http', httpKind('response', 'version')));
-  add('http.host', ['http.headers'], 'string', 'Value of the Host header.', derived('http', httpHeader('host')));
-  add('http.content_type', ['http.headers'], 'string', 'Value of the Content-Type header.', derived('http', httpHeader('content-type')));
-  add('http.server', ['http.headers'], 'string', 'Value of the Server header.', derived('http', httpHeader('server')));
-  add('http.user_agent', ['http.headers'], 'string', 'Value of the User-Agent header.', derived('http', httpHeader('user-agent')));
-  return out;
+  return Object.freeze(out);
 }
+
+const PROTOCOL_HELP: Readonly<Record<string, string>> = buildProtocolHelp();
 
 function buildRegistry(): DisplayFieldAccessor[] {
   const out: DisplayFieldAccessor[] = frameAccessors();
@@ -390,14 +150,22 @@ function buildRegistry(): DisplayFieldAccessor[] {
       out.push(canonicalAccessor(def(path, [path], mapFieldType(spec.type), spec.doc)));
     }
   }
-  for (const a of PROTOCOL_ALIASES) {
-    out.push(protocolAccessor(def(a.name, [a.proto], 'protocol', `${PROTOCOL_HELP[a.proto] ?? a.proto} Same as '${a.proto}'.`), a.proto));
+  for (const file of PROTOCOL_FILES) {
+    for (const a of file.protocolAliases ?? []) {
+      knownProto(a.proto, `name ${a.name}`);
+      out.push(protocolAccessor(def(a.name, [a.proto], 'protocol', `${PROTOCOL_HELP[a.proto] ?? a.proto} Same as '${a.proto}'.`), a.proto));
+    }
   }
-  for (const a of PLAIN_ALIASES) {
-    const type = canonicalFieldType(a.reads[0] as string);
-    out.push(canonicalAccessor(def(a.name, a.reads, type, a.help)));
+  for (const file of PROTOCOL_FILES) {
+    for (const a of file.aliases ?? []) {
+      const type = canonicalFieldType(a.reads[0] as string);
+      for (const path of a.reads.slice(1)) canonicalFieldType(path);
+      out.push(canonicalAccessor(def(a.name, a.reads, type, a.help)));
+    }
   }
-  out.push(...derivedAccessors());
+  for (const file of PROTOCOL_FILES) {
+    for (const d of file.derived ?? []) out.push(valuesAccessor(def(d.name, d.reads, d.type, d.help), d.values));
+  }
   const seen = new Set<string>();
   for (const acc of out) {
     if (seen.has(acc.def.name)) throw new Error(`duplicate display filter field ${acc.def.name}`);
@@ -421,6 +189,24 @@ export function lookupDisplayField(name: string): DisplayFieldDef | undefined {
 export function displayFieldAccessor(name: string): DisplayFieldAccessor | undefined {
   return BY_NAME.get(name);
 }
+
+function buildFieldValues(): Readonly<Record<string, readonly string[]>> {
+  const out: Record<string, readonly string[]> = {};
+  for (const values of [FRAME_FIELD_VALUES, ...PROTOCOL_FILES.map((f) => f.values ?? {})]) {
+    for (const [name, list] of Object.entries(values)) {
+      if (!BY_NAME.has(name)) throw new Error(`display filter values name an unknown field ${name}`);
+      if (out[name] !== undefined) throw new Error(`display filter values for ${name} are given twice`);
+      out[name] = Object.freeze([...list]);
+    }
+  }
+  return Object.freeze(out);
+}
+
+/**
+ * Suggested values of the enumerated text fields by field name (canonical and familiar spellings), offered by
+ * completion after a relation (`dhcp.type == "DISCOVER"`); gathered from the protocol files.
+ */
+export const DISPLAY_FIELD_VALUES: Readonly<Record<string, readonly string[]>> = buildFieldValues();
 
 // ── literal helpers shared by the parser and the evaluator ────────────────────
 

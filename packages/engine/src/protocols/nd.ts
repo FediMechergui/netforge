@@ -6,6 +6,10 @@
  *  • `nd.sendVia` (from ipv6 and icmpv6), by the egress port's link framing:
  *      hdlc     → no neighbour resolution and no NdRow: encapsulate `hdlc {address 0x0f, control 0, protocol 0x86dd}`,
  *                 or rewrap a packet still framed by another link (forwarded from Ethernet);
+ *      ppp      → (P3 [S19], ARCHITECTURE-P3 D17, §9.2 item 30: a `ppp` port was framed as HDLC before) the same
+ *                 without resolution, framed `ppp {address 0xff, control 0x03, protocol 0x0057}`; while the port's
+ *                 `ppp` row (written by the ppp daemon) says IPv6CP is not opened (absent counts as not negotiated),
+ *                 IPv6 is dropped `link-down`, the twin of arp's IPCP gate; with no row there is no gate (§9.2 item 30b);
  *      none     → (loopbacks) the bare packet is sent;
  *      ethernet → multicast next hop → 33:33 + low 32 bits (RFC 2464 §7); unicast → the neighbour cache: REACHABLE,
  *                 DELAY and PROBE send at once, STALE sends and moves to DELAY (5 s), then PROBE (unicast NS every
@@ -54,6 +58,9 @@ import {
   ICMPV6_RA,
   ICMPV6_RS,
   ICMPV6_UNREACH_ADDRESS,
+  PPP_ADDRESS,
+  PPP_CONTROL,
+  PPP_PROTO,
   IPPROTO_ICMPV6,
   IPV6_ND_HOP_LIMIT,
   type LayerSpec,
@@ -80,7 +87,7 @@ import {
   ND_RS_MAX,
   ND_RS_MAX_DELAY_NS,
 } from '../contracts/services.js';
-import { ndKey, type NdRow, type Table } from '../contracts/tables.js';
+import { ndKey, type NdRow, type PppRow, type Table } from '../contracts/tables.js';
 import { flowKey, ipv6MulticastMac, ipv6NetworkOf, normalizeIpv6, solicitedNodeMulticast } from '../core/addr6.js';
 import { ICMPV6_RA_DEFAULT_HOP_LIMIT, ICMPV6_RA_DEFAULT_LIFETIME_S } from '../pdu/codecs/icmpv6.js';
 import {
@@ -107,11 +114,17 @@ const TIMER_NBR = 'nd:';
 const TIMER_RS = 'rs:';
 const TIMER_RA = 'ra:';
 const TIMER_RA_SOLICIT = 'ra-solicit:';
-/** Link framing protocols that the framer strips when a packet changes framing (P2: an 802.1Q tag counts as framing). */
-const LINK_FRAMING_PROTOS: readonly string[] = Object.freeze(['ethernet', 'dot1q', 'hdlc', 'dot11', 'llc']);
+/**
+ * Link framing protocols that the framer strips when a packet changes framing (P2: an 802.1Q tag counts as framing;
+ * P3 [S19]: a PPP frame).
+ */
+const LINK_FRAMING_PROTOS: readonly string[] = Object.freeze(['ethernet', 'dot1q', 'hdlc', 'dot11', 'llc', 'ppp']);
 
-/** How a port frames IPv6: Ethernet (also wireless adapters, whose data frames are Ethernet at the daemons), HDLC, or none. */
-type Framing = 'ethernet' | 'hdlc' | 'none';
+/**
+ * How a port frames IPv6: Ethernet (also wireless adapters, whose data frames are Ethernet at the daemons), HDLC,
+ * [S19] PPP, or none.
+ */
+type Framing = 'ethernet' | 'hdlc' | 'ppp' | 'none';
 
 /** A packet waiting for a resolution, with the cause its sender gave. */
 interface Queued {
@@ -139,12 +152,18 @@ function leadingFraming(pdu: Pick<Pdu, 'layers'>): number {
   return n;
 }
 
-/** Framing of a port view. */
+/** Framing of a port view ([S19] `ppp` frames as PPP; it was latently mapped to HDLC framing before, D17). */
 function framingOf(view: PortView): Framing {
   const encap = encapOf6(view);
-  if (encap === 'hdlc' || encap === 'ppp') return 'hdlc';
+  if (encap === 'hdlc') return 'hdlc';
+  if (encap === 'ppp') return 'ppp';
   if (encap === 'none') return 'none';
   return 'ethernet';
+}
+
+/** [S19] The PPP header of an IPv6 packet (protocol 0x0057). */
+function pppIpv6Layer(): LayerSpec {
+  return { proto: 'ppp', fields: { address: PPP_ADDRESS, control: PPP_CONTROL, protocol: PPP_PROTO.ipv6 } };
 }
 
 /** Structural rewrap through the ctx (trace-mirrored) when available, else directly on the PDU (still recorded). */
@@ -249,6 +268,14 @@ export function createNd(): Process {
     else rewrapPdu(ctx, pdu, { strip: framing, push: [outer] }, cause);
   }
 
+  /** [S19] Put a PPP header on `pdu` (serial point-to-point: nothing to resolve). */
+  function framePpp(ctx: ProcessCtx, pdu: Pdu, cause?: string): void {
+    const framing = leadingFraming(pdu);
+    if (framing === 0) ctx.encapsulate(pdu, pppIpv6Layer(), cause);
+    else if (framing === 1 && pdu.layers[0]!.proto === 'ppp') return;
+    else rewrapPdu(ctx, pdu, { strip: framing, push: [pppIpv6Layer()] }, cause);
+  }
+
   /** Remove any link framing (a packet leaving through a port without framing). */
   function frameNone(ctx: ProcessCtx, pdu: Pdu, cause?: string): void {
     const framing = leadingFraming(pdu);
@@ -259,6 +286,7 @@ export function createNd(): Process {
   function linkLayer(ctx: ProcessCtx, view: PortView, dstMac: MacAddress): LayerSpec | undefined {
     const framing = framingOf(view);
     if (framing === 'hdlc') return { proto: 'hdlc', fields: { address: HDLC_ADDRESS_UNICAST, control: 0, protocol: HDLC_PROTO_IPV6 } };
+    if (framing === 'ppp') return pppIpv6Layer();
     if (framing === 'none') return undefined;
     return { proto: 'ethernet', fields: { dst: dstMac, src: ctx.macOf(view.id), type: ETHERTYPE_IPV6 } };
   }
@@ -339,6 +367,20 @@ export function createNd(): Process {
     if (framing === 'hdlc') {
       frameHdlc(ctx, pdu, cause);
       debug(ctx, `framing for ${nextHopText} on ${iface}: serial HDLC link, no neighbour resolution`, { ip: nextHopText, iface, pdu: pdu.id });
+      out.push({ type: 'send', port: iface, pdu });
+      return out;
+    }
+    if (framing === 'ppp') {
+      // [S19] IPv6 waits for IPv6CP, as IPv4 waits for IPCP in arp (no row: no ppp daemon, no gate)
+      const row = ctx.tables.get<PppRow>('ppp')?.get(iface);
+      if (row !== undefined && row.ipv6cp !== 'opened') {
+        const state = row.ipv6cp ?? 'not negotiated';
+        debug(ctx, `cannot send to ${nextHopText} on ${iface}: IPv6CP is ${state}, not opened`, { ip: nextHopText, iface, pdu: pdu.id, ipv6cp: state });
+        out.push({ type: 'drop', pdu, reason: 'link-down', detail: `IPv6CP is not open on ${iface}`, port: iface });
+        return out;
+      }
+      framePpp(ctx, pdu, cause);
+      debug(ctx, `framing for ${nextHopText} on ${iface}: serial PPP link, no neighbour resolution`, { ip: nextHopText, iface, pdu: pdu.id });
       out.push({ type: 'send', port: iface, pdu });
       return out;
     }

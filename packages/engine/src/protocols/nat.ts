@@ -39,6 +39,14 @@
  * still earns a time-exceeded, and the connected route sends it back out the outside port, where nobody answers the
  * ARP), which is what a real router does.
  *
+ * P3 (ARCHITECTURE-P3 D12, §2.4, §3.0 (a) step 6; W2 nat) — `filterOut`: when ipv4 sets `filterOut: true` on
+ * `nat.outbound` (the egress port has an outbound access list), nat translates exactly as before (allocating its row)
+ * and then, instead of sending `arp.sendVia`, requests acl `acl.filter {family 4, dir 'out', iface, inPort, natted?,
+ * pdu, onPermit: <that arp.sendVia request>}`. `natted: true` is set when a translation rule rewrote the packet (its
+ * source is now a global address, so acl sends no ICMP for a deny); a packet left untranslated keeps its real source
+ * and goes without the flag. A deny leaves the row to age out (§3.3 step 7). Without `filterOut`, P2's seam byte for
+ * byte; a `nat-exhausted` drop never reaches acl.
+ *
  * Determinism (§4.1): no randomness; ports and pool addresses come from fixed walks; rows are read in insertion order.
  * Silence (§4.3): the daemon never originates a PDU; with no `ip nat` line it writes no row, arms no timer and emits
  * no debug line. Debug category `ip nat` (§5.4); state-machine transitions (`FsmMachine 'nat'`) report a row's life:
@@ -61,6 +69,8 @@ import { aclPermits, isStandardAclNumber, readStandardAcls, type StandardAcl } f
 
 /** Process name (`PROCESS_ORDER` position after `ipv4`, §2.1). */
 export const NAT_PROCESS: ProcessName = 'nat';
+/** @since P3 The daemon nat hands a translated packet to on the `filterOut` path (D12). */
+const ACL_FILTER_PROCESS: ProcessName = 'acl';
 /** Debug category (`debug ip nat`, §5.4). */
 export const NAT_DEBUG_CATEGORY = 'ip nat';
 /** The periodic sweep timer (§4.2). */
@@ -711,9 +721,18 @@ class NatDaemon implements Process {
 
   private outbound(ctx: ProcessCtx, req: Extract<ProcessRequest, { kind: 'nat.outbound' }>): Action[] {
     const pdu = req.pdu;
-    const send = (): Action[] => [
-      { type: 'request', to: 'arp', req: { kind: 'arp.sendVia', pdu, nextHop: req.nextHop, iface: req.iface, ...(req.cause !== undefined ? { cause: req.cause } : {}) } },
-    ];
+    /**
+     * The packet goes on: `arp.sendVia` (P2), or with `filterOut` (P3, D12) the outbound access list with that request
+     * as its continuation; `natted` = a rule translated the packet.
+     */
+    const send = (natted = false): Action[] => {
+      const via: Action = { type: 'request', to: 'arp', req: { kind: 'arp.sendVia', pdu, nextHop: req.nextHop, iface: req.iface, ...(req.cause !== undefined ? { cause: req.cause } : {}) } };
+      if (req.filterOut !== true) return [via];
+      const filter: Extract<ProcessRequest, { kind: 'acl.filter' }> = natted
+        ? { kind: 'acl.filter', family: 4, dir: 'out', iface: req.iface, inPort: req.inPort, natted: true, pdu, onPermit: via }
+        : { kind: 'acl.filter', family: 4, dir: 'out', iface: req.iface, inPort: req.inPort, pdu, onPermit: via };
+      return [{ type: 'request', to: ACL_FILTER_PROCESS, req: filter }];
+    };
     const table = this.table(ctx);
     const flow = flowOf(pdu);
     if (table === undefined || flow === undefined) return send();
@@ -721,8 +740,9 @@ class NatDaemon implements Process {
 
     // [S9] an ICMP error from an inside host about an inbound flow
     if (flow.proto === 'icmp' && flow.error) {
-      if (!this.outboundError(ctx, pdu, flow, rows)) this.untranslated(ctx, pdu, 'out', flow);
-      return send();
+      const translated = this.outboundError(ctx, pdu, flow, rows);
+      if (!translated) this.untranslated(ctx, pdu, 'out', flow);
+      return send(translated);
     }
 
     // 1. a port forward for this inside socket
@@ -731,14 +751,14 @@ class NatDaemon implements Process {
       const st = rows.find((r) => r.kind === 'static' && r.proto === flow.proto && r.insideLocal === flow.src && r.insideLocalPort === port);
       if (st !== undefined) {
         this.rewriteOut(ctx, pdu, st, flow);
-        return send();
+        return send(true);
       }
     }
     // 2. a static address translation
     const st = rows.find((r) => r.kind === 'static' && r.proto === 'any' && r.insideLocal === flow.src);
     if (st !== undefined) {
       this.rewriteOut(ctx, pdu, st, flow);
-      return send();
+      return send(true);
     }
     // 3. an existing overload row of this flow, or the host's address-only dynamic row
     if (flow.proto !== 'other' && port !== undefined) {
@@ -750,14 +770,14 @@ class NatDaemon implements Process {
       if (ov !== undefined) {
         this.touch(ctx, table, ov, flow, 'out', pdu.id);
         this.rewriteOut(ctx, pdu, ov, flow);
-        return send();
+        return send(true);
       }
     }
     const dyn = rows.find((r) => r.kind === 'dynamic' && r.insideLocal === flow.src);
     if (dyn !== undefined) {
       this.touch(ctx, table, dyn, flow, 'out', pdu.id);
       this.rewriteOut(ctx, pdu, dyn, flow);
-      return send();
+      return send(true);
     }
     // 4. the first dynamic rule whose list permits the source
     for (const rule of this.cfg.dynamics) {
@@ -770,7 +790,7 @@ class NatDaemon implements Process {
         return [{ type: 'drop', pdu, reason: 'nat-exhausted', detail: made, port: req.inPort }];
       }
       this.rewriteOut(ctx, pdu, made, flow);
-      return [...this.reconcileVirtuals(ctx), ...this.sweepArming(ctx), ...send()];
+      return [...this.reconcileVirtuals(ctx), ...this.sweepArming(ctx), ...send(true)];
     }
     this.untranslated(ctx, pdu, 'out', flow);
     return send();

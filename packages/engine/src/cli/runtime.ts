@@ -70,6 +70,26 @@
  *   • `debug <category>` state is a per-device set (`'all'` matches everything); `onDebugEvent` prints
  *     `*hh:mm:ss.uuuuuu: <category>: <message>` to every console/vty session on that device.
  *
+ * P3 approved items (ARCHITECTURE-P3 §2.11, D14, D20; §7 W2 cli, delimited `[S13]` / `[S25]` / `[S32]` blocks):
+ *   • [S13] remote sessions. Server side: `openRemote` opens a session `via: 'vty'` (id `v_<n>` from its own counter,
+ *     `FacadeCounters.remote`, resumed from `deps.resume.remote`) for the vty daemon's connection `act.conn`, already
+ *     authenticated by vty (user EXEC, or privileged EXEC for a `username <u> privilege 15` user); `execRemote` runs a
+ *     received line exactly like `exec`; `closeRemote` drops the session. Such a session's output — results, prompts,
+ *     banners, job output, debug and monitor lines — never becomes a `cliOutput` / `cliPrompt` trace event: it is
+ *     delivered to the device's vty daemon as ProcessEvent `vty.output` (`deps.remoteOutput` when the Simulation
+ *     supplies one, else an `event` action applied on the device as process `cli`). Client side: a `telnet` / `ssh` job
+ *     (`vty-client`) relays its session: `setRemote` (the vty-client's `cliRemote`) sets the remote prompt, masked
+ *     input and the chip (`CliSessionView.remote`) and makes the session ready for a line; every line typed then goes
+ *     to the vty-client as `vty.input` (journaled by the facade as the client's `cliExec`, never in the local history),
+ *     ^C as `vty.interrupt`; the job's `cliDone` ends the relay. Nesting depth: a remote session is one deeper than the
+ *     client session that opened it (matched by the client's address and its connect target); a `telnet` / `ssh` job
+ *     in a session `REMOTE_DEPTH_CAP` deep is refused with `MSG_REMOTE_DEPTH`.
+ *   • [S25] `onLogEvent` prints a log line (the logger's renderer, through cli/log-render.ts) on the device's console
+ *     sessions up to `consoleLogLevel` (P3 worlds by default, P1/P2 only after a typed `logging console`) and on its
+ *     sessions with `terminal monitor` up to `monitorLogLevel`; `CliSessionView.monitor` shows the flag. [S24] A stored
+ *     `service timestamps debug …` stamps debug lines the same way (absent: P1's line, byte for byte).
+ *   • [S32] the command context also carries the host's `files:` store (`files` / `readFile`, cli/command-ctx-p3.ts).
+ *
  * Deterministic: no wall clock, no randomness; sessions are kept in Maps in open order and every iteration is
  * over that order.
  */
@@ -98,9 +118,15 @@ import type { Capability, CliGrammar, CliSpec } from '../contracts/catalog.js';
 import type { DeviceModel, DeviceRuntime, PortResolution } from '../contracts/device.js';
 import type { DeviceId, PortId, SessionId } from '../contracts/ids.js';
 import type { PortView } from '../contracts/port.js';
-import type { Action, ConfigOrigin, DebugEvent } from '../contracts/process.js';
+import type { Action, CliRemoteAction, ConfigOrigin, DebugEvent, RemoteCliAction } from '../contracts/process.js';
 import type { Dot11AssocRow, TableName, TableRow, Table } from '../contracts/tables.js';
 import { formatSimTime, type SimTime } from '../contracts/time.js';
+import type { TraceEvent } from '../contracts/trace.js';
+import type { VtyOutputEvent } from '../contracts/transport.js';
+import { profileIncludes } from '../contracts/catalog.js';
+import type { CommandCtxP3 } from './command-ctx-p3.js';
+import { consoleLogLevel, monitorLogLevel, renderDebugLine, renderLogLine, storedTimestampFormat } from './log-render.js';
+import { REMOTE_DEPTH_CAP, VTY_CLIENT_PROCESS } from './grammar/remote.js';
 import { walkConfigText } from './config-text.js';
 import { PASSWORD_PROMPT, secretsFor, USERNAME_PROMPT, verifySecret } from './secrets.js';
 import { CONFIG_SECRET_MASK } from './config-rules.js';
@@ -162,6 +188,43 @@ export const CLI_PROCESS_NAME = 'cli';
 
 /** Terminal label of the P0 ping job. */
 export const PING_JOB_LABEL = 'ping';
+
+// ── P3 [S13] remote sessions, [S25] log printing (ARCHITECTURE-P3 §2.11, D14, D20; W2 cli) ─────────────────────────
+
+/** @since P3 [S13] Prefix of the ids of remote (server-side, via-'vty') sessions: `v_<n>`, counted apart (D14). */
+export const REMOTE_SESSION_PREFIX = 'v_';
+/** @since P3 [S13] The daemon that serves remote sessions and receives their output (`vty.output`). */
+export const VTY_PROCESS_NAME = 'vty';
+/** @since P3 [S13] A `telnet` / `ssh` typed in a session already `REMOTE_DEPTH_CAP` remote sessions deep. */
+export const MSG_REMOTE_DEPTH = `% Remote sessions nest at most ${REMOTE_DEPTH_CAP} deep. Log out of one first.`;
+
+/**
+ * @since P3 What the Simulation may add to `CliRuntimeDeps` for the approved items (no contract member: D14 keeps
+ * `CliRuntimeDeps` as it is). `resume.remote` resumes `FacadeCounters.remote`; `remoteOutput`, when given, receives the
+ * output of every via-'vty' remote session instead of the runtime's own delivery (an `event` action to the device's
+ * vty daemon).
+ */
+export interface CliRuntimeDepsP3 extends Omit<CliRuntimeDeps, 'resume'> {
+  resume?: { sessions: number; headless: number; remote?: number };
+  remoteOutput?(device: DeviceId, ev: VtyOutputEvent, now: SimTime): void;
+}
+
+/**
+ * @since P3 The runtime `createCliRuntime` builds: the contract surface with the approved items' members present
+ * ([S24]/[S25] `onLogEvent`, [S13] the four remote-session methods) and `counters()` carrying `remote` (only once a
+ * remote session has been opened, so P1/P2 counters keep their shape).
+ */
+export interface CliRuntimeP3 extends CliRuntime {
+  onLogEvent(ev: Extract<TraceEvent, { kind: 'log' }>): void;
+  openRemote(device: DeviceId, act: RemoteCliAction, now: SimTime): SessionId;
+  execRemote(device: DeviceId, act: RemoteCliAction, now: SimTime): void;
+  closeRemote(device: DeviceId, act: RemoteCliAction, now: SimTime): void;
+  setRemote(act: CliRemoteAction, now: SimTime): void;
+  counters(): { sessions: number; headless: number; remote?: number };
+}
+
+/** @since P3 [S32] The hosts' `files:` store as a device runtime exposes it (`DeviceRuntime.files` / `readFile`). */
+type FileStoreReader = Pick<DeviceRuntime, 'files' | 'readFile'>;
 
 /** The P0 job behind a bare `CommandCtx.block()`: the icmpv4 ping of `session`, aborted with `icmp.abort`. */
 export function pingJob(session: SessionId): CliJob {
@@ -381,11 +444,18 @@ export function lineAuthOf(running: CommandCtx['running'], via: 'console' | 'vty
   return undefined;
 }
 
-/** Stored secret of `username <name> secret|password <value>`, or undefined for an unknown user. */
+/**
+ * Stored secret of `username <name> secret|password <value>`, or undefined for an unknown user.
+ * P3 (ARCHITECTURE-P3 D14, §9.2 W2 item 26; W2 cli): also the privilege form `username <name> privilege <level>
+ * secret|password <value>`, so `login local` accepts a user created with a privilege.
+ */
 export function userSecretOf(running: CommandCtx['running'], name: string): string | undefined {
   for (const node of running.root.children) {
     if (node.key !== 'username' || node.args[0] !== name) continue;
     if ((node.args[1] === 'secret' || node.args[1] === 'password') && node.args.length > 2) return node.args.slice(2).join(' ');
+    if (node.args[1] === 'privilege' && (node.args[3] === 'secret' || node.args[3] === 'password') && node.args.length > 4) {
+      return node.args.slice(4).join(' ');
+    }
   }
   return undefined;
 }
@@ -470,6 +540,25 @@ interface SessionState {
   origin?: ConfigOrigin;
   /** Question the next `exec` line answers (§4.10). */
   pending?: PendingInput;
+  // ── P3 [S13] / [S25] ──
+  /** @since P3 [S25] `terminal monitor` is on (logs print on this session up to `logging monitor`). */
+  monitor?: boolean;
+  /** @since P3 [S13] Server side: the vty daemon's connection this remote session serves (`openRemote`). */
+  conn?: string;
+  /** @since P3 [S13] Nesting depth: absent (0) for a console session; a remote session is one deeper than its client. */
+  depth?: number;
+  /** @since P3 [S13] Client side: the remote session a `telnet` / `ssh` job relays (the vty-client's `cliRemote`). */
+  relay?: { prompt?: string; input?: 'plain' | 'secret'; remote?: string };
+  /** @since P3 [S13] Client side: the address a `telnet` / `ssh` job connects to, until a remote session claims it. */
+  outbound?: { target: string; linked: boolean };
+}
+
+/** @since P3 [S13] Thrown by `CommandCtx.block` when a `telnet` / `ssh` job would nest deeper than `REMOTE_DEPTH_CAP`. */
+class RemoteDepthRefused extends Error {
+  constructor() {
+    super(MSG_REMOTE_DEPTH);
+    this.name = 'RemoteDepthRefused';
+  }
 }
 
 /** Everything one line produced, before it is shaped into a `CliResult` or a `ConfigureLineResult`. */
@@ -498,7 +587,7 @@ class HeadlessJobRefused extends Error {
  * the runtime-bound handlers (`debug`, `undebug all`, `do`) are always merged over it. The grammar is
  * `deps.grammar` when given, else the built-in `GRAMMAR`.
  */
-export function createCliRuntime(deps: CliRuntimeDeps, handlers?: Record<string, CommandHandler>): CliRuntime {
+export function createCliRuntime(deps: CliRuntimeDepsP3, handlers?: Record<string, CommandHandler>): CliRuntimeP3 {
   const grammar: readonly CommandSpec[] = deps.grammar ?? BUILTIN_GRAMMAR;
   const scope = createScopeCache();
   const sessions = new Map<SessionId, SessionState>();
@@ -507,11 +596,14 @@ export function createCliRuntime(deps: CliRuntimeDeps, handlers?: Record<string,
   // [S1] counted from `deps.resume` so a replay numbers its sessions exactly as the live world did (§2.13)
   let nextSession = deps.resume?.sessions ?? 0;
   let nextHeadless = deps.resume?.headless ?? 0;
+  // [S13] remote (server-side) sessions have their own counter, `FacadeCounters.remote` (D14)
+  let nextRemote = deps.resume?.remote ?? 0;
 
   // ── small helpers ──────────────────────────────────────────────────────────
 
   const hostnameOf = (s: SessionState): string => deps.device(s.device)?.hostname ?? '';
-  const promptOf = (s: SessionState, mode: CliMode = s.mode): string => hostnameOf(s) + promptSuffix(mode);
+  // [S13] a session relaying a remote session shows the remote prompt
+  const promptOf = (s: SessionState, mode: CliMode = s.mode): string => s.relay?.prompt ?? hostnameOf(s) + promptSuffix(mode);
   const capabilitiesOf = (dev: DeviceRuntime): readonly Capability[] => dev.capabilities;
   /** Context a command sees in `mode`: the session stack in configuration-class modes, none elsewhere. */
   const contextIn = (s: SessionState, mode: CliMode): string[][] => (isConfigClassMode(mode) ? copyContext(s.context) : []);
@@ -545,13 +637,52 @@ export function createCliRuntime(deps: CliRuntimeDeps, handlers?: Record<string,
     if (isConfigClassMode(mode)) v.context = context;
     if (s.job !== undefined) v.job = { process: s.job.process, label: s.job.label };
     if (s.pending !== undefined) v.input = { ...s.pending.request };
+    // ── P3 [S13] / [S25] (optional by meaning: absent on every P1/P2 session) ──
+    const relayInput = relayInputOf(s);
+    if (relayInput !== undefined) v.input = relayInput;
+    if (s.monitor === true) v.monitor = true;
+    if (s.relay?.remote !== undefined) v.remote = s.relay.remote;
     return v;
+  };
+
+  /** @since P3 [S13] The masked input a relayed remote session asks for (a remote password prompt), if any. */
+  function relayInputOf(s: SessionState): CliInputRequest | undefined {
+    return s.relay?.input === 'secret' ? { kind: 'secret', prompt: s.relay.prompt ?? '' } : undefined;
+  }
+
+  /**
+   * @since P3 [S13] Deliver output of a remote (via-'vty') session to the device's vty daemon as `vty.output`: through
+   * `deps.remoteOutput` when the Simulation supplies it, else as an `event` action applied on the device.
+   */
+  const deliverRemote = (s: SessionState, out: Omit<VtyOutputEvent, 'kind' | 'conn'>, now: SimTime): void => {
+    if (s.conn === undefined) return;
+    const ev: VtyOutputEvent = { kind: 'vty.output', conn: s.conn, text: out.text };
+    if (out.prompt !== undefined) ev.prompt = out.prompt;
+    if (out.input !== undefined) ev.input = out.input;
+    if (out.closed === true) ev.closed = true;
+    if (deps.remoteOutput !== undefined) {
+      deps.remoteOutput(s.device, ev, now);
+      return;
+    }
+    // only a live device that runs vty can carry it (its connections died with the power otherwise)
+    const dev = deps.device(s.device);
+    if (dev === undefined || !dev.power || dev.bootedAt === undefined || !dev.processes.has(VTY_PROCESS_NAME)) return;
+    dev.applyActions(CLI_PROCESS_NAME, [{ type: 'event', to: VTY_PROCESS_NAME, ev }], now);
   };
 
   const emitPrompt = (s: SessionState, now: SimTime): void => {
     if (s.headless) return;
-    if (s.pending !== undefined) {
-      deps.trace.emit({ t: now, kind: 'cliPrompt', session: s.id, prompt: promptOf(s), busy: s.busy, input: { ...s.pending.request } });
+    if (s.conn !== undefined) {
+      // [S13] a remote session's prompt goes back over its connection (a question shows its own prompt)
+      const question = s.pending !== undefined ? s.pending.request : relayInputOf(s);
+      const out: Omit<VtyOutputEvent, 'kind' | 'conn'> = { text: '', prompt: s.pending !== undefined ? s.pending.request.prompt : promptOf(s) };
+      if (question?.kind === 'secret') out.input = 'secret';
+      deliverRemote(s, out, now);
+      return;
+    }
+    const input = s.pending !== undefined ? { ...s.pending.request } : relayInputOf(s);
+    if (input !== undefined) {
+      deps.trace.emit({ t: now, kind: 'cliPrompt', session: s.id, prompt: promptOf(s), busy: s.busy, input });
       return;
     }
     deps.trace.emit({ t: now, kind: 'cliPrompt', session: s.id, prompt: promptOf(s), busy: s.busy });
@@ -559,6 +690,10 @@ export function createCliRuntime(deps: CliRuntimeDeps, handlers?: Record<string,
 
   const emitOutput = (s: SessionState, text: string, now: SimTime): void => {
     if (s.headless) return;
+    if (s.conn !== undefined) {
+      deliverRemote(s, { text }, now);
+      return;
+    }
     deps.trace.emit({ t: now, kind: 'cliOutput', session: s.id, text });
   };
 
@@ -734,7 +869,8 @@ export function createCliRuntime(deps: CliRuntimeDeps, handlers?: Record<string,
         ),
       setPortRole: (port, role) => counted(s, dev, () => dev.setPortRole(port, role, now)),
     };
-    const ctx: CommandCtx = {
+    const store = dev as DeviceRuntime & FileStoreReader;
+    const ctx: CommandCtxP3 = {
       now,
       session: viewOf(s, mode, contextOverride),
       deviceId: dev.id,
@@ -753,6 +889,8 @@ export function createCliRuntime(deps: CliRuntimeDeps, handlers?: Record<string,
       },
       resolvePort: (name) => existingPort(dev, name),
       request: (to, req) => {
+        // [S13] a client job's target, so the remote session it opens can be counted one level deeper
+        if (req.kind === 'vty.connect') s.outbound = { target: req.target, linked: false };
         dev.applyActions(CLI_PROCESS_NAME, [{ type: 'request', to, req }], now);
       },
       act: (actions: Action[]) => {
@@ -767,6 +905,8 @@ export function createCliRuntime(deps: CliRuntimeDeps, handlers?: Record<string,
       },
       block: (job) => {
         if (s.headless) throw new HeadlessJobRefused();
+        // [S13] the nesting cap of remote sessions (D14)
+        if (job?.process === VTY_CLIENT_PROCESS && (s.depth ?? 0) >= REMOTE_DEPTH_CAP) throw new RemoteDepthRefused();
         s.busy = true;
         s.job = job ?? pingJob(s.id);
       },
@@ -786,6 +926,19 @@ export function createCliRuntime(deps: CliRuntimeDeps, handlers?: Record<string,
       secrets: secretsFor(dev.id),
       // P3 (W1, §2.9, §9.2 item 19): the device clock at the command's time
       clock: () => dev.clockView(now),
+      // P3 (W2 fix, finding 8): the world's defaults profile, for the show handlers' profile defaults
+      profile: dev.profile,
+      // P3 (§2.9, M13; W2 cli): a port's QoS marking counters for `show policy-map interface`, when the runtime has them
+      ...(dev.qosCounters !== undefined ? { qosCounters: (port: PortId) => dev.qosCounters?.(port) } : {}),
+      // ── P3 approved items (cli/command-ctx-p3.ts) ──
+      // [S25] `terminal monitor` / `terminal no monitor`
+      setMonitor: (on) => {
+        if (on) s.monitor = true;
+        else delete s.monitor;
+      },
+      // [S32] the hosts' `files:` store (empty on a device without one)
+      files: (fs) => store.files?.(fs) ?? [],
+      readFile: (fs, path) => store.readFile?.(fs, path),
     };
     return ctx;
   };
@@ -856,7 +1009,15 @@ export function createCliRuntime(deps: CliRuntimeDeps, handlers?: Record<string,
     const auth = lineAuthOf(dev.running, s.via);
     if (auth === undefined || !auth.local) return finishLogin(s, dev);
     const stored = userSecretOf(dev.running, user);
-    if (stored !== undefined && verifySecret(dev.id, stored, answer)) return finishLogin(s, dev);
+    if (stored !== undefined && verifySecret(dev.id, stored, answer)) {
+      const step = finishLogin(s, dev);
+      // P3 (D14, W2 cli): a `username <u> privilege 15` user starts in privileged EXEC, as on a remote session
+      if (userPrivilegeOf(dev.running, user) === 15) {
+        s.mode = 'priv-exec';
+        s.privilege = 15;
+      }
+      return step;
+    }
     return { output: MSG_LOGIN_FAILED, next: { request: USERNAME_PROMPT, answer: usernameAnswer, failed: true } };
   };
 
@@ -998,6 +1159,7 @@ export function createCliRuntime(deps: CliRuntimeDeps, handlers?: Record<string,
       outcome = handler(ctx, m.args, m.negated);
     } catch (e) {
       if (e instanceof HeadlessJobRefused) return failure(CLI_MESSAGES.notHeadless, { message: CLI_MESSAGES.notHeadless });
+      if (e instanceof RemoteDepthRefused) return failure(MSG_REMOTE_DEPTH, { message: MSG_REMOTE_DEPTH }); // [S13]
       throw e;
     }
     if (outcome.ask !== undefined) {
@@ -1072,6 +1234,11 @@ export function createCliRuntime(deps: CliRuntimeDeps, handlers?: Record<string,
     if (error !== undefined) r.error = error;
     if (closed === true) r.closed = true;
     else if (s.pending !== undefined) r.input = { ...s.pending.request };
+    else {
+      // [S13] a relayed remote password prompt
+      const relayInput = relayInputOf(s);
+      if (relayInput !== undefined) r.input = relayInput;
+    }
     return r;
   };
 
@@ -1226,9 +1393,125 @@ export function createCliRuntime(deps: CliRuntimeDeps, handlers?: Record<string,
     return out;
   }
 
+  // ── one line on a session (shared by the console and the [S13] remote sessions) ─────────────────────────────
+
+  /**
+   * Run one typed line on `s`: the result, and whether a prompt follows it (the console then emits `cliPrompt`, a
+   * remote session sends it back over its connection). P3 [S13]: a session relaying a remote session sends the line
+   * to its vty-client instead (`vty.input`), never into the local history.
+   */
+  function execSession(s: SessionState, line: string): { r: CliResult; prompt: boolean } {
+    if (s.pending !== undefined) {
+      // An answer: not parsed, not trimmed (only the line ending goes), never recorded in history.
+      s.executing = true;
+      let r: CliResult;
+      try {
+        r = answerPending(s, stripLineEnding(line));
+      } finally {
+        s.executing = false;
+      }
+      return { r, prompt: r.closed !== true && sessions.has(s.id) };
+    }
+    if (s.mode === 'login') {
+      // After a denial the console waits in the login stage; any line starts it over.
+      const dev = deps.device(s.device);
+      if (dev === undefined) {
+        closeNow(s);
+        return { r: { output: MSG_NO_DEVICE, error: { message: MSG_NO_DEVICE }, mode: s.mode, prompt: '', busy: false, closed: true }, prompt: false };
+      }
+      // The login lines may have been removed meanwhile: then the session goes straight to user EXEC.
+      const banner = startLogin(s, dev);
+      return { r: result(s, banner ?? finishLogin(s, dev).output, s.busy), prompt: true };
+    }
+    // ── P3 [S13] a relayed remote session: the line belongs to the far end ──
+    if (s.relay !== undefined && s.job?.process === VTY_CLIENT_PROCESS) {
+      if (s.busy) return { r: result(s, '', true), prompt: false };
+      s.busy = true;
+      s.executing = true;
+      try {
+        deps.device(s.device)?.applyActions(
+          CLI_PROCESS_NAME,
+          [{ type: 'request', to: VTY_CLIENT_PROCESS, req: { kind: 'vty.input', session: s.id, line: stripLineEnding(line) } }],
+          deps.now(),
+        );
+      } finally {
+        s.executing = false;
+      }
+      return { r: result(s, '', s.busy), prompt: sessions.has(s.id) };
+    }
+    const trimmed = line.trim();
+    if (trimmed === '') return { r: result(s, '', s.busy), prompt: false };
+    if (s.busy) return { r: result(s, '', true), prompt: false };
+
+    s.history.push(trimmed);
+    if (s.history.length > HISTORY_LIMIT) s.history.splice(0, s.history.length - HISTORY_LIMIT);
+
+    s.executing = true;
+    let r: CliResult;
+    try {
+      r = execLine(s, trimmed, s.mode);
+    } finally {
+      s.executing = false;
+    }
+    return { r, prompt: r.closed !== true && sessions.has(s.id) };
+  }
+
+  // ── P3 [S13] remote-session helpers ───────────────────────────────────────
+
+  /** The remote session serving connection `conn` on `device`. */
+  const remoteSession = (device: DeviceId, conn: string): SessionState | undefined => {
+    for (const s of sessions.values()) if (s.device === device && s.conn === conn) return s;
+    return undefined;
+  };
+
+  /** Whether `device` holds `address` on one of its ports (IPv4, IPv6, or a local virtual IPv4 such as an HSRP VIP). */
+  const deviceOwns = (device: DeviceId, address: string): boolean => {
+    const dev = deps.device(device);
+    if (dev === undefined) return false;
+    for (const id of dev.ports.keys()) {
+      const l3 = dev.portView(id)?.l3;
+      if (l3 === undefined) continue;
+      if (l3.ipv4?.address === address) return true;
+      if (l3.ipv6?.some((a) => a.address === address) === true) return true;
+      if (l3.virtual4?.some((v) => v.local && v.address === address) === true) return true;
+    }
+    return false;
+  };
+
+  /**
+   * Depth of a new remote session on `device` opened from `peer`: one more than the client session whose `telnet` /
+   * `ssh` job connects from that address to this device (the first such session in open order, claimed once), else 1.
+   */
+  const remoteDepth = (device: DeviceId, peer: string | undefined): number => {
+    if (peer === undefined) return 1;
+    for (const c of sessions.values()) {
+      const out = c.outbound;
+      if (out === undefined || out.linked || c.job?.process !== VTY_CLIENT_PROCESS) continue;
+      if (!deviceOwns(c.device, peer) || !deviceOwns(device, out.target)) continue;
+      out.linked = true;
+      return (c.depth ?? 0) + 1;
+    }
+    return 1;
+  };
+
+  /** The privilege level of `username <user> privilege <n> …`, or undefined. */
+  const userPrivilegeOf = (running: CommandCtx['running'], user: string): number | undefined => {
+    for (const node of running.root.children) {
+      if (node.key === 'username' && node.args[0] === user && node.args[1] === 'privilege') return Number(node.args[2]);
+    }
+    return undefined;
+  };
+
+  /** A line result as `vty.output` members: the text, the next prompt (a question's own prompt), masked input. */
+  const remoteOutputOf = (r: CliResult): Omit<VtyOutputEvent, 'kind' | 'conn'> => {
+    const out: Omit<VtyOutputEvent, 'kind' | 'conn'> = { text: r.output, prompt: r.input?.prompt ?? r.prompt };
+    if (r.input?.kind === 'secret') out.input = 'secret';
+    return out;
+  };
+
   // ── public surface ────────────────────────────────────────────────────────
 
-  const runtime: CliRuntime = {
+  const runtime: CliRuntimeP3 = {
     onOutput(session, text, now) {
       const s = sessions.get(session);
       if (s === undefined) return;
@@ -1240,6 +1523,9 @@ export function createCliRuntime(deps: CliRuntimeDeps, handlers?: Record<string,
       if (s === undefined) return;
       s.busy = false;
       delete s.job;
+      // [S13] the end of a client job ends its relay
+      delete s.relay;
+      delete s.outbound;
       if (!s.executing) emitPrompt(s, now);
     },
 
@@ -1247,7 +1533,12 @@ export function createCliRuntime(deps: CliRuntimeDeps, handlers?: Record<string,
       const set = debugByDevice.get(ev.device);
       if (set === undefined || set.size === 0) return;
       if (!set.has(ev.category) && !set.has('all')) return;
-      const text = `*${formatSimTime(ev.at)}: ${ev.category}: ${ev.message}`;
+      let text = `*${formatSimTime(ev.at)}: ${ev.category}: ${ev.message}`;
+      // ── P3 [S24] (D20): a stored `service timestamps debug …` stamps the line through the logger's renderer; without
+      // the line (every P1/P2 world) the P1 line above is printed unchanged ──
+      const dev = deps.device(ev.device);
+      const fmt = dev === undefined ? undefined : storedTimestampFormat(dev.running.root, 'debug');
+      if (dev !== undefined && fmt !== undefined) text = renderDebugLine(ev, dev.clockView(ev.at), dev.uptime(ev.at), fmt);
       for (const s of sessions.values()) {
         if (s.device === ev.device) emitOutput(s, text, ev.at);
       }
@@ -1296,6 +1587,11 @@ export function createCliRuntime(deps: CliRuntimeDeps, handlers?: Record<string,
     },
 
     close(id) {
+      // [S13] closing a session that relays a remote session also ends the client job (the vty-client closes it)
+      const s = sessions.get(id);
+      if (s !== undefined && s.job?.process === VTY_CLIENT_PROCESS) {
+        deps.device(s.device)?.applyActions(CLI_PROCESS_NAME, [{ type: 'request', to: s.job.process, req: s.job.abort }], deps.now());
+      }
       sessions.delete(id);
     },
 
@@ -1304,46 +1600,8 @@ export function createCliRuntime(deps: CliRuntimeDeps, handlers?: Record<string,
       if (s === undefined) {
         return { output: MSG_NO_SESSION, error: { message: MSG_NO_SESSION }, mode: 'user-exec', prompt: '', busy: false, closed: true };
       }
-      if (s.pending !== undefined) {
-        // An answer: not parsed, not trimmed (only the line ending goes), never recorded in history.
-        s.executing = true;
-        let r: CliResult;
-        try {
-          r = answerPending(s, stripLineEnding(line));
-        } finally {
-          s.executing = false;
-        }
-        if (r.closed !== true && sessions.has(s.id)) emitPrompt(s, deps.now());
-        return r;
-      }
-      if (s.mode === 'login') {
-        // After a denial the console waits in the login stage; any line starts it over.
-        const dev = deps.device(s.device);
-        if (dev === undefined) {
-          closeNow(s);
-          return { output: MSG_NO_DEVICE, error: { message: MSG_NO_DEVICE }, mode: s.mode, prompt: '', busy: false, closed: true };
-        }
-        // The login lines may have been removed meanwhile: then the session goes straight to user EXEC.
-        const banner = startLogin(s, dev);
-        const r = result(s, banner ?? finishLogin(s, dev).output, s.busy);
-        emitPrompt(s, deps.now());
-        return r;
-      }
-      const trimmed = line.trim();
-      if (trimmed === '') return result(s, '', s.busy);
-      if (s.busy) return result(s, '', true);
-
-      s.history.push(trimmed);
-      if (s.history.length > HISTORY_LIMIT) s.history.splice(0, s.history.length - HISTORY_LIMIT);
-
-      s.executing = true;
-      let r: CliResult;
-      try {
-        r = execLine(s, trimmed, s.mode);
-      } finally {
-        s.executing = false;
-      }
-      if (r.closed !== true && sessions.has(s.id)) emitPrompt(s, deps.now());
+      const { r, prompt } = execSession(s, line);
+      if (prompt) emitPrompt(s, deps.now());
       return r;
     },
 
@@ -1371,6 +1629,11 @@ export function createCliRuntime(deps: CliRuntimeDeps, handlers?: Record<string,
         // Drop the question; a login stage stays (the next line starts it over).
         delete s.pending;
         emitPrompt(s, now);
+        return;
+      }
+      // [S13] in a relayed remote session the interrupt goes to the far end (`vty.interrupt`); the session stays
+      if (s.relay !== undefined && s.job !== undefined) {
+        deps.device(s.device)?.applyActions(CLI_PROCESS_NAME, [{ type: 'request', to: s.job.process, req: s.job.abort }], now);
         return;
       }
       if (s.busy) {
@@ -1404,7 +1667,10 @@ export function createCliRuntime(deps: CliRuntimeDeps, handlers?: Record<string,
     configure,
 
     counters() {
-      return { sessions: nextSession, headless: nextHeadless };
+      // [S13] `remote` only once a remote session was opened (FacadeCounters.remote is optional by meaning)
+      const c: { sessions: number; headless: number; remote?: number } = { sessions: nextSession, headless: nextHeadless };
+      if (nextRemote > 0) c.remote = nextRemote;
+      return c;
     },
 
     onPortsRemoved(device, ports) {
@@ -1419,6 +1685,103 @@ export function createCliRuntime(deps: CliRuntimeDeps, handlers?: Record<string,
         s.context = [];
         emitPrompt(s, now);
       }
+    },
+
+    // ── P3 [S24]/[S25] log printing (D20) ──
+
+    onLogEvent(ev) {
+      const dev = deps.device(ev.device);
+      if (dev === undefined) return;
+      let line: string | undefined;
+      let consoleLevel: number | undefined;
+      let monitorLevel: number | undefined;
+      for (const s of sessions.values()) {
+        if (s.device !== ev.device) continue;
+        let level: number;
+        if (s.via === 'console') level = consoleLevel ??= consoleLogLevel(dev.running.root, profileIncludes(dev.profile, 'P3'));
+        else if (s.monitor === true) level = monitorLevel ??= monitorLogLevel(dev.running.root);
+        else continue;
+        if (ev.severity > level) continue;
+        line ??= renderLogLine(ev, dev.clockView(ev.t), dev.uptime(ev.t), storedTimestampFormat(dev.running.root, 'log'));
+        emitOutput(s, line, ev.t);
+      }
+    },
+
+    // ── P3 [S13] remote sessions (D14): called only by the Simulation's `remoteCli` event dispatch ──
+
+    openRemote(device, act, now) {
+      const dev = deps.device(device);
+      if (dev === undefined) throw new Error(`cannot open a remote session on unknown device ${device}`);
+      const existing = remoteSession(device, act.conn);
+      if (existing !== undefined) return existing.id;
+      nextRemote++;
+      // vty authenticated the user already; a privilege-15 user starts in privileged EXEC
+      const admin = act.user !== undefined && userPrivilegeOf(dev.running, act.user) === 15;
+      const s: SessionState = {
+        id: `${REMOTE_SESSION_PREFIX}${nextRemote}`,
+        device,
+        via: 'vty',
+        mode: admin ? 'priv-exec' : 'user-exec',
+        privilege: admin ? 15 : cliSpecOf(dev.model).initialPrivilege,
+        busy: false,
+        context: [],
+        history: [],
+        closing: false,
+        executing: false,
+        headless: false,
+        applied: 0,
+        conn: act.conn,
+        depth: remoteDepth(device, act.peer),
+      };
+      sessions.set(s.id, s);
+      const banners: string[] = [];
+      for (const type of ['motd', 'exec'] as const) {
+        const b = bannerOf(dev.running, type);
+        if (b !== undefined) banners.push(b);
+      }
+      deliverRemote(s, { text: banners.join('\n'), prompt: promptOf(s) }, now);
+      return s.id;
+    },
+
+    execRemote(device, act, now) {
+      const s = remoteSession(device, act.conn);
+      if (s === undefined) return;
+      const { r } = execSession(s, act.text ?? '');
+      if (r.closed === true) {
+        deliverRemote(s, { text: r.output, closed: true }, now);
+        return;
+      }
+      // the far end shows the next prompt at once, even after an empty line (a console terminal redraws its own)
+      if (!s.busy) {
+        deliverRemote(s, remoteOutputOf(r), now);
+        return;
+      }
+      // a job started (a remote ping) or a nested relay waits: output and prompt follow through onOutput / onDone /
+      // setRemote
+      if (r.output !== '') deliverRemote(s, { text: r.output }, now);
+    },
+
+    closeRemote(device, act, now) {
+      const s = remoteSession(device, act.conn);
+      if (s === undefined) return;
+      if (s.busy && s.job !== undefined) {
+        deps.device(device)?.applyActions(CLI_PROCESS_NAME, [{ type: 'request', to: s.job.process, req: s.job.abort }], now);
+      }
+      sessions.delete(s.id);
+    },
+
+    setRemote(act, now) {
+      const s = sessions.get(act.session);
+      if (s === undefined || s.job?.process !== VTY_CLIENT_PROCESS) return;
+      const relay: NonNullable<SessionState['relay']> = { ...(s.relay ?? {}) };
+      if (act.prompt !== undefined) relay.prompt = act.prompt;
+      if (act.remote !== undefined) relay.remote = act.remote;
+      if (act.input === 'secret') relay.input = 'secret';
+      else delete relay.input;
+      s.relay = relay;
+      // a prompt means the far end waits for a line
+      if (act.prompt !== undefined) s.busy = false;
+      emitPrompt(s, now);
     },
   };
 

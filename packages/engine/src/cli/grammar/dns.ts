@@ -38,6 +38,14 @@ export const DNS_HANDLERS = {
 /** Capabilities that run the stub resolver and the name server. */
 export const DNS_CLIENT_CAPABILITIES: readonly Capability[] = capabilitiesRunning('dns-client');
 export const DNS_SERVER_CAPABILITIES: readonly Capability[] = capabilitiesRunning('dns-server');
+/**
+ * @since P3 (ARCHITECTURE-P3 D14, §5.2; W2 cli) Capabilities offered `ip domain-name`: the resolver's, widened to
+ * managed switches (an SSH key needs a domain name; lessons 15 and 19 configure SSH on a switch).
+ */
+export const DOMAIN_NAME_CAPABILITIES: readonly Capability[] = Object.freeze([
+  ...DNS_CLIENT_CAPABILITIES,
+  ...(DNS_CLIENT_CAPABILITIES.includes('managed-switch') ? [] : (['managed-switch'] as const)),
+]);
 
 /** Both DNS daemons stamp their events with this one category. */
 export const DNS_DEBUG_CATEGORIES: readonly GrammarDebugCategory[] = Object.freeze([
@@ -83,7 +91,8 @@ export const DNS_GRAMMAR: readonly CommandSpec[] = Object.freeze<CommandSpec[]>(
     allowNo: true,
     noArgsOptional: true,
     grammars: NFOS_ONLY,
-    requiresAny: DNS_CLIENT_CAPABILITIES,
+    // ARCHITECTURE-P3 D14 (W2 cli): widened to managed switches, whose SSH key needs a domain name
+    requiresAny: DOMAIN_NAME_CAPABILITIES,
     since: 'P1',
     objectives: ['CCNA1.11.1'],
   },

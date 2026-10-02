@@ -258,10 +258,10 @@ export type PortEncap = 'ethernet' | 'hdlc' | 'ppp' | 'dot11' | 'none' | 'tunnel
 
 /**
  * Outer framing of a PDU as seen by the device frame pipeline (validator, MAC filter, demux layer).
- * P3 (§2.1): [S19] adds 'ppp'. NOT added in W0 (ruling R4): the exhaustive `FRAMING_RULES` (device/pipeline.ts,
- * device-owned) would need its rules, so the [S19] item that writes the PPP framing adds the member with them.
+ * 'ppp' @since P3 [S19] (§2.1; ruling R4): added by the W2 device [S19] item together with its `FRAMING_RULES` entry
+ * (device/pipeline.ts): RFC 1662 framing without flags, demultiplexed on `ppp.protocol`, no destination MAC.
  */
-export type FramingProto = 'ethernet' | 'hdlc' | 'dot11';
+export type FramingProto = 'ethernet' | 'hdlc' | 'dot11' | 'ppp';
 
 /** Ethernet copper wiring side: MDI (hosts, routers) transmits on pins 1-2, MDI-X (switch ports) on 3-6. */
 export type Wiring = 'MDI' | 'MDI-X';
@@ -448,10 +448,11 @@ export function defaultRoleFor(kind: PortKind, caps: readonly Capability[]): Por
  * True when the MAC not-for-me filter applies to a frame received on a port: the role holds L3
  * addresses, the outer framing carries a destination MAC (ethernet.dst / dot11.addr1) and the port
  * is not promiscuous (IDS monitor ports). P0 outcomes are preserved: host/router ports are
- * `routed` (filter), switch ports are `switched` (no filter).
+ * `routed` (filter), switch ports are `switched` (no filter). The point-to-point framings carry no MAC: HDLC and,
+ * @since P3 [S19], PPP (the W2 device item's minimal fix with the new `FramingProto` member, ruling R4).
  */
 export function macFilterApplies(role: PortRole, outer: FramingProto, promiscuous: boolean | undefined): boolean {
-  return ROLE_TRAITS[role].l3 && outer !== 'hdlc' && promiscuous !== true;
+  return ROLE_TRAITS[role].l3 && outer !== 'hdlc' && outer !== 'ppp' && promiscuous !== true;
 }
 
 // ── port families (naming, CATALOG.md) ───────────────────────────────────────

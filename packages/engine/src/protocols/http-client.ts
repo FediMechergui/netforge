@@ -31,6 +31,28 @@
  *     fetches, completed, failed }
  * With a `session` the tab also prints one original summary line and ends with cliDone.
  *
+ * P3 (ARCHITECTURE-P3 D21, §2.4, §3.0 (d), §3.8; §7 W2 http): `http.request {owner, token, method, url, headers?,
+ * body?, timeoutNs?, session?}` is the API client — the host-shell `rest` job (owner 'cli', with its `session`) and
+ * [S32] the script host use it. It is a separate path that never touches the browser tabs above:
+ *  1. the URL is normalized by the same `normalizeUrl`; `http:` (port 80) and `https:` (port 443, `tcp.connect
+ *     {tls: true}`: the data segments carry `meta.protected` + `protectedBy 'tls'`, no handshake bytes) are accepted;
+ *     anything else, or a header that cannot be sent, ends the call at once with `bad-url`;
+ *  2. a name host is resolved like a tab's (dns token `api:<token>`), a literal address is used as is;
+ *  3. `tcp.connect {socket: 'http-client#api:<token>'}` (later attempts append `.<n>`), next address on the same
+ *     socket errors as a tab;
+ *  4. `sock.connected` → the request: `<METHOD> <target> HTTP/1.1`, `Host`, the caller's headers in order (its own
+ *     Host, Content-Length, Connection and Transfer-Encoding are left out: the client writes those), `Content-Length`
+ *     when there is a body or the method carries one, `Connection: close`, then the body;
+ *  5. the response is read like a tab's (framed by Content-Length, finished by the server's FIN, so the client is the
+ *     passive closer; a whole framed response without a FIN is still delivered at the deadline); a response to HEAD
+ *     ends with its header block;
+ *  6. the result goes to the owner: ProcessEvent `http.result {token, status, reason, headers, body}` (or `{token,
+ *     error}`) to a process; to the CLI session the status line, the headers, a blank line and the body (JSON
+ *     pretty-printed with two spaces when the response says it is JSON), or one original failure line; then cliDone.
+ * The deadline is `timeoutNs` (default HTTP_CLIENT_TIMEOUT_NS) through the one-shot timer `request:<token>`; `job.abort`
+ * of the session cancels the call. The StateView gains a `requests` member (the last HTTP_CLIENT_RETAINED_TABS calls)
+ * and an `apiRequests` count only once a request has been made, so a P1 or P2 world's StateView is byte-identical.
+ *
  * ponytail: the socket id counts connection ATTEMPTS, not tabs — the first attempt of a token is the plain
  * `http-client#<token>` of §4.5 step 1 and every later one appends `.<n>`, which is the cheapest way to keep a
  * restarted tab from inheriting the `sock.closed` of the connection its own restart aborted (and to stop a
@@ -44,15 +66,20 @@
  */
 import type { IpAddress } from '../contracts/addr.js';
 import type { ProcessName, SessionId } from '../contracts/ids.js';
-import type { Action, DebugEvent, Process, ProcessCtx, ProcessRequest, StateView } from '../contracts/process.js';
+import { TCP_PORT_HTTPS } from '../contracts/pdu.js';
+import type { Action, DebugEvent, HttpMethod, Process, ProcessCtx, ProcessRequest, StateView } from '../contracts/process.js';
 import { HTTP_BROWSER_USER_AGENT, HTTP_CLIENT_TIMEOUT_NS, type HttpResponseView, type HttpTabPhase } from '../contracts/services.js';
-import type { ProcessEvent, SocketErrorCode, SocketId } from '../contracts/transport.js';
+import type { SimTime } from '../contracts/time.js';
+import type { HttpResultEvent, ProcessEvent, SocketErrorCode, SocketId } from '../contracts/transport.js';
 import { normalizeUrl } from '../cli/parser.js';
 import { normalizeIp } from '../core/addr6.js';
+import { parseJson, type DataNode } from '../automation/data/json.js';
 import { httpCodec, httpHeader, parseHttpMessage, type HttpMessage } from '../pdu/codecs/http.js';
 
 const NAME = 'http-client';
 const CAT = 'http';
+/** The owner of an `http.request` made by the host-shell `rest` job (text goes to its session). */
+const CLI_OWNER = 'cli';
 const DEBUG_RING = 256;
 /**
  * Finished tabs kept for reading after the fact. The GUI mints a fresh token per navigation (`hostRequest` →
@@ -152,6 +179,126 @@ function isFramed(m: HttpMessage): boolean {
   return httpHeader(m.headers, 'content-length') !== undefined || httpHeader(m.headers, 'transfer-encoding') !== undefined;
 }
 
+// ── P3: the API client (`http.request`, D21) ─────────────────────────────────
+
+const UTF8_DECODER = new TextDecoder('utf-8', { fatal: false });
+const UTF8_ENCODER = new TextEncoder();
+/** An RFC 9110 field name (token). */
+const HEADER_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
+/** Headers the client writes itself: the caller's copies are left out. */
+const OWN_HEADERS: ReadonlySet<string> = new Set(['host', 'content-length', 'connection', 'transfer-encoding']);
+/** Methods whose request always carries a Content-Length (0 when there is no body). */
+const BODY_METHODS: ReadonlySet<HttpMethod> = new Set(['POST', 'PUT', 'PATCH']);
+const CRLFCRLF = [13, 10, 13, 10];
+
+// Original wording, never a vendor phrase.
+export const MSG_API_BAD_URL = 'That address could not be read as an http:// or https:// web address.';
+export const MSG_API_BAD_HEADER = 'A request header could not be sent: a header is written "Name: value" on one line of plain text.';
+export const MSG_API_TIMEOUT = 'The server did not answer the request in time.';
+export const MSG_API_CANCELLED = 'The request was cancelled.';
+export const MSG_API_EMPTY = 'The server closed the connection before it answered.';
+
+/** One `http.request` in progress or finished. */
+interface ApiCall {
+  readonly token: string;
+  readonly owner: ProcessName;
+  readonly session?: SessionId;
+  readonly method: HttpMethod;
+  /** Normalized URL (the text as given when it could not be read). */
+  readonly url: string;
+  readonly host: string;
+  readonly hostHeader: string;
+  readonly port: number;
+  /** Request target: the path and query of the URL. */
+  readonly target: string;
+  readonly tls: boolean;
+  readonly headers: readonly (readonly [string, string])[];
+  /** The body as UTF-8 text ('' when none). */
+  readonly body: string;
+  /** The same phase words as a browser tab's. */
+  phase: HttpTabPhase;
+  qtypes: ('A' | 'AAAA')[];
+  addresses: IpAddress[];
+  address?: IpAddress;
+  serial: number;
+  socket?: SocketId;
+  buf: Uint8Array;
+  status?: number;
+  error?: string;
+}
+
+const apiSocketOf = (c: ApiCall): SocketId => (c.serial === 0 ? `${NAME}#api:${c.token}` : `${NAME}#api:${c.token}.${c.serial}`);
+const apiTimerOf = (c: ApiCall): string => `request:${c.token}`;
+const apiDnsToken = (token: string): string => `api:${token}`;
+const apiActive = (c: ApiCall): boolean => c.phase !== 'done' && c.phase !== 'error';
+
+/** Whether `bytes` holds a whole header block (CRLF CRLF seen). */
+function hasHeadEnd(bytes: Uint8Array): boolean {
+  outer: for (let i = 0; i + CRLFCRLF.length <= bytes.length; i++) {
+    for (let k = 0; k < CRLFCRLF.length; k++) if (bytes[i + k] !== CRLFCRLF[k]) continue outer;
+    return true;
+  }
+  return false;
+}
+
+/** 'Name: value' lines (joined by '\n') → ordered pairs. */
+export function httpHeaderPairs(headers: string): [string, string][] {
+  const out: [string, string][] = [];
+  for (const line of headers.split('\n')) {
+    const c = line.indexOf(':');
+    if (c <= 0) continue;
+    out.push([line.slice(0, c).trim(), line.slice(c + 1).trim()]);
+  }
+  return out;
+}
+
+/** True when a header can be written on the wire: a token name and a one-line Latin-1 value. */
+function headerSendable(name: string, value: string): boolean {
+  if (!HEADER_NAME.test(name) || /[\r\n]/.test(value)) return false;
+  for (let i = 0; i < value.length; i++) if (value.charCodeAt(i) > 0xff) return false;
+  return true;
+}
+
+/**
+ * A parsed JSON document pretty-printed with two spaces, members in the order they were received and numbers exactly as
+ * written (a data object would move integer-like member names first, as JavaScript objects do).
+ */
+export function prettyJsonText(node: DataNode, level = 0): string {
+  const pad = (n: number): string => '  '.repeat(n);
+  switch (node.kind) {
+    case 'null':
+      return 'null';
+    case 'boolean':
+      return node.value ? 'true' : 'false';
+    case 'number':
+      return node.raw;
+    case 'string':
+      return JSON.stringify(node.value);
+    case 'array':
+      if (node.items.length === 0) return '[]';
+      return `[\n${node.items.map((i) => `${pad(level + 1)}${prettyJsonText(i, level + 1)}`).join(',\n')}\n${pad(level)}]`;
+    case 'object':
+      if (node.entries.length === 0) return '{}';
+      return `{\n${node.entries.map((e) => `${pad(level + 1)}${JSON.stringify(e.key)}: ${prettyJsonText(e.value, level + 1)}`).join(',\n')}\n${pad(level)}}`;
+  }
+}
+
+/**
+ * What the CLI session prints for a response: the status line, the headers, a blank line and the body — JSON
+ * pretty-printed with two spaces when the response's Content-Type says JSON and the body parses.
+ */
+export function formatHttpResponseText(m: Pick<HttpMessage, 'startLine' | 'headers' | 'body'>): string {
+  const lines = [m.startLine, ...(m.headers === '' ? [] : m.headers.split('\n')), ''];
+  let body = m.body;
+  const type = (httpHeader(m.headers, 'content-type') ?? '').toLowerCase();
+  if (body !== '' && type.includes('json')) {
+    const parsed = parseJson(body);
+    if (parsed.ok) body = prettyJsonText(parsed.node);
+  }
+  if (body !== '') lines.push(body.endsWith('\n') ? body.slice(0, -1) : body);
+  return `${lines.join('\n')}\n`;
+}
+
 export function createHttpClient(): Process {
   const tabs = new Map<string, Tab>();
   const ring: DebugEvent[] = [];
@@ -170,6 +317,213 @@ export function createHttpClient(): Process {
 
   const byToken = (token: string): Tab | undefined => tabs.get(token);
   const bySocket = (socket: SocketId): Tab | undefined => [...tabs.values()].find((t) => isActive(t) && t.socket === socket);
+
+  // ── P3 API calls (`http.request`, D21) ──
+  const calls = new Map<string, ApiCall>();
+  let apiRequests = 0;
+  const callBySocket = (socket: SocketId): ApiCall | undefined => [...calls.values()].find((c) => apiActive(c) && c.socket === socket);
+
+  /** Forget the oldest finished calls beyond HTTP_CLIENT_RETAINED_TABS (active ones never; insertion order). */
+  function evictFinishedCalls(): void {
+    let finished = 0;
+    for (const c of calls.values()) if (!apiActive(c)) finished++;
+    for (const [token, c] of calls) {
+      if (finished <= HTTP_CLIENT_RETAINED_TABS) break;
+      if (apiActive(c)) continue;
+      calls.delete(token);
+      finished--;
+    }
+  }
+
+  /** End a call: cancel its deadline, close (done) or abort (error) its connection, then hand over the result. */
+  function callFinish(c: ApiCall, phase: 'done' | 'error', deliver: readonly Action[]): Action[] {
+    c.phase = phase;
+    const out: Action[] = [{ type: 'cancelTimer', key: apiTimerOf(c) }];
+    if (c.socket !== undefined) out.push(toTcp({ kind: phase === 'done' ? 'tcp.close' : 'tcp.abort', socket: c.socket }));
+    out.push(...deliver);
+    evictFinishedCalls();
+    return out;
+  }
+
+  /** The owner's answer: text to the CLI session (owner 'cli'), else `http.result` to the owning process. */
+  function callAnswer(c: ApiCall, text: string, ev: HttpResultEvent): Action[] {
+    if (c.owner === CLI_OWNER) {
+      return c.session === undefined ? [] : [{ type: 'cliOutput', session: c.session, text }, { type: 'cliDone', session: c.session }];
+    }
+    return [{ type: 'event', to: c.owner, ev }];
+  }
+
+  function callFail(ctx: ProcessCtx, c: ApiCall, code: NonNullable<HttpResultEvent['error']>, message: string): Action[] {
+    c.error = message;
+    debug(ctx, `${c.token}: ${c.method} ${c.url} failed: ${message}`, { token: c.token, url: c.url, error: code });
+    return callFinish(c, 'error', callAnswer(c, `% The request to ${c.url} failed: ${message}\n`, { kind: 'http.result', token: c.token, error: code }));
+  }
+
+  function callDone(ctx: ProcessCtx, c: ApiCall, m: HttpMessage): Action[] {
+    const status = m.status ?? 0;
+    const reason = m.reason ?? '';
+    c.status = status;
+    const body = UTF8_ENCODER.encode(m.body);
+    debug(ctx, `${c.token}: ${c.method} ${c.url}: ${status} ${reason} from ${c.address ?? '?'}, ${body.length} bytes`, { token: c.token, status, bytes: body.length });
+    return callFinish(
+      c,
+      'done',
+      callAnswer(c, formatHttpResponseText(m), { kind: 'http.result', token: c.token, status, reason, headers: httpHeaderPairs(m.headers), body }),
+    );
+  }
+
+  /** Try the next address of the call; none left → it fails with `code` / `message`. */
+  function callConnect(ctx: ProcessCtx, c: ApiCall, code: SocketErrorCode, message: string): Action[] {
+    const address = c.addresses.shift();
+    if (address === undefined) return callFail(ctx, c, code, message);
+    c.address = address;
+    c.phase = 'connecting';
+    c.socket = apiSocketOf(c);
+    c.serial++;
+    c.buf = NO_PAYLOAD;
+    debug(ctx, `${c.token}: connecting to ${address} port ${c.port}${c.tls ? ' (TLS, simulated)' : ''}`, { token: c.token, address, port: c.port });
+    return [toTcp({ kind: 'tcp.connect', owner: NAME, socket: c.socket, dst: address, dstPort: c.port, ...(c.tls ? { tls: true as const } : {}) })];
+  }
+
+  /** Ask for the next query type of the call; none left → it fails (the name has no address). */
+  function callResolve(ctx: ProcessCtx, c: ApiCall, message: string): Action[] {
+    const qtype = c.qtypes.shift();
+    if (qtype === undefined) return callFail(ctx, c, 'host-unreachable', message);
+    c.phase = 'resolving';
+    debug(ctx, `${c.token}: resolving ${c.host} ${qtype}`, { token: c.token, name: c.host, qtype });
+    return [{ type: 'request', to: 'dns-client', req: { kind: 'dns.resolve', owner: NAME, token: apiDnsToken(c.token), name: c.host, qtype } }];
+  }
+
+  function startCall(ctx: ProcessCtx, req: Extract<ProcessRequest, { kind: 'http.request' }>): Action[] {
+    const out: Action[] = [];
+    const old = calls.get(req.token);
+    if (old !== undefined && apiActive(old)) {
+      // the owner asked again with the same token: the earlier call is dropped without an answer
+      old.phase = 'error';
+      old.error = MSG_API_CANCELLED;
+      out.push({ type: 'cancelTimer', key: apiTimerOf(old) });
+      if (old.socket !== undefined) out.push(toTcp({ kind: 'tcp.abort', socket: old.socket }));
+    }
+    calls.delete(req.token);
+    apiRequests++;
+    const normalized = normalizeUrl(req.url.trim());
+    const parts = normalized === null ? null : URL_PARTS.exec(normalized);
+    const scheme = parts?.[1];
+    const tls = scheme === 'https';
+    const bracketed = parts?.[2] ?? '';
+    const path = parts?.[4] ?? '/';
+    const hash = path.indexOf('#');
+    const c: ApiCall = {
+      token: req.token,
+      owner: req.owner,
+      ...(req.session !== undefined ? { session: req.session } : {}),
+      method: req.method,
+      url: normalized ?? req.url,
+      host: bracketed.startsWith('[') ? bracketed.slice(1, -1) : bracketed,
+      hostHeader: `${bracketed}${parts?.[3] !== undefined ? `:${Number(parts[3])}` : ''}`,
+      port: parts?.[3] !== undefined ? Number(parts[3]) : tls ? TCP_PORT_HTTPS : 80,
+      target: hash < 0 ? path : path.slice(0, hash),
+      tls,
+      headers: req.headers ?? [],
+      body: req.body !== undefined ? UTF8_DECODER.decode(req.body) : '',
+      phase: 'resolving',
+      qtypes: [],
+      addresses: [],
+      // the counter runs on across restarts of the token, so no two attempts ever share an id
+      serial: old?.serial ?? 0,
+      buf: NO_PAYLOAD,
+    };
+    calls.set(c.token, c);
+    if (parts === null || (scheme !== 'http' && scheme !== 'https')) return [...out, ...callFail(ctx, c, 'bad-url', MSG_API_BAD_URL)];
+    if (!c.headers.every(([n, v]) => headerSendable(n, v))) return [...out, ...callFail(ctx, c, 'bad-url', MSG_API_BAD_HEADER)];
+    debug(ctx, `${c.token}: ${c.method} ${c.url}`, { token: c.token, method: c.method, url: c.url });
+    const timeout: SimTime = req.timeoutNs !== undefined && req.timeoutNs > 0 ? req.timeoutNs : HTTP_CLIENT_TIMEOUT_NS;
+    out.push({ type: 'timer', key: apiTimerOf(c), delay: timeout });
+    const literal = normalizeIp(c.host);
+    if (literal !== null) {
+      c.addresses = [literal];
+      return [...out, ...callConnect(ctx, c, 'no-route', socketMessage('no-route'))];
+    }
+    c.qtypes = preferV6(ctx) ? ['AAAA', 'A'] : ['A', 'AAAA'];
+    return [...out, ...callResolve(ctx, c, resolveMessage(c.host, 'NXDOMAIN'))];
+  }
+
+  /** The buffered response once it is whole (a HEAD answer ends with its header block). */
+  function callWhole(c: ApiCall, ended: boolean): HttpMessage | undefined {
+    const m = parseHttpMessage(c.buf);
+    if (m === null || m.kind !== 'response') return undefined;
+    if (c.method === 'HEAD') return hasHeadEnd(c.buf) ? { ...m, body: '', complete: true } : undefined;
+    return (isFramed(m) ? m.complete : ended) ? m : undefined;
+  }
+
+  function callEnded(ctx: ProcessCtx, c: ApiCall): Action[] {
+    const m = callWhole(c, true);
+    return m === undefined ? callFail(ctx, c, 'reset', MSG_API_EMPTY) : callDone(ctx, c, m);
+  }
+
+  /** The request bytes: start line, Host, the caller's headers, Content-Length, Connection: close, body. */
+  function requestBytes(c: ApiCall): Uint8Array {
+    const lines = [`Host: ${c.hostHeader}`];
+    for (const [n, v] of c.headers) if (!OWN_HEADERS.has(n.toLowerCase())) lines.push(`${n}: ${v}`);
+    const length = UTF8_ENCODER.encode(c.body).length;
+    if (length > 0 || BODY_METHODS.has(c.method)) lines.push(`Content-Length: ${length}`);
+    lines.push('Connection: close');
+    return httpCodec.encode({ kind: 'request', method: c.method, target: c.target, headers: lines.join('\n'), body: c.body }, NO_PAYLOAD);
+  }
+
+  /** A socket event of an API call's connection. */
+  function callSocketEvent(ctx: ProcessCtx, c: ApiCall, ev: Extract<ProcessEvent, { socket: SocketId }>): Action[] {
+    switch (ev.kind) {
+      case 'sock.connected': {
+        c.phase = 'waiting';
+        const data = requestBytes(c);
+        debug(ctx, `${c.token}: ${c.method} ${c.target} to ${c.address ?? '?'}, ${data.length} bytes`, { token: c.token, bytes: data.length });
+        return [toTcp({ kind: 'tcp.send', socket: c.socket!, data })];
+      }
+      case 'sock.data':
+        c.phase = 'receiving';
+        c.buf = append(c.buf, ev.data);
+        return [];
+      case 'sock.peerClosed':
+      case 'sock.closed':
+        return callEnded(ctx, c);
+      case 'sock.error': {
+        c.socket = undefined;
+        if (c.phase === 'connecting' && NEXT_ADDRESS.has(ev.code) && c.addresses.length > 0) return callConnect(ctx, c, ev.code, socketMessage(ev.code));
+        return c.phase === 'receiving' ? callEnded(ctx, c) : callFail(ctx, c, ev.code, socketMessage(ev.code));
+      }
+      default:
+        return [];
+    }
+  }
+
+  function callTimeout(ctx: ProcessCtx, c: ApiCall): Action[] {
+    const m = c.phase === 'receiving' ? callWhole(c, false) : undefined;
+    return m === undefined ? callFail(ctx, c, 'timeout', MSG_API_TIMEOUT) : callDone(ctx, c, m);
+  }
+
+  function callCancel(ctx: ProcessCtx, c: ApiCall): Action[] {
+    c.error = MSG_API_CANCELLED;
+    debug(ctx, `${c.token}: cancelled`, { token: c.token });
+    // the job's session was unblocked by the abort; one line and cliDone, as a cancelled tab prints
+    return callFinish(c, 'error', c.owner === CLI_OWNER && c.session !== undefined ? [{ type: 'cliOutput', session: c.session, text: `% ${MSG_API_CANCELLED}\n` }, { type: 'cliDone', session: c.session }] : []);
+  }
+
+  function callsView(): Record<string, unknown> {
+    const view: Record<string, unknown> = {};
+    for (const c of calls.values()) {
+      view[c.token] = {
+        method: c.method,
+        url: c.url,
+        phase: c.phase,
+        host: c.host,
+        ...(c.address !== undefined ? { address: c.address } : {}),
+        ...(c.status !== undefined ? { status: c.status } : {}),
+        ...(c.error !== undefined ? { error: c.error } : {}),
+      };
+    }
+    return view;
+  }
 
   /**
    * Forget the oldest finished tabs beyond HTTP_CLIENT_RETAINED_TABS. Active tabs are never dropped, and the Map is
@@ -316,6 +670,10 @@ export function createHttpClient(): Process {
     },
 
     onTimer(ctx, key): Action[] {
+      if (key.startsWith('request:')) {
+        const c = calls.get(key.slice('request:'.length));
+        return c === undefined || !apiActive(c) ? [] : callTimeout(ctx, c);
+      }
       const t = key.startsWith('fetch:') ? byToken(key.slice('fetch:'.length)) : undefined;
       if (t === undefined || !isActive(t)) return [];
       // a whole response that the server never followed with a FIN still counts
@@ -325,6 +683,14 @@ export function createHttpClient(): Process {
 
     onEvent(ctx, ev: ProcessEvent): Action[] {
       if (ev.kind === 'dns.result') {
+        const call = ev.token.startsWith('api:') ? calls.get(ev.token.slice('api:'.length)) : undefined;
+        if (call !== undefined && call.phase === 'resolving') {
+          if (ev.addresses.length > 0) {
+            call.addresses = [...ev.addresses];
+            return callConnect(ctx, call, 'no-route', socketMessage('no-route'));
+          }
+          return callResolve(ctx, call, resolveMessage(call.host, ev.rcode));
+        }
         const t = byToken(ev.token);
         if (t === undefined || t.phase !== 'resolving') return [];
         if (ev.addresses.length > 0) {
@@ -335,7 +701,10 @@ export function createHttpClient(): Process {
       }
       if (ev.kind !== 'sock.connected' && ev.kind !== 'sock.data' && ev.kind !== 'sock.peerClosed' && ev.kind !== 'sock.closed' && ev.kind !== 'sock.error') return [];
       const t = bySocket(ev.socket);
-      if (t === undefined) return [];
+      if (t === undefined) {
+        const c = callBySocket(ev.socket);
+        return c === undefined ? [] : callSocketEvent(ctx, c, ev);
+      }
       switch (ev.kind) {
         case 'sock.connected': {
           t.phase = 'waiting';
@@ -364,12 +733,17 @@ export function createHttpClient(): Process {
 
     onRequest(ctx, req: ProcessRequest): Action[] {
       if (req.kind === 'http.fetch') return start(ctx, req);
+      if (req.kind === 'http.request') return startCall(ctx, req);
       const t =
         req.kind === 'http.cancel'
           ? byToken(req.token)
           : req.kind === 'job.abort'
             ? [...tabs.values()].find((x) => isActive(x) && x.session === req.session)
             : undefined;
+      if (req.kind === 'job.abort' && (t === undefined || !isActive(t))) {
+        const c = [...calls.values()].find((x) => apiActive(x) && x.session === req.session);
+        return c === undefined ? [] : callCancel(ctx, c);
+      }
       if (t === undefined || !isActive(t)) return [];
       failed++;
       t.error = MSG_CANCELLED;
@@ -389,7 +763,9 @@ export function createHttpClient(): Process {
           ...(t.error !== undefined ? { error: t.error } : {}),
         };
       }
-      return { process: NAME, state: { tabs: view, fetches, completed, failed } };
+      // P3: the API members appear only once a request was made, so P1/P2 StateViews keep their bytes
+      const api = apiRequests > 0 ? { requests: callsView(), apiRequests } : {};
+      return { process: NAME, state: { tabs: view, fetches, completed, failed, ...api } };
     },
 
     debugEvents(): readonly DebugEvent[] {

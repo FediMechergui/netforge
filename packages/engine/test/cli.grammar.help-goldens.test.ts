@@ -57,10 +57,13 @@ describe('help goldens', () => {
     // every P0 entry is still there, in the same order.
     // ARCHITECTURE-P2 §9.2 items 12 and 18 (W4 folds the P2 fragments into GRAMMAR): `encapsulation` (W2) and `standby`
     // [S2] (W3) on the routed Ethernet port, `access-list` (W3) in config
-    expect(goldens['router.nf2911']!['config-if ethernet/routed']).toEqual(['description', 'do', 'duplex', 'encapsulation', 'end', 'exit', 'ip', 'ipv6', 'mac-address', 'no', 'shutdown', 'speed', 'standby']);
-    expect(goldens['router.nf2911']!.config).toEqual(['access-list', 'banner', 'do', 'enable', 'end', 'exit', 'hostname', 'interface', 'ip', 'ipv6', 'line', 'no', 'service', 'username']);
-    expect(goldens['router.nf2911']!['user-exec']).toEqual(['enable', 'exit', 'logout', 'nslookup', 'ping', 'show', 'traceroute']);
-    expect(goldens['pc.nfpc']!['user-exec']).toEqual(['adapter', 'arp', 'exit', 'ip', 'ipconfig', 'ipv6', 'ipv6config', 'netstat', 'no', 'nslookup', 'ping', 'show', 'tracert']);
+    // ARCHITECTURE-P3 §9.2 W2 item 21 (W2 cli folds the P3 fragments and the approved items' into GRAMMAR): the complete
+    // new lists — `delay` [C1], `fair-queue` [S21], `logging` [S24]/[S25], `crypto` [C13], `router` (also EIGRP [C1]),
+    // `ssh` and `telnet` [S13]; OSPF, EIGRP and ACL interface lines sit under the existing `ip`
+    expect(goldens['router.nf2911']!['config-if ethernet/routed']).toEqual(['bandwidth', 'cdp', 'delay', 'description', 'do', 'duplex', 'encapsulation', 'end', 'exit', 'fair-queue', 'ip', 'ipv6', 'lldp', 'mac-address', 'no', 'service-policy', 'shutdown', 'speed', 'standby']);
+    expect(goldens['router.nf2911']!.config).toEqual(['access-list', 'banner', 'cdp', 'class-map', 'clock', 'crypto', 'do', 'enable', 'end', 'exit', 'hostname', 'interface', 'ip', 'ipv6', 'line', 'lldp', 'logging', 'no', 'ntp', 'policy-map', 'restconf', 'router', 'service', 'username']);
+    expect(goldens['router.nf2911']!['user-exec']).toEqual(['enable', 'exit', 'logout', 'nslookup', 'ping', 'show', 'ssh', 'telnet', 'traceroute']);
+    expect(goldens['pc.nfpc']!['user-exec']).toEqual(['adapter', 'arp', 'exit', 'flow', 'ip', 'ipconfig', 'ipv6', 'ipv6config', 'netstat', 'no', 'nslookup', 'ping', 'rest', 'show', 'ssh', 'telnet', 'tracert']);
     expect(goldens['pc.nfpc']!['user-exec show']).toEqual(['arp', 'history', 'hosts', 'interfaces', 'ip', 'running-config', 'version']);
     // The L2 switch gained its management SVI (P1 W5 catalog), which takes an address although the switch does not route.
     expect(goldens['switch.nfc2960']!['config-if virtual/svi']).toContain('ip');

@@ -6,8 +6,10 @@
  * shared interface configuration (`config.ts`), every `show` output template (`show.ts`), the host shell (`pc.ts`,
  * `host.ts`, `host-net.ts`), serial lines (`serial.ts`), switchport (`switchport.ts`), radio lines (`wireless.ts`)
  * and the P1 features: IPv6 (`ipv6.ts`), DHCP (`dhcp.ts`), DNS (`dns.ts`), web services (`services.ts`), the socket
- * listing (`transport.ts`), path traces (`traceroute.ts`) and passwords and lines (`line-auth.ts`). The CLI runtime
- * looks handlers up here by `CommandSpec.handler`.
+ * listing (`transport.ts`), path traces (`traceroute.ts`) and passwords and lines (`line-auth.ts`); the P2 registry
+ * (`P2_HANDLER_REGISTRY`); and (ARCHITECTURE-P3 §7 W2 cli) the P3 MUST registry (`P3_HANDLER_REGISTRY`: `ospf.ts`, the
+ * P3 part of `acl.ts`, `hardening.ts`, `qos.ts`, `discovery.ts`, `time.ts`, `api.ts`, `ssh.ts`) and the approved items'
+ * (`P3_APPROVED_HANDLERS`, `p3-approved.ts`). The CLI runtime looks handlers up here by `CommandSpec.handler`.
  *
  * `exec.debug`, `exec.undebug-all` and `exec.do` are bound to the runtime at construction time
  * (`createRuntimeHandlers` in `exec.ts`) and are merged over this registry by `createCliRuntime`, so they are
@@ -42,6 +44,15 @@ import { aclHandlers } from './acl.js';
 import { dhcpv6Handlers } from './dhcpv6.js';
 import { hsrpHandlers } from './hsrp.js';
 import { wlcHandlers } from './wlc.js';
+import { ospfHandlers } from './ospf.js';
+import { aclP3Handlers } from './acl.js';
+import { hardeningHandlers } from './hardening.js';
+import { qosHandlers } from './qos.js';
+import { discoveryHandlers } from './discovery.js';
+import { timeHandlers } from './time.js';
+import { apiHandlers } from './api.js';
+import { sshHandlers } from './ssh.js';
+import { P3_APPROVED_HANDLERS } from './p3-approved.js';
 
 /**
  * @since P2 (ARCHITECTURE-P2 §7 W2, W3 and W5 cli) The handlers of the P2 fragments (`P2_HANDLERS` ids): VLANs, the
@@ -65,6 +76,22 @@ export const P2_HANDLER_REGISTRY: Record<string, CommandHandler> = {
   ...wlcHandlers,
 };
 
+/**
+ * @since P3 (ARCHITECTURE-P3 §7 W2 cli part 1) The handlers of the P3 MUST fragments (`P3_HANDLERS` ids): OSPF, the P3
+ * access-list lines and shows, access-layer hardening, QoS marking and the host-shell flows, CDP and LLDP, the clock and
+ * NTP, the device API and `rest`, SSH and vty access.
+ */
+export const P3_HANDLER_REGISTRY: Record<string, CommandHandler> = {
+  ...ospfHandlers,
+  ...aclP3Handlers,
+  ...hardeningHandlers,
+  ...qosHandlers,
+  ...discoveryHandlers,
+  ...timeHandlers,
+  ...apiHandlers,
+  ...sshHandlers,
+};
+
 /** Handler id → handler, for every command in the grammar that needs no runtime binding. */
 export const HANDLER_REGISTRY: Record<string, CommandHandler> = {
   ...execHandlers,
@@ -84,4 +111,7 @@ export const HANDLER_REGISTRY: Record<string, CommandHandler> = {
   ...tracerouteHandlers,
   ...lineAuthHandlers,
   ...P2_HANDLER_REGISTRY,
+  // P3 (ARCHITECTURE-P3 §7 W2 cli): the MUST handlers (cli part 1), then the approved items' (cli part 2)
+  ...P3_HANDLER_REGISTRY,
+  ...P3_APPROVED_HANDLERS,
 };

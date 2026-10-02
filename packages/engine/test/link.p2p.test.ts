@@ -266,6 +266,17 @@ describe('link/media/p2p corruption window by outer codec', () => {
     expect(captureLinkTypeOf({ layers: [layer('hdlc', 4, 30, 2)] })).toBe('c_hdlc');
     expect(captureLinkTypeOf({ layers: [layer('dot11', 24, 90, 4)] })).toBe('ieee802_11');
     expect(captureLinkTypeOf({ layers: [layer('ipv6', 40, 60, 0)] })).toBe('raw');
+    // P3 [S19] (ruling R4; W2 fix): a PPP-framed leg is captured as PPP in HDLC-like framing (pcap link type 50)
+    expect(captureLinkTypeOf({ layers: [layer('ppp', 4, 30, 2)] })).toBe('ppp_hdlc');
+  });
+
+  it('[S18] the link tags a GRE leg "gre" in its summary, as the runtime does (W2 fix); a plain frame has no tunnel', () => {
+    const leg = fakePdu(layer('ethernet', 14, 102, 4));
+    (leg as unknown as { layers: LayerView[] }).layers = [layer('ethernet', 14, 102, 4), layer('ipv4', 20, 84, 0), layer('gre', 4, 64, 0), layer('ipv4', 20, 60, 0), layer('icmpv4', 8, 40, 0)];
+    expect(summarizePdu(leg).tunnel).toBe('gre');
+    const plain = fakePdu(layer('ethernet', 14, 102, 4));
+    (plain as unknown as { layers: LayerView[] }).layers = [layer('ethernet', 14, 102, 4), layer('ipv4', 20, 84, 0), layer('udp', 8, 64, 0), layer('dns', 12, 56, 0), layer('payload', 0, 44, 0)];
+    expect(summarizePdu(plain)).not.toHaveProperty('tunnel');
   });
 
   it('a corrupted hdlc frame is flipped inside its payload window', () => {

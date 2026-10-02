@@ -30,6 +30,20 @@
  * `applyConfigLine`, so the `configChange` events carry it), invalidates the rendered configs, and delivers
  * `ProcessEvent {kind: 'config.result', token, result}` to the issuer through `applyActions`. The run is never
  * journaled: it is a consequence of replayed events, so a replay repeats it exactly.
+ *
+ * P3 [S13] the remote-session seam (ARCHITECTURE-P3 D14, §2.4, §2.7, §3.14; §7 W2 sim), applied like configure: the
+ * vty daemon's `remoteCli` action and the vty-client's `cliRemote` action make the runtime schedule `SimEvent {kind:
+ * 'remoteCli', device, from, act}` at now (zero delay, non-periodic). The Simulation's dispatch of that event calls
+ * `dispatchRemoteCli`, in the event's OWN dispatch (never inside the daemon's action application, never nested): it
+ * skips a device that is gone, powered off or still booting (its daemons died with the power), syncs the device clock,
+ * then calls the CLI core — `openRemote` / `execRemote` / `closeRemote` for a `remoteCli` act (op `open`, `line`,
+ * `close`) and `setRemote` for a `cliRemote` act — with the event's time. Never journaled: the server side is a
+ * consequence of the client's journaled lines, so a replay repeats it exactly.
+ * The output of a via-'vty' session never becomes a `cliOutput` trace event: `deliverVtyOutput` hands it to the
+ * device's vty daemon as `ProcessEvent vty.output` through a fresh top-level `applyActions` of the facade (its own
+ * action budget); a device that does not run vty gets nothing. When the CLI core cannot run remote sessions (its
+ * optional methods are absent), an `open` or `line` is answered with REMOTE_CLI_UNAVAILABLE_TEXT and `closed`, so the
+ * connection ends instead of hanging; a `close` or a `cliRemote` is then a no-op.
  */
 import type { CliRuntime, ConfigureOptions, ConfigureResult } from '../contracts/cli.js';
 import { type HardwareResult, type ModuleType, type SlotId } from '../contracts/catalog.js';
@@ -37,6 +51,7 @@ import type { DeviceRuntime } from '../contracts/device.js';
 import type { SimEvent } from '../contracts/events.js';
 import type { DeviceId, LinkId, ProcessName } from '../contracts/ids.js';
 import type { SimTime } from '../contracts/time.js';
+import type { VtyOutputEvent } from '../contracts/transport.js';
 
 /** Options of a config-fragment fault run: pasted-config indentation, keep going after a failing line. */
 export const CONFIG_FRAGMENT_OPTIONS: Readonly<ConfigureOptions> = Object.freeze({ indentation: true, stopOnError: false });
@@ -175,4 +190,77 @@ export function dispatchDeviceConfigure(env: DeviceConfigureEnv, ev: DeviceConfi
     env.invalidate(ev.device);
   }
   dev.applyActions(env.caller, [{ type: 'event', to: ev.from, ev: { kind: 'config.result', token: ev.token, result } }], ev.at);
+}
+
+// ── P3 [S13]: the remote-session seam (D14) ──────────────────────────────────
+
+/** @since P3 [S13] The daemon that serves remote sessions and receives their output (D14). */
+export const VTY_PROCESS: ProcessName = 'vty';
+
+/**
+ * @since P3 [S13] What a remote connection is told when this build's CLI core cannot run remote sessions (original
+ * wording); delivered with `closed`, so the connection ends.
+ */
+export const REMOTE_CLI_UNAVAILABLE_TEXT = '% Remote sessions are not available on this device.\r\n';
+
+/** @since P3 [S13] What the `remoteCli` dispatch needs from the facade (D14). */
+export interface RemoteCliEnv {
+  /** Live device lookup in the current world. */
+  device(id: DeviceId): DeviceRuntime | undefined;
+  /** The CLI core's remote-session methods — the CLI core itself, never the journaled facade wrapper. */
+  readonly cli: Pick<CliRuntime, 'openRemote' | 'execRemote' | 'closeRemote' | 'setRemote'>;
+  /** Bring the device's own clock to the event's time. */
+  syncClock(dev: DeviceRuntime): void;
+  /** The process name the facade applies its own actions as (`SIM_PROCESS_NAME`). */
+  readonly caller: ProcessName;
+}
+
+/** @since P3 [S13] The `remoteCli` SimEvent (contracts/events.ts). */
+export type RemoteCliEvent = Extract<SimEvent, { kind: 'remoteCli' }>;
+
+/**
+ * @since P3 [S13] Deliver the output of a via-'vty' session (connection `out.conn`) to the vty daemon of `device` as
+ * ProcessEvent `vty.output` (file header): a fresh top-level `applyActions` of the facade at `now`. Returns false, and
+ * does nothing, for a device that is gone, off, booting or not running vty.
+ */
+export function deliverVtyOutput(env: Pick<RemoteCliEnv, 'device' | 'caller'>, device: DeviceId, out: VtyOutputEvent, now: SimTime): boolean {
+  const dev = env.device(device);
+  if (dev === undefined || !dev.power || dev.bootedAt === undefined || !dev.processes.has(VTY_PROCESS)) return false;
+  const ev: VtyOutputEvent = { kind: 'vty.output', conn: out.conn, text: out.text };
+  if (out.prompt !== undefined) ev.prompt = out.prompt;
+  if (out.input !== undefined) ev.input = out.input;
+  if (out.closed === true) ev.closed = true;
+  dev.applyActions(env.caller, [{ type: 'event', to: VTY_PROCESS, ev }], now);
+  return true;
+}
+
+/**
+ * @since P3 [S13] The Simulation's dispatch of a `remoteCli` event (file header, D14): the CLI core's remote-session
+ * call for the act, in this event's own dispatch.
+ */
+export function dispatchRemoteCli(env: RemoteCliEnv, ev: RemoteCliEvent): void {
+  const dev = env.device(ev.device);
+  if (dev === undefined || !dev.power || dev.bootedAt === undefined) return;
+  env.syncClock(dev);
+  const act = ev.act;
+  if (act.type === 'cliRemote') {
+    env.cli.setRemote?.(act, ev.at);
+    return;
+  }
+  const unavailable = (): void => {
+    deliverVtyOutput(env, ev.device, { kind: 'vty.output', conn: act.conn, text: REMOTE_CLI_UNAVAILABLE_TEXT, closed: true }, ev.at);
+  };
+  switch (act.op) {
+    case 'open':
+      if (env.cli.openRemote === undefined) unavailable();
+      else env.cli.openRemote(ev.device, act, ev.at);
+      return;
+    case 'line':
+      if (env.cli.execRemote === undefined) unavailable();
+      else env.cli.execRemote(ev.device, act, ev.at);
+      return;
+    case 'close':
+      env.cli.closeRemote?.(ev.device, act, ev.at);
+      return;
+  }
 }

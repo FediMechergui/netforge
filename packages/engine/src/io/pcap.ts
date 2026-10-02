@@ -75,6 +75,7 @@ const LINKTYPE_BY_NUMBER: ReadonlyMap<number, CaptureLinkType> = new Map<number,
   [PCAP_LINKTYPE.raw, 'raw'],
   [228, 'raw'],
   [229, 'raw'],
+  [PCAP_LINKTYPE.ppp_hdlc, 'ppp_hdlc'], // P3 [S19] (W2 capture): 50, PPP in HDLC-like framing
 ]);
 
 const encoder = new TextEncoder();

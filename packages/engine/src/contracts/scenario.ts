@@ -412,6 +412,12 @@ export interface LabCheckResult {
   pass: boolean;
   points: number;
   assertions: { index: number; pass: boolean; detail?: string }[];
+  /**
+   * @since P3 (optional by meaning; ruling R18, W2 sim) The analytics tag of the envelope (spec §12.4): the
+   * `misconception` of the task's first failing assertion that carries one. Absent when the task passes or no failing
+   * assertion carries one, so every P1 and P2 lab status keeps its bytes. Never shown to the learner.
+   */
+  misconception?: string;
 }
 
 export interface LabStatus {

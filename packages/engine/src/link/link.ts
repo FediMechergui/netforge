@@ -43,6 +43,20 @@
  *
  * Field ownership: this module (with the strategies it hosts) is the only writer of `PortState.tx`, `operUp` of
  * non-virtual ports, `speedBps`, `duplex`, `link`, `lastChange` and `phy`.
+ *
+ * P3 (ARCHITECTURE-P3; W2 media):
+ *   • D16, §2.8: `queued(ref, now)` — the frames a port has committed but not started (the in-flight registry's
+ *     `queued`, oldest first), the source of the snapshot cache's `PortSnapshot.txBacklog`. A pure read.
+ *   • [S19] D17, §2.7, §3.9 — PPP line protocol. A `ppp` end's line protocol is its ppp daemon's last report, the
+ *     MediumOp `ppp-link {up, reason?}`, kept per reporting port while the serial line is READY (carrier, clock and one
+ *     encapsulation at both ends: `serialLineReady`) and fed to `evaluateSerialLine` as `SerialEndInput.ppp`. A report
+ *     from a port that is not `ppp`, has no link, or whose line is not ready is ignored (like a keepalive latch without
+ *     carrier); a report that changes nothing the evaluation reads recomputes nothing. The reports are forgotten when the
+ *     line stops being ready (carrier lost, clock removed, an encapsulation mismatch), when an end leaves `ppp` and when
+ *     the cable is removed, so a line that becomes ready again starts negotiating. Readiness is kept per link; when it
+ *     changes on a link where either end is `ppp` (`serialLineNotifies`), both ends get MediumEvent `serial-line
+ *     {ready}` (after the `carrier` notifications of the same recompute), so an HDLC-only link never sees one. A link
+ *     with no `ppp` end takes exactly the P1 path: same evaluation, same events.
  */
 import type { DeviceId, LinkId, PortId, PortRef } from '../contracts/ids.js';
 import { portKey } from '../contracts/ids.js';
@@ -89,7 +103,7 @@ import { CELL_NOMINAL_UE, createCellularCell } from './media/cell.js';
 import { createCableP2P, summarizePdu } from './media/p2p.js';
 import { createRadioLink, effectiveRadio } from './media/radio.js';
 import { createSharedSegment, type CollisionStormParams } from './media/segment.js';
-import type { FrameArrivalBody, MediumHost, MediumRouteInput, MediumStrategy } from './media/types.js';
+import type { FrameArrivalBody, MediumHost, MediumRouteInput, MediumStrategy, QueuedFrame } from './media/types.js';
 import { cellId, routeMedium } from './media/types.js';
 import { negotiate, negotiatesPhy, samePhyResult, type NegotiationEnd, type NegotiationResult } from './negotiation.js';
 import { connectRssiMdb, rangeMetres } from './rf/pathloss.js';
@@ -100,8 +114,12 @@ import {
   isSerialMedia,
   resolveDceEnd,
   serialCarrierDown,
+  serialLineNotifies,
+  serialLineReady,
+  serialPppEndDownReason,
   type SerialEndInput,
   type SerialLinkResult,
+  type SerialPppEndState,
 } from './serial.js';
 
 /** The link model plus the hooks the Simulation uses beyond the contract (faults, snapshots, device removal). */
@@ -137,6 +155,12 @@ export interface LinkModelImpl extends LinkModel {
   collisionStorm(faultId: string, target: PortRef, params: CollisionStormParams, now: SimTime): boolean;
   /** Stop a running collision storm early; false when none has this id. */
   stopCollisionStorm(faultId: string, now: SimTime): boolean;
+  /**
+   * @since P3 (ARCHITECTURE-P3 D16, §2.8; W2 media) The frames committed on egress port `ref` that have not started yet
+   * (`txStart > now`), oldest first, each with the DSCP recorded at enqueue: the snapshot cache's `txBacklog` source.
+   * A pure read; an uncongested port returns none.
+   */
+  queued(ref: PortRef, now: SimTime): QueuedFrame[];
 }
 
 /** Internal per-link record. */
@@ -145,6 +169,11 @@ interface LinkRecord {
   cut: boolean;
   /** At least one direction could carry data after the last recompute (abort trigger on the way down). */
   flowing: boolean;
+  /**
+   * @since P3 [S19] The serial line was ready after the last recompute (`serialLineReady`: carrier, clock, one
+   * encapsulation); false for every other link. Its changes are the `serial-line` events (file header).
+   */
+  lineReady: boolean;
 }
 
 /** Result of writing one port during a recompute. */
@@ -245,6 +274,8 @@ export function createLinkModel(deps: LinkModelDeps): LinkModelImpl {
   const streams = new Map<string, Rng>();
   /** Serial keepalive latches (per reporting port). */
   const latches = createKeepaliveLatches();
+  /** @since P3 [S19] portKey → the last `ppp-link` report of that end's ppp daemon (file header). Lookup only. */
+  const pppEnds = new Map<string, SerialPppEndState>();
   let scale = deps.metresPerUnit ?? DEFAULT_METRES_PER_UNIT;
 
   // ── device/port registry used when the deps do not enumerate devices ──
@@ -468,7 +499,32 @@ export function createLinkModel(deps: LinkModelDeps): LinkModelImpl {
     const settings = deps.portSettings(ref);
     if (settings !== undefined) end.settings = settings;
     if (p.spec.clockSource === true) end.clockSource = true;
+    // P3 [S19]: a ppp end's last report (read by evaluateSerialLine only when the end uses ppp)
+    const ppp = pppEnds.get(portKey(ref));
+    if (ppp !== undefined) end.ppp = ppp;
     return end;
+  };
+
+  /**
+   * @since P3 [S19] After a recompute: forget the PPP reports a line that is not ready can no longer hold (both ends),
+   * or that an end which left `ppp` no longer uses; then, when the line's readiness changed on a link with a `ppp`
+   * end, queue `serial-line {ready}` to both ends (file header). Links that are not serial-to-serial are never ready.
+   */
+  const settleSerialLine = (rec: LinkRecord, pa: PortState | undefined, pb: PortState | undefined, serial: SerialLinkResult | undefined, now: SimTime): void => {
+    const { state } = rec;
+    const ready = serialLineReady(serial);
+    if (!ready) {
+      pppEnds.delete(portKey(state.a));
+      pppEnds.delete(portKey(state.b));
+    } else {
+      if (pa === undefined || effectiveEncap(pa) !== 'ppp') pppEnds.delete(portKey(state.a));
+      if (pb === undefined || effectiveEncap(pb) !== 'ppp') pppEnds.delete(portKey(state.b));
+    }
+    if (ready === rec.lineReady) return;
+    rec.lineReady = ready;
+    if (pa === undefined || pb === undefined || !serialLineNotifies(effectiveEncap(pa), effectiveEncap(pb))) return;
+    notify(state.a, { kind: 'serial-line', ready }, now);
+    notify(state.b, { kind: 'serial-line', ready }, now);
   };
 
   /** Write one port's derived state; reports what changed. */
@@ -657,6 +713,8 @@ export function createLinkModel(deps: LinkModelDeps): LinkModelImpl {
     for (const [ref, p, w] of portEvents) {
       if (w.carrierChanged && p.phy !== undefined) notify(ref, { kind: 'carrier', up: p.phy.carrier }, now);
     }
+    // P3 [S19]: PPP reports and the serial-line event (after the carrier notifications)
+    settleSerialLine(rec, pa, pb, serial, now);
     return changes;
   };
 
@@ -786,7 +844,7 @@ export function createLinkModel(deps: LinkModelDeps): LinkModelImpl {
         if (kind !== undefined) state.kind = kind;
         if (spec.dceEnd !== undefined) state.dceEnd = spec.dceEnd;
         if (spec.distanceOverrideM !== undefined) state.distanceOverrideM = spec.distanceOverrideM;
-        links.set(spec.id, { state, cut: false, flowing: false });
+        links.set(spec.id, { state, cut: false, flowing: false, lineReady: false });
         byPort.set(keyA, spec.id);
         byPort.set(keyB, spec.id);
         const pa = deps.port(spec.a);
@@ -841,6 +899,16 @@ export function createLinkModel(deps: LinkModelDeps): LinkModelImpl {
         links.delete(id);
         if (wasSegment) segment.rebuild(now);
         for (const ref of carrierLost) notify(ref, { kind: 'carrier', up: false }, now);
+        // P3 [S19]: the line is gone; a ready line with a ppp end says so (touched holds only the ends still present)
+        pppEnds.delete(portKey(state.a));
+        pppEnds.delete(portKey(state.b));
+        if (rec.lineReady) {
+          rec.lineReady = false;
+          const ends = touched.map(([ref, p]) => [ref, effectiveEncap(p)] as const);
+          if (ends.length === 2 && serialLineNotifies(ends[0]![1], ends[1]![1])) {
+            for (const [ref] of ends) notify(ref, { kind: 'serial-line', ready: false }, now);
+          }
+        }
         return changed;
       });
     },
@@ -952,6 +1020,19 @@ export function createLinkModel(deps: LinkModelDeps): LinkModelImpl {
             if (!latches.apply(from, op, p.phy?.carrier === true)) return [];
             return recomputeLink(id, now);
           }
+          case 'ppp-link': {
+            // P3 [S19] (file header): kept only for a ppp end of a ready line; a report that changes nothing is silent
+            const p = deps.port(from);
+            const id = p?.link ?? byPort.get(portKey(from));
+            const rec = id === undefined ? undefined : links.get(id);
+            if (p === undefined || id === undefined || rec === undefined || !rec.lineReady || effectiveEncap(p) !== 'ppp') return [];
+            const key = portKey(from);
+            const before = pppEnds.get(key);
+            const next: SerialPppEndState = op.up ? { up: true } : op.reason === undefined ? { up: false } : { up: false, reason: op.reason };
+            pppEnds.set(key, next);
+            if (serialPppEndDownReason(before) === serialPppEndDownReason(next)) return [];
+            return recomputeLink(id, now);
+          }
           case 'sta-state':
           case 'assoc':
           case 'authorize':
@@ -1006,6 +1087,10 @@ export function createLinkModel(deps: LinkModelDeps): LinkModelImpl {
 
     inflight(now) {
       return inflight.visible(now);
+    },
+
+    queued(ref, now) {
+      return inflight.queued(ref, now);
     },
 
     cut(id, on, now) {

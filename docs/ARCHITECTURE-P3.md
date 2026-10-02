@@ -4481,6 +4481,94 @@ each keeps its assertion's strength.
 26. `userSecretOf` (`cli/runtime.ts:383-388`): tests of the `username X secret|password Y` forms unchanged; the
     privilege form gains exact cases.
 
+**W2 additions (recorded at the W2 fix and integrate step, 2026-10-02).** Pins the W2 items forced without a line
+above; each keeps its assertion's strength (an exact value stays an exact value; line numbers are the current ones).
+
+21b. cli (knock-ons of item 21: the W2 fold puts `P3_GRAMMAR_FRAGMENTS`, then `P3_APPROVED_GRAMMAR_FRAGMENTS`, after
+     the P2 fragments in `GRAMMAR_FRAGMENTS` / `GRAMMAR`, and their handlers in `HANDLERS`):
+     - help lists, all still `toEqual` complete arrays: `cli.parser.help.test.ts` user-exec (:44) = item 21 :62, config
+       and the routed port (:65, :67) = item 21 :61 and :60, the PC (:221) = item 21 :63, the router `show ` subtree
+       (:79) and `cli.grammar.p05.test.ts:271` → `['access-lists', 'arp', 'class-map', 'clock', 'history', 'hosts',
+       'interfaces', 'ip', 'ipv6', 'policy-map', 'running-config', 'standby', 'startup-config', 'version']` (the W2
+       subset of item 21's show list), `show ip ` (:88) → `['access-lists', 'arp', 'dhcp', 'interface', 'nat', 'ospf',
+       'route', 'sockets']`, `no ` on the routed port (:152) → `['bandwidth', 'cdp', 'delay', 'description', 'duplex',
+       'encapsulation', 'fair-queue', 'ip', 'ipv6', 'lldp', 'mac-address', 'service-policy', 'shutdown', 'speed',
+       'standby']`; `cli.grammar.p05.test.ts:171-172` the serial port → item 21's final `serial/wan` list (complete
+       at W2) and the routed port → item 21 :60, :235 the laptop shell gains `flow`, `rest`, `ssh`, `telnet` (before
+       `wifi`), :246 the PC = item 21 :63; `cli.grammar.p1.test.ts:222` `config-line` → `['access-class', 'do', 'end',
+       'exec-timeout', 'exit', 'login', 'no', 'password', 'transport']` (§5.2); `cli.nat.test.ts:86` a named standard
+       list → `['deny', 'do', 'end', 'exit', 'no', 'permit', 'remark', '<1-2147483647>']` (§5.2 sequence numbers and
+       `remark`).
+     - D14 (the ACL lines widened to `managed-switch`): `cli.nat.test.ts:94-98` — `access-list 1 permit any` on
+       `switch.nfc2960` now matches exactly `{ok: true, handler: configAccessList, args: {form: 'any', number: '1',
+       action: 'permit'}}`; two new exact cases keep NAT a router's (`ip nat inside source …` and `ip nat pool …` do
+       not match on the switch).
+     - the table: `cli.parser.grammar.test.ts` `EXPECTED_IDS` (:101-130) gains every `P3_HANDLERS` and
+       `P3_APPROVED_HANDLER_IDS` id in fragment order, and the fragment keys (:173-176) gain `ospf, acl-p3, hardening,
+       qos, discovery, time, api, ssh, eigrp, wan, crypto, qos-queueing, logging, remote, devhost` after `wlc` (exact);
+       "every path begins with a keyword" (:183-215) admits exactly the four sequenced named-ACL specs whose first
+       element is `<seq>` (`naclEntryP3` and `naclSeq` in `config-std-nacl` and `config-ext-nacl`), pinned as an exact
+       set with the exact `seq` ArgSpec; `cli.vlan.test.ts:233-242`, `cli.stp.test.ts:429-439` and
+       `cli.wlc.test.ts:303-309` — the table is the P1 fragments, the P2 specs, then exactly `P3_GRAMMAR`, `wlc` closes
+       the P1/P2 block (exact slices instead of "the last N specs"); `cli.modes.p2.test.ts:42` and
+       `cli.wlc.test.ts:283-287` — `modesOfClass('config')` is item 22's complete list (exact).
+     - the regenerated `goldens/cli-help.p05.json` (item 21) moves 124 lists, additions only, no list removed; the
+       `ppp …` lines are offered on `wan`-role serial ports only (`grammar/wan.ts` `PPP_PORT`), so the serial access lines
+       of `csu.nfcsu` and `cloud.nfinternet` stay unchanged (D17: HDLC only).
+23b. web-shell (knock-on of item 23): `overlays.registry.test.ts:60` pins `TOPO_OVERLAY_DEFAULTS` with the six new
+     defaults (exact object). The constant lives in web-canvas's `canvas/overlays/registry.ts`; its six keys are a
+     reviewed additive edit by web-shell, forced by the now-required `TopoOverlayState` keys.
+26b. web (ruling R22): `vocab.test.ts:593-600` — `ntp`, `ssh`, `telnet` and `syslog` keep their exact former labels and
+     are exactly absent from `RESERVED_PROTOCOL_VOCAB`.
+30b. l3 [S19] (the receive side item 30 left out; verified W2 findings 2 and 7): `IPV6_HANDLES` gains `{layer: 'ppp',
+     ethertype: PPP_PROTO.ipv6 (0x0057), roles: ['wan']}` after the HDLC selector, so IPv6 framed by nd over PPP is
+     demultiplexed to ipv6; nd's PPP branch drops `link-down` (detail `IPv6CP is not open on <port>`) while the port's
+     `ppp` row has an `ipv6cp` other than `'opened'` (absent counts as not negotiated; no row, no gate — arp's IPCP gate
+     mirrored). No existing test pinned the ipv6 handles; `ip.ppp-plumbing.test.ts` pins the exact array, the demux and
+     the gate. The W3 `wan.ppp` test adds an IPv6 ping across the PPP link.
+30c. device [S25] (the extended-logging default of P3 worlds): `device.emit-log.test.ts:102-170` — a P3 world's router
+     boots with exactly one log, `%SYS-5-BOOTED` (`systemStartedMessage(model)`), as trace bytes and as the logger's
+     `log.record`; the cases that asserted "nothing logged at boot" pin exactly that line first and slice past it for
+     the rest (still `toEqual`); the P1/P2 cases are unchanged.
+30d. Knock-ons of item 30, each still `toEqual`: `device.pipeline.roles.test.ts:162` `ENCAP_ALLOWS.ppp` → `['ppp']` (R4:
+     the W2 device item adds `FramingProto` `'ppp'` with its `FRAMING_RULES`, and `contracts/catalog.ts`
+     `macFilterApplies` treats `ppp` like `hdlc` — a frame without a destination MAC is never MAC-filtered — a reviewed
+     extension of R4 in the same change); `sim.capture.test.ts:274` `CAPTURE_LIVE_FCS_LEN` gains `ppp_hdlc: 0` (the
+     exhaustive record of the new `CaptureLinkType` member); `device.role.test.ts:120-139`, `device.subif.test.ts:188`
+     and `cli.handlers.p05.test.ts:138-152` get the accepting `encapsulation ppp` case (`{ok: true}`; the handler's
+     `{}` and its `configCalls` entry; `pppUnavailable` and `MSG_PPP_NOT_AVAILABLE` are deleted, the access-line
+     refusal is `DEVICE_CONFIG_MESSAGES.pppAccessLine`).
+
+**W2 rulings (architect, 2026-10-02)**
+
+- **R23.** The W2 fix's additive contract members are accepted: `CommandCtx.profile?`, `.setMonitor?`, `.files?`,
+  `.readFile?`; `DeviceRuntime.files?`, `.readFile?`; the `remoteOutput` SimEvent (a remote session's output is
+  delivered in its own dispatch, never re-entering the device's `applyActions`); `macFilterApplies` (item 30d). The W8
+  gate settles their optionality with the rest.
+- **R24.** `udp.send` gains `dscp?` (optional by meaning; absent = 0, today's bytes) — owner: the W3 **svc** item, so
+  application traffic can carry a marking without a policy.
+- **R25.** `LoggerStateView` becomes a contract type (`contracts/process.ts`, additive) — owner: the W3 **svc** item;
+  the same item aligns the logger's default console level with `log-render`'s.
+- **R26.** `PolicerSpec` gains its conform and exceed actions, and the conform/exceed counts reach
+  `show policy-map interface` through `DeviceRuntime.qosCounters` — owners: the W3 **qos** and **cli** items.
+- **R27.** The l3 half of R17 (an outbound telnet/ssh client session wakes a switch's dormant transport) and its case
+  in `ip.switch-transport.test.ts` — owner: the W3 **l3** item.
+- **R28.** Web worker tests: each re-imports the whole engine (442 modules after W2, ~1.2–1.8 s per import on the
+  current disk), so a cold first run times out at 5 s. The W3 **web-shell** item makes those tests reset only the
+  worker module and keep the engine module cached (or an equivalent that cuts the per-test import cost); no timeout is
+  raised.
+- **R29.** `accept.p2.loop-storm-bounded` now runs ~317 s alone (647 s in the full suite), above its 300 s literal,
+  which vitest cannot enforce on a synchronous test; the W8 gate decides (P2 §9.2 22e carried). A repository on a
+  synced cloud folder slows file reads; moving it to a local folder is the product owner's call.
+- **R30.** The §10.3 W2 gate's "`rest` with no arguments (the usage text)" is met by the host shell's house rule: a
+  command missing its arguments answers `% More input is required to complete this command.` exactly as `ping` and
+  `flow` do, and `rest ?` names the verbs. No separate usage text is added.
+- **R31.** "Run to idle" (`app/PlaybackControls.tsx`, since P1) warns "Stopped after 200 000 events; the queue is
+  still busy." whenever `pendingEvents > 0`, but an idle run (D10) always leaves the periodic maintenance timers
+  pending, so any world with a router warns after a normal idle run. The warning is shown only when the run stopped
+  at its event cap (`RunStats.stopped === 'maxEvents'`), carried through the bridge by a minimal additive change —
+  owner: the W3 **web-shell** item, with a test for both cases.
+
 **W3**
 
 27. `show access-lists` for an applied list gains ` (N matches)` on rows with N > 0: no P2 test applies a list to an

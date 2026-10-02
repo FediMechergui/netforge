@@ -10,10 +10,12 @@
  * W8 exit gate, except the ones tagged `@since P2 (optional by meaning)` (`LabUiState.checking`). Course-layer
  * members are tagged `@since course`: they are delivered and required, and the P2 transition sweep never touches
  * them. Epoch change additionally clears: simMode.stoppedAt,
- * netscope live captures (keeps i_*), lab.status, desktopWindows, a11y.canvasFocus, eventsTruncated.
+ * netscope live captures (keeps i_*), lab.status, desktopWindows, a11y.canvasFocus, eventsTruncated, and (P3 [S2])
+ * resets `routingUi`.
  * Persisted to localStorage (try/catch): theme, palette.collapsed/recent, cable.media, overlays, dock layout,
  * (P2 W2 web-shell) `topoOverlays` and `learn.lastCourse`, and (P2, store/store.ts `rememberEntryView`) whether the
- * last surface was the sandbox or the course layer.
+ * last surface was the sandbox or the course layer. (P3 W2 web-shell) `topoOverlays` gains the QoS, OSPF, WAN and
+ * EIGRP keys: a stored P2 record has none of them, and each takes its default (store/persist.ts).
  */
 import type {
   CaptureId,
@@ -159,6 +161,33 @@ export interface TopoOverlayState {
   stpVlan: number | null;
   vlanFocus: number | null;
   capwap: boolean;
+  /**
+   * @since P3 (ARCHITECTURE-P3 §2.14, M13; W2 web-shell) FIFO stacks at congested egress ports (from
+   * `PortSnapshot.txBacklog`) and cable load sleeves.
+   */
+  qos: boolean;
+  /** @since P3 [S1] The OSPF overlay: adjacencies, DR/BDR letters, costs and area zones. */
+  ospf: boolean;
+  /** @since P3 [S1] The one area the OSPF overlay keeps (dotted, '0.0.0.0'); null = every area. */
+  ospfArea: string | null;
+  /** @since P3 [S18]/[S19] The WAN overlay: PPP phase rails and tunnels. */
+  wan: boolean;
+  /** @since P3 [C1] The EIGRP overlay: successors and feasible successors for one destination. */
+  eigrp: boolean;
+  /** @since P3 [C1] The destination the EIGRP overlay draws ('10.0.12.0/24'); null = the first one a router knows. */
+  eigrpPrefix: string | null;
+}
+
+/**
+ * @since P3 [S2] The link-state browser's selection (ARCHITECTURE-P3 §2.14; W2 web-shell; read by the W3
+ * `routing/*` panels). Not persisted: a new epoch resets it, since its device id belonged to the world that went.
+ * `lsa` is the key of the LSA shown in detail; `spf` is the SPF stepper's frame and whether it is playing.
+ */
+export interface RoutingUiState {
+  device: DeviceId | null;
+  area: string | null;
+  lsa: string | null;
+  spf: { step: number; playing: boolean };
 }
 
 /**
@@ -329,6 +358,10 @@ export interface UiState {
    * store's initial state holds `defaultTimelineUi()` and a new epoch resets it in place, so the slice always exists.
    */
   timeline: TimelineUiState;
+
+  // ── P3 ──
+  /** @since P3 [S2] The link-state browser's selection (not persisted; reset by a new epoch). */
+  routingUi: RoutingUiState;
 }
 
 export interface UiActions {
@@ -389,6 +422,13 @@ export interface UiActions {
   setTopoOverlay<K extends keyof TopoOverlayState>(k: K, v: TopoOverlayState[K]): void;
   /** @since P2 Record the course of the lesson just opened (`learn.lastCourse`, persisted; W2 web-shell). */
   setLastCourse(courseId: string | null): void;
+
+  // ── P3 ──
+  /**
+   * @since P3 [S2] Merge into the link-state browser's selection. The slice object is replaced when anything changed
+   * (`spf` is replaced whole when given) and kept when nothing did.
+   */
+  setRoutingUi(p: Partial<RoutingUiState>): void;
 }
 
 export type Store = UiState & UiActions;

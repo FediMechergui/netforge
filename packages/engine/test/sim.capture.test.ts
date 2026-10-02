@@ -266,12 +266,12 @@ describe('capture bytes per link type', () => {
       ['ethernet', 'ethernet', 4],
       ['dot11', 'ieee802_11', 0],
       ['hdlc', 'c_hdlc', 0],
-      ['ppp', 'c_hdlc', 0],
+      ['ppp', 'ppp_hdlc', 0], // P3 §9.2 item 30 (W2 capture [S19]): was 'c_hdlc'
       ['none', 'raw', 0],
       [undefined, 'ethernet', 4],
     ];
     for (const [encap, linkType, fcsLen] of cases) expect(captureLinkForEncap(encap)).toEqual({ linkType, fcsLen });
-    expect(CAPTURE_LIVE_FCS_LEN).toEqual({ ethernet: 4, ieee802_11: 0, c_hdlc: 0, raw: 0 });
+    expect(CAPTURE_LIVE_FCS_LEN).toEqual({ ethernet: 4, ieee802_11: 0, c_hdlc: 0, raw: 0, ppp_hdlc: 0 }); // P3 §9.2 item 30: + ppp_hdlc
   });
 
   it('strips the 802.11 FCS and the HDLC CRC; the rows still decode with fcsLen 0', () => {

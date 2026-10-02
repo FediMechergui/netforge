@@ -86,6 +86,7 @@ import {
   IPPROTO_NONE,
   IPPROTO_TCP,
   IPPROTO_UDP,
+  PPP_PROTO,
   type LayerView,
   type Pdu,
 } from '../contracts/pdu.js';
@@ -155,10 +156,17 @@ export function ecmpIndex6(src: Ipv6Address, dst: Ipv6Address, n: number): numbe
   return h % n;
 }
 
-/** Wire selectors: Ethernet type 0x86dd on every L3 role, HDLC protocol 0x86dd on serial WAN ports (§3.9). */
+/**
+ * Wire selectors: Ethernet type 0x86dd on every L3 role, HDLC protocol 0x86dd on serial WAN ports (§3.9); [S19] PPP
+ * protocol 0x0057 on serial WAN ports (ARCHITECTURE-P3 D17, §9.2 item 30b: the IPv6 twin of ipv4's 0x0021 selector, so
+ * the IPv6 nd frames over PPP is received; W2 fix, verified findings 2 and 7).
+ */
 export const IPV6_HANDLES: readonly DemuxSelector[] = Object.freeze([
   Object.freeze({ layer: 'ethernet', ethertype: ETHERTYPE_IPV6, roles: L3_ROLES }),
   Object.freeze({ layer: 'hdlc', ethertype: HDLC_PROTO_IPV6, roles: Object.freeze(['wan'] as PortRole[]) }),
+  // ── [S19] PPP framing on a serial WAN port ──
+  Object.freeze({ layer: 'ppp', ethertype: PPP_PROTO.ipv6, roles: Object.freeze(['wan'] as PortRole[]) }),
+  // ── end [S19] ──
 ]) as readonly DemuxSelector[];
 
 // ── shared helpers (also used by nd and icmpv6) ─────────────────────────────

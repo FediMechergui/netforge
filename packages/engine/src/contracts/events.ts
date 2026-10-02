@@ -12,6 +12,7 @@ import type { SimTime } from './time.js';
 import type { MediumId } from './medium.js';
 import type { RfBand } from './rf.js';
 import type { CliRemoteAction, ConfigOrigin, RemoteCliAction } from './process.js';
+import type { VtyOutputEvent } from './transport.js';
 
 export type SimEventBody =
   /** Last bit of a frame has arrived on `port` (store-and-forward). */
@@ -74,7 +75,15 @@ export type SimEventBody =
    * non-periodic). The Simulation applies it to its CliRuntime (openRemote / execRemote / closeRemote / setRemote) and
    * delivers the output of a via-'vty' session to the device's vty daemon as ProcessEvent `vty.output`.
    */
-  | { kind: 'remoteCli'; device: DeviceId; from: ProcessName; act: RemoteCliAction | CliRemoteAction };
+  | { kind: 'remoteCli'; device: DeviceId; from: ProcessName; act: RemoteCliAction | CliRemoteAction }
+  /**
+   * @since P3 [S13] (W2 fix, verified finding 5; a minimal additive member) One piece of a via-'vty' session's output,
+   * scheduled by the Simulation at now (zero delay, non-periodic) and handed to the device's vty daemon as ProcessEvent
+   * `vty.output` in this event's own dispatch, with its own ACTION_BUDGET. The CLI core produces such output from inside
+   * trace delivery or a daemon's handler (a debug line, a job's output), where applying it would re-enter the device
+   * runtime mid-handler; pieces keep their order (seq). Never journaled (a consequence of replayed events).
+   */
+  | { kind: 'remoteOutput'; device: DeviceId; out: VtyOutputEvent };
 
 export type SimEvent = SimEventBody & {
   readonly at: SimTime;

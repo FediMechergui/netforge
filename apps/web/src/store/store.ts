@@ -15,7 +15,8 @@
  *
  * Epoch change (reset/load) clears mirrored history: events, in-flight frames, markers, flashes, dropped and
  * truncated counters, the inspected PDU and PDU selection, desktop windows, the keyboard canvas focus, plus the P1
- * slices when present (sim-mode stop, live captures, lab status) and the P2 review state.
+ * slices when present (sim-mode stop, live captures, lab status), the P2 review state and (P3 [S2]) the link-state
+ * browser's selection (`routingUi`).
  *
  * P2 [SHOULD S1] review (ARCHITECTURE-P2 §2.14; W4 web-shell): a batch whose `review` is set shows an earlier
  * instant of the same world. Its snapshot or delta, `now`, playing state and in-flight frames apply exactly as a live
@@ -51,6 +52,7 @@ import {
   type DesktopWindow,
   type DropMarker,
   type SnapshotIndex,
+  type RoutingUiState,
   type Store,
   type TableFlash,
   type Theme,
@@ -95,6 +97,14 @@ export const DEFAULT_TIMELINE_LANES: readonly LaneId[] = Object.freeze([
 /** @since P2 [S1] A fresh timeline slice: no review, no head yet, every lane, nothing in flight. */
 export function defaultTimelineUi(): TimelineUiState {
   return { review: null, head: null, lanes: [...DEFAULT_TIMELINE_LANES], seeking: false, reviewEvents: [] };
+}
+
+/**
+ * @since P3 [S2] A fresh link-state browser selection: no router, area or LSA chosen, the SPF stepper at its first
+ * frame and stopped (the initial state, and what a new epoch resets to).
+ */
+export function defaultRoutingUi(): RoutingUiState {
+  return { device: null, area: null, lsa: null, spf: { step: 0, playing: false } };
 }
 
 /** Desktop window geometry. */
@@ -320,6 +330,8 @@ export const useStore = create<Store>()(
     learn: { courseId: null, lessonId: null, lastCourse: persisted.learn.lastCourse },
     // P2 [S1] (W4 web-shell): review and the timeline head mirror the worker; lanes and seeking are the strip's.
     timeline: defaultTimelineUi(),
+    // P3 [S2] (W2 web-shell): the link-state browser's selection, not persisted.
+    routingUi: defaultRoutingUi(),
 
     // ── actions ──────────────────────────────────────────────────────────
     applyBatch(batch: EngineBatch) {
@@ -634,6 +646,26 @@ export const useStore = create<Store>()(
       });
     },
 
+    // ── P3 ───────────────────────────────────────────────────────────────
+    setRoutingUi(p) {
+      const cur = get().routingUi;
+      const same =
+        (p.device === undefined || p.device === cur.device) &&
+        (p.area === undefined || p.area === cur.area) &&
+        (p.lsa === undefined || p.lsa === cur.lsa) &&
+        (p.spf === undefined || (p.spf.step === cur.spf.step && p.spf.playing === cur.spf.playing));
+      if (same) return;
+      set((s) => {
+        // A fresh object (and a fresh `spf`), so a selector on the slice sees the change by reference.
+        s.routingUi = {
+          device: p.device === undefined ? cur.device : p.device,
+          area: p.area === undefined ? cur.area : p.area,
+          lsa: p.lsa === undefined ? cur.lsa : p.lsa,
+          spf: { ...(p.spf ?? cur.spf) },
+        };
+      });
+    },
+
     setInspectorTab(t) {
       if (get().inspectorTab === t) return;
       set((s) => {
@@ -807,6 +839,8 @@ function clearHistory(s: Draft<Store>, epoch: number): void {
   timeline.head = null;
   timeline.seeking = false;
   timeline.reviewEvents = [];
+  // P3 [S2] the link-state browser pointed into the previous world (its device ids restart with the epoch)
+  s.routingUi = defaultRoutingUi();
 }
 
 /**

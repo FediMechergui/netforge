@@ -37,6 +37,15 @@
  *    (nor `sock.closed` when it closes), left out of the StateView, so a P1/P2 router whose configuration holds
  *    `line vty` keeps its bytes. It binds and accepts like any listener; its accepted connections are ordinary ones.
  *
+ * P3 (ARCHITECTURE-P3 §2.4, §2.6; W2 svc): `tcp.probe {session, dst, port, src?, timeoutNs}` (grader clones only) sends
+ * one SYN (tag 'tcp-probe') from an ephemeral port that the probe holds, with no connection, row or socket event, and
+ * records the outcome in the StateView `probes` (optional by meaning: present only after a probe, at most 16, newest
+ * last): 'open' on the SYN-ACK, which is answered with a RST so no connection is kept; 'refused' on a RST; 'unreachable'
+ * on an ICMP destination unreachable quoting the SYN (type and code kept), or at once when there is no source address
+ * or route; 'timeout' when the non-periodic timer `probe:<session>` fires first. The ISN comes from the cached `isn`
+ * stream, as for any connection. A new probe with the same session replaces the old one. Without a probe every path is
+ * the P1 one.
+ *
  * ponytail: one file (the brief's tcp/{fsm,sender,receiver,congestion}.ts split is not needed at this size). Skipped:
  * window scaling, SACK, timestamps, simultaneous open, `tcp.connect.timeoutNs`, RFC 5961 challenge ACKs; our receive
  * window is always 65535 because data goes straight to the owner. Add when a lab needs them.
@@ -44,9 +53,9 @@
 import { isIpv4, isIpv4Broadcast, isIpv4Multicast, type IpAddress, type IpFamily } from '../contracts/addr.js';
 import type { PduId, PortId, ProcessName } from '../contracts/ids.js';
 import type { DropReason } from '../contracts/link.js';
-import { ICMP_DEST_UNREACHABLE, ICMP_UNREACH_ADMIN, IPPROTO_TCP, type FieldValue, type LayerSpec, type LayerView, type Pdu, type PduMeta } from '../contracts/pdu.js';
+import { ICMP_DEST_UNREACHABLE, ICMP_UNREACH_ADMIN, ICMPV6_DEST_UNREACHABLE, IPPROTO_TCP, type FieldValue, type LayerSpec, type LayerView, type Pdu, type PduMeta } from '../contracts/pdu.js';
 import type { Action, DebugEvent, Process, ProcessCtx, ProcessRequest, StateView } from '../contracts/process.js';
-import { socketKey, type SocketRow, type Table } from '../contracts/tables.js';
+import { socketKey, type SocketRow, type Table, type TransportProbeView } from '../contracts/tables.js';
 import type { SimTime } from '../contracts/time.js';
 import {
   EPHEMERAL_PORT_MAX,
@@ -72,7 +81,7 @@ import {
   type TcpState,
 } from '../contracts/transport.js';
 import { flowKey, parseIpv6 } from '../core/addr6.js';
-import { canonical, flowEndpoint, ipIndexFrom, nextEphemeralPort, udpBindsConflict, udpErrorCodeFor, udpWildcard, upperIndex } from './udp.js';
+import { canonical, flowEndpoint, ipIndexFrom, nextEphemeralPort, trimProbeLog, udpBindsConflict, udpErrorCodeFor, udpWildcard, upperIndex } from './udp.js';
 
 const NAME = 'tcp';
 const CAT = 'tcp';
@@ -153,6 +162,18 @@ interface Conn {
   readonly ooo: Map<number, { data: Uint8Array; fin: boolean; pdu: Pdu }>;
 }
 
+/** @since P3 One running probe (grader clones only): the SYN's 4-tuple and ISN, and its outcome record. */
+interface TcpProbe {
+  readonly session: string;
+  readonly family: IpFamily;
+  readonly localAddr: IpAddress;
+  readonly localPort: number;
+  readonly remoteAddr: IpAddress;
+  readonly remotePort: number;
+  readonly iss: number;
+  readonly view: TransportProbeView;
+}
+
 interface Seg {
   seq: number;
   ack: number;
@@ -185,6 +206,9 @@ export function createTcp(): Process {
   let retransmits = 0;
   let resetsOut = 0;
   let checksumErrors = 0;
+  /** @since P3 Running probes by session (grader clones only), and the outcomes shown in the StateView. */
+  const probes = new Map<string, TcpProbe>();
+  const probeLog: TransportProbeView[] = [];
 
   function debug(ctx: ProcessCtx, message: string, data?: Record<string, unknown>): void {
     ctx.debug(CAT, message, data);
@@ -247,6 +271,8 @@ export function createTcp(): Process {
   function bindConflict(family: IpFamily, localAddr: IpAddress, localPort: number): SocketId | undefined {
     for (const l of listeners.values()) if (udpBindsConflict(l, { family, localAddr, localPort })) return l.id;
     for (const c of conns.values()) if (c.listener === undefined && udpBindsConflict(c, { family, localAddr, localPort })) return c.id;
+    // P3: a running probe holds its port too (no probe runs outside grader clones)
+    for (const p of probes.values()) if (udpBindsConflict(p, { family, localAddr, localPort })) return `probe ${p.session}`;
     return undefined;
   }
 
@@ -524,6 +550,79 @@ export function createTcp(): Process {
     setState(ctx, c, 'SYN_SENT', 'connect');
     out.push(...sendSyn(ctx, c));
     return out;
+  }
+
+  // ── P3: the grader's probe (§2.4 `tcp.probe`; grader clones only) ──────────
+
+  /** Settle `p` with `outcome` (and the ICMP type and code), forget it and stop its timer. */
+  function settleProbe(ctx: ProcessCtx, p: TcpProbe, outcome: TransportProbeView['outcome'], icmp?: { type: number; code: number }): Action {
+    probes.delete(p.session);
+    p.view.outcome = outcome;
+    p.view.at = ctx.now;
+    if (icmp !== undefined) p.view.icmp = icmp;
+    debug(ctx, `probe ${p.session} to ${flowEndpoint(p.family, p.remoteAddr, p.remotePort)}: ${outcome}${icmp !== undefined ? ` (type ${icmp.type} code ${icmp.code})` : ''}`, {
+      session: p.session,
+      outcome,
+    });
+    return { type: 'cancelTimer', key: `probe:${p.session}` };
+  }
+
+  function probe(ctx: ProcessCtx, req: Extract<ProcessRequest, { kind: 'tcp.probe' }>): Action[] {
+    const out: Action[] = [];
+    if (probes.delete(req.session)) out.push({ type: 'cancelTimer', key: `probe:${req.session}` });
+    const family: IpFamily = isIpv4(req.dst) ? 4 : 6;
+    const dst = canonical(family, req.dst);
+    const view: TransportProbeView = { session: req.session, dst: dst ?? req.dst, port: req.port, outcome: 'pending', at: ctx.now };
+    probeLog.push(view);
+    trimProbeLog(probeLog);
+    const fail = (detail: string): Action[] => {
+      view.outcome = 'unreachable';
+      debug(ctx, `probe ${req.session} to ${req.dst} port ${String(req.port)}: unreachable (${detail})`, { session: req.session, outcome: view.outcome });
+      return out;
+    };
+    if (dst === null) return fail(`${req.dst} is not an IP address`);
+    if (!Number.isInteger(req.port) || req.port < 1 || req.port > 0xffff) return fail('the port is outside 1-65535');
+    let src: IpAddress;
+    if (req.src !== undefined) {
+      const a = canonical(family, req.src);
+      if (a === null || !isOwn(ctx, family, a)) return fail(`${req.src} is not an address of this device`);
+      src = a;
+    } else {
+      const sel = family === 4 ? ctx.sourceFor(dst) : ctx.sourceFor6(dst);
+      if (sel === undefined) return fail(`no route to ${dst}`);
+      src = sel.address;
+    }
+    const localPort = allocateEphemeral(ctx, family, src);
+    if (localPort === undefined) return fail('every ephemeral port is in use');
+    const p: TcpProbe = { session: req.session, family, localAddr: src, localPort, remoteAddr: dst, remotePort: req.port, iss: isn(ctx), view };
+    probes.set(p.session, p);
+    debug(ctx, `probe ${p.session}: SYN ${flowEndpoint(family, src, localPort)} > ${flowEndpoint(family, dst, req.port)}`, { session: p.session });
+    out.push(emit(ctx, family, src, dst, localPort, req.port, { seq: p.iss, flags: 'S', mss: ourMss(family) }, undefined, { tag: 'tcp-probe' }));
+    out.push({ type: 'timer', key: `probe:${p.session}`, delay: req.timeoutNs });
+    return out;
+  }
+
+  /** A segment for a running probe's 4-tuple: SYN-ACK → open (answered with a RST), RST → refused; others ignored. */
+  function onProbeSegment(ctx: ProcessCtx, p: TcpProbe, s: Seg): Action[] {
+    const out: Action[] = [{ type: 'consume', pdu: s.pdu }];
+    const has = (f: string): boolean => s.flags.includes(f);
+    if (has('R')) {
+      if (has('A') && s.ack === seqAdd(p.iss, 1)) out.push(settleProbe(ctx, p, 'refused'));
+      return out;
+    }
+    if (has('S') && has('A') && s.ack === seqAdd(p.iss, 1)) {
+      out.push(settleProbe(ctx, p, 'open'));
+      resetsOut++;
+      out.push(emit(ctx, p.family, p.localAddr, p.remoteAddr, p.localPort, p.remotePort, { seq: s.ack, flags: 'R', window: 0 }, undefined, { triggeredBy: s.pdu.id }));
+    }
+    return out;
+  }
+
+  function findProbe(family: IpFamily, local: IpAddress, localPort: number, remote: IpAddress, remotePort: number): TcpProbe | undefined {
+    for (const p of probes.values()) {
+      if (p.family === family && p.localPort === localPort && p.remotePort === remotePort && p.localAddr === local && p.remoteAddr === remote) return p;
+    }
+    return undefined;
   }
 
   function send(ctx: ProcessCtx, req: Extract<ProcessRequest, { kind: 'tcp.send' }>): Action[] {
@@ -892,6 +991,10 @@ export function createTcp(): Process {
     if (typeof f.mss === 'number') s.mss = f.mss;
     const c = findConn(family, dst, f.dstPort, src, f.srcPort);
     if (c !== undefined) return onSegment(ctx, c, s);
+    if (probes.size > 0) {
+      const p = findProbe(family, dst, f.dstPort, src, f.srcPort);
+      if (p !== undefined) return onProbeSegment(ctx, p, s);
+    }
     // RFC 1122 §4.2.3.10: a segment to a broadcast or multicast address is discarded in silence — no listener, no RST
     const unicast = family === 4 ? ctx.ownAddress(dst) !== undefined && !isIpv4Broadcast(dst) && !isIpv4Multicast(dst) : parseIpv6(dst)?.[0] !== 0xff;
     if (!unicast) return [drop(ctx, pdu, 'not-for-me', `tcp segment to ${dst} is not a unicast address of this device`, port)];
@@ -919,6 +1022,13 @@ export function createTcp(): Process {
     if (qIp === undefined || qTcp?.proto !== 'tcp' || typeof qTcp.fields.srcPort !== 'number' || typeof qTcp.fields.dstPort !== 'number') return out;
     const qFamily: IpFamily = qIp.proto === 'ipv4' ? 4 : 6;
     const c = findConn(qFamily, String(qIp.fields.src), qTcp.fields.srcPort, String(qIp.fields.dst), qTcp.fields.dstPort);
+    if (c === undefined && probes.size > 0) {
+      // P3 (§2.4): a destination unreachable quoting a running probe's SYN settles it (type and code kept)
+      const p = findProbe(qFamily, String(qIp.fields.src), qTcp.fields.srcPort, String(qIp.fields.dst), qTcp.fields.dstPort);
+      const unreachable = family === 4 ? type === ICMP_DEST_UNREACHABLE : type === ICMPV6_DEST_UNREACHABLE;
+      if (p !== undefined && unreachable) out.push(settleProbe(ctx, p, 'unreachable', { type, code }));
+      return out;
+    }
     // P3 (D12): ICMP 3/13, an ACL deny, is the soft error admin-prohibited (it never aborts a connect)
     const sockCode: SocketErrorCode | undefined =
       family === 4 && type === ICMP_DEST_UNREACHABLE && code === ICMP_UNREACH_ADMIN ? 'admin-prohibited' : udpErrorCodeFor(family, type, code);
@@ -997,6 +1107,11 @@ export function createTcp(): Process {
     onTimer(ctx: ProcessCtx, key: string): Action[] {
       const i = key.indexOf(':');
       const kind = key.slice(0, i);
+      if (kind === 'probe') {
+        const p = probes.get(key.slice(i + 1));
+        if (p !== undefined) settleProbe(ctx, p, 'timeout');
+        return [];
+      }
       const c = conns.get(key.slice(i + 1));
       if (c === undefined) return [];
       switch (kind) {
@@ -1029,6 +1144,8 @@ export function createTcp(): Process {
           return close(ctx, req);
         case 'tcp.abort':
           return abort(ctx, req);
+        case 'tcp.probe':
+          return probe(ctx, req);
         default:
           return [];
       }
@@ -1065,6 +1182,8 @@ export function createTcp(): Process {
           retransmits,
           resetsOut,
           checksumErrors,
+          // P3 (§2.6, optional by meaning): only after a probe, so no P1/P2 StateView changes
+          ...(probeLog.length > 0 ? { probes: probeLog.map((v) => ({ ...v, ...(v.icmp !== undefined ? { icmp: { ...v.icmp } } : {}) })) } : {}),
         },
       };
     },

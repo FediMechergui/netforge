@@ -14,7 +14,7 @@
  * DISPLAY_FILTER_COMPLETION_LIMIT.
  */
 import type { DisplayFieldDef, DisplayFilterCompletion } from '../../contracts/capture.js';
-import { DISPLAY_FIELDS, lookupDisplayField } from './fields.js';
+import { DISPLAY_FIELD_VALUES, DISPLAY_FIELDS, lookupDisplayField } from './fields.js';
 import { isDisplayFilterWordChar, tokenizeDisplayFilter, type DisplayFilterToken } from './lexer.js';
 import { DISPLAY_FILTER_RELOPS, displayFilterOpAllowed, type DisplayFilterRelOp } from './parser.js';
 
@@ -45,18 +45,11 @@ const NOT_ITEM: Item = { label: 'not', kind: 'keyword', help: 'Negate the next t
 const CLOSE_ITEM: Item = { label: ')', kind: 'operator', help: 'Close the parenthesis.' };
 const CLOSE_SET_ITEM: Item = { label: '}', kind: 'operator', help: 'Close the set of values.' };
 
-/** Suggested values for enumerated text fields (display names; canonical and alias spellings). */
-const ENUM_VALUES: Readonly<Record<string, readonly string[]>> = Object.freeze({
-  'dhcp.messageType': ['DISCOVER', 'OFFER', 'REQUEST', 'DECLINE', 'ACK', 'NAK', 'RELEASE', 'INFORM'],
-  'dhcp.type': ['DISCOVER', 'OFFER', 'REQUEST', 'DECLINE', 'ACK', 'NAK', 'RELEASE', 'INFORM'],
-  'http.method': ['GET', 'HEAD', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  'http.request.method': ['GET', 'HEAD', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  'http.kind': ['request', 'response'],
-  'dns.qry.type': ['A', 'AAAA', 'CNAME', 'MX', 'PTR', 'NS', 'SOA'],
-  'dot11.frameType': ['mgmt', 'ctrl', 'data'],
-  'dot11-mgmt.security': ['open', 'wpa2-psk', 'wpa3-sae', 'wpa2-ent'],
-  'frame.direction': ['tx', 'rx', 'unknown'],
-});
+/**
+ * Suggested values for enumerated text fields (display names; canonical and alias spellings). Since the W2 split they
+ * live with each protocol's display fields (`capture/filter/fields/<proto>.ts`), gathered by the index file.
+ */
+const ENUM_VALUES: Readonly<Record<string, readonly string[]>> = DISPLAY_FIELD_VALUES;
 
 /** Operators that may still grow into a longer one ('=' to '==', '<' to '<='); complete operators end the prefix. */
 const PARTIAL_OPS: readonly string[] = ['=', '&', '|', '<', '>'];

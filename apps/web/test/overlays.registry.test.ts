@@ -57,7 +57,20 @@ describe('the registry', () => {
   });
 
   it('starts with every overlay off', () => {
-    expect(TOPO_OVERLAY_DEFAULTS).toEqual({ vlan: false, stp: false, stpVlan: null, vlanFocus: null, capwap: false });
+    // ARCHITECTURE-P3 §9.2 item 23 (W2 web-shell): the default object gains the P3 keys, still pinned exactly
+    expect(TOPO_OVERLAY_DEFAULTS).toEqual({
+      vlan: false,
+      stp: false,
+      stpVlan: null,
+      vlanFocus: null,
+      capwap: false,
+      qos: false,
+      ospf: false,
+      ospfArea: null,
+      wan: false,
+      eigrp: false,
+      eigrpPrefix: null,
+    });
   });
 
   it('syncs nothing while an overlay is off or there is no snapshot', () => {

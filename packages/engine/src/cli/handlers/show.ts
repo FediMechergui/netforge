@@ -326,15 +326,54 @@ export function sortedRouteRows(ctx: CommandCtx): RouteRow[] {
 }
 
 /**
+ * @since P3 (ARCHITECTURE-P3 D11, §5.8; W2 cli) The second legend line, printed only when a routing process is
+ * configured and naming only the sources of the configured processes: OSPF's codes with a `router ospf` section, and
+ * [C1] `D - EIGRP` with a `router eigrp` section (appended, or the whole list when only EIGRP runs).
+ */
+export const ROUTE_CODES_OSPF = 'O - OSPF, IA - OSPF inter area, E1/E2 - OSPF external type 1/2';
+/** @since P3 [C1] The EIGRP code of the second legend line (D11: the DHCP default keeps `D*`, EIGRP's machine source is 'EIGRP'). */
+export const ROUTE_CODES_EIGRP = 'D - EIGRP';
+/** @since P3 [C1] The sentence that follows the second legend line when EIGRP runs and the table holds a DHCP default (D11). */
+export const ROUTE_DHCP_DEFAULT_NOTE = 'A D* route at distance 254 was learned by DHCP.';
+
+/** @since P3 The legend lines after `ROUTE_CODES_LEGEND`: none without a routing process (P1/P2 bytes, D11). */
+export function dynamicRouteLegend(ctx: Pick<CommandCtx, 'running'>, rows: readonly RouteRow[]): string[] {
+  let ospf = false;
+  let eigrp = false;
+  for (const n of ctx.running.root.children) {
+    if (n.key !== 'router') continue;
+    if (n.args[0] === 'ospf') ospf = true;
+    if (n.args[0] === 'eigrp') eigrp = true;
+  }
+  const codes = [...(ospf ? [ROUTE_CODES_OSPF] : []), ...(eigrp ? [ROUTE_CODES_EIGRP] : [])];
+  if (codes.length === 0) return [];
+  const out = [`Dynamic sources: ${codes.join(', ')}`];
+  if (eigrp && rows.some((r) => r.source === 'D')) out.push(ROUTE_DHCP_DEFAULT_NOTE);
+  return out;
+}
+
+/**
+ * @since P3 (D11) The display code of a route: its source, `*` on the candidate default, and the OSPF route type after
+ * a space (`O E2`, `O*E2`); [C1] EIGRP's machine source 'EIGRP' is shown as `D`. P1/P2 sources render as before.
+ */
+export function routeCode(r: RouteRow): string {
+  const letter = r.source === 'EIGRP' ? 'D' : r.source;
+  const star = r.isDefault ? '*' : '';
+  if (r.source === 'O' && r.routeType !== undefined) return `${letter}${star === '' ? ' ' : star}${r.routeType}`;
+  return `${letter}${star}`;
+}
+
+/**
  * One routing-table row, source code in column 1 (original wording):
  *   `C    10.0.0.0/24  connected  GigabitEthernet0/0`
  *   `S    10.1.0.0/24  via 10.0.0.2 [1/0] GigabitEthernet0/0`
  *   `S    9.0.0.0/8  [1/0] out GigabitEthernet0/1`
+ *   (P3) `O    10.3.0.0/24  via 10.0.12.2 [110/3] GigabitEthernet0/0`, `O*E2 0.0.0.0/0  via …`
  */
 export function renderRoute(r: RouteRow): string {
-  const code = padRight(r.source + (r.isDefault ? '*' : ''), 5);
+  const code = padRight(routeCode(r), 5);
   const prefix = `${r.network}/${r.prefixLen}`;
-  if (r.source === 'S' || r.source === 'D') {
+  if (r.source === 'S' || r.source === 'D' || r.source === 'O' || r.source === 'EIGRP') {
     const ad = `[${r.ad}/${r.metric}]`;
     if (r.nextHop !== undefined) {
       return `${code}${prefix}  via ${r.nextHop} ${ad}${r.iface ? ` ${r.iface}` : ''}`;
@@ -368,17 +407,19 @@ const showIpRoute: CommandHandler = (ctx, args) => {
   const all = sortedRouteRows(ctx);
   const source = args[ROUTE_SOURCE_ARG];
   const rows = source === undefined ? all : all.filter((r) => r.source === source);
-  const lines: string[] = [ROUTE_CODES_LEGEND, ''];
+  // P3 (D11): the second legend line only when a routing process is configured
+  const lines: string[] = [ROUTE_CODES_LEGEND, ...dynamicRouteLegend(ctx, all), ''];
   const def = all.find((r) => r.isDefault || (r.prefixLen === 0 && r.network === '0.0.0.0'));
   if (def) {
     const via = def.nextHop !== undefined ? `via ${def.nextHop}` : `out ${def.iface ?? 'unknown interface'}`;
-    lines.push(`Default route: ${via} (${def.source}*)`);
+    // P3: the display code (`O*E2`, [C1] `D*` for EIGRP); P1/P2 sources keep `<source>*`
+    lines.push(`Default route: ${via} (${routeCode({ ...def, isDefault: true })})`);
   } else {
     lines.push('Default route: none configured');
   }
   lines.push('');
   if (rows.length === 0) {
-    lines.push(source === undefined ? 'The routing table is empty.' : 'The routing table holds no static route.');
+    lines.push(source === undefined ? 'The routing table is empty.' : source === 'O' ? 'The routing table holds no OSPF route.' : 'The routing table holds no static route.');
   } else {
     for (const r of rows) lines.push(renderRoute(r), ...renderRoutePaths(r));
   }

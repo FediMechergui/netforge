@@ -82,15 +82,20 @@ describe('parsing and scope', () => {
     expect(matchCommand(BUILTIN_GRAMMAR, nacl, 'permit 10.0.0.0 0.0.0.255')).toMatchObject({ ok: true, spec: { handler: P2_HANDLERS.naclEntry }, args: { action: 'permit', form: 'address' } });
     expect(matchCommand(BUILTIN_GRAMMAR, nacl, 'deny any')).toMatchObject({ ok: true, args: { action: 'deny', form: 'any' } });
     expect(matchCommand(BUILTIN_GRAMMAR, nacl, 'permit host 10.0.0.1')).toMatchObject({ ok: true, args: { action: 'permit', form: 'host', address: '10.0.0.1' } });
-    expect(tokens(nacl, '')).toEqual(['deny', 'do', 'end', 'exit', 'no', 'permit']);
+    // ARCHITECTURE-P3 §9.2 W2 item 21b (§5.2): a named list's entries take a sequence number and a remark
+    expect(tokens(nacl, '')).toEqual(['deny', 'do', 'end', 'exit', 'no', 'permit', 'remark', '<1-2147483647>']);
     const exec = matchContextFor(ROUTER, 'user-exec');
     expect(matchCommand(BUILTIN_GRAMMAR, exec, 'show ip nat translations')).toMatchObject({ ok: true, spec: { handler: P2_HANDLERS.showIpNatTranslations }, args: {} });
     expect(matchCommand(BUILTIN_GRAMMAR, exec, 'show ip nat translations verbose')).toMatchObject({ ok: true, args: { verbose: 'verbose' } });
     expect(matchCommand(BUILTIN_GRAMMAR, exec, 'show ip nat statistics')).toMatchObject({ ok: true, spec: { handler: P2_HANDLERS.showIpNatStatistics } });
     expect(matchCommand(BUILTIN_GRAMMAR, exec, 'show access-lists')).toMatchObject({ ok: true, spec: { handler: P2_HANDLERS.showAccessLists } });
     expect(matchCommand(BUILTIN_GRAMMAR, matchContextFor(ROUTER, 'priv-exec'), 'clear ip nat translation *')).toMatchObject({ ok: true, spec: { handler: P2_HANDLERS.execClearIpNat } });
-    // not on a switch, and not on the P1 router before the flip's grammar fold either
-    expect(matchCommand(BUILTIN_GRAMMAR, matchContextFor(p2Model('switch.nfc2960'), 'config'), 'access-list 1 permit any').ok).toBe(false);
+    // not on a switch, and not on the P1 router before the flip's grammar fold either. ARCHITECTURE-P3 §9.2 W2 item 21b
+    // (D14): the ACL lines now reach a managed switch (a vty list, an SVI's access group); NAT stays a router's
+    const sw = matchContextFor(p2Model('switch.nfc2960'), 'config');
+    expect(matchCommand(BUILTIN_GRAMMAR, sw, 'access-list 1 permit any')).toMatchObject({ ok: true, spec: { handler: P2_HANDLERS.configAccessList }, args: { form: 'any', number: '1', action: 'permit' } });
+    expect(matchCommand(BUILTIN_GRAMMAR, sw, 'ip nat inside source list 1 pool P').ok).toBe(false);
+    expect(matchCommand(BUILTIN_GRAMMAR, sw, 'ip nat pool P 1.1.1.1 1.1.1.2 netmask 255.255.255.0').ok).toBe(false);
     expect(matchCommand(BUILTIN_GRAMMAR, matchContextFor(catalogModel('pc.nfpc'), 'user-exec'), 'show ip nat translations').ok).toBe(false);
     // the modes W3 entered are reachable (§9.2 W2 item 12b, W3 part)
     expect(modeForContext([['ip', 'access-list', 'standard', 'LAN']])).toBe('config-std-nacl');

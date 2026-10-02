@@ -52,10 +52,14 @@ export type MediumOp =
   /** hdlc keepalive daemon: line protocol result on a serial port (D6). */
   | { op: 'line-protocol'; up: boolean; reason?: string }
   | { op: 'cell-attach' }
-  | { op: 'cell-detach'; reason?: string };
-// P3 [S19] (ARCHITECTURE-P3 §2.7): MediumOp += { op: 'ppp-link'; up: boolean; reason?: 'ppp-negotiating' |
-//   'ppp-auth-failed' | 'keepalive-missed' }. NOT added in W0 (ruling R4): link/link.ts `mediumOp` (media-owned)
-//   switches on `op.op` and would no longer return on every path, so the [S19] media item adds the member with its case.
+  | { op: 'cell-detach'; reason?: string }
+  /**
+   * @since P3 [S19] (ARCHITECTURE-P3 §2.7, D17; ruling R4: added by the W2 [S19] media item with its `link/link.ts` case)
+   * The ppp daemon's line-protocol report on its serial port: `up` once LCP, authentication and the NCPs are open;
+   * otherwise down with the reason (`ppp-negotiating` when absent). The link model keeps the last report per end while
+   * the line is ready (carrier, clock, one encapsulation) and forgets it when the line stops being ready.
+   */
+  | { op: 'ppp-link'; up: boolean; reason?: 'ppp-negotiating' | 'ppp-auth-failed' | 'keepalive-missed' };
 
 /** Medium → daemon notifications (`Process.onMediumEvent`). */
 export type MediumEvent =

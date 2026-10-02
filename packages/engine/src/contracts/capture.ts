@@ -30,12 +30,12 @@ export type CaptureId = string;
 
 /**
  * Link types, named after pcap LINKTYPE_* values.
- * P3 [S19] (ARCHITECTURE-P3 §2.13): 'ppp_hdlc' (LINKTYPE_PPP_HDLC, 50). NOT added in W0 (ruling R4): the exhaustive
- * records of capture/tap.ts (capture-owned) would need entries, so the W2 capture [S19] item adds the member, its
- * PCAP_LINKTYPE number and its `outerForLinkType` case with them.
+ * P3 [S19] (ARCHITECTURE-P3 §2.13): 'ppp_hdlc' (LINKTYPE_PPP_HDLC, 50: PPP in HDLC-like framing, RFC 1662), the
+ * interface link type of a port with PPP encapsulation. Not added in W0 (ruling R4); added by the W2 capture [S19]
+ * item as this comment directed: the member, its PCAP_LINKTYPE number and its `outerForLinkType` case.
  */
-export type CaptureLinkType = 'ethernet' | 'ieee802_11' | 'c_hdlc' | 'raw';
-export const PCAP_LINKTYPE: Readonly<Record<CaptureLinkType, number>> = Object.freeze({ ethernet: 1, ieee802_11: 105, c_hdlc: 104, raw: 101 });
+export type CaptureLinkType = 'ethernet' | 'ieee802_11' | 'c_hdlc' | 'raw' | 'ppp_hdlc';
+export const PCAP_LINKTYPE: Readonly<Record<CaptureLinkType, number>> = Object.freeze({ ethernet: 1, ieee802_11: 105, c_hdlc: 104, raw: 101, ppp_hdlc: 50 });
 
 export interface CaptureSpec {
   /** Capture points; omitted together with `links` = every port (promiscuous lab capture). */
@@ -59,7 +59,7 @@ export interface CaptureInterface {
   linkType: CaptureLinkType;
   /**
    * Trailing FCS bytes present in each record for this interface (pcapng if_fcslen). Live: ethernet 4; dot11 0
-   * (stripped); c_hdlc 0 (2-byte CRC stripped). Import: pcapng if_fcslen when the FCS-present flag is set, else 0;
+   * (stripped); c_hdlc and [S19] ppp_hdlc 0 (2-byte CRC stripped). Import: pcapng if_fcslen when the FCS-present flag is set, else 0;
    * classic pcap 0; unsupported values fall back to 0.
    */
   fcsLen: 0 | 2 | 4;
@@ -191,7 +191,7 @@ export const PCAP_MIXED_LINKTYPE_MESSAGE = 'This capture mixes link types; save 
 
 /**
  * @since P1 Outer protocol used to decode a record: ethernet → 'ethernet', ieee802_11 → 'dot11', c_hdlc → 'hdlc',
- * raw → 'ipv4' | 'ipv6' by the high nibble of bytes[0] (6 → ipv6, anything else → ipv4).
+ * raw → 'ipv4' | 'ipv6' by the high nibble of bytes[0] (6 → ipv6, anything else → ipv4); P3 [S19] ppp_hdlc → 'ppp'.
  */
 export function outerForLinkType(linkType: CaptureLinkType, bytes: Uint8Array): ProtoName {
   switch (linkType) {
@@ -203,6 +203,8 @@ export function outerForLinkType(linkType: CaptureLinkType, bytes: Uint8Array): 
       return 'hdlc';
     case 'raw':
       return bytes.length > 0 && (bytes[0] as number) >> 4 === 6 ? 'ipv6' : 'ipv4';
+    case 'ppp_hdlc':
+      return 'ppp';
   }
 }
 

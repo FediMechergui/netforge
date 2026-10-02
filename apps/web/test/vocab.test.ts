@@ -591,8 +591,12 @@ describe('P3 vocabulary', () => {
   });
 
   it('labels the formerly reserved names as the reserved table did, and says what is simulated', () => {
+    // ARCHITECTURE-P3 ruling R22 (W2 web): the four are decoded now and no longer listed as reserved; each keeps the
+    // exact label the reserved table gave it
+    const formerly = { ntp: 'NTP', ssh: 'SSH', telnet: 'Telnet', syslog: 'Syslog' } as const;
     for (const p of ['ntp', 'ssh', 'telnet', 'syslog'] as const) {
-      expect(protocols.protocolLabel(p), p).toBe(protocols.RESERVED_PROTOCOL_VOCAB[p]?.label);
+      expect(protocols.protocolLabel(p), p).toBe(formerly[p]);
+      expect(protocols.RESERVED_PROTOCOL_VOCAB[p], p).toBeUndefined();
     }
     expect(protocols.PROTOCOL_VOCAB.esp.hint).toMatch(/simulated/);
     expect(protocols.PROTOCOL_VOCAB.ssh.hint).toMatch(/simulated/);

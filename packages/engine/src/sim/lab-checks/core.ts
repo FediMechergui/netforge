@@ -7,7 +7,12 @@
  *   port         → the live `PortState` (operUp, adminUp, ipv4, ipv6, duplex, speedBps, role; P2 errDisabled);
  *   table        → `DeviceRuntime.tables.get(name)`, rows filtered by `where` (field-by-field, text-compared; P2: a
  *                  value of a column whose TABLE_DESCRIPTORS format is 'port' is first resolved through the device's
- *                  port-name resolver, so `Gi0/1` matches `GigabitEthernet0/1`);
+ *                  port-name resolver, so `Gi0/1` matches `GigabitEthernet0/1`); P3 (ruling R18, W2 sim; every member
+ *                  optional by meaning, absent = the P2 check and detail byte for byte): `whereOps` filters further, one
+ *                  comparison per column (`lt` `le` `gt` `ge` numeric — a value that is not a number never matches —,
+ *                  `ne` the negation of `where`'s equality, `contains` a substring of the text), port columns resolved
+ *                  like `where`; `exists` keeps its P2 meaning and `minCount` / `maxCount` bound the number of matching
+ *                  rows as well (all must hold);
  *   process      → `Process.stateSnapshot().state` addressed by a dotted path whose array step is an index
  *                  (`a.b.0.c`) or a `field=value` selector (`clients.iface=Wlan0.state`) picking the first matching
  *                  element — use the selector whenever list order depends on what the student did;
@@ -193,6 +198,35 @@ function canonicalPortName(dev: DeviceRuntime, name: string): string {
   return r.kind === 'existing' || r.kind === 'virtual' ? r.port : name;
 }
 
+/** @since P3 (R18) The comparisons of `table.whereOps`. */
+type WhereOp = NonNullable<Extract<LabAssertion, { kind: 'table' }>['whereOps']>[string]['op'];
+
+/** @since P3 (R18) How a `whereOps` comparison reads in a detail. */
+const WHERE_OP_TEXT: Readonly<Record<WhereOp, string>> = Object.freeze({ lt: '<', le: '<=', gt: '>', ge: '>=', ne: '!=', contains: 'contains' });
+
+/** @since P3 (R18) A row value or an author's value as a number, or NaN when it is not one (text holding a number counts). */
+function asNumber(v: unknown): number {
+  if (typeof v === 'number') return v;
+  if (typeof v === 'string' && /^-?\d+(\.\d+)?$/.test(v.trim())) return Number(v.trim());
+  return Number.NaN;
+}
+
+/** @since P3 (R18) One `whereOps` comparison of a row value (file header). */
+export function whereOpHolds(actual: unknown, op: WhereOp, value: string | number): boolean {
+  switch (op) {
+    case 'ne':
+      return !sameValue(actual, value);
+    case 'contains':
+      return actual !== undefined && actual !== null && String(actual).includes(String(value));
+    default: {
+      const x = asNumber(actual);
+      const y = asNumber(value);
+      if (Number.isNaN(x) || Number.isNaN(y)) return false;
+      return op === 'lt' ? x < y : op === 'le' ? x <= y : op === 'gt' ? x > y : x >= y;
+    }
+  }
+}
+
 export function checkTable(sim: Simulation, a: Extract<LabAssertion, { kind: 'table' }>): Check {
   const dev = deviceNamed(sim, a.device);
   if (dev === undefined) return noDevice(a.device);
@@ -201,14 +235,30 @@ export function checkTable(sim: Simulation, a: Extract<LabAssertion, { kind: 'ta
   // P2 (§11.2): a value of a 'port' column is compared in its canonical form (Gi0/1 matches GigabitEthernet0/1)
   const ports = portColumnsOf(a.table);
   const where = Object.entries(a.where).map(([k, v]): [string, unknown] => [k, ports.has(k) && typeof v === 'string' ? canonicalPortName(dev, v) : v]);
+  // P3 (R18): the per-column comparisons beyond equality, port columns resolved the same way
+  const ops = Object.entries(a.whereOps ?? {}).map(
+    ([k, o]): [string, WhereOp, string | number] => [k, o.op, ports.has(k) && typeof o.value === 'string' ? canonicalPortName(dev, o.value) : o.value],
+  );
   const matches = table.find((row: TableRow) => {
     const r = row as unknown as Record<string, unknown>;
     for (const [k, v] of where) if (!sameValue(r[k], v)) return false;
+    for (const [k, op, v] of ops) if (!whereOpHolds(r[k], op, v)) return false;
     return true;
   });
-  const text = Object.entries(a.where).map(([k, v]) => `${k}=${String(v)}`).join(' ');
-  if (matches.length > 0 === a.exists) return PASS;
-  return fail(a.exists ? `The ${a.table} table of ${a.device} has no row with ${text}.` : `The ${a.table} table of ${a.device} still has a row with ${text}.`);
+  const conditions = [
+    ...Object.entries(a.where).map(([k, v]) => `${k}=${String(v)}`),
+    ...Object.entries(a.whereOps ?? {}).map(([k, o]) => `${k} ${WHERE_OP_TEXT[o.op]} ${String(o.value)}`),
+  ];
+  const text = conditions.join(' ');
+  const n = matches.length;
+  if (n > 0 !== a.exists) {
+    return fail(a.exists ? `The ${a.table} table of ${a.device} has no row with ${text}.` : `The ${a.table} table of ${a.device} still has a row with ${text}.`);
+  }
+  // P3 (R18): the bounds on the number of matching rows
+  const rows = `${n} row${n === 1 ? '' : 's'}`;
+  if (a.minCount !== undefined && n < a.minCount) return fail(`The ${a.table} table of ${a.device} has ${rows} with ${text}, expected at least ${a.minCount}.`);
+  if (a.maxCount !== undefined && n > a.maxCount) return fail(`The ${a.table} table of ${a.device} has ${rows} with ${text}, expected at most ${a.maxCount}.`);
+  return PASS;
 }
 
 /**

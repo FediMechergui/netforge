@@ -267,13 +267,20 @@ export const CONTROLLER_PORT_SWITCHPORT: SwitchportConfig = Object.freeze({
 
 /**
  * @since P2 Why a port is err-disabled (PortState.errDisabled holds one of these).
- * 'dhcp-rate-limit' and 'arp-inspection' @since P3 (ARCHITECTURE-P3 §2.2, D13): the union only in W0. The runtime list
- * ERR_DISABLE_CAUSES gains them, in this order, in the W2 l2 change that raises them (`show errdisable recovery`
- * iterates it), never earlier (§0 rule 3).
+ * 'dhcp-rate-limit' and 'arp-inspection' @since P3 (ARCHITECTURE-P3 §2.2, D13): the union in W0; the runtime list
+ * ERR_DISABLE_CAUSES gained them, in this order, in the W2 l2 change that raises them (eth-switch steps 7b/7c; the
+ * pre-approved contract edit), so `show errdisable recovery` lists them (§9.2 item 24).
  */
 export type ErrDisableCause = 'psecure-violation' | 'bpduguard' | 'channel-misconfig' | 'fault' | 'dhcp-rate-limit' | 'arp-inspection';
-/** @since P2 Every err-disable cause, in the order `show errdisable recovery` lists them. */
-export const ERR_DISABLE_CAUSES: readonly ErrDisableCause[] = Object.freeze(['psecure-violation', 'bpduguard', 'channel-misconfig', 'fault']);
+/** @since P2 Every err-disable cause, in the order `show errdisable recovery` lists them ('dhcp-rate-limit', 'arp-inspection' @since P3). */
+export const ERR_DISABLE_CAUSES: readonly ErrDisableCause[] = Object.freeze([
+  'psecure-violation',
+  'bpduguard',
+  'channel-misconfig',
+  'fault',
+  'dhcp-rate-limit',
+  'arp-inspection',
+]);
 
 /** @since P2 A virtual IPv4 address answered on a port (HSRP virtual IP, NAT pool / static inside-global address). */
 export interface VirtualIpv4 {

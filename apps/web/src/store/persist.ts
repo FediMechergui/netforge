@@ -4,6 +4,12 @@
  * web-shell), the switching overlay slice (`topoOverlays`) and the course of the last lesson opened
  * (`learn.lastCourse`, the course context a new world takes its defaults profile from, D2).
  *
+ * P3 (ARCHITECTURE-P3 §2.14, §9.2 item 23; W2 web-shell): the one persisted-slice migration. `topoOverlays` gains
+ * `qos` and the approved `ospf`/`ospfArea` [S1], `wan` [S18]/[S19] and `eigrp`/`eigrpPrefix` [C1]. A record stored
+ * by a P2 build has none of them, so each takes its default (false, null) while the P2 keys keep their stored
+ * values; the record keeps its key (`netforge.ui.v1`), so no other preference is lost. The two selectors keep only a
+ * well-formed value (a dotted area id, an IPv4 prefix): anything else falls back to null.
+ *
  * Everything goes through try/catch: storage may be missing (private mode, sandboxed frames, tests) and stored
  * values are untrusted, so every field is validated and unknown or malformed values fall back to the defaults.
  * The theme keeps its P0 key; the rest lives in one versioned JSON record.
@@ -35,6 +41,7 @@ export const DEFAULT_OVERLAYS: Readonly<WirelessOverlayState> = Object.freeze({
 /**
  * @since P2 Every switching overlay off and no VLAN chosen (the same values as the canvas registry's
  * `TOPO_OVERLAY_DEFAULTS`, kept here so the store reads nothing from the canvas at module scope).
+ * @since P3 Every routing, WAN and QoS overlay off, no area and no destination chosen.
  */
 export const DEFAULT_TOPO_OVERLAYS: Readonly<TopoOverlayState> = Object.freeze({
   vlan: false,
@@ -42,6 +49,12 @@ export const DEFAULT_TOPO_OVERLAYS: Readonly<TopoOverlayState> = Object.freeze({
   stpVlan: null,
   vlanFocus: null,
   capwap: false,
+  qos: false,
+  ospf: false,
+  ospfArea: null,
+  wan: false,
+  eigrp: false,
+  eigrpPrefix: null,
 });
 /** @since P2 Highest VLAN id a persisted selector may name (802.1Q VID range). */
 export const VLAN_ID_MAX = 4094;
@@ -52,7 +65,7 @@ export const DEFAULT_DOCK_TAB: DockTab = 'terminal';
 export const DEFAULT_DOCK_HEIGHT = DOCK_OPEN_HEIGHT;
 export const DEFAULT_INSPECTOR_WIDTH = INSPECTOR_OPEN_WIDTH;
 const OVERLAY_KEYS = Object.keys(DEFAULT_OVERLAYS) as (keyof WirelessOverlayState)[];
-const TOPO_TOGGLE_KEYS = ['vlan', 'stp', 'capwap'] as const;
+const TOPO_TOGGLE_KEYS = ['vlan', 'stp', 'capwap', 'qos', 'ospf', 'wan', 'eigrp'] as const;
 const TOPO_VLAN_KEYS = ['stpVlan', 'vlanFocus'] as const;
 
 export interface PersistedUi {
@@ -82,6 +95,24 @@ export function defaultPersistedUi(): PersistedUi {
 /** @since P2 A VLAN selector value: null (no choice) or an integer VLAN id in 1…VLAN_ID_MAX. */
 export function isVlanChoice(v: unknown): v is number | null {
   return v === null || (typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= VLAN_ID_MAX);
+}
+
+/** Four dotted decimal octets, each 0…255 without a leading zero. */
+const DOTTED_QUAD = /^(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)$/;
+
+/** @since P3 [S1] An OSPF area selector value: null (every area) or a dotted area id ('0.0.0.1'). */
+export function isAreaChoice(v: unknown): v is string | null {
+  return v === null || (typeof v === 'string' && DOTTED_QUAD.test(v));
+}
+
+/** @since P3 [C1] An EIGRP destination selector value: null (the first destination) or an IPv4 prefix ('10.0.12.0/24'). */
+export function isPrefixChoice(v: unknown): v is string | null {
+  if (v === null) return true;
+  if (typeof v !== 'string') return false;
+  const slash = v.indexOf('/');
+  if (slash < 0 || !DOTTED_QUAD.test(v.slice(0, slash))) return false;
+  const len = v.slice(slash + 1);
+  return /^(?:3[0-2]|[12]?\d)$/.test(len);
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -141,7 +172,8 @@ export function sanitizePersistedUi(raw: unknown, theme: unknown = undefined): P
     out.dock.inspectorWidth = size(raw.dock.inspectorWidth, DEFAULT_INSPECTOR_WIDTH, 10_000);
   }
 
-  // P2: the switching overlays — booleans for the toggles, a VLAN id or null for the two selectors.
+  // P2: the switching overlays — booleans for the toggles, a VLAN id or null for the two selectors; P3 adds four
+  // toggles and two selectors, so a stored P2 slice comes back with each of them at its default (the migration).
   if (isRecord(raw.topoOverlays)) {
     for (const k of TOPO_TOGGLE_KEYS) {
       const v = raw.topoOverlays[k];
@@ -151,6 +183,9 @@ export function sanitizePersistedUi(raw: unknown, theme: unknown = undefined): P
       const v = raw.topoOverlays[k];
       if (isVlanChoice(v)) out.topoOverlays[k] = v;
     }
+    // P3: the two routing selectors (a P2 record has neither: they stay null).
+    if (isAreaChoice(raw.topoOverlays.ospfArea)) out.topoOverlays.ospfArea = raw.topoOverlays.ospfArea;
+    if (isPrefixChoice(raw.topoOverlays.eigrpPrefix)) out.topoOverlays.eigrpPrefix = raw.topoOverlays.eigrpPrefix;
   }
 
   // P2: the course context (a course id the catalogue may or may not still know; the consumer treats it as a name).

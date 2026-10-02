@@ -31,6 +31,7 @@ import {
   LITERAL_HELP,
   P2_GRAMMAR_FRAGMENTS,
   P2_HANDLERS,
+  P3_GRAMMAR,
   SWITCHPORT_GRAMMAR,
   SWITCHPORT_HANDLERS,
   WLC_ARG_LIMITS,
@@ -279,7 +280,11 @@ describe('grammar and scope', () => {
   it('entered config-wlan and config-wlc-if (their reserved flags dropped, §9.2 W2 item 12b)', () => {
     expect(MODES['config-wlan']?.reserved).toBeUndefined();
     expect(MODES['config-wlc-if']?.reserved).toBeUndefined();
-    expect(modesOfClass('config').slice(-2)).toEqual(['config-wlan', 'config-wlc-if']);
+    // ARCHITECTURE-P3 §9.2 W2 items 22 and 21b: the P3 modes follow them, in MODES declaration order
+    expect(modesOfClass('config').slice(10)).toEqual([
+      'config-wlan', 'config-wlc-if', 'config-ext-nacl', 'config-cmap', 'config-pmap', 'config-pmap-c', 'config-router-eigrp',
+      'config-ikev2-keyring', 'config-ikev2-keyring-peer', 'config-ikev2-profile', 'config-ipsec-profile',
+    ]);
     expect(modeForContext([['wlan', '1', 'STAFF', 'LabNet']])).toBe('config-wlan');
     expect(modeForContext([['wlc-interface', 'management']])).toBe('config-wlc-if');
   });
@@ -295,9 +300,13 @@ describe('grammar and scope', () => {
 
   it('is the `wlc` fragment, folded into GRAMMAR and HANDLERS after the W3 fragments', () => {
     expect(Object.keys(P2_GRAMMAR_FRAGMENTS).at(-1)).toBe('wlc');
-    expect(Object.keys(GRAMMAR_FRAGMENTS).at(-1)).toBe('wlc');
+    // ARCHITECTURE-P3 §9.2 W2 item 21b: `wlc` closes the P1/P2 table; the P3 fragments (W2 cli) follow it
+    expect(Object.keys(GRAMMAR_FRAGMENTS).slice(Object.keys(P2_GRAMMAR_FRAGMENTS).length + 16)).toEqual([
+      'wlc', 'ospf', 'acl-p3', 'hardening', 'qos', 'discovery', 'time', 'api', 'ssh', 'eigrp', 'wan', 'crypto', 'qos-queueing', 'logging', 'remote', 'devhost',
+    ]);
     expect(GRAMMAR_FRAGMENTS['wlc']).toBe(WLC_GRAMMAR);
-    expect(GRAMMAR.slice(GRAMMAR.length - WLC_GRAMMAR.length)).toEqual(WLC_GRAMMAR);
+    const wlcEnd = GRAMMAR.length - P3_GRAMMAR.length;
+    expect(GRAMMAR.slice(wlcEnd - WLC_GRAMMAR.length, wlcEnd)).toEqual(WLC_GRAMMAR);
     expect(Object.values(WLC_HANDLERS)).toEqual([
       'config.wlc-interface', 'wlc-if.vlan', 'wlc-if.address', 'wlc-if.gateway', 'wlc-if.dhcp-server',
       'config.wlan', 'wlan.security', 'wlan.passphrase', 'wlan.interface', 'wlan.radio', 'wlan.shutdown',

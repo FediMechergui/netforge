@@ -171,6 +171,8 @@ export * from './protocols/etherchannel/lacp.js';
 export * from './protocols/etherchannel/pagp.js';
 export * from './protocols/etherchannel/static.js';
 export * from './protocols/nat.js';
+// protocols — P3 W2 acl (ARCHITECTURE-P3 D12): the access-list daemon
+export * from './protocols/acl.js';
 export * from './protocols/dtp.js';
 export * from './protocols/l2/control.js';
 export * from './protocols/l2/lag-hash.js';
@@ -198,6 +200,13 @@ export * from './protocols/ospf/cost.js';
 export * from './protocols/ospf/dr.js';
 export * from './protocols/ospf/hello-check.js';
 export * from './protocols/ospf/ism.js';
+// protocols — the OSPF daemon and its modules (P3 W2 ospf)
+export * from './protocols/ospf.js';
+export * from './protocols/ospf/nsm.js';
+export * from './protocols/ospf/flood.js';
+export * from './protocols/ospf/lsdb.js';
+export * from './protocols/ospf/originate.js';
+export * from './protocols/ospf/routes.js';
 // protocols — P3 W1 wan [S19] [C13]: the RFC 1661 automaton; IKEv2-lite exchange and derived values (pure)
 export * from './protocols/ppp/fsm.js';
 export * from './protocols/ike/proof.js';
@@ -206,6 +215,16 @@ export * from './protocols/ike/exchange.js';
 export * from './protocols/eigrp/config.js';
 export * from './protocols/eigrp/metric.js';
 export * from './protocols/eigrp/dual.js';
+// protocols — P3 W2 disc: the discovery daemons (CDP in its NF format, LLDP)
+export * from './protocols/cdp.js';
+export * from './protocols/lldp.js';
+// protocols — P3 W2 eigrp [C1]: the daemon; W2 wan [S18]: the tunnel owner (GRE mode)
+export * from './protocols/eigrp.js';
+export * from './protocols/gre.js';
+// protocols — P3 W2 svc (ARCHITECTURE-P3 D16, D19, D20): NTP, the traffic generator, [S24] the logger
+export * from './protocols/ntp.js';
+export * from './protocols/traffic.js';
+export * from './protocols/logger.js';
 
 // cli
 export * from './cli/runtime.js';
@@ -271,3 +290,9 @@ export * from './automation/yang/path.js';
 export * from './automation/yang/model.js';
 export * from './automation/py/lexer.js';
 export * from './automation/py/parser.js';
+
+// qos — P3 W2 qos (ARCHITECTURE-P3 D16): the MQC reader, the classifier, the marking plan; [S20]/[S21] the port scheduler
+export * from './qos/config.js';
+export * from './qos/classify.js';
+export * from './qos/mark.js';
+export * from './link/qos/scheduler.js';

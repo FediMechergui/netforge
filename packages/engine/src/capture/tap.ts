@@ -11,12 +11,15 @@
  *  • Capture points: `resolveCapturePoints(spec, resolver)` = the spec's ports ∪ both ends of its links ∪ the members
  *    of its media, first occurrence order, each port once; with neither `ports` nor `links`, every port.
  *  • Interfaces: one per capture point, typed by the port encapsulation: ethernet → `ethernet` (fcsLen 4, the FCS
- *    stays in the record), dot11 → `ieee802_11` (FCS stripped, fcsLen 0), hdlc (and reserved ppp) → `c_hdlc`
- *    (2-byte CRC stripped, fcsLen 0), none → `raw` (fcsLen 0). A frame whose link type differs from its point's
+ *    stays in the record), dot11 → `ieee802_11` (FCS stripped, fcsLen 0), hdlc → `c_hdlc` (2-byte CRC stripped,
+ *    fcsLen 0), P3 [S19] ppp → `ppp_hdlc` (pcap link type 50, PPP in HDLC-like framing; 2-byte CRC stripped,
+ *    fcsLen 0), none and [S18] tunnel → `raw` (fcsLen 0; a tunnel interface carries packets without a link header,
+ *    and the medium under it is captured on the transport port). A frame whose link type differs from its point's
  *    interface (the event's `linkType`, from the frame's outer layer) goes to an extra interface of that point and
- *    link type, named `<point> (<link type>)`, added on first use.
+ *    link type, named `<point> (<link type>)`, added on first use (a serial port switched from HDLC to PPP mid-capture
+ *    gains a `(ppp_hdlc)` interface).
  *  • `record` copies `pdu.bytes` immediately (PDUs are mutated in place on later hops): the FCS bytes of the event's
- *    link type are stripped (802.11 4, HDLC 2); a collision fragment keeps only its leading `fragmentBytes` bytes
+ *    link type are stripped (802.11 4, HDLC 2, PPP 2); a collision fragment keeps only its leading `fragmentBytes` bytes
  *    (no trailer is stripped from a fragment) and is marked corrupted, with `origLen` the full frame length. One copy
  *    is shared by every capture that records the event (records are never modified).
  *  • Per capture: `dir` ('tx' | 'rx' | 'both', default both) filters events; background frames
@@ -65,10 +68,10 @@ export interface CapturePointResolver {
 }
 
 /** FCS bytes a frame of this link type carries at the end of `Pdu.bytes` and that a capture strips. */
-export const CAPTURE_STRIP_BYTES: Readonly<Record<CaptureLinkType, number>> = Object.freeze({ ethernet: 0, ieee802_11: 4, c_hdlc: 2, raw: 0 });
+export const CAPTURE_STRIP_BYTES: Readonly<Record<CaptureLinkType, number>> = Object.freeze({ ethernet: 0, ieee802_11: 4, c_hdlc: 2, raw: 0, ppp_hdlc: 2 });
 
 /** fcsLen of a live interface of this link type (the FCS bytes that remain in each record). */
-export const CAPTURE_LIVE_FCS_LEN: Readonly<Record<CaptureLinkType, 0 | 2 | 4>> = Object.freeze({ ethernet: 4, ieee802_11: 0, c_hdlc: 0, raw: 0 });
+export const CAPTURE_LIVE_FCS_LEN: Readonly<Record<CaptureLinkType, 0 | 2 | 4>> = Object.freeze({ ethernet: 4, ieee802_11: 0, c_hdlc: 0, raw: 0, ppp_hdlc: 0 });
 
 /** Interface link type of a port by its encapsulation (see the file header). */
 export function captureLinkForEncap(encap: PortEncap | undefined): CaptureLinkInfo {
@@ -76,11 +79,13 @@ export function captureLinkForEncap(encap: PortEncap | undefined): CaptureLinkIn
     case 'dot11':
       return { linkType: 'ieee802_11', fcsLen: 0 };
     case 'hdlc':
-    case 'ppp':
       return { linkType: 'c_hdlc', fcsLen: 0 };
+    // P3 [S19] (ARCHITECTURE-P3 §9.2 item 30, W2 capture): PPP frames get their own link type, pcap 50.
+    case 'ppp':
+      return { linkType: 'ppp_hdlc', fcsLen: 0 };
     case 'none':
-    // P3 [S18] (ARCHITECTURE-P3 §2.1; a W0 compile stub forced by ruling R3): no port carries 'tunnel' before the [S18]
-    // item, whose capture owner confirms or changes this link type (the carried packet has no link header).
+    // P3 [S18] (ruling R3, confirmed by the W2 capture item): a tunnel interface's packets have no link header, so the
+    // interface is `raw`; the GRE or ESP packet itself is seen on the transport port's medium.
     case 'tunnel':
       return { linkType: 'raw', fcsLen: 0 };
     case 'ethernet':

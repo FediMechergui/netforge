@@ -37,8 +37,9 @@ describe('the P2 modes', () => {
       expect(exitTarget(mode, [['interface', 'GigabitEthernet0/1']]), mode).toEqual({ close: false, mode: 'config', context: [] });
     }
     // W2 cli entered config-subif, config-vlan and config-if-range (§9.2 W2 item 12b); W3 cli entered config-dhcpv6
-    // and config-std-nacl; W5 cli entered config-wlan and config-wlc-if
-    expect(modesOfClass('config')).toEqual(['config', 'config-if', 'config-line', 'dhcp-config', 'config-subif', 'config-vlan', 'config-if-range', 'config-dhcpv6', 'config-std-nacl', 'config-wlan', 'config-wlc-if']);
+    // and config-std-nacl; W5 cli entered config-wlan and config-wlc-if. ARCHITECTURE-P3 §9.2 W2 items 22 and 21b: the W2
+    // cli change entered config-router (no longer reserved) and the P3 modes, in MODES declaration order
+    expect(modesOfClass('config')).toEqual(['config', 'config-if', 'config-line', 'dhcp-config', 'config-router', 'config-subif', 'config-vlan', 'config-if-range', 'config-dhcpv6', 'config-std-nacl', 'config-wlan', 'config-wlc-if', 'config-ext-nacl', 'config-cmap', 'config-pmap', 'config-pmap-c', 'config-router-eigrp', 'config-ikev2-keyring', 'config-ikev2-keyring-peer', 'config-ikev2-profile', 'config-ipsec-profile']);
   });
 
   it('maps a sub-mode context entry to its mode', () => {

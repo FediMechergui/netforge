@@ -23,7 +23,7 @@ import type { TraceEvent, TraceKind } from './trace.js';
 import type { SimEvent, FaultSpec } from './events.js';
 import type { TableName } from './tables.js';
 import type { DefaultsProfile, HardwareResult, ModuleInstall, ModuleType, SlotId } from './catalog.js';
-import type { FsmMachine } from './process.js';
+import type { FsmMachine, TrafficFlowSpec } from './process.js';
 import type { FacadeCounters, JournalPosition, SimJournal } from './journal.js';
 import type {
   CaptureExportOptions,
@@ -158,13 +158,24 @@ export interface SnapshotOptions {
 /**
  * @since P0.5 Non-config GUI actions, mapped by the facade onto ProcessRequests. Results appear in process StateViews.
  * P3 (ARCHITECTURE-P3 §2.9): the traffic apps (M13) and the [S32] apps are NOT added in W0 (ruling R5); each joins with
- * the W2/W3 sim item that adds its HOST_APP_PROCESS row (sim/simulation.ts).
+ * the W2/W3 sim item that adds its HOST_APP_PROCESS row (sim/simulation.ts). Added by the W2 sim item with their rows:
+ * the traffic apps (→ `traffic`) and the [S32] apps (→ `script-host`).
  */
 export type HostAppRequest =
   | { app: 'http.get'; url: string }
   | { app: 'wifi.scan'; port?: PortId }
   | { app: 'dhcp.renew'; port: PortId }
-  | { app: 'dhcp.release'; port: PortId };
+  | { app: 'dhcp.release'; port: PortId }
+  /** @since P3 (M13) The Traffic app starts a generated flow (`traffic.start`). */
+  | { app: 'traffic.start'; flow: TrafficFlowSpec }
+  /** @since P3 (M13) The Traffic app stops flow `id` (`traffic.stop`). */
+  | { app: 'traffic.stop'; id: string }
+  /** @since P3 [S32] The automation workspace runs a script of `files:` (`script.run`; the ticket is the run's token). */
+  | { app: 'script.run'; file: string; argv?: readonly string[] }
+  /** @since P3 [S32] The automation workspace stops the run whose token is `run`. */
+  | { app: 'script.stop'; run: string }
+  /** @since P3 [S32] The automation workspace writes (`content` required) or deletes a file of `files:`. */
+  | { app: 'file.write' | 'file.delete'; path: string; content?: string };
 
 export interface HostAppTicket {
   /**

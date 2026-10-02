@@ -184,7 +184,8 @@ describe('encapsulation dot1Q (§3.4 step 2)', () => {
     // the same VID on another parent is fine; a serial line keeps its own encapsulation rule
     expect(cfg(h, [['interface', 'GigabitEthernet0/1.10']], 'encapsulation dot1Q 10')).toEqual({ ok: true });
     expect(cfg(h, [['interface', 'Serial0/0/0']], 'encapsulation hdlc')).toEqual({ ok: true });
-    expect(cfg(h, [['interface', 'Serial0/0/0']], 'encapsulation ppp')).toEqual({ ok: false, error: DEVICE_CONFIG_MESSAGES.pppUnavailable });
+    // ARCHITECTURE-P3 §9.2 item 30 ([S19], W2 device): the PPP refusal is removed — the accepting case
+    expect(cfg(h, [['interface', 'Serial0/0/0']], 'encapsulation ppp')).toEqual({ ok: true });
     expect(CLI_MESSAGES.encapNotHere).toBe('% 802.1Q encapsulation belongs on a subinterface such as {port}.10.');
     expect(parseDot1qArgs(['dot1Q', '10'])).toEqual({ vid: 10, native: false });
     expect(parseDot1qArgs(['DOT1Q', '99', 'native'])).toEqual({ vid: 99, native: true });

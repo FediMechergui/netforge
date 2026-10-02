@@ -3,7 +3,8 @@
  *
  *   if.clock-rate     `clock rate <bps>` / `no clock rate` — a standard rate; on a DTE cable end the line is stored
  *                     with an informational note (only the DCE end clocks the line)
- *   if.encapsulation  `encapsulation hdlc` / `no encapsulation`; `encapsulation ppp` is refused (reserved, P3)
+ *   if.encapsulation  `encapsulation hdlc|ppp` / `no encapsulation` (P3 [S19]: PPP is accepted, ARCHITECTURE-P3
+ *                     §9.2 item 30)
  *   if.bandwidth      `bandwidth <kbps>` / `no bandwidth`
  *   if.keepalive      `keepalive [<s>]`, `keepalive 0`, `no keepalive` (stored negation read by the hdlc daemon)
  *
@@ -12,7 +13,7 @@
  */
 import type { CommandCtx, CommandHandler } from '../../contracts/cli.js';
 import type { PortView } from '../../contracts/port.js';
-import { HANDLERS, MSG_NOT_SERIAL } from '../grammar/index.js';
+import { BANDWIDTH_PORT, HANDLERS, MSG_BANDWIDTH_PORT, MSG_NOT_SERIAL } from '../grammar/index.js';
 import { MSG_NO_INTERFACE_SELECTED, outcomeOf, selectedPort } from './common.js';
 
 /** Clock rates a serial DCE end accepts, in bits per second (ascending). */
@@ -21,8 +22,6 @@ export const STANDARD_CLOCK_RATES: readonly number[] = Object.freeze([
   250000, 500000, 800000, 1000000, 1300000, 2000000, 4000000, 8000000,
 ]);
 
-/** Refusal of `encapsulation ppp` (reserved framing). */
-export const MSG_PPP_NOT_AVAILABLE = '% PPP framing is not available in this release. Serial interfaces use HDLC.';
 /** Note printed when `clock rate` is set on the DTE end of a serial cable. */
 export const NOTE_CLOCK_ON_DTE = 'Note: this interface is the DTE end of its cable, so the clock rate is stored but not used. Set it on the DCE end.';
 
@@ -58,15 +57,19 @@ const encapsulation: CommandHandler = (ctx, args, negate) => {
   if (isError(port)) return port;
   if (negate) return outcomeOf(ctx.config(['encapsulation'], true));
   const framing = args['framing'] ?? '';
-  if (framing === 'ppp') return { error: MSG_PPP_NOT_AVAILABLE };
-  if (framing !== 'hdlc') return { error: '% Expected hdlc as the framing.' };
-  return outcomeOf(ctx.config(['encapsulation', 'hdlc'], false));
+  // P3 [S19] (ARCHITECTURE-P3 §9.2 item 30): PPP is a real encapsulation now; the refusal is gone
+  if (framing !== 'hdlc' && framing !== 'ppp') return { error: '% Expected hdlc or ppp as the framing.' };
+  return outcomeOf(ctx.config(['encapsulation', framing], false));
 };
 
-/** `bandwidth <kbps>` / `no bandwidth`. */
+/**
+ * `bandwidth <kbps>` / `no bandwidth`. P3 (ARCHITECTURE-P3 §5.1, §9.2 W2; W2 cli): on serial ports, routed Ethernet
+ * ports, subinterfaces and [S18] tunnels (`BANDWIDTH_PORT`): OSPF reads it for the cost.
+ */
 const bandwidth: CommandHandler = (ctx, args, negate) => {
-  const port = serialPort(ctx);
-  if (isError(port)) return port;
+  const port = selectedPort(ctx);
+  if (port === undefined) return { error: MSG_NO_INTERFACE_SELECTED };
+  if (!(BANDWIDTH_PORT.kinds ?? []).includes(port.spec.kind) || !(BANDWIDTH_PORT.roles ?? []).includes(port.role)) return { error: MSG_BANDWIDTH_PORT };
   if (negate) return outcomeOf(ctx.config(['bandwidth'], true));
   const kbps = args['kbps'];
   if (kbps === undefined || kbps === '') return { error: '% A bandwidth in kilobits per second is required.' };

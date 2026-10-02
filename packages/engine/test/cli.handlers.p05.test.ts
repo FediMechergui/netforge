@@ -12,7 +12,7 @@ import { HANDLERS, MSG_INTERFACE_NOT_CONFIGURABLE, MSG_NOT_ACCESS_RADIO, MSG_NOT
 import { HANDLER_REGISTRY } from '../src/cli/handlers/index.js';
 import { MSG_CANNOT_CREATE_INTERFACE } from '../src/cli/handlers/config.js';
 import { MSG_NO_WIFI_ADAPTER, visibleNetworks } from '../src/cli/handlers/host.js';
-import { MSG_PPP_NOT_AVAILABLE, NOTE_CLOCK_ON_DTE } from '../src/cli/handlers/serial.js';
+import { NOTE_CLOCK_ON_DTE } from '../src/cli/handlers/serial.js';
 import { maskConfigSecrets } from '../src/cli/handlers/show.js';
 import { MSG_AUTO_CHANNEL_PTP, MSG_WIDTH_FIXED_60 } from '../src/cli/handlers/wireless.js';
 import { testPortSpec } from './port.fixtures.js';
@@ -134,15 +134,17 @@ describe('serial lines', () => {
     expect(run(device('router.nf2911', { iface: 'GigabitEthernet0/0' }), HANDLERS.ifClockRate, { bps: '64000' }).error).toBe(MSG_NOT_SERIAL);
   });
 
-  it('encapsulation refuses ppp, keepalive and bandwidth write their lines', () => {
+  // ARCHITECTURE-P3 §9.2 item 30 ([S19], W2 cli): the PPP refusal is removed; the test gets the accepting case
+  it('encapsulation accepts ppp and hdlc, keepalive and bandwidth write their lines', () => {
     const r = device('router.nf2911', { iface: 'Serial0/0/1' });
-    expect(run(r, HANDLERS.ifEncapsulation, { framing: 'ppp' }).error).toBe(MSG_PPP_NOT_AVAILABLE);
+    expect(run(r, HANDLERS.ifEncapsulation, { framing: 'ppp' })).toEqual({});
     run(r, HANDLERS.ifEncapsulation, { framing: 'hdlc' });
     run(r, HANDLERS.ifKeepalive, {});
     run(r, HANDLERS.ifKeepalive, { seconds: '0' });
     run(r, HANDLERS.ifKeepalive, {}, true);
     run(r, HANDLERS.ifBandwidth, { kbps: '1544' });
     expect(r.configCalls.map((c) => [c.line, c.negate])).toEqual([
+      [['encapsulation', 'ppp'], false],
       [['encapsulation', 'hdlc'], false],
       [['keepalive'], false],
       [['keepalive', '0'], false],

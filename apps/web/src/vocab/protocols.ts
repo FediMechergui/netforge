@@ -103,9 +103,9 @@ export const PROTOCOL_VOCAB: Readonly<Record<KnownProto, ProtocolVocab>> = Objec
   pagp: entry('pagp', 'Port aggregation', 'PG', 'hexagon', 'accent', 'control', 'P2', 'A second way for two switches to agree on a bundle of parallel links.'),
   // ── P3 (ARCHITECTURE-P3 §2.3, §6; real wording, W1 web-inspector). Control frames — routing, discovery, the PPP
   // control protocols and their authentication, IKE — use the hexagon shape of spec §9.1; letters stay unique. The
-  // labels of the formerly reserved names (NTP, Telnet, SSH, Syslog) are the ones RESERVED_PROTOCOL_VOCAB uses, so
-  // `protocolLabel` answers the same whether or not a build still lists them as reserved. CDP is a name only: its
-  // frames use NetForge's own format (D23). ──
+  // labels of the formerly reserved names (NTP, Telnet, SSH, Syslog) are the ones RESERVED_PROTOCOL_VOCAB used, so
+  // `protocolLabel` answers as it did before they were decoded (R22 then dropped them from that table). CDP is a name
+  // only: its frames use NetForge's own format (D23). ──
   ospf: entry('ospf', 'OSPF', 'O', 'hexagon', 'ok', 'control', 'P3', 'Link-state routing messages routers exchange to build one map of their area.'),
   'ospf-lsa': entry('ospf-lsa', 'OSPF LSA', 'OL', 'hexagon', 'textDim', 'control', 'P3', 'One entry of the link-state map: a router, a shared network or an outside route.'),
   cdp: entry('cdp', 'CDP', 'CD', 'hexagon', 'warn', 'control', 'P3',
@@ -145,15 +145,14 @@ function reserved(proto: string, label: string): ReservedProtocolVocab {
   return Object.freeze({ proto, label, hint: RESERVED_HINT });
 }
 
-/** Reserved protocols listed in the engine dispatch table. */
+/**
+ * Reserved protocols listed in the engine dispatch table. @since P3 (ARCHITECTURE-P3 §9.2 ruling R22; W2 web) NTP,
+ * SSH, Telnet and Syslog are decoded now (`PROTOCOL_VOCAB` has them), so they are no longer listed here.
+ */
 export const RESERVED_PROTOCOL_VOCAB: Readonly<Record<string, ReservedProtocolVocab>> = Object.freeze({
   tftp: reserved('tftp', 'TFTP'),
-  ntp: reserved('ntp', 'NTP'),
   snmp: reserved('snmp', 'SNMP'),
-  syslog: reserved('syslog', 'Syslog'),
   ftp: reserved('ftp', 'FTP'),
-  ssh: reserved('ssh', 'SSH'),
-  telnet: reserved('telnet', 'Telnet'),
   smtp: reserved('smtp', 'SMTP'),
   pop3: reserved('pop3', 'POP3'),
   imap: reserved('imap', 'IMAP'),

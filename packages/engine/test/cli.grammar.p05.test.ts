@@ -166,9 +166,10 @@ describe('serial lines', () => {
   it('help lists the serial lines on a serial port only', () => {
     // ARCHITECTURE-P2 §9.2 W4 item 18 (the P2 fragments folded into GRAMMAR): `standby` and `encapsulation` on the routed
     // Ethernet port; §9.2 item 20e (architect ruling of 2026-09-23, W5 cli): the serial port (role `wan`, a
-    // point-to-point link) loses `standby` again
-    expect(tokens(serial, '')).toEqual(['bandwidth', 'clock', 'description', 'do', 'encapsulation', 'end', 'exit', 'ip', 'ipv6', 'keepalive', 'no', 'shutdown']);
-    expect(tokens(gig, '')).toEqual(['description', 'do', 'duplex', 'encapsulation', 'end', 'exit', 'ip', 'ipv6', 'mac-address', 'no', 'shutdown', 'speed', 'standby']);
+    // point-to-point link) loses `standby` again. ARCHITECTURE-P3 §9.2 W2 items 21 and 21b (the W2 fold): the serial port
+    // gains `delay` [C1], `fair-queue` [S21], `ppp` [S19] and `service-policy`; the routed Ethernet port the item 21 :60 list
+    expect(tokens(serial, '')).toEqual(['bandwidth', 'clock', 'delay', 'description', 'do', 'encapsulation', 'end', 'exit', 'fair-queue', 'ip', 'ipv6', 'keepalive', 'no', 'ppp', 'service-policy', 'shutdown']);
+    expect(tokens(gig, '')).toEqual(['bandwidth', 'cdp', 'delay', 'description', 'do', 'duplex', 'encapsulation', 'end', 'exit', 'fair-queue', 'ip', 'ipv6', 'lldp', 'mac-address', 'no', 'service-policy', 'shutdown', 'speed', 'standby']);
   });
 
   it('show controllers serial and debug serial run but are not listed', () => {
@@ -229,8 +230,9 @@ describe('host shell', () => {
     expect(ok(laptop, 'wifi disconnect').spec.handler).toBe(HANDLERS.hostWifiDisconnect);
     expect(ok(laptop, 'wifi list').spec.handler).toBe(HANDLERS.hostWifiList);
     expect(ok(laptop, 'adapter wl0 down').args).toEqual({ iface: 'Wlan0', state: 'down' });
+    // ARCHITECTURE-P3 §9.2 W2 items 21 and 21b: the host shell gains `flow`, `rest` and the [S13] `ssh` and `telnet`
     expect(tokens(laptop, '')).toEqual([
-      'adapter', 'arp', 'exit', 'ip', 'ipconfig', 'ipv6', 'ipv6config', 'netstat', 'no', 'nslookup', 'ping', 'show', 'tracert', 'wifi',
+      'adapter', 'arp', 'exit', 'flow', 'ip', 'ipconfig', 'ipv6', 'ipv6config', 'netstat', 'no', 'nslookup', 'ping', 'rest', 'show', 'ssh', 'telnet', 'tracert', 'wifi',
     ]);
     expect(tokens(laptop, 'show ')).toEqual(['arp', 'history', 'hosts', 'interfaces', 'ip', 'running-config', 'version', 'wireless']);
     expect(tokens(laptop, 'wifi ')).toEqual(['connect', 'disconnect', 'list']);
@@ -238,9 +240,10 @@ describe('host shell', () => {
 
   it('the NF-PC gains the P1 host commands; wifi needs a Wi-Fi adapter; adapter works', () => {
     // §9.2 (P1): the PC top-level help list gains tracert, nslookup, netstat, ipv6config and adapter.
+    // ARCHITECTURE-P3 §9.2 W2 item 21 (:63): `flow`, `rest` and the [S13] `ssh` and `telnet` join it
     const pc = on('pc.nfpc', 'user-exec');
     expect(tokens(pc, '')).toEqual([
-      'adapter', 'arp', 'exit', 'ip', 'ipconfig', 'ipv6', 'ipv6config', 'netstat', 'no', 'nslookup', 'ping', 'show', 'tracert',
+      'adapter', 'arp', 'exit', 'flow', 'ip', 'ipconfig', 'ipv6', 'ipv6config', 'netstat', 'no', 'nslookup', 'ping', 'rest', 'show', 'ssh', 'telnet', 'tracert',
     ]);
     expect(fail(pc, 'wifi list')).toMatchObject({ kind: 'unrecognized', error: { column: 0 } });
     expect(ok(pc, 'adapter GigabitEthernet0 up').args).toEqual({ iface: 'GigabitEthernet0', state: 'up' });
@@ -263,8 +266,9 @@ describe('inventory and status tables', () => {
   it('show interfaces status exists on bridging devices; routers keep the P0 show list', () => {
     expect(ok(on('switch.nfc2960', 'priv-exec'), 'show interfaces status').spec.handler).toBe(HANDLERS.showInterfacesStatus);
     const r1 = on('router.nf2911', 'priv-exec');
-    // the P0 show list plus (ARCHITECTURE-P2 §9.2 W4 item 18) `access-lists` and `standby`
-    expect(tokens(r1, 'show ')).toEqual(['access-lists', 'arp', 'history', 'hosts', 'interfaces', 'ip', 'ipv6', 'running-config', 'standby', 'startup-config', 'version']);
+    // the P0 show list plus (ARCHITECTURE-P2 §9.2 W4 item 18) `access-lists` and `standby`, and (ARCHITECTURE-P3 §9.2 W2
+    // item 21b, the W2 subset of item 21's priv-exec show list) `class-map`, `clock` and `policy-map`
+    expect(tokens(r1, 'show ')).toEqual(['access-lists', 'arp', 'class-map', 'clock', 'history', 'hosts', 'interfaces', 'ip', 'ipv6', 'policy-map', 'running-config', 'standby', 'startup-config', 'version']);
     expect(ok(r1, 'show interfaces serial0/0/0').args.iface).toBe('Serial0/0/0');
   });
 

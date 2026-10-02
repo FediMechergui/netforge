@@ -32,6 +32,21 @@
  *  - step 12: the MAC filter also accepts the MAC of a virtual address of the port (`PortL3.virtual4`).
  * Step 10b also runs in the `ingress` action at a framing layer (the SVI clone eth-switch hands over, a loop
  * egress), so a control or unjoined-group frame never reaches an L3 daemon by that path either.
+ *
+ * P3 (ARCHITECTURE-P3 D18, §3.0 (b); W2 device) adds, on a `routed` port with Ethernet framing, BEFORE step 10a:
+ *  - the control check on the physical port (`routedControlVerdict`): a frame to the LLDP nearest-bridge group or to the
+ *    NF control group that `classifyControl` (protocols/l2/control.ts) classes `cdp` or `lldp`, whose daemon runs on the
+ *    device (`FrameArrivalInput.daemons`), is delivered to that daemon on the physical port — even when the port has a
+ *    native subinterface, which step 10a would otherwise hand it to. Every other frame and every other class (DTP,
+ *    LACP, BPDUs) goes on to 10a/10b exactly as before, and a discovery frame whose daemon does not run still drops
+ *    `not-for-me` at step 10b. A hand-built input without `daemons` keeps the P2 decision.
+ *
+ * P3 [S19] (ARCHITECTURE-P3 D17, §3.9; ruling R4; W2 device) PPP framing: `FramingProto` 'ppp' (a `ppp` port accepts
+ * exactly the `ppp` framing, RFC 1662 without flags: `PPP_HEADER` + `PPP_FCS` bytes around the payload, no destination
+ * MAC, demux key `ppp.protocol`, demux layer 'ppp'), and the step-4 receive gate's PPP branch: a PPP control frame
+ * (LCP, PAP, CHAP, IPCP, IPv6CP) is still received on a `ppp` port that has carrier and whose line protocol is down only
+ * by PPP (`downOnlyBySerialPpp`, link/serial.ts), so the link can negotiate, authenticate and recover. The HDLC
+ * keepalive branch is unchanged.
  */
 import { ipv4ToU32, isIpv4, type MacAddress } from '../contracts/addr.js';
 import type { PortId, ProcessName } from '../contracts/ids.js';
@@ -45,8 +60,12 @@ import {
   HDLC_FCS,
   HDLC_HEADER,
   HDLC_PROTO_KEEPALIVE,
+  LLDP_NEAREST_BRIDGE_MAC,
   NF_L2_CONTROL_MAC,
+  PPP_FCS,
+  PPP_HEADER,
   type FieldValue,
+  type PduView,
   type ProtoName,
 } from '../contracts/pdu.js';
 import type { PortCounters, PortL3, PortView } from '../contracts/port.js';
@@ -60,6 +79,8 @@ import {
   type PortEncap,
   type PortRole,
 } from '../contracts/catalog.js';
+import { downOnlyBySerialPpp, isSerialPppControlFrame } from '../link/serial.js';
+import { classifyControl, l2ControlRow, type L2ControlClass } from '../protocols/l2/control.js';
 import { specEncap, specRole } from './ports.js';
 
 // ── frame shape ──────────────────────────────────────────────────────────────
@@ -79,11 +100,11 @@ export interface FrameLike {
   layer(proto: ProtoName): FrameLayerLike | undefined;
 }
 
-/** Outer framings, in declaration order. */
-export const FRAMING_PROTOS: readonly FramingProto[] = Object.freeze(['ethernet', 'hdlc', 'dot11']);
+/** Outer framings, in declaration order ('ppp' @since P3 [S19], appended). */
+export const FRAMING_PROTOS: readonly FramingProto[] = Object.freeze(['ethernet', 'hdlc', 'dot11', 'ppp']);
 
-/** Demux layers, in declaration order. */
-export const DEMUX_LAYERS: readonly DemuxLayer[] = Object.freeze(['ethernet', 'hdlc', 'dot11', 'ipv4', 'ipv6']);
+/** Demux layers, in declaration order ('ppp' @since P3 [S19], appended). */
+export const DEMUX_LAYERS: readonly DemuxLayer[] = Object.freeze(['ethernet', 'hdlc', 'dot11', 'ipv4', 'ipv6', 'ppp']);
 
 /** True when `proto` names an outer framing. */
 export function isFramingProto(proto: string | undefined): proto is FramingProto {
@@ -164,14 +185,26 @@ export function effectivePortEncap(port: Pick<PortView, 'encap' | 'spec'>): Port
 /**
  * §3.1 step 4 receive gate. wlan ports gate on `phy.carrier` (management and EAPOL flow before authorization);
  * every other port on `operUp`, except that an HDLC keepalive (protocol 0x8035) is still received while the port
- * has carrier and is down only by its keepalive latch.
+ * has carrier and is down only by its keepalive latch, and (@since P3 [S19]) a PPP control frame (LCP, PAP, CHAP,
+ * IPCP, IPv6CP; `isSerialPppControlFrame`) is still received on a port whose effective encapsulation is `ppp`, that
+ * has carrier and whose line protocol is down only by PPP (`downOnlyBySerialPpp`: negotiating, failed authentication,
+ * missed LCP echoes). `encap` (@since P3) is the port's live encapsulation; absent = the spec default.
  */
-export function portReceiveUp(port: Pick<PortView, 'operUp' | 'phy' | 'spec'>, frame: Pick<FrameLike, 'layers'>): boolean {
+export function portReceiveUp(
+  port: Pick<PortView, 'operUp' | 'phy' | 'spec'> & { readonly encap?: PortEncap | undefined },
+  frame: Pick<FrameLike, 'layers'>,
+): boolean {
   if (port.spec.kind === 'wlan') return port.phy?.carrier === true;
   if (port.operUp) return true;
   const outer = frame.layers[0];
-  return outer !== undefined && outer.proto === 'hdlc' && outer.fields['protocol'] === HDLC_PROTO_KEEPALIVE
-    && port.phy?.carrier === true && port.phy.lineProtocolReason === 'keepalive-missed';
+  if (outer === undefined) return false;
+  if (outer.proto === 'hdlc') {
+    return outer.fields['protocol'] === HDLC_PROTO_KEEPALIVE && port.phy?.carrier === true && port.phy.lineProtocolReason === 'keepalive-missed';
+  }
+  // [S19] the PPP branch: a PPP control frame on a `ppp` port down only by PPP (an HDLC port never takes it)
+  if (outer.proto !== 'ppp' || port.phy === undefined) return false;
+  // isSerialPppControlFrame reads only the outer layer's `proto` and `fields`, which every FrameLike layer carries
+  return isSerialPppControlFrame(frame as unknown as Pick<PduView, 'layers'>) && downOnlyBySerialPpp({ phy: port.phy, encap: port.encap ?? specEncap(port.spec) });
 }
 
 // ── encapsulation validators ─────────────────────────────────────────────────
@@ -181,7 +214,8 @@ export const ENCAP_ALLOWS: Readonly<Record<PortEncap, readonly FramingProto[]>> 
   ethernet: Object.freeze(['ethernet'] as FramingProto[]),
   hdlc: Object.freeze(['hdlc'] as FramingProto[]),
   dot11: Object.freeze(['dot11', 'ethernet'] as FramingProto[]),
-  ppp: Object.freeze([] as FramingProto[]),
+  // P3 [S19]: a PPP serial port carries PPP framing (RFC 1662 without flags), nothing else
+  ppp: Object.freeze(['ppp'] as FramingProto[]),
   none: Object.freeze([] as FramingProto[]),
   // P3 [S18] (ARCHITECTURE-P3 §2.1; the W0 stub of ruling R3): no port carries 'tunnel' before the [S18] item, which
   // sets what it accepts ("the owner frames it").
@@ -200,9 +234,12 @@ export interface FramingRules {
   readonly minBytes: number;
   /** Largest valid frame for a port MTU. */
   maxBytes(mtu: number): number;
-  /** Destination MAC of the framing layer (ethernet.dst, dot11.addr1), undefined for HDLC. */
+  /** Destination MAC of the framing layer (ethernet.dst, dot11.addr1), undefined for HDLC and PPP. */
   destination(layer: FrameLayerLike): MacAddress | undefined;
-  /** Demux key: ethernet.type, hdlc.protocol, llc.type of dot11 data frames; undefined when the frame has none. */
+  /**
+   * Demux key: ethernet.type, hdlc.protocol, llc.type of dot11 data frames, (@since P3 [S19]) ppp.protocol; undefined
+   * when the frame has none.
+   */
   demuxKey(frame: FrameLike, layer: FrameLayerLike): number | undefined;
   /** dot11 management/control subtype (frames that only key-less selectors take); undefined otherwise. */
   managementSubtype(layer: FrameLayerLike): string | undefined;
@@ -233,6 +270,15 @@ export const FRAMING_RULES: Readonly<Record<FramingProto, FramingRules>> = Objec
     destination: (layer: FrameLayerLike) => mac(layer.fields['addr1']),
     demuxKey: (frame: FrameLike, layer: FrameLayerLike) => (layer.fields['frameType'] === 'data' ? num(frame.layer('llc')?.fields['type']) : undefined),
     managementSubtype: (layer: FrameLayerLike) => (layer.fields['frameType'] === 'data' ? undefined : String(layer.fields['subtype'] ?? 'unknown')),
+  }),
+  // P3 [S19] (D17, §3.9): RFC 1662 framing without flags — address, control, protocol, payload, FCS-16; no MAC; demuxed
+  // on `ppp.protocol` (the `ppp.proto` space: 0x0021 IPv4 to ipv4, 0xc021 LCP and the other control protocols to ppp)
+  ppp: Object.freeze({
+    minBytes: 0,
+    maxBytes: (mtu: number) => mtu + PPP_HEADER + PPP_FCS,
+    destination: () => undefined,
+    demuxKey: (_frame: FrameLike, layer: FrameLayerLike) => num(layer.fields['protocol']),
+    managementSubtype: () => undefined,
   }),
 });
 
@@ -372,6 +418,38 @@ export function multicastGroupFilter(dst: MacAddress, groups4: readonly string[]
 
 // [/S2] ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
+// ── P3: the control check on the physical port of a routed port, before step 10a (D18, §3.0 (b)) ─────────────────
+
+/** @since P3 The only control classes the routed-port check delivers (D18): the discovery protocols. */
+export const ROUTED_CONTROL_CLASSES: readonly L2ControlClass[] = Object.freeze(['cdp', 'lldp']);
+
+/** @since P3 The daemons running on the device, as the control check reads them (a `Map` or `Set` of names satisfies it). */
+export interface RunningDaemons {
+  has(name: ProcessName): boolean;
+}
+
+/**
+ * @since P3 The control check on a `routed` port's physical port, before step 10a (D18, §3.0 (b)): a frame whose outer
+ * Ethernet destination is the LLDP nearest-bridge group or the NF control group, that `classifyControl` classes `cdp`
+ * or `lldp` (`ROUTED_CONTROL_CLASSES`), and whose class daemon (`l2ControlRow(cls).to`) is in `daemons`, is delivered
+ * to that daemon on the arrival port: verdict `deliver` at the Ethernet layer (key = the frame's ethernet type field),
+ * counting `inBroadcasts` (step 11: the destination is a group address). Undefined otherwise (every other frame and
+ * class, or a daemon that does not run): the frame goes on to steps 10a/10b unchanged.
+ */
+export function routedControlVerdict(frame: FrameLike, outer: FrameLayerLike, daemons: RunningDaemons): FrameDeliver | undefined {
+  const dst = FRAMING_RULES.ethernet.destination(outer)?.toLowerCase();
+  if (dst !== LLDP_NEAREST_BRIDGE_MAC && dst !== NF_L2_CONTROL_MAC) return undefined;
+  // classifyControl reads only each layer's `proto` and `fields`, which every FrameLike layer carries
+  const cls = classifyControl(frame as unknown as Pick<PduView, 'layers'>);
+  if (cls === undefined || !ROUTED_CONTROL_CLASSES.includes(cls)) return undefined;
+  const to = l2ControlRow(cls).to;
+  if (to === undefined || !daemons.has(to)) return undefined;
+  const key = FRAMING_RULES.ethernet.demuxKey(frame, outer);
+  return key === undefined
+    ? { kind: 'deliver', process: to, layer: 'ethernet', counters: ['inBroadcasts'] }
+    : { kind: 'deliver', process: to, layer: 'ethernet', key, counters: ['inBroadcasts'] };
+}
+
 /** @since P2 Step 12: true when `dst` is the MAC of one of the port's virtual addresses (`PortL3.virtual4`). */
 export function isVirtualMac(l3: PipelineL3 | undefined, dst: MacAddress): boolean {
   return (l3?.virtual4 ?? []).some((v) => v.mac === dst);
@@ -473,6 +551,11 @@ export interface FrameArrivalInput {
   readonly subinterfaces?: readonly PipelineSubif[] | undefined;
   /** @since P2 [S2] Switch the multicast-group rule of step 10b on (the device runtime always does; absent = off). */
   readonly groupFilter?: boolean | undefined;
+  /**
+   * @since P3 The daemons running on the device, read by the control check on a routed port before step 10a
+   * (`routedControlVerdict`; the device runtime passes its process map). Absent = no check (the P2 decision).
+   */
+  readonly daemons?: RunningDaemons | undefined;
 }
 
 /** Steps 11–14 at a framing layer or an IP layer. `counters` holds increments already decided. */
@@ -515,6 +598,8 @@ function demuxStage(
  *  5 err-disabled → port-err-disabled (detail = the cause); 6 role without frames → other `no-frames-on-<role>`;
  *  7 `rx.collided` → collision (no counter); 8 `rx.fragmentBytes` → runt (< 64 B) or fcs-error;
  *  9 encapsulation → other `no-<encap>-layer`; 10 FCS/runt/giant of the outer framing (P2: +4 bytes when tagged);
+ *  (P3) on a `routed` port with Ethernet framing and `daemons` given: the control check on the physical port
+ *      (`routedControlVerdict`: a cdp or lldp frame whose daemon runs → deliver to it, counting inBroadcasts);
  *  10a (P2) on a `routed` port: subinterface hand-over (`subif` verdict) or encapsulation-mismatch for a tagged
  *      frame no subinterface carries (`classifySubinterface`);
  *  10b (P2) on a non-bridged, non-promiscuous port: link-layer control groups and [S2] unjoined IPv4 multicast groups
@@ -542,6 +627,11 @@ export function frameArrivalVerdict(input: FrameArrivalInput): FrameArrivalVerdi
   if (invalid !== undefined) return invalid;
   const outer = frame.layers[0] as FrameLayerLike;
   if (role === 'routed' && encap.outer === 'ethernet') {
+    // P3 (D18): the control check on the physical port, before step 10a (cdp and lldp only)
+    if (input.daemons !== undefined) {
+      const control = routedControlVerdict(frame, outer, input.daemons);
+      if (control !== undefined) return control;
+    }
     const sub = classifySubinterface(frame, input.subinterfaces ?? []);
     if (sub !== undefined) return sub;
   }

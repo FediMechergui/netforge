@@ -12,6 +12,8 @@
  * kinds in routing.ts (all moved verbatim, proved by `accept.p3.lab-status`), the data-driven `neighbor` and `fact`
  * kinds and the identities in facts.ts, and the P3 area adapters (sim/lab-checks/<area>.ts, W3). Each file documents
  * its kinds. A failing assertion that carries `feedback` shows it after its detail (the envelope, registry.ts).
+ * P3 (ruling R18, W2 sim): a failed task's `LabCheckResult.misconception` is the analytics tag of its first failing
+ * assertion that carries one (`misconceptionOf`); a passing task, and every task of a P1/P2 lab (no notes), has none.
  *
  * The live simulation is never disturbed: nothing here advances its clock, emits trace or draws its rng. Reads are
  * plain property reads, pure readers and `traceQuery` (which only pages the ring).
@@ -40,7 +42,7 @@
  */
 import type { FaultSpec } from '../contracts/events.js';
 import type { DeviceId, PortId } from '../contracts/ids.js';
-import type { EvaluateLab, LabCheckResult, LabStatus, ScenarioInfo } from '../contracts/scenario.js';
+import type { EvaluateLab, LabAssertion, LabCheckResult, LabStatus, ScenarioInfo } from '../contracts/scenario.js';
 import type { Simulation } from '../contracts/simulation.js';
 import type { SimTime } from '../contracts/time.js';
 import type { Topology } from '../contracts/topology.js';
@@ -192,6 +194,19 @@ function createCloneHost(sim: Simulation): CloneHost {
 // ── the grader ───────────────────────────────────────────────────────────────
 
 /**
+ * @since P3 (ruling R18) The envelope's analytics tag of a failed task: the trimmed `misconception` of its first failing
+ * assertion that carries a non-empty one, else undefined.
+ */
+export function misconceptionOf(assertions: readonly LabAssertion[], results: readonly { readonly pass: boolean }[]): string | undefined {
+  for (let i = 0; i < assertions.length; i++) {
+    if (results[i]?.pass !== false) continue;
+    const tag = assertions[i]?.misconception?.trim();
+    if (tag !== undefined && tag !== '') return tag;
+  }
+  return undefined;
+}
+
+/**
  * Score every task of `lab` against `sim` (contracts/scenario.ts `EvaluateLab`). The live simulation's clock, trace
  * and rng are untouched; `connectivity` assertions run in disposable clones built on first use (one per fault set).
  */
@@ -215,7 +230,11 @@ export const evaluateLab: EvaluateLab = (sim: Simulation, lab: ScenarioInfo): La
     const pass = assertions.every((r) => r.pass);
     total += task.points;
     if (pass) score += task.points;
-    results.push({ task: task.id, pass, points: pass ? task.points : 0, assertions });
+    const result: LabCheckResult = { task: task.id, pass, points: pass ? task.points : 0, assertions };
+    // P3 (R18): the analytics tag of the first failing assertion that carries one (never on a passing task)
+    const misconception = pass ? undefined : misconceptionOf(task.assertions, assertions);
+    if (misconception !== undefined) result.misconception = misconception;
+    results.push(result);
   }
   return { lab: lab.name, checkedAt: sim.now, score, total, results };
 };

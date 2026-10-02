@@ -117,20 +117,25 @@ describe('port roles: switchport / no switchport (§3.10)', () => {
 });
 
 describe('port settings rendered from running-config', () => {
-  it('encapsulation: hdlc is accepted on serial ports, ppp and others are refused, ethernet ports refuse the line', () => {
+  it('encapsulation: hdlc and (P3 [S19]) ppp are accepted on serial ports, others are refused, ethernet ports refuse the line', () => {
     const h = harness({ type: 'router.nf2911', name: 'R1' });
     boot(h);
     const d = h.device;
     const ctx = [['interface', 'Serial0/0/0']];
     expect(d.port('Serial0/0/0')?.encap).toBe('hdlc');
-    expect(d.applyConfigLine(ctx, ['encapsulation', 'ppp'], false)).toEqual({ ok: false, error: DEVICE_CONFIG_MESSAGES.pppUnavailable });
     expect(d.applyConfigLine(ctx, ['encapsulation', 'frame-relay'], false)).toEqual({ ok: false, error: 'Encapsulation frame-relay is not supported on this interface.' });
     expect(d.running.render()).not.toContain('encapsulation');
     expect(h.phyCalls).toEqual([]);
     expect(d.applyConfigLine(ctx, ['encapsulation', 'hdlc'], false)).toEqual({ ok: true });
     expect(d.port('Serial0/0/0')?.encap).toBe('hdlc');
     expect(h.phyCalls.map((c) => c.ref.port)).toEqual(['Serial0/0/0']);
+    // ARCHITECTURE-P3 §9.2 item 30 ([S19], W2 device): the PPP refusal is removed, so its case becomes the accepting one
+    expect(d.applyConfigLine(ctx, ['encapsulation', 'ppp'], false)).toEqual({ ok: true });
+    expect(d.port('Serial0/0/0')?.encap).toBe('ppp');
+    expect(d.running.render()).toContain(' encapsulation ppp\n');
+    expect(h.phyCalls.map((c) => c.ref.port)).toEqual(['Serial0/0/0', 'Serial0/0/0']);
     expect(d.applyConfigLine(ctx, ['encapsulation'], true)).toEqual({ ok: true });
+    expect(d.port('Serial0/0/0')?.encap).toBe('hdlc');
     expect(d.applyConfigLine([['interface', 'GigabitEthernet0/0']], ['encapsulation', 'hdlc'], false)).toEqual({ ok: false, error: DEVICE_CONFIG_MESSAGES.encapsulationNotSerial });
   });
 

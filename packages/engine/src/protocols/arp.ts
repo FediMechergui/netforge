@@ -19,7 +19,11 @@
  *                 (5 per next hop, oldest dropped `queue-full`), write an Incomplete row, broadcast a request and
  *                 retry every `ARP_REQUEST_RETRY_NS` up to `ARP_REQUEST_RETRIES` requests, then drop the queue
  *                 `arp-unresolved` and remove the row.
- *      P3 (ARCHITECTURE-P3 §3.0 (a) step 8), after the HDLC branch: [S18] tunnel → no resolution, no framing, `send`
+ *      P3 (ARCHITECTURE-P3 §3.0 (a) step 8), after the HDLC branch: [S19] ppp → no resolution: a bare packet is
+ *                 encapsulated in `ppp {address 0xff, control 0x03, protocol 0x0021}`, a packet framed by another link
+ *                 is rewrapped, a PPP-framed packet is sent unchanged; while the port's `ppp` row (written by the ppp
+ *                 daemon) says IPCP is not opened the packet is dropped `link-down` (IP does not cross a PPP link
+ *                 before its NCP opens; no row = no gate); [S18] tunnel → no resolution, no framing, `send`
  *                 on the tunnel port (the runtime hands it to the tunnel owner's egress); an IPv4 multicast next hop
  *                 (D7) → never resolved, framed to `01:00:5e` + the low 23 bits of the group (RFC 1112) — before the
  *                 broadcast rule and resolution.
@@ -65,12 +69,12 @@ import { KIND_ENCAP, L3_ROLES, ROLE_TRAITS, defaultRoleFor, ipDefaultsFor, profi
 import type { PortEncap, PortRole } from '../contracts/catalog.js';
 import type { ConfigDelta } from '../contracts/config.js';
 import type { PortId, ProcessName } from '../contracts/ids.js';
-import { ARP_OP_REPLY, ARP_OP_REQUEST, ETHERTYPE_ARP, ETHERTYPE_IPV4, HDLC_ADDRESS_UNICAST, HDLC_PROTO_IPV4 } from '../contracts/pdu.js';
+import { ARP_OP_REPLY, ARP_OP_REQUEST, ETHERTYPE_ARP, ETHERTYPE_IPV4, HDLC_ADDRESS_UNICAST, HDLC_PROTO_IPV4, PPP_ADDRESS, PPP_CONTROL, PPP_PROTO } from '../contracts/pdu.js';
 import type { LayerSpec, Pdu, RewrapOp } from '../contracts/pdu.js';
 import type { PortView } from '../contracts/port.js';
 import type { Action, DebugEvent, DemuxSelector, Process, ProcessCtx, ProcessRequest, StateView } from '../contracts/process.js';
 import { ARP_REQUEST_RETRIES, ARP_REQUEST_RETRY_NS } from '../contracts/tables.js';
-import type { ArpRow } from '../contracts/tables.js';
+import type { ArpRow, PppRow } from '../contracts/tables.js';
 import { SEC } from '../contracts/time.js';
 import type { SimTime } from '../contracts/time.js';
 import { APIPA_PROBES, APIPA_PROBE_INTERVAL_NS } from '../contracts/services.js';
@@ -86,8 +90,11 @@ export const ARP_QUEUE_LIMIT = 5;
 export const ARP_HANDLES: readonly DemuxSelector[] = Object.freeze([
   Object.freeze({ layer: 'ethernet', ethertype: ETHERTYPE_ARP, roles: L3_ROLES }),
 ]) as readonly DemuxSelector[];
-/** Link framing protocols that `arp.sendVia` strips when a packet changes framing (P2: an 802.1Q tag counts as framing). */
-export const LINK_FRAMING_PROTOS: readonly string[] = Object.freeze(['ethernet', 'dot1q', 'hdlc', 'dot11', 'llc']);
+/**
+ * Link framing protocols that `arp.sendVia` strips when a packet changes framing (P2: an 802.1Q tag counts as framing;
+ * P3 [S19]: a PPP frame, ARCHITECTURE-P3 D17).
+ */
+export const LINK_FRAMING_PROTOS: readonly string[] = Object.freeze(['ethernet', 'dot1q', 'hdlc', 'dot11', 'llc', 'ppp']);
 /** Debug events retained per daemon (newest last). */
 const DEBUG_RING = 256;
 const TIMER_SWEEP = 'arp-sweep';
@@ -258,6 +265,24 @@ export function createArp(): Process {
     else rewrapPdu(ctx, pdu, { strip: framing, push: [outer] }, cause);
   }
 
+  // ── [S19] PPP framing (ARCHITECTURE-P3 D17, §3.0 (a) step 8, §3.9 step 5) ──
+
+  /** Put a PPP header on `pdu` (protocol 0x0021): encapsulate a bare packet, rewrap another link's framing. */
+  function framePpp(ctx: ProcessCtx, pdu: Pdu, cause?: string): void {
+    const outer: LayerSpec = { proto: 'ppp', fields: { address: PPP_ADDRESS, control: PPP_CONTROL, protocol: PPP_PROTO.ipv4 } };
+    const framing = leadingFramingLayers(pdu);
+    if (framing === 0) ctx.encapsulate(pdu, outer, cause);
+    else if (framing === 1 && pdu.layers[0]!.proto === 'ppp') return;
+    else rewrapPdu(ctx, pdu, { strip: framing, push: [outer] }, cause);
+  }
+
+  /** The IPCP state the ppp daemon reports for `iface`, when it runs and has a row for the port. */
+  function ipcpState(ctx: ProcessCtx, iface: PortId): PppRow['ipcp'] | undefined {
+    return ctx.tables.get<PppRow>('ppp')?.get(iface)?.ipcp;
+  }
+
+  // ── end [S19] ──
+
   /** Write (or refresh) a complete row for `ip`, then release anything queued for it on `iface`. */
   function learn(ctx: ProcessCtx, ip: Ipv4Address, mac: MacAddress, iface: PortId, out: Action[]): void {
     const previous = ctx.tables.arp.get(ip);
@@ -343,6 +368,19 @@ export function createArp(): Process {
     if (encapOf(port) === 'hdlc') {
       frameHdlc(ctx, pdu, cause);
       debug(ctx, `framing for ${nextHop} on ${iface}: serial HDLC link, no address resolution`, { ip: nextHop, iface, pdu: pdu.id });
+      out.push({ type: 'send', port: iface, pdu });
+      return out;
+    }
+    // [S19] A PPP serial link: the far end is the only station, nothing to resolve; IP waits for IPCP.
+    if (encapOf(port) === 'ppp') {
+      const ipcp = ipcpState(ctx, iface);
+      if (ipcp !== undefined && ipcp !== 'opened') {
+        debug(ctx, `cannot send to ${nextHop} on ${iface}: IPCP is ${ipcp}, not opened`, { ip: nextHop, iface, pdu: pdu.id, ipcp });
+        out.push({ type: 'drop', pdu, reason: 'link-down', detail: `IPCP is not open on ${iface}`, port: iface });
+        return out;
+      }
+      framePpp(ctx, pdu, cause);
+      debug(ctx, `framing for ${nextHop} on ${iface}: serial PPP link, no address resolution`, { ip: nextHop, iface, pdu: pdu.id });
       out.push({ type: 'send', port: iface, pdu });
       return out;
     }

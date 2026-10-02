@@ -45,12 +45,25 @@
  * counters — is the same for tunnel and ordinary sockets. A socket without `tunnel` behaves exactly as before, so no
  * P1 trace or StateView changes (the `tunnel` key appears in the StateView only for a tunnel socket).
  *
+ * P3 (ARCHITECTURE-P3 §2.4, §2.5, §2.6; W2 svc):
+ *  • The discard rule (M13, exact): a datagram to a port with no socket is consumed silently — no drop, no
+ *    port-unreachable — and handed to the traffic daemon as `traffic.rx {pdu, iface, from, dstPort}` ONLY when the
+ *    device runs `traffic` AND the payload starts with the traffic header (`isTrafficPayload`, protocols/traffic.ts).
+ *    Every other datagram keeps the P1 path, so no P1 or P2 world (no device of theirs runs `traffic`) changes.
+ *  • `udp.probe {session, dst, port, src?, timeoutNs}` (grader clones only): one datagram whose payload is the marker
+ *    `NFPR` and the session, from an ephemeral port reserved for the probe (no socket, no `sockets` row) until the
+ *    non-periodic timer `probe:<session>`. An ICMP error quoting it records `unreachable` with its type and code;
+ *    otherwise the timer records `sent` (no source address or route records `unreachable` at once, without `icmp`).
+ *    Pass or fail is read from the clone's trace (the datagram consumed by a socket on the target, §2.10). A new
+ *    probe with the same session replaces the old one.
+ *
  * Debug category: 'udp'.
  *
  * stateSnapshot():
  *   { process: 'udp', state: { sockets: [{ id, owner, family, localAddr, localPort, iface?, tunnel? }], ephemeralNext,
- *     datagramsIn, datagramsOut, noPort, checksumErrors, icmpErrors } }
- *   `ephemeralNext` is null until the first ephemeral bind; `tunnel: true` only on a tunnel socket.
+ *     datagramsIn, datagramsOut, noPort, checksumErrors, icmpErrors, probes? } }
+ *   `ephemeralNext` is null until the first ephemeral bind; `tunnel: true` only on a tunnel socket. `probes` (P3,
+ *   optional by meaning, TransportProbeView): present only after a probe, at most 16, newest last.
  */
 import { IPV4_ANY, IPV6_ANY, isIpv4, isIpv4Broadcast, isIpv4Multicast, type IpAddress, type IpFamily } from '../contracts/addr.js';
 import type { PortId, ProcessName } from '../contracts/ids.js';
@@ -73,7 +86,7 @@ import {
   type PduMeta,
 } from '../contracts/pdu.js';
 import type { Action, DebugEvent, Process, ProcessCtx, ProcessRequest, StateView } from '../contracts/process.js';
-import { socketKey, type SocketRow, type Table } from '../contracts/tables.js';
+import { socketKey, type SocketRow, type Table, type TransportProbeView } from '../contracts/tables.js';
 import {
   EPHEMERAL_PORT_MAX,
   EPHEMERAL_PORT_MIN,
@@ -82,6 +95,7 @@ import {
   type SocketId,
 } from '../contracts/transport.js';
 import { flowKey, normalizeIpv6, parseIpv6 } from '../core/addr6.js';
+import { isTrafficPayload, TRAFFIC_PROCESS } from './traffic.js';
 
 /** Process name, as registered in the protocol registry. */
 const NAME = 'udp';
@@ -93,6 +107,24 @@ const DEBUG_RING = 256;
 const EPHEMERAL_SPAN = EPHEMERAL_PORT_MAX - EPHEMERAL_PORT_MIN + 1;
 /** IPv6 extension headers skipped when looking for the upper-layer header. */
 const IPV6_EXTENSIONS: ReadonlySet<string> = new Set(['ipv6-hopopts', 'ipv6-route', 'ipv6-frag', 'ipv6-dstopts']);
+/** @since P3 The grader's probe payload marker (§2.4 `udp.probe`, original). */
+export const UDP_PROBE_MARKER = 'NFPR';
+/** @since P3 Probe outcomes kept in the StateView `probes` (§2.6: at most 16, newest last). Shared with tcp. */
+export const TRANSPORT_PROBES_KEPT = 16;
+
+/** @since P3 Keep `log` to its last TRANSPORT_PROBES_KEPT entries (shared by udp and tcp probes). */
+export function trimProbeLog(log: TransportProbeView[]): void {
+  if (log.length > TRANSPORT_PROBES_KEPT) log.splice(0, log.length - TRANSPORT_PROBES_KEPT);
+}
+
+/** @since P3 One running udp probe: its reserved port and its outcome record. */
+interface UdpProbe {
+  readonly session: string;
+  readonly family: IpFamily;
+  readonly localAddr: IpAddress;
+  readonly localPort: number;
+  readonly view: TransportProbeView;
+}
 
 /** A bound UDP socket. */
 export interface UdpSocket {
@@ -277,6 +309,9 @@ export function createUdp(): Process {
   let noPort = 0;
   let checksumErrors = 0;
   let icmpErrors = 0;
+  /** @since P3 Running probes by session (grader clones only), and the outcomes shown in the StateView. */
+  const probes = new Map<string, UdpProbe>();
+  const probeLog: TransportProbeView[] = [];
 
   function debug(ctx: ProcessCtx, message: string, data?: Record<string, unknown>): void {
     ctx.debug(CAT, message, data);
@@ -326,6 +361,12 @@ export function createUdp(): Process {
     return undefined;
   }
 
+  /** @since P3 A running probe holds its port like a bound socket (no probe runs outside grader clones). */
+  function probeHolds(key: UdpBindKey): boolean {
+    for (const p of probes.values()) if (udpBindsConflict(p, key)) return true;
+    return false;
+  }
+
   /** Allocate an ephemeral port for a bind of (family, localAddr, iface); draws the base once per lifetime. */
   function allocateEphemeral(ctx: ProcessCtx, family: IpFamily, localAddr: IpAddress, iface: PortId | undefined): number | undefined {
     if (ephemeralNext === undefined) {
@@ -334,7 +375,7 @@ export function createUdp(): Process {
     }
     const port = nextEphemeralPort(ephemeralNext, (p) => {
       const key: UdpBindKey = iface === undefined ? { family, localAddr, localPort: p } : { family, localAddr, localPort: p, iface };
-      return conflicts(key) === undefined;
+      return conflicts(key) === undefined && (probes.size === 0 || !probeHolds(key));
     });
     if (port !== undefined) ephemeralNext = port === EPHEMERAL_PORT_MAX ? EPHEMERAL_PORT_MIN : port + 1;
     return port;
@@ -512,6 +553,74 @@ export function createUdp(): Process {
     return [{ type: 'request', to: 'ipv6', req: r }];
   }
 
+  // ── P3: the grader's probe (§2.4 `udp.probe`; grader clones only) ──────────
+
+  /** The running probe whose reserved (family, address, port) a quoted header names. */
+  function probeFor(family: IpFamily, localAddr: IpAddress, localPort: number): UdpProbe | undefined {
+    for (const p of probes.values()) if (p.family === family && p.localPort === localPort && p.localAddr === localAddr) return p;
+    return undefined;
+  }
+
+  function probe(ctx: ProcessCtx, req: Extract<ProcessRequest, { kind: 'udp.probe' }>): Action[] {
+    const out: Action[] = [];
+    if (probes.delete(req.session)) out.push({ type: 'cancelTimer', key: `probe:${req.session}` });
+    const family: IpFamily = isIpv4(req.dst) ? 4 : 6;
+    const dst = canonical(family, req.dst);
+    const view: TransportProbeView = { session: req.session, dst: dst ?? req.dst, port: req.port, outcome: 'pending', at: ctx.now };
+    probeLog.push(view);
+    trimProbeLog(probeLog);
+    const fail = (detail: string): Action[] => {
+      view.outcome = 'unreachable';
+      debug(ctx, `probe ${req.session} to ${req.dst} port ${String(req.port)}: ${detail}`, { session: req.session, outcome: view.outcome });
+      return out;
+    };
+    if (dst === null) return fail(`${req.dst} is not an IP address`);
+    if (!Number.isInteger(req.port) || req.port < 1 || req.port > 0xffff) return fail('the port is outside 1-65535');
+    let src: IpAddress;
+    if (req.src !== undefined) {
+      const c = canonical(family, req.src);
+      if (c === null || !isOwnAddress(ctx, family, c)) return fail(`${req.src} is not an address of this device`);
+      src = c;
+    } else {
+      const sel = sourceFor(ctx, { id: '', owner: NAME, family, localAddr: udpWildcard(family), localPort: 0 }, dst, undefined);
+      if ('code' in sel) return fail(sel.detail);
+      src = sel.address;
+    }
+    const localPort = allocateEphemeral(ctx, family, src, undefined);
+    if (localPort === undefined) return fail('every ephemeral port is in use');
+    probes.set(req.session, { session: req.session, family, localAddr: src, localPort, view });
+    const text = `${UDP_PROBE_MARKER}${req.session}`;
+    const data = Uint8Array.from(text, (ch) => ch.charCodeAt(0) & 0xff);
+    let ip: LayerSpec;
+    if (family === 4) {
+      ipId = (ipId + 1) & 0xffff;
+      ip = { proto: 'ipv4', fields: { src, dst, protocol: IPPROTO_UDP, ttl: ctx.model.ipDefaults.ttl, id: ipId } };
+    } else {
+      ip = { proto: 'ipv6', fields: { src, dst, nextHeader: IPPROTO_UDP, hopLimit: ctx.model.ipDefaults.hopLimit } };
+    }
+    const pdu = ctx.newPdu([ip, { proto: 'udp', fields: { srcPort: localPort, dstPort: req.port } }, { proto: 'payload', fields: { data } }], {
+      flow: flowKey(family, src, dst, 'udp', localPort, req.port),
+      tag: 'udp-probe',
+    });
+    datagramsOut++;
+    debug(ctx, `probe ${req.session}: send ${flowEndpoint(family, src, localPort)} > ${flowEndpoint(family, dst, req.port)}`, { session: req.session, pdu: pdu.id });
+    out.push(family === 4 ? { type: 'request', to: 'ipv4', req: { kind: 'ipv4.send', pdu } } : { type: 'request', to: 'ipv6', req: { kind: 'ipv6.send', pdu } });
+    out.push({ type: 'timer', key: `probe:${req.session}`, delay: req.timeoutNs });
+    return out;
+  }
+
+  /** The probe timer: no ICMP error came back, so the datagram counts as sent. */
+  function probeTimeout(ctx: ProcessCtx, session: string): void {
+    const p = probes.get(session);
+    if (p === undefined) return;
+    probes.delete(session);
+    if (p.view.outcome === 'pending') {
+      p.view.outcome = 'sent';
+      p.view.at = ctx.now;
+    }
+    debug(ctx, `probe ${session}: ${p.view.outcome}`, { session, outcome: p.view.outcome });
+  }
+
   // ── receive ───────────────────────────────────────────────────────────────
 
   function receiveDatagram(ctx: ProcessCtx, pdu: Pdu, ipLayer: LayerView, udpLayer: LayerView, port: PortId): Action[] {
@@ -529,6 +638,17 @@ export function createUdp(): Process {
     const dstPort = udpLayer.fields.dstPort;
     const s = matchUdpSocket(sockets.values(), family, dst, dstPort, port);
     if (s === undefined) {
+      // P3 (§2.5) the discard rule: a generated datagram on a device that runs traffic is handed over in silence
+      const payloadStart = udpLayer.offset + UDP_HEADER;
+      const payloadEnd = udpLayer.offset + udpLayer.length;
+      if (ctx.model.processes.includes(TRAFFIC_PROCESS) && isTrafficPayload(pdu.bytes, payloadStart, payloadEnd)) {
+        datagramsIn++;
+        debug(ctx, `receive ${flowEndpoint(family, src, srcPort)} > ${flowEndpoint(family, dst, dstPort)} on ${port}: no socket, a generated datagram handed to ${TRAFFIC_PROCESS}`, {
+          pdu: pdu.id,
+          port,
+        });
+        return [{ type: 'consume', pdu }, event(TRAFFIC_PROCESS, { kind: 'traffic.rx', pdu, iface: port, from: src, dstPort })];
+      }
       noPort++;
       const actions: Action[] = [drop(ctx, pdu, 'unsupported-protocol', `udp port ${dstPort} closed`, port)];
       const unicast = family === 4 ? !isIpv4Broadcast(dst) && !isIpv4Multicast(dst) && ctx.ownAddress(dst) !== undefined : !isMulticast6(dst);
@@ -592,6 +712,18 @@ export function createUdp(): Process {
       }
       if (s === undefined && isWildcard(cand.family, cand.localAddr)) s = cand;
     }
+    if (s === undefined && probes.size > 0) {
+      // P3 (§2.4) an ICMP error that quotes a running probe settles it as unreachable (type and code kept)
+      const pr = probeFor(qFamily, localAddr, localPort);
+      if (pr !== undefined) {
+        probes.delete(pr.session);
+        pr.view.outcome = 'unreachable';
+        pr.view.icmp = { type, code };
+        pr.view.at = ctx.now;
+        debug(ctx, `probe ${pr.session}: unreachable, type ${type} code ${code} from ${from}`, { session: pr.session, pdu: pdu.id, type, code });
+        return [{ type: 'consume', pdu }, { type: 'cancelTimer', key: `probe:${pr.session}` }];
+      }
+    }
     if (sockCode === undefined || s === undefined) {
       const why = sockCode === undefined ? 'not reported to UDP sockets' : `no socket on port ${localPort}`;
       debug(ctx, `error type ${type} code ${code} from ${from} quoting port ${localPort}: ${why}`, { pdu: pdu.id, type, code, localPort });
@@ -636,7 +768,8 @@ export function createUdp(): Process {
       return [drop(ctx, pdu, 'unsupported-protocol', 'not a UDP datagram', port)];
     },
 
-    onTimer(): Action[] {
+    onTimer(ctx: ProcessCtx, key: string): Action[] {
+      if (key.startsWith('probe:')) probeTimeout(ctx, key.slice('probe:'.length));
       return [];
     },
 
@@ -652,6 +785,8 @@ export function createUdp(): Process {
           return send(ctx, req);
         case 'udp.close':
           return close(ctx, req);
+        case 'udp.probe':
+          return probe(ctx, req);
         default:
           return [];
       }
@@ -665,10 +800,10 @@ export function createUdp(): Process {
         if (s.tunnel === true) row.tunnel = true;
         list.push(row);
       }
-      return {
-        process: NAME,
-        state: { sockets: list, ephemeralNext: ephemeralNext ?? null, datagramsIn, datagramsOut, noPort, checksumErrors, icmpErrors },
-      };
+      const state: Record<string, unknown> = { sockets: list, ephemeralNext: ephemeralNext ?? null, datagramsIn, datagramsOut, noPort, checksumErrors, icmpErrors };
+      // P3 (§2.6, optional by meaning): only after a probe, so no P1/P2 StateView changes
+      if (probeLog.length > 0) state.probes = probeLog.map((v) => ({ ...v, ...(v.icmp !== undefined ? { icmp: { ...v.icmp } } : {}) }));
+      return { process: NAME, state };
     },
 
     debugEvents(): readonly DebugEvent[] {

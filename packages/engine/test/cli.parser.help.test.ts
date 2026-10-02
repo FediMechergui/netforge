@@ -40,7 +40,8 @@ const literals = (c: CliCompletion): string[] => c.items.filter((i) => !i.isArg)
 describe('help lists', () => {
   it("'' at user-exec lists the user commands sorted, with help text", () => {
     const h = help(GRAMMAR, user, '');
-    expect(tokens(h)).toEqual(['enable', 'exit', 'logout', 'nslookup', 'ping', 'show', 'traceroute']);
+    // ARCHITECTURE-P3 §9.2 W2 item 21 (:62): the [S13] `ssh` and `telnet` jobs
+    expect(tokens(h)).toEqual(['enable', 'exit', 'logout', 'nslookup', 'ping', 'show', 'ssh', 'telnet', 'traceroute']);
     expect(h.cr).toBeUndefined();
     expect(h.error).toBeUndefined();
     for (const i of h.items) expect(i.help.length, i.token).toBeGreaterThan(0);
@@ -59,10 +60,11 @@ describe('help lists', () => {
   it("'' in config mode offers do and no plus the config commands", () => {
     // ARCHITECTURE-P2 §9.2 W4 items 12 and 18 (the P2 fragments folded into GRAMMAR): a router's config mode gains
     // `access-list`, its routed Ethernet port `encapsulation` and `standby`
+    // ARCHITECTURE-P3 §9.2 W2 item 21 (:61 and :60): the router's config and routed Ethernet lists of the W2 fold
     const t = tokens(help(GRAMMAR, conf, ''));
-    expect(t).toEqual(['access-list', 'banner', 'do', 'enable', 'end', 'exit', 'hostname', 'interface', 'ip', 'ipv6', 'line', 'no', 'service', 'username']);
+    expect(t).toEqual(['access-list', 'banner', 'cdp', 'class-map', 'clock', 'crypto', 'do', 'enable', 'end', 'exit', 'hostname', 'interface', 'ip', 'ipv6', 'line', 'lldp', 'logging', 'no', 'ntp', 'policy-map', 'restconf', 'router', 'service', 'username']);
     const tIf = tokens(help(GRAMMAR, confIf, ''));
-    expect(tIf).toEqual(['description', 'do', 'duplex', 'encapsulation', 'end', 'exit', 'ip', 'ipv6', 'mac-address', 'no', 'shutdown', 'speed', 'standby']);
+    expect(tIf).toEqual(['bandwidth', 'cdp', 'delay', 'description', 'do', 'duplex', 'encapsulation', 'end', 'exit', 'fair-queue', 'ip', 'ipv6', 'lldp', 'mac-address', 'no', 'service-policy', 'shutdown', 'speed', 'standby']);
   });
 
   it("'sh' lists only show", () => {
@@ -73,7 +75,8 @@ describe('help lists', () => {
 
   it("'show ' lists the show subtree for the device kind", () => {
     // ARCHITECTURE-P2 §9.2 W4 item 18: a router's show subtree gains `access-lists` and `standby`
-    expect(tokens(help(GRAMMAR, priv, 'show '))).toEqual(['access-lists', 'arp', 'history', 'hosts', 'interfaces', 'ip', 'ipv6', 'running-config', 'standby', 'startup-config', 'version']);
+    // ARCHITECTURE-P3 §9.2 W2 item 21b (the W2 subset of item 21's show list): `class-map`, `clock` and `policy-map`
+    expect(tokens(help(GRAMMAR, priv, 'show '))).toEqual(['access-lists', 'arp', 'class-map', 'clock', 'history', 'hosts', 'interfaces', 'ip', 'ipv6', 'policy-map', 'running-config', 'standby', 'startup-config', 'version']);
     expect(tokens(help(GRAMMAR, sw, 'show '))).toContain('mac');
     expect(tokens(help(GRAMMAR, pc, 'show '))).toEqual(['arp', 'history', 'hosts', 'interfaces', 'ip', 'running-config', 'version']);
   });
@@ -81,7 +84,8 @@ describe('help lists', () => {
   it("'show ip ' lists interface, arp and (routers only) route", () => {
     const h = help(GRAMMAR, priv, 'show ip ');
     // ARCHITECTURE-P2 §9.2 W4 item 18: `show ip nat …` joins on a router
-    expect(tokens(h)).toEqual(['arp', 'dhcp', 'interface', 'nat', 'route', 'sockets']);
+    // ARCHITECTURE-P3 §9.2 W2 item 21b: `show ip access-lists` (§5.8) and `show ip ospf …` join on a router
+    expect(tokens(h)).toEqual(['access-lists', 'arp', 'dhcp', 'interface', 'nat', 'ospf', 'route', 'sockets']);
     expect(h.cr).toBeUndefined();
     expect(h.items.find((i) => i.token === 'interface')?.help).toBe('Interface status and settings');
     expect(h.items.find((i) => i.token === 'route')?.help).toBe('The IPv4 routing table');
@@ -143,7 +147,9 @@ describe('help lists', () => {
 
   it("'no ' lists only commands with a no form; 'do ' lists priv-exec commands", () => {
     // ARCHITECTURE-P2 §9.2 W4 item 18: `encapsulation` and `standby` have a no form
-    expect(tokens(help(GRAMMAR, confIf, 'no '))).toEqual(['description', 'duplex', 'encapsulation', 'ip', 'ipv6', 'mac-address', 'shutdown', 'speed', 'standby']);
+    // ARCHITECTURE-P3 §9.2 W2 item 21b: the W2 interface lines with a no form (`bandwidth`, `cdp`, `delay`, `fair-queue`,
+    // `lldp`, `service-policy`)
+    expect(tokens(help(GRAMMAR, confIf, 'no '))).toEqual(['bandwidth', 'cdp', 'delay', 'description', 'duplex', 'encapsulation', 'fair-queue', 'ip', 'ipv6', 'lldp', 'mac-address', 'service-policy', 'shutdown', 'speed', 'standby']);
     const d = tokens(help(GRAMMAR, conf, 'do '));
     expect(d).toContain('show');
     expect(d).toContain('reload');
@@ -210,8 +216,9 @@ describe('help errors', () => {
     expect(help(GRAMMAR, pc, 'enable').error?.column).toBe(0);
     expect(help(GRAMMAR, priv, 'shutdown').error?.column).toBe(0);
     // §9.2: the P1 host shell list gains tracert, nslookup, netstat, ipv6config and the now-listed adapter.
+    // ARCHITECTURE-P3 §9.2 W2 item 21 (:63): `flow`, `rest` and the [S13] `ssh` and `telnet`
     expect(tokens(help(GRAMMAR, pc, ''))).toEqual([
-      'adapter', 'arp', 'exit', 'ip', 'ipconfig', 'ipv6', 'ipv6config', 'netstat', 'no', 'nslookup', 'ping', 'show', 'tracert',
+      'adapter', 'arp', 'exit', 'flow', 'ip', 'ipconfig', 'ipv6', 'ipv6config', 'netstat', 'no', 'nslookup', 'ping', 'rest', 'show', 'ssh', 'telnet', 'tracert',
     ]);
   });
 

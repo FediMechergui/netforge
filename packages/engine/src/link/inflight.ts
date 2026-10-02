@@ -8,13 +8,21 @@
  *
  * Determinism: legs live in an insertion-ordered Map; `on(scope)` returns insertion order and `visible(now)` sorts
  * explicitly by `(txStart, pdu.id, link, portKey(to))` with ordinal string comparison.
+ *
+ * P3 (ARCHITECTURE-P3 D16, §2.8; W2 media): `queued(from, now)` lists the legs an egress port has committed but not
+ * started yet (`txStart > now`, the virtual FIFO of `link/media/p2p.ts`), oldest first in the `visible` order, each with
+ * the DSCP its medium recorded at enqueue (`frameDscp`). It reads a per-sender index kept beside the scope index, so a
+ * snapshot asks each port in O(its own legs), and it never prunes: the snapshot cache's `PortSnapshot.txBacklog` reads
+ * it without changing the registry. Legs whose `txStart <= now` (on the wire) are not listed, so an uncongested port
+ * returns nothing.
  */
 import type { LinkId, PduId, PortRef } from '../contracts/ids.js';
 import { portKey } from '../contracts/ids.js';
 import type { MediumId } from '../contracts/medium.js';
+import type { PduView } from '../contracts/pdu.js';
 import type { InflightFrame } from '../contracts/snapshot.js';
 import type { SimTime } from '../contracts/time.js';
-import type { InflightLeg, InflightRegistry } from './media/types.js';
+import type { InflightLeg, InflightRegistry, QueuedFrame } from './media/types.js';
 import { compareOrdinal } from './media/types.js';
 
 /** Registry size below which `sweep` never scans (the threshold never drops under it). */
@@ -53,6 +61,31 @@ export function publicFrame(leg: InflightLeg): InflightFrame {
   return out;
 }
 
+/**
+ * @since P3 (ARCHITECTURE-P3 D16, ruling R15) The DSCP of a frame: that of its outermost IP header (IPv4 `dscp`, IPv6
+ * `trafficClass >> 2`), or undefined when it carries none. Media record it on a leg committed with `txStart > now`.
+ */
+export function frameDscp(pdu: Pick<PduView, 'layers'>): number | undefined {
+  for (const layer of pdu.layers) {
+    if (layer.proto === 'ipv4') {
+      const d = layer.fields.dscp;
+      return typeof d === 'number' ? d & 0x3f : undefined;
+    }
+    if (layer.proto === 'ipv6') {
+      const tc = layer.fields.trafficClass;
+      return typeof tc === 'number' ? (tc >>> 2) & 0x3f : undefined;
+    }
+  }
+  return undefined;
+}
+
+/** @since P3 The `queued` copy of a waiting leg: its public frame, plus the DSCP recorded at enqueue. */
+function queuedFrame(leg: InflightLeg): QueuedFrame {
+  const out: QueuedFrame = publicFrame(leg);
+  if (leg.dscp !== undefined) out.dscp = leg.dscp;
+  return out;
+}
+
 /** Delete every leg recorded on `scope` (arrived-or-not, lost legs included); returns how many were removed. */
 export function clearScope(registry: InflightRegistry, scope: LinkId | MediumId): number {
   const legs = registry.on(scope);
@@ -68,6 +101,8 @@ export function createInflightRegistry(): InflightRegistry {
   const byTarget = new Map<string, string[]>();
   /** scope → leg keys, insertion ordered. */
   const byScope = new Map<string, Set<string>>();
+  /** @since P3 portKey(from) → leg keys, insertion ordered (the sender index `queued` reads). */
+  const byFrom = new Map<string, Set<string>>();
   let sweepAt = INFLIGHT_SWEEP_MIN;
 
   const targetKey = (pdu: PduId, to: PortRef): string => `${pdu}|${portKey(to)}`;
@@ -85,6 +120,12 @@ export function createInflightRegistry(): InflightRegistry {
     if (scope) {
       scope.delete(key);
       if (scope.size === 0) byScope.delete(leg.link);
+    }
+    const fk = portKey(leg.from);
+    const sender = byFrom.get(fk);
+    if (sender) {
+      sender.delete(key);
+      if (sender.size === 0) byFrom.delete(fk);
     }
   };
 
@@ -104,6 +145,13 @@ export function createInflightRegistry(): InflightRegistry {
         byScope.set(leg.link, scope);
       }
       scope.add(key);
+      const fk = portKey(leg.from);
+      let sender = byFrom.get(fk);
+      if (!sender) {
+        sender = new Set();
+        byFrom.set(fk, sender);
+      }
+      sender.add(key);
     },
 
     remove(pdu, to) {
@@ -144,6 +192,18 @@ export function createInflightRegistry(): InflightRegistry {
         }
         if (leg.txStart > now) continue;
         out.push(publicFrame(leg));
+      }
+      out.sort(compareInflight);
+      return out;
+    },
+
+    queued(from, now) {
+      const keys = byFrom.get(portKey(from));
+      if (!keys) return [];
+      const out: QueuedFrame[] = [];
+      for (const k of keys) {
+        const leg = legs.get(k);
+        if (leg !== undefined && leg.txStart > now) out.push(queuedFrame(leg));
       }
       out.sort(compareInflight);
       return out;

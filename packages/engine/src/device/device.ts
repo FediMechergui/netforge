@@ -109,6 +109,24 @@
  *  - [S32] the hosts' `files:` store: a flat, persistent store on devices with `host` (it survives power-off, like a
  *    disk), changed only by the `storage` action, read by `ctx.files` / `ctx.readFile` and `files` / `readFile`.
  *
+ * P3 (ARCHITECTURE-P3 D17, D18, D20, §3.0 (b), §3.7, §3.9; rulings R4, R20; W2 device):
+ *  - the control check on a routed port before step 10a (device/pipeline.ts `routedControlVerdict`): the runtime passes
+ *    its running daemons, so a `cdp` or `lldp` frame is delivered to its daemon on the physical port;
+ *  - [S19] `encapsulation ppp` is accepted on a router's serial WAN port (the P1 refusal is removed); a serial access
+ *    line (NF-CSU-DSU, NF-INTERNET) stays HDLC-only (`DEVICE_CONFIG_MESSAGES.pppAccessLine`, a listed deviation). PPP
+ *    framing and its receive gate live in device/pipeline.ts;
+ *  - [S25] the extended-logging default of a P3 world (D2, D20; never in a P1 or P2 world), on the models that take it
+ *    (`extendedLoggingModel`: routers and managed switches with the NF-OS CLI, the controller), through `emitLog`: on a
+ *    port's oper change a link log (`LINK`, severity 3, mnemonic `UPDOWN`; physical ports, when the carrier changed and
+ *    not for an administrative shutdown, which the P1 admin log already reports) and a line-protocol log (`LINEPROTO`,
+ *    severity 5, `UPDOWN`; every port, once per change); at boot completion a start log (`SYS`, 5, `BOOTED`); and a
+ *    configuration log (`SYS`, 5, `CONFIGURED`) for a typed line or a configure-seam line that changed the running
+ *    configuration, once per source (the console, or the configure origin) and dispatch instant — never for the boot
+ *    replay or a daemon's `configLine` action;
+ *  - ruling R20: the `storage` action enforces the io limits of a `files:` store (`MAX_TOPOLOGY_FILES_PER_DEVICE` files,
+ *    `MAX_TOPOLOGY_FILE_NAME_CHARS`-character names, `MAX_TOPOLOGY_FILE_CHARS` characters per file; io/schema.ts), so
+ *    every file a host holds survives export and reload (`storageWriteProblem`).
+ *
  * Power-off semantics (RAM is lost, NVRAM survives): every daemon's `onShutdown` runs first (its actions apply while the
  * ports are still up; P1), then tables are cleared (declared order), processes and timers
  * dropped, virtual interfaces other than the auto ones removed, roles/encapsulations/admin state/counters/L3
@@ -190,6 +208,7 @@ import { configTextLinesOf } from '../cli/config-text.js';
 import { vlanPopOp, vlanPushOp } from '../pdu/vlan.js';
 import { carries, channelOperOf, isImplicitVlan, operOf, type L2PortView } from '../protocols/l2/membership.js';
 import { readSwitchport } from '../protocols/l2/switchport-config.js';
+import { MAX_TOPOLOGY_FILES_PER_DEVICE, MAX_TOPOLOGY_FILE_CHARS, MAX_TOPOLOGY_FILE_NAME_CHARS } from '../io/schema.js';
 import { CATALOG_STAGE } from './catalog/index.js';
 import { deriveProcesses, deriveTables, modulePortSpecs } from './catalog/define.js';
 import { parseSubinterfaceName, resolvePortName } from './catalog/names.js';
@@ -260,8 +279,8 @@ export const ERR_DISABLE_CAUSE_TEXT: Readonly<Record<ErrDisableCause, string>> =
   bpduguard: 'BPDU guard',
   'channel-misconfig': 'an EtherChannel misconfiguration',
   fault: 'an injected fault',
-  // P3 (ARCHITECTURE-P3 §2.2, §9.2 W0 item 1): the architect's W0 compile stub, final texts. Nothing raises these causes
-  // before the W2 l2 change that also appends them to ERR_DISABLE_CAUSES.
+  // P3 (ARCHITECTURE-P3 §2.2, §9.2 W0 item 1): the final texts; eth-switch raises them since W2 l2 (steps 7b/7c, which
+  // also appended them to ERR_DISABLE_CAUSES).
   'dhcp-rate-limit': 'the DHCP snooping rate limit',
   'arp-inspection': 'dynamic ARP inspection',
 });
@@ -332,6 +351,91 @@ export function storedFileSize(text: string): number {
     } else n += 3;
   }
   return n;
+}
+
+/**
+ * @since P3 [S32] Why a `storage` write of `path` with `content` cannot be stored in a `files:` store that holds `paths`
+ * (ruling R20: the io limits, io/schema.ts), in original wording; undefined when it can. A name longer than
+ * `MAX_TOPOLOGY_FILE_NAME_CHARS` UTF-16 code units, a content longer than `MAX_TOPOLOGY_FILE_CHARS` code units (1 MiB,
+ * the startup-config bound) and a NEW file in a store that already holds `MAX_TOPOLOGY_FILES_PER_DEVICE` files are
+ * refused; replacing an existing file never counts against the file limit. The writers ([S32] `file.write`,
+ * script-host) may call it first to tell the user why; the runtime enforces it.
+ */
+export function storageWriteProblem(paths: ReadonlySet<string> | readonly string[], path: string, content: string): string | undefined {
+  if (path.length > MAX_TOPOLOGY_FILE_NAME_CHARS) return `the name is longer than ${MAX_TOPOLOGY_FILE_NAME_CHARS} characters`;
+  if (content.length > MAX_TOPOLOGY_FILE_CHARS) return `the file is longer than ${MAX_TOPOLOGY_FILE_CHARS} characters`;
+  const has = Array.isArray(paths) ? (paths as readonly string[]).includes(path) : (paths as ReadonlySet<string>).has(path);
+  if (!has) {
+    const count = Array.isArray(paths) ? (paths as readonly string[]).length : (paths as ReadonlySet<string>).size;
+    if (count >= MAX_TOPOLOGY_FILES_PER_DEVICE) return `the store already holds ${MAX_TOPOLOGY_FILES_PER_DEVICE} files`;
+  }
+  return undefined;
+}
+
+// ── P3 [S25]: the extended-logging default (D2, D20; W2 device) ─────────────────
+
+/** @since P3 [S25] Syslog facility of the line-protocol change log (the link log uses the P1 `LINK` facility). */
+export const FACILITY_LINEPROTO = 'LINEPROTO';
+
+/** @since P3 [S25] Mnemonic of the link and line-protocol change logs (§3.7: `%LINK-3-UPDOWN`, `%LINEPROTO-5-UPDOWN`). */
+export const LOG_MNEMONIC_UPDOWN = 'UPDOWN';
+
+/** @since P3 [S25] Mnemonic of the start log at boot completion (original wording). */
+export const LOG_MNEMONIC_BOOTED = 'BOOTED';
+
+/** @since P3 [S25] Mnemonic of the configuration log (original wording). */
+export const LOG_MNEMONIC_CONFIGURED = 'CONFIGURED';
+
+/** @since P3 [S25] Severity of the link change log (§3.7). */
+export const LINK_LOG_SEVERITY: Severity = 3;
+
+/** @since P3 [S25] Severity of the line-protocol change, start and configuration logs (§3.7). */
+export const EXTENDED_LOG_SEVERITY: Severity = 5;
+
+/** @since P3 [S25] Does a world of `profile` have the extended-logging default (D2: P3 worlds only)? */
+export function extendedLoggingDefault(profile: DefaultsProfile): boolean {
+  return profileIncludes(profile, 'P3');
+}
+
+/**
+ * @since P3 [S25] Does a model take the extended-logging default? The devices whose P3 defaults are a network device's
+ * (D2; the [S24] timestamps lines go to the same set): a router or a managed or multilayer switch with the NF-OS CLI,
+ * and the controller; never a home router (`nat-gateway`, GUI only), a host, an access point or a legacy device.
+ */
+export function extendedLoggingModel(model: Pick<DeviceModel, 'capabilities' | 'cli'>): boolean {
+  const caps = model.capabilities ?? [];
+  if (caps.includes('nat-gateway')) return false;
+  if (caps.includes('wireless-controller')) return true;
+  return model.cli?.shell === 'nfos' && (caps.includes('routing') || caps.includes('managed-switch'));
+}
+
+/** @since P3 [S25] The link change log of `port` (original wording). */
+export function linkStateMessage(port: PortId, up: boolean): string {
+  return `Interface ${port}: the link is ${up ? 'up' : 'down'}`;
+}
+
+/** @since P3 [S25] The line-protocol change log of `port` (original wording). */
+export function lineProtocolMessage(port: PortId, up: boolean): string {
+  return `Interface ${port}: line protocol is ${up ? 'up' : 'down'}`;
+}
+
+/** @since P3 [S25] The start log at boot completion (original wording). */
+export function systemStartedMessage(model: string): string {
+  return `The system has started (${model}).`;
+}
+
+/** @since P3 [S25] How a configure origin names its channel in the configuration log. */
+const ORIGIN_CHANNEL: Readonly<Record<ConfigOrigin['via'], string>> = Object.freeze({ restconf: 'RESTCONF' });
+
+/**
+ * @since P3 [S25] The configuration log (original wording): from the console for a typed line (no origin), else over
+ * the configure origin's channel, naming its user and address when the origin carries them.
+ */
+export function configurationChangedMessage(origin?: ConfigOrigin): string {
+  if (origin === undefined) return 'Configuration changed from the console.';
+  const by = origin.user === undefined ? '' : ` by ${origin.user}`;
+  const from = origin.address === undefined ? '' : ` from ${origin.address}`;
+  return `Configuration changed over ${ORIGIN_CHANNEL[origin.via]}${by}${from}.`;
 }
 
 /** @since P3 A copy of a configure origin with only the members that are set (D21; stored on `configChange`). */
@@ -452,10 +556,13 @@ export const PHY_CONFIG_KEYS: readonly string[] = Object.freeze([
   'switchport',
 ]);
 
-/** Original wording of the runtime's own config refusals (§1.6). */
+/**
+ * Original wording of the runtime's own config refusals (§1.6). P3 [S19] (§9.2 item 30): the P1 refusal of
+ * `encapsulation ppp` on a router's serial port is removed; `pppAccessLine` refuses it on a serial access line only.
+ */
 export const DEVICE_CONFIG_MESSAGES = Object.freeze({
-  /** `encapsulation ppp` (D6: PPP is reserved). */
-  pppUnavailable: 'PPP encapsulation is not available in this release. Serial interfaces use HDLC.',
+  /** @since P3 [S19] `encapsulation ppp` on a serial access line (NF-CSU-DSU, NF-INTERNET): HDLC only (D17, a listed deviation). */
+  pppAccessLine: 'This serial access line carries HDLC only.',
   /** `encapsulation <other>`. */
   encapsulationUnknown: 'Encapsulation {encap} is not supported on this interface.',
   /** `encapsulation …` on a port that is not a serial interface. */
@@ -765,6 +872,14 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
   private clockBase: DeviceClockBase | undefined;
   /** @since P3 [S32] The hosts' `files:` store by path (D21); persistent (kept across power-off, like a disk). */
   private readonly fileStore = new Map<string, StoredFileEntry>();
+  /** @since P3 [S25] The extended-logging default applies: a P3 world and a model that takes it (fixed per device). */
+  private readonly extendedLogging: boolean;
+  /** @since P3 [S25] The carrier state last reported by a link log, per physical port (RAM: cleared at power-off). */
+  private readonly linkLogged = new Map<PortId, boolean>();
+  /** @since P3 [S25] The line-protocol state last reported by a line-protocol log, per port (RAM). */
+  private readonly lineLogged = new Map<PortId, boolean>();
+  /** @since P3 [S25] The source and instant of the last configuration log (RAM): one log per source and instant. */
+  private lastConfigLog: { at: SimTime; source: string } | undefined;
 
   constructor(spec: DeviceSpec, deps: DeviceRuntimeDeps, now: SimTime) {
     const model = deps.catalog.get(spec.type);
@@ -809,6 +924,7 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
     this.tables = createDeviceTables(spec.id, this.computeTableNames(), deps.tables, deps.trace, () => this.clock);
 
     this.defaultSlots = deviceDefaultSlots(model, spec.profile ?? 'P1');
+    this.extendedLogging = extendedLoggingDefault(spec.profile ?? 'P1') && extendedLoggingModel(model);
     this.runningAst = this.freshRunning();
     if (spec.startupConfig !== undefined) this.startup = this.parseSavedConfig(spec.startupConfig);
     if (spec.runningConfig !== undefined && spec.power) this.pendingRunning = this.parseSavedConfig(spec.runningConfig);
@@ -1005,7 +1121,8 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
   /**
    * @since P3 [S32] The `storage` action: write (create or replace; `modifiedAt` = now) or delete one file of the
    * store. Refused with a runtime debug line on a device without a store, for another file system, a path that is not
-   * a flat name or a write without content; deleting a missing file changes nothing.
+   * a flat name, a write without content, or (ruling R20) a write beyond the io limits (`storageWriteProblem`: the name
+   * or the content too long, or a new file in a full store); deleting a missing file changes nothing.
    */
   private applyStorage(owner: ProcessName, a: Extract<Action, { type: 'storage' }>, now: SimTime): void {
     if (!this.hasFileStore) {
@@ -1023,6 +1140,12 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
     const file: StoredFileInput | undefined = a.file;
     if (file === undefined || typeof file.content !== 'string') {
       this.runtimeDebug(owner, `storage write of ${a.path} ignored: no content`, now);
+      return;
+    }
+    // ruling R20: the io limits, so every stored file survives export and reload
+    const problem = storageWriteProblem(new Set(this.fileStore.keys()), a.path, file.content);
+    if (problem !== undefined) {
+      this.runtimeDebug(owner, `storage write of ${a.path.length > 64 ? `${a.path.slice(0, 64)}…` : a.path} ignored: ${problem}`, now);
       return;
     }
     this.fileStore.set(a.path, { content: file.content, size: storedFileSize(file.content), modifiedAt: now });
@@ -1050,6 +1173,8 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
       index: this.demuxIndex,
       subinterfaces: this.subinterfacesFor(port),
       groupFilter: true,
+      // P3 (D18): the control check on a routed port reads the running daemons (cdp, lldp)
+      daemons: this.processes,
     });
     if (verdict.kind === 'subif') {
       // Step 10a hand-over (D11, §3.4 step 3): pop the tag (stamped with this device, cause `encapsulation dot1Q <v>`),
@@ -1152,6 +1277,8 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
     // 4. booted; let the link model bring the physical ports up, then derive virtual oper state
     this.bootedAt = now;
     this.trace.emit({ t: now, kind: 'deviceState', device: this.id, power: true, booted: true });
+    // P3 [S25]: the start log of the extended-logging default (P3 worlds only), before the ports come up
+    if (this.extendedLogging) this.emitLog(EXTENDED_LOG_SEVERITY, FACILITY_SYS, systemStartedMessage(this.model.model), now, LOG_MNEMONIC_BOOTED);
     for (const port of [...this.ports.values()]) {
       if (this.isVirtual(port)) continue;
       this.deps.onPortAdmin({ device: this.id, port: port.id }, port.adminUp, now);
@@ -1161,9 +1288,46 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
 
   onPortOper(portId: PortId, operUp: boolean, now: SimTime): void {
     this.clock = now;
-    if (!this.ports.has(portId)) return;
+    const port = this.ports.get(portId);
+    if (port === undefined) return;
+    this.logOperChange(port, operUp, now); // P3 [S25]: P3 worlds only
     this.fanLinkChange(portId, operUp, now);
     this.recomputeVirtual(now);
+  }
+
+  /**
+   * @since P3 [S25] The extended-logging default's change logs for `port` now `operUp` (P3 worlds only, booted and
+   * powered): on a physical port, a link log when its carrier differs from the last one logged — not when the port is
+   * administratively down (the P1 admin log already said so); then, on every port, a line-protocol log when `operUp`
+   * differs from the last one logged.
+   */
+  private logOperChange(port: PortState, operUp: boolean, now: SimTime): void {
+    if (!this.extendedLogging || !this.power || this.bootedAt === undefined) return;
+    if (!this.isVirtual(port)) {
+      // an administratively down port counts as without carrier, so `no shutdown` logs the link coming up again
+      const carrier = port.adminUp && (port.phy?.carrier ?? operUp);
+      if ((this.linkLogged.get(port.id) ?? false) !== carrier) {
+        this.linkLogged.set(port.id, carrier);
+        if (carrier || port.adminUp) this.emitLog(LINK_LOG_SEVERITY, FACILITY_LINK, linkStateMessage(port.id, carrier), now, LOG_MNEMONIC_UPDOWN);
+      }
+    }
+    if ((this.lineLogged.get(port.id) ?? false) !== operUp) {
+      this.lineLogged.set(port.id, operUp);
+      this.emitLog(EXTENDED_LOG_SEVERITY, FACILITY_LINEPROTO, lineProtocolMessage(port.id, operUp), now, LOG_MNEMONIC_UPDOWN);
+    }
+  }
+
+  /**
+   * @since P3 [S25] The configuration log of a typed or configure-seam line that changed the running configuration (P3
+   * worlds only, booted): once per source — the console, or the configure origin — and dispatch instant.
+   */
+  private logConfigured(origin: ConfigOrigin | undefined, now: SimTime): void {
+    if (!this.extendedLogging || !this.power || this.bootedAt === undefined) return;
+    const source = origin === undefined ? 'console' : `${origin.via}|${origin.user ?? ''}|${origin.address ?? ''}`;
+    const last = this.lastConfigLog;
+    if (last !== undefined && last.at === now && last.source === source) return;
+    this.lastConfigLog = { at: now, source };
+    this.emitLog(EXTENDED_LOG_SEVERITY, FACILITY_SYS, configurationChangedMessage(origin), now, LOG_MNEMONIC_CONFIGURED);
   }
 
   onTxOutcome(portId: PortId, outcome: TxOutcome, now: SimTime): void {
@@ -1338,7 +1502,8 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
       case 'l2Changed':
         return { steps: this.l2ChangedSteps(owner, a, now) };
       case 'configLine': {
-        const result = this.applyConfigLine(a.context.map((c) => [...c]), [...a.line], a.negate);
+        // a daemon's own line (sticky MACs): no configuration log (P3 [S25])
+        const result = this.applyLine(a.context.map((c) => [...c]), [...a.line], a.negate, undefined, false);
         if (!result.ok) this.runtimeDebug(owner, `config line "${a.negate ? 'no ' : ''}${a.line.join(' ')}" refused: ${result.error ?? 'unknown reason'}`, now);
         return undefined;
       }
@@ -1597,6 +1762,14 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
    * lines) is copied into every `configChange` event this line produces, so P1/P2 events keep their bytes.
    */
   applyConfigLine(context: string[][], line: string[], negate: boolean, origin?: ConfigOrigin): { ok: boolean; error?: string } {
+    return this.applyLine(context, line, negate, origin, true);
+  }
+
+  /**
+   * `applyConfigLine`; P3 [S25]: `user` is false for a daemon's `configLine` action, which logs no configuration change
+   * (a typed or configure-seam line logs one, `logConfigured`).
+   */
+  private applyLine(context: string[][], line: string[], negate: boolean, origin: ConfigOrigin | undefined, user: boolean): { ok: boolean; error?: string } {
     const now = this.clock;
     if (line.length === 0 || line[0] === undefined || line[0] === '') return { ok: false, error: 'Empty configuration line' };
     const first = context[0];
@@ -1677,6 +1850,8 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
     if (ifacePort !== undefined && PHY_CONFIG_KEYS.includes(key) && !this.isVirtual(ifacePort)) {
       this.deps.onPortPhyConfig?.({ device: this.id, port: ifacePort.id }, now);
     }
+    // P3 [S25]: the configuration log of the extended-logging default (P3 worlds only)
+    if (user) this.logConfigured(origin, now);
     return { ok: true };
   }
 
@@ -1711,12 +1886,19 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
     return parseConfigText(text, DEFAULT_CONFIG_RULES, { defaults: this.defaultSlots });
   }
 
-  /** `encapsulation X` on `port` (undefined value = `no encapsulation`, back to the spec default). */
+  /**
+   * `encapsulation X` on `port` (undefined value = `no encapsulation`, back to the spec default). P3 [S19] (§9.2 item
+   * 30): `ppp` is accepted on a serial WAN port (a router's serial interface); a serial access line stays HDLC-only.
+   */
   private checkEncapsulation(port: PortState, value: string | undefined): { ok: true; encap: NonNullable<PortState['encap']> } | { ok: false; error: string } {
     if (port.spec.kind !== 'serial') return { ok: false, error: DEVICE_CONFIG_MESSAGES.encapsulationNotSerial };
     if (value === undefined) return { ok: true, encap: specEncap(port.spec) };
     if (value === 'hdlc') return { ok: true, encap: 'hdlc' };
-    if (value === 'ppp') return { ok: false, error: DEVICE_CONFIG_MESSAGES.pppUnavailable };
+    if (value === 'ppp') {
+      // [S19] PPP runs on direct serial cables between routers only (D17)
+      if (effectivePortRole(port, this.effectiveCaps) !== 'wan') return { ok: false, error: DEVICE_CONFIG_MESSAGES.pppAccessLine };
+      return { ok: true, encap: 'ppp' };
+    }
     return { ok: false, error: fill(DEVICE_CONFIG_MESSAGES.encapsulationUnknown, { encap: value }) };
   }
 
@@ -1890,6 +2072,10 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
     this.airCache = undefined;
     this.radioProfiles.clear(); // P2 (wireless): a controller profile is RAM
     this.clockBase = undefined; // P3 (D19): no hardware calendar — the next boot starts unset again (the files stay)
+    // P3 [S25]: what the change logs last reported is RAM (the next boot logs its ports coming up again)
+    this.linkLogged.clear();
+    this.lineLogged.clear();
+    this.lastConfigLog = undefined;
     for (const name of this.tables.names()) this.tables.get(name)?.clear('cleared');
     this.hostname = this.spec.name;
 
@@ -2033,6 +2219,7 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
       this.fanLinkChange(name, false, now);
     }
     removePorts(this.ports, this.model, [name]);
+    this.lineLogged.delete(name); // P3 [S25]: a re-created interface starts unlogged
     this.version++;
     this.trace.emit({ t: now, kind: 'portState', device: this.id, port: name, adminUp: port.adminUp, operUp: false, reason: 'virtual-removed' });
     return { ok: true };
@@ -2201,6 +2388,8 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
     const changes = recomputeVirtualOper(this.ports, { power: this.power, booted: this.bootedAt !== undefined }, this.effectiveCaps, now, this.virtualLookups());
     for (const change of changes) {
       this.emitPortState(change.port, change.reason);
+      const port = this.ports.get(change.port);
+      if (port !== undefined) this.logOperChange(port, change.operUp, now); // P3 [S25]: P3 worlds only
       this.fanLinkChange(change.port, change.operUp, now);
     }
   }

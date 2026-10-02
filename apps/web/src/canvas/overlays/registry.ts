@@ -165,4 +165,12 @@ export const TOPO_OVERLAY_DEFAULTS: Readonly<TopoOverlayState> = Object.freeze({
   stpVlan: null,
   vlanFocus: null,
   capwap: false,
+  // P3 (ARCHITECTURE-P3 §2.14, §9.2 item 23; the W2 web-shell slice migration, a reviewed additive edit): the QoS,
+  // OSPF, WAN and EIGRP keys at their defaults, so this stays equal to the store's DEFAULT_TOPO_OVERLAYS.
+  qos: false,
+  ospf: false,
+  ospfArea: null,
+  wan: false,
+  eigrp: false,
+  eigrpPrefix: null,
 });

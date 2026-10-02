@@ -7,7 +7,7 @@
  * `debug serial` are executable everywhere the network OS runs but are not listed by `?` in P0.5, so the P0 help
  * lists of the P0 router stay identical (ARCHITECTURE-P1 §9.2). Help strings are original wording (spec §1.6).
  */
-import type { CommandSpec } from '../../contracts/cli.js';
+import type { CommandSpec, PortRequirement } from '../../contracts/cli.js';
 import {
   choiceArg,
   debugSpecs,
@@ -37,6 +37,20 @@ export const MSG_NOT_SERIAL = '% This setting applies to serial interfaces only.
 
 const H = SERIAL_HANDLERS;
 const SERIAL_PORT = kindsPort(['serial'], MSG_NOT_SERIAL);
+
+/** @since P3 Mismatch of `bandwidth` on a port that takes none. */
+export const MSG_BANDWIDTH_PORT = '% Bandwidth applies to serial interfaces, routed Ethernet interfaces, subinterfaces and tunnels.';
+/**
+ * @since P3 (ARCHITECTURE-P3 §5.1, §9.2 W2; W2 cli) Ports `bandwidth` takes: the serial ports it always took (roles
+ * `wan` and `access-line`) and, widened so the OSPF cost lesson can set it, routed Ethernet ports (the Ethernet `wan`
+ * port of a home router included), subinterfaces and [S18] tunnels. One spec, so a port that takes none still reports
+ * the mismatch.
+ */
+export const BANDWIDTH_PORT: PortRequirement = Object.freeze<PortRequirement>({
+  kinds: Object.freeze(['serial', 'ethernet', 'virtual'] as const),
+  roles: Object.freeze(['wan', 'access-line', 'routed', 'subif', 'tunnel'] as const),
+  mismatch: MSG_BANDWIDTH_PORT,
+});
 
 /** The serial command table. */
 export const SERIAL_GRAMMAR: readonly CommandSpec[] = Object.freeze<CommandSpec[]>([
@@ -69,8 +83,10 @@ export const SERIAL_GRAMMAR: readonly CommandSpec[] = Object.freeze<CommandSpec[
     objectives: ['CCNA2.7.1'],
   },
   {
+    // P3 (ARCHITECTURE-P3 §5.1, §9.2 W2; W2 cli): widened from serial ports to routed Ethernet ports, subinterfaces and
+    // [S18] tunnels (`BANDWIDTH_PORT`)
     path: ['bandwidth', '<kbps>'],
-    mode: 'config-if',
+    mode: ['config-if', 'config-subif'],
     privilege: 15,
     help: 'Nominal line capacity in kilobits per second, for display and metrics',
     args: { kbps: intArg('Bandwidth in kilobits per second', 1, 10_000_000) },
@@ -78,9 +94,9 @@ export const SERIAL_GRAMMAR: readonly CommandSpec[] = Object.freeze<CommandSpec[
     allowNo: true,
     noArgsOptional: true,
     grammars: NFOS_ONLY,
-    portRequires: SERIAL_PORT,
+    portRequires: BANDWIDTH_PORT,
     since: 'P0.5',
-    objectives: ['CCNA2.7.1'],
+    objectives: ['CCNA2.7.1', 'CCNA3.ospf.5'],
   },
   {
     path: ['keepalive', '<seconds>'],

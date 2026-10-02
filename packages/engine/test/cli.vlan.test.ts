@@ -9,7 +9,7 @@ import type { CommandHandler, CommandOutcome } from '../src/contracts/cli.js';
 import type { TableRow, VlanRow } from '../src/contracts/tables.js';
 import { findBannedWords } from '../src/device/catalog/validate.js';
 import { createTable } from '../src/core/table.js';
-import { BUILTIN_GRAMMAR, GRAMMAR, GRAMMAR_FRAGMENTS, HANDLERS, P2_GRAMMAR, P2_GRAMMAR_FRAGMENTS, P2_HANDLERS } from '../src/cli/grammar/index.js';
+import { BUILTIN_GRAMMAR, GRAMMAR, GRAMMAR_FRAGMENTS, HANDLERS, P2_GRAMMAR, P2_GRAMMAR_FRAGMENTS, P2_HANDLERS, P3_GRAMMAR } from '../src/cli/grammar/index.js';
 import { HANDLER_REGISTRY, P2_HANDLER_REGISTRY } from '../src/cli/handlers/index.js';
 import {
   accessPortsOf,
@@ -230,13 +230,16 @@ describe('the P2 fragments folded into the table (ARCHITECTURE-P2 §7 W2 cli; §
       'spanning-tree', 'etherchannel', 'port-security', 'errdisable', 'nat', 'acl', 'dhcpv6', 'hsrp',
       'wlc',
     ];
-    expect(Object.keys(GRAMMAR_FRAGMENTS)).toEqual([...P1_KEYS, ...P2_KEYS]);
+    // ARCHITECTURE-P3 §9.2 W2 item 21b: the P3 fragments (W2 cli: the MUST ones, then the approved items') follow
+    const P3_KEYS = ['ospf', 'acl-p3', 'hardening', 'qos', 'discovery', 'time', 'api', 'ssh', 'eigrp', 'wan', 'crypto', 'qos-queueing', 'logging', 'remote', 'devhost'];
+    expect(Object.keys(GRAMMAR_FRAGMENTS)).toEqual([...P1_KEYS, ...P2_KEYS, ...P3_KEYS]);
     expect(Object.keys(P2_GRAMMAR_FRAGMENTS)).toEqual(P2_KEYS);
     for (const k of P2_KEYS) expect(GRAMMAR_FRAGMENTS[k], k).toBe(P2_GRAMMAR_FRAGMENTS[k]);
     for (const id of Object.values(P2_HANDLERS)) expect(Object.values(HANDLERS), id).toContain(id);
     expect(P2_GRAMMAR).toEqual(Object.values(P2_GRAMMAR_FRAGMENTS).flat());
-    // the table is the P1 fragments followed by the P2 specs, the order the runtime table always had
-    expect(GRAMMAR).toEqual([...P1_KEYS.flatMap((k) => GRAMMAR_FRAGMENTS[k] ?? []), ...P2_GRAMMAR]);
+    // the table is the P1 fragments followed by the P2 specs, the order the runtime table always had, then the P3 specs
+    expect(GRAMMAR).toEqual([...P1_KEYS.flatMap((k) => GRAMMAR_FRAGMENTS[k] ?? []), ...P2_GRAMMAR, ...P3_GRAMMAR]);
+    expect(P3_GRAMMAR).toEqual(P3_KEYS.flatMap((k) => GRAMMAR_FRAGMENTS[k] ?? []));
     expect(BUILTIN_GRAMMAR).toBe(GRAMMAR);
   });
 

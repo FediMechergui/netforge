@@ -16,8 +16,11 @@ export const ERRDISABLE_HANDLERS = {
   showErrdisableRecovery: 'show.errdisable-recovery',
 } as const;
 
-/** Causes `errdisable recovery cause` accepts (the configurable causes of §5.1, then `all`). */
-export const ERRDISABLE_RECOVERY_CAUSES = Object.freeze(['psecure-violation', 'bpduguard', 'channel-misconfig', 'all'] as const);
+/**
+ * Causes `errdisable recovery cause` accepts (the configurable causes of §5.1, then `all`). ARCHITECTURE-P3 §5.3, §9.2
+ * W2 item 24 (W2 cli): `dhcp-rate-limit` and `arp-inspection` (D13) are appended before `all`.
+ */
+export const ERRDISABLE_RECOVERY_CAUSES = Object.freeze(['psecure-violation', 'bpduguard', 'channel-misconfig', 'dhcp-rate-limit', 'arp-inspection', 'all'] as const);
 
 /** Bounds of `errdisable recovery interval` (seconds). */
 export const ERRDISABLE_INTERVAL_MIN_S = 30;

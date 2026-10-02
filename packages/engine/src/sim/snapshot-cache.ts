@@ -42,10 +42,35 @@
  * written only when it differs from the default (config ≠ DEFAULT_SWITCHPORT, oper 'trunk', channel or security
  * present). `SimSnapshot.profile` is the world's profile for a P2 or P3 world and absent for a P1 one (P3 §9.2 item 16).
  *
+ * P3 (ARCHITECTURE-P3 §2.8, D16, D19, D21; W2 sim). Every member is optional by meaning and appended after the P2 ones,
+ * so no P1 or P2 snapshot changes:
+ *   PortSnapshot.qos       the port's QoS view from `DeviceRuntime.qosCounters(port)` (M13 marking counters; [S20] the
+ *                          queue view), copied; present only when the runtime returns one (a port with a policy).
+ *   PortSnapshot.txBacklog the virtual FIFO of the egress port (D16): `LinkModelImpl.queued(port, now)` — the frames
+ *                          committed with `txStart > now` — as `{depth, frames}` with at most TX_BACKLOG_FRAMES (8) of
+ *                          them, oldest first, each `{pdu, summary, txStart, bytes, dscp?}` (`dscp` recorded by the medium
+ *                          at enqueue, ruling R15). Written in every profile, only while the depth is ≥ 1, so an
+ *                          uncongested world never gains it; display only, never in the trace, removed by both digest
+ *                          normalisers (§4.6). Built only when the caller gives the snapshot instant.
+ *   DeviceSnapshot.clock   the device clock (D19) of a BOOTED device, in a P3 world or when its source is `user`, `ntp`
+ *                          or `master` (a typed `clock set` or a sync, so no P1/P2 golden gains it). Read from
+ *                          `clockView(now)` and written as the line it lies on: `baseAt` is the first SimTime (0 … 999 999
+ *                          ns) at which the clock reads a whole millisecond and `baseUnixMs` that millisecond, so
+ *                          `baseUnixMs + (t − baseAt) / 10⁶` is the clock at any t exactly and the member changes only
+ *                          when the clock is set or synchronised (never per tick; the web extrapolates from `now`).
+ *   DeviceSnapshot.storage [S32] the host's `files:` store as `[{fs: 'files', files}]` (path order), present only when
+ *                          it holds at least one file (a host with user files).
+ * Dirtying (D16): the worker refreshes a device from the drained trace; a backlog shrinks at each `txComplete`, which
+ * emits no trace event. `createTxBacklogWatch` turns the drained `frameTx` events into the devices to refresh: a frame
+ * committed behind a busy transmitter (`txStart > t`, an enqueue that leaves a backlog) keeps its sender due at every
+ * drain until its port's last committed frame has ended (each `txComplete` of a port that has a backlog), and once more
+ * after, so the member's disappearance reaches the web too.
+ *
  * Determinism: ports in canonical Map order, devices in creation order, tables in declared order.
  */
 import { portMac } from '../contracts/addr.js';
-import { ROLE_TRAITS, SLOT_ACCEPTS, isVlanAware, type DefaultsProfile } from '../contracts/catalog.js';
+import { ROLE_TRAITS, SLOT_ACCEPTS, isVlanAware, profileIncludes, type DefaultsProfile } from '../contracts/catalog.js';
+import type { ClockSource } from '../contracts/clock.js';
 import type { DeviceRuntime } from '../contracts/device.js';
 import type { DeviceId } from '../contracts/ids.js';
 import type { PortPhy, PortPhySettings } from '../contracts/link.js';
@@ -53,7 +78,18 @@ import type { MediaSnapshot } from '../contracts/medium.js';
 import type { PortL3, PortState } from '../contracts/port.js';
 import type { CliSessionView } from '../contracts/cli.js';
 import type { ConfigAst } from '../contracts/config.js';
-import type { DeviceSnapshot, PortL2View, PortSnapshot, SimSnapshot, SlotSnapshot, TableSnapshot } from '../contracts/snapshot.js';
+import type {
+  DeviceClockSnapshot,
+  DeviceSnapshot,
+  PortL2View,
+  PortQosView,
+  PortSnapshot,
+  PortTxQueueView,
+  SimSnapshot,
+  SlotSnapshot,
+  TableSnapshot,
+} from '../contracts/snapshot.js';
+import type { DeviceStorageView, FileSystemId, StoredFileMeta } from '../contracts/storage.js';
 import {
   TABLE_DESCRIPTORS,
   type DtpRow,
@@ -69,6 +105,7 @@ import type { TraceEvent } from '../contracts/trace.js';
 import { maskConfigSecrets } from '../cli/handlers/show.js';
 import { formatVlanList, vlanListIntersect } from '../core/vlan-list.js';
 import type { LinkModelImpl } from '../link/link.js';
+import type { QueuedFrame } from '../link/media/types.js';
 import { channelOperOf, isImplicitVlan, operOf } from '../protocols/l2/membership.js';
 import { isDefaultSwitchport, readSwitchport } from '../protocols/l2/switchport-config.js';
 
@@ -194,12 +231,88 @@ function copyPhy(phy: PortPhy): PortPhy {
 
 /** What port and device snapshots read beyond the runtime itself. */
 export interface SnapshotSources {
-  readonly links: Pick<LinkModelImpl, 'radioPortView' | 'list' | 'inflight' | 'media'>;
+  /** P3 (D16): `queued` is the source of `PortSnapshot.txBacklog`. */
+  readonly links: Pick<LinkModelImpl, 'radioPortView' | 'list' | 'inflight' | 'media' | 'queued'>;
   readonly cache: RenderCache;
 }
 
-/** Structured-clone-safe snapshot of one port of `dev` (§3.14 port additions). */
-export function buildPortSnapshot(dev: DeviceRuntime, p: PortState, sources: Pick<SnapshotSources, 'links'>): PortSnapshot {
+// ── P3: the QoS view and the virtual FIFO of a port (§2.8, D16) ─────────────
+
+/** @since P3 The most frames a `PortSnapshot.txBacklog` lists (its depth counts every waiting frame). */
+export const TX_BACKLOG_FRAMES = 8;
+
+/**
+ * @since P3 (D16, §2.8, ruling R15) The `txBacklog` of a port from its `queued` frames (oldest first): undefined when
+ * none waits; otherwise the depth and the first TX_BACKLOG_FRAMES of them as `{pdu, summary, txStart, bytes, dscp?}`.
+ */
+export function txBacklogOf(queued: readonly QueuedFrame[]): PortTxQueueView | undefined {
+  if (queued.length === 0) return undefined;
+  const frames: PortTxQueueView['frames'][number][] = [];
+  for (const f of queued.slice(0, TX_BACKLOG_FRAMES)) {
+    const entry: PortTxQueueView['frames'][number] = { pdu: f.pdu.id, summary: { ...f.pdu }, txStart: f.txStart, bytes: f.pdu.size };
+    if (f.dscp !== undefined) entry.dscp = f.dscp;
+    frames.push(entry);
+  }
+  return { depth: queued.length, frames };
+}
+
+/**
+ * @since P3 (D16) Which devices' `txBacklog` may have changed, from the drained trace (file header, "Dirtying"). The
+ * worker feeds it every drained event and merges `drain(now)` into its dirty set before it builds a delta.
+ */
+export interface TxBacklogWatch {
+  /** One drained trace event: a `frameTx` committed behind a busy transmitter keeps its sender due until its `txEnd`. */
+  observe(ev: TraceEvent): void;
+  /**
+   * The devices that had a waiting frame at any time since the last drain, in the order they were first seen; those
+   * whose last committed frame has ended by `now` are reported this once more and then forgotten.
+   */
+  drain(now: SimTime): DeviceId[];
+  /** Forget everything (a new world). */
+  clear(): void;
+}
+
+/** @since P3 (D16) A fresh `TxBacklogWatch` (no module state, rule 12). */
+export function createTxBacklogWatch(): TxBacklogWatch {
+  /** device → the latest txEnd of a frame it committed behind its transmitter (insertion ordered). */
+  const until = new Map<DeviceId, SimTime>();
+  return {
+    observe(ev) {
+      if (ev.kind !== 'frameTx' || ev.txStart <= ev.t) return;
+      const device = ev.from.device;
+      const prev = until.get(device);
+      if (prev === undefined || ev.txEnd > prev) until.set(device, ev.txEnd);
+    },
+    drain(now) {
+      const out: DeviceId[] = [];
+      for (const [device, end] of [...until]) {
+        out.push(device);
+        if (end <= now) until.delete(device);
+      }
+      return out;
+    },
+    clear() {
+      until.clear();
+    },
+  };
+}
+
+/** @since P3 (M13) A structured-clone-safe copy of a port's QoS view (`DeviceRuntime.qosCounters`). */
+export function copyQosView(view: PortQosView): PortQosView {
+  const out: PortQosView = {
+    ...(view.input !== undefined ? { input: view.input } : {}),
+    ...(view.output !== undefined ? { output: view.output } : {}),
+    classes: view.classes.map((c) => ({ name: c.name, matched: c.matched, matchedBytes: c.matchedBytes, marked: c.marked })),
+  };
+  if (view.queue !== undefined) out.queue = structuredClone(view.queue);
+  return out;
+}
+
+/**
+ * Structured-clone-safe snapshot of one port of `dev` (§3.14 port additions). P3: `qos` from the runtime, and, when
+ * `now` is given and the sources can list it, `txBacklog` (file header).
+ */
+export function buildPortSnapshot(dev: DeviceRuntime, p: PortState, sources: Pick<SnapshotSources, 'links'>, now?: SimTime): PortSnapshot {
   const role = p.role;
   const traits = ROLE_TRAITS[role];
   const spec = p.spec;
@@ -258,6 +371,13 @@ export function buildPortSnapshot(dev: DeviceRuntime, p: PortState, sources: Pic
   }
   if (spec.parent !== undefined) s.parent = spec.parent;
   if (p.dot1q !== undefined) s.dot1q = { vid: p.dot1q.vid, native: p.dot1q.native };
+  // P3 (§2.8, optional by meaning): appended after every P2 member, absent unless there is something to show
+  const qos = dev.qosCounters?.(p.id);
+  if (qos !== undefined) s.qos = copyQosView(qos);
+  if (now !== undefined && typeof sources.links.queued === 'function') {
+    const backlog = txBacklogOf(sources.links.queued({ device: dev.id, port: p.id }, now));
+    if (backlog !== undefined) s.txBacklog = backlog;
+  }
   return s;
 }
 
@@ -347,10 +467,63 @@ function slotSnapshots(dev: DeviceRuntime): SlotSnapshot[] | undefined {
   });
 }
 
+// ── P3: the device clock and the hosts' file store (§2.8, D19, D21) ────────
+
+/** @since P3 (D19) The clock sources a P1 or P2 world shows: set by a typed `clock set` or by a synchronisation. */
+export const CLOCK_SNAPSHOT_SOURCES: readonly ClockSource[] = Object.freeze(['user', 'ntp', 'master']);
+
+/** Nanoseconds per millisecond (integer clock arithmetic). */
+const NS_PER_MS = 1_000_000;
+
+/**
+ * @since P3 (D19, §2.8) `DeviceSnapshot.clock` of `dev` at `now` (file header), or undefined: a device that is off or
+ * still booting shows none, and outside a P3 world only a clock set by a user or a synchronisation is shown. The line
+ * is written from its first whole-millisecond instant, so it is the same object value at every `now` until the clock
+ * is set or synchronised again.
+ */
+export function deviceClockSnapshot(dev: Pick<DeviceRuntime, 'bootedAt' | 'profile' | 'clockView'>, now: SimTime): DeviceClockSnapshot | undefined {
+  if (dev.bootedAt === undefined) return undefined;
+  const view = dev.clockView(now);
+  if (!profileIncludes(dev.profile, 'P3') && !CLOCK_SNAPSHOT_SOURCES.includes(view.source)) return undefined;
+  // the clock reads view.unixMs ms + view.subMsNs ns at `now`; it reads a whole millisecond every 10⁶ ns from
+  // baseAt = (now − subMsNs) mod 10⁶, where it reads baseUnixMs (integers only: no product beyond 2⁵³)
+  const baseAt = (((now - view.subMsNs) % NS_PER_MS) + NS_PER_MS) % NS_PER_MS;
+  const baseUnixMs = view.unixMs - (now - view.subMsNs - baseAt) / NS_PER_MS;
+  const out: DeviceClockSnapshot = { source: view.source, baseUnixMs, baseAt, tzOffsetMin: view.tz.offsetMin };
+  if (view.stratum !== undefined) out.stratum = view.stratum;
+  if (view.reference !== undefined) out.reference = view.reference;
+  return out;
+}
+
+/** @since P3 [S32] The file system the hosts' store lists in a snapshot (D21; [S29] would add flash: and nvram:). */
+const STORAGE_FS: FileSystemId = 'files';
+
+/**
+ * @since P3 [S32] The reader of a runtime's `files:` store (`DeviceRuntime.files`, optional by meaning since the W2 fix):
+ * read when present; an absent reader means an empty store.
+ */
+type FileStoreReader = Pick<DeviceRuntime, 'files'>;
+
+/** @since P3 [S32] The files of `dev`'s `files:` store, in path order (none without a store or a reader). */
+export function storedFilesOf(dev: object): readonly StoredFileMeta[] {
+  const reader = (dev as FileStoreReader).files;
+  return typeof reader === 'function' ? reader.call(dev, STORAGE_FS) : [];
+}
+
+/**
+ * @since P3 [S32] `DeviceSnapshot.storage` of `dev` (D21): `[{fs: 'files', files}]` in the store's path order, copied;
+ * undefined when the device keeps no file (a host without user files, or a device without a store).
+ */
+export function deviceStorageOf(dev: object): DeviceStorageView[] | undefined {
+  const files = storedFilesOf(dev);
+  if (files.length === 0) return undefined;
+  return [{ fs: STORAGE_FS, files: files.map((f) => ({ fs: f.fs, path: f.path, size: f.size, modifiedAt: f.modifiedAt })) }];
+}
+
 /** Structured-clone-safe snapshot of one device (§3.14 device additions). */
 export function buildDeviceSnapshot(dev: DeviceRuntime, now: SimTime, sources: SnapshotSources): DeviceSnapshot {
   const ports: PortSnapshot[] = [];
-  for (const p of dev.ports.values()) ports.push(buildPortSnapshot(dev, p, sources));
+  for (const p of dev.ports.values()) ports.push(buildPortSnapshot(dev, p, sources, now));
   const configs = sources.cache.configs(dev);
   const model = dev.model;
   const s: DeviceSnapshot = {
@@ -390,6 +563,11 @@ export function buildDeviceSnapshot(dev: DeviceRuntime, now: SimTime, sources: S
   const slots = slotSnapshots(dev);
   if (slots !== undefined) s.slots = slots;
   if (dev.spec.ui !== undefined) s.ui = structuredCloneUi(dev.spec.ui);
+  // P3 (§2.8, optional by meaning): appended last, absent in every P1/P2 golden world
+  const clock = deviceClockSnapshot(dev, now);
+  if (clock !== undefined) s.clock = clock;
+  const storage = deviceStorageOf(dev);
+  if (storage !== undefined) s.storage = storage;
   return s;
 }
 

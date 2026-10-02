@@ -46,6 +46,20 @@ export type FrameArrivalBody = Extract<SimEventBody, { kind: 'frameArrival' }>;
 export interface InflightLeg extends InflightFrame {
   /** Scheduler seq of the pending `frameArrival` (undefined for lost legs, which never arrive). */
   arrivalSeq?: number;
+  /**
+   * @since P3 (ARCHITECTURE-P3 D16, ruling R15) The frame's IPv4/IPv6 DSCP when it carries an IP header, recorded only
+   * for a leg committed with `txStart > now` (a frame waiting in the virtual FIFO); read by `queued` for the snapshot's
+   * `PortSnapshot.txBacklog`. Internal: `publicFrame` never copies it, so no trace, in-flight list or golden sees it.
+   */
+  dscp?: number;
+}
+
+/**
+ * @since P3 (ARCHITECTURE-P3 D16, §2.8) A leg waiting on its egress port (`txStart > now`) as `InflightRegistry.queued`
+ * returns it: the public frame, plus the DSCP recorded at enqueue when the frame carries an IP header.
+ */
+export interface QueuedFrame extends InflightFrame {
+  dscp?: number;
 }
 
 /** Facade-owned in-flight registry shared by every strategy (link/inflight.ts implements it). */
@@ -60,6 +74,12 @@ export interface InflightRegistry {
   delete(pdu: PduId, link: LinkId | MediumId, to: PortRef): InflightLeg | undefined;
   /** Legs with `txStart <= now < arrive`, ordered by `(txStart, pdu.id, link, portKey(to))`; prunes arrived legs. */
   visible(now: SimTime): InflightFrame[];
+  /**
+   * @since P3 (ARCHITECTURE-P3 D16, §2.8; W2 media) The legs committed on egress port `from` that have not started yet
+   * (`txStart > now`): the virtual FIFO of that port, oldest first (`compareInflight` order). A pure read: nothing is
+   * pruned, and an uncongested port returns none.
+   */
+  queued(from: PortRef, now: SimTime): QueuedFrame[];
   /**
    * Amortized pruning of legs whose `arrive <= now` (lost legs never reach `remove`). Runs a full pass only once the
    * registry has grown past its sweep threshold, then doubles the threshold (minimum 1024), so it is O(1) amortized.

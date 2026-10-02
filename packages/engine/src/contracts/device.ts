@@ -17,6 +17,7 @@ import type { Pdu, PduFactory } from './pdu.js';
 import type { ErrDisableCause, PortSpec, PortState, PortView } from './port.js';
 import type { Action, ClockAction, ConfigOrigin, Process, ProcessFactory, Severity, StateView, DebugEvent } from './process.js';
 import type { DeviceClockView } from './clock.js';
+import type { FileSystemId, StoredFile, StoredFileMeta } from './storage.js';
 import type { PortSnapshot } from './snapshot.js';
 import type { Rng } from './rng.js';
 import type { DeviceTables, TableFactory, TableName } from './tables.js';
@@ -369,4 +370,12 @@ export interface DeviceRuntime {
    * LinkModelDeps.egressPolicy; [S21] adds fair-queue, police and shape to it. Undefined = the virtual FIFO.
    */
   egressPolicy?(port: PortId): EgressSchedulerSpec | undefined;
+  /**
+   * @since P3 [S32] (W2 fix, the media-sim and cli-b reports' contract gap; minimal additive members, optional by meaning)
+   * The files of the device's `files:` store in path order (hosts only; empty elsewhere) and one file of it, as the W1
+   * device item implements them (device/device.ts): read by the snapshot cache (`DeviceSnapshot.storage`) and the
+   * CLI's command context.
+   */
+  files?(fs: FileSystemId): readonly StoredFileMeta[];
+  readFile?(fs: FileSystemId, path: string): StoredFile | undefined;
 }

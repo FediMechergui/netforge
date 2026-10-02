@@ -1,18 +1,22 @@
 /**
  * Concept view host (ARCHITECTURE-P1 §4.13, §7 "Concept views"): the full-workspace tool a student opens from
- * the View menu or from a `concept:` link in lab instructions. It picks between the subnetting workbench and
- * the IPv6 explorer and gives both a heading and a way back to the topology.
+ * the View menu or from a `concept:` link in lab instructions. It picks the tool by its id and gives every tool a
+ * heading and a way back to the topology.
  *
  * The workspace keeps the canvas mounted and hidden behind this view (§4.13), so nothing here unmounts it.
  * The chosen tool comes from the store (`conceptTool`) when the shell offers the P1 view state and from this
  * component otherwise, so the view works either way; `tool` overrides both, for a host that already knows.
  *
- * ponytail: two tools, listed in one place (CONCEPT_TOOLS) so adding a third is one entry plus one case.
- *
- * P3 (ARCHITECTURE-P3 D24): `ConceptTool` is the engine's `ConceptToolId`; an id whose tool is not built yet shows a
- * short "not available" note instead of falling back to the subnetting workbench.
+ * P3 (ARCHITECTURE-P3 D24; W2 web-shell): routing by `ConceptToolId`. `CONCEPT_TOOL_VIEWS` is exhaustive over the
+ * engine's one list of concept tools, so a new id is a compile error here until it has an entry. An entry renders its
+ * tool when called (rule 12: nothing of another module is read at module scope); `null` is a tool this build does not
+ * have yet, which shows a short "not available" note instead of falling back to the subnetting workbench. New tools
+ * are lazy chunks (D24): a web-concept item registers `lazy(() => import('./<tool>/<Tool>'))` here and adds its
+ * `CONCEPT_TOOLS` row (R9: `concept.views.test.ts:171` gains its id), and the View menu lists it from these two
+ * (`app/TopBar.tsx` `conceptMenuEntries`). The tool renders inside a Suspense boundary, so a lazy one shows a
+ * loading line while its chunk arrives.
  */
-import { useState } from 'react';
+import { Suspense, useState, type ReactElement } from 'react';
 import { useStore } from '../store/store';
 import type { ConceptTool } from '../store/types';
 import { Ipv6Explorer } from './ipv6/Ipv6Explorer';
@@ -23,6 +27,26 @@ export const CONCEPT_TOOLS: readonly { readonly id: ConceptTool; readonly label:
   { id: 'subnetting', label: 'Subnetting', hint: 'Split blocks, read masks and practise the arithmetic.' },
   { id: 'ipv6', label: 'IPv6', hint: 'Shorten addresses, build interface ids and name address types.' },
 ]);
+
+/** @since P3 How a registered tool is drawn: called at render time; null = not built in this build. */
+export type ConceptToolView = (() => ReactElement) | null;
+
+/**
+ * @since P3 (D24) The concept registry: one entry per `ConceptToolId`. The P3 tools land with their W3 web-concept
+ * items ('queueing', 'data-formats', [S9] 'wildcard'); until then they are null.
+ */
+export const CONCEPT_TOOL_VIEWS: Readonly<Record<ConceptTool, ConceptToolView>> = Object.freeze({
+  subnetting: () => <SubnetWorkbench />,
+  ipv6: () => <Ipv6Explorer />,
+  queueing: null,
+  'data-formats': null,
+  wildcard: null,
+});
+
+/** @since P3 Whether this build has the tool (a registered view and a `CONCEPT_TOOLS` row to name it). */
+export function isConceptToolBuilt(tool: ConceptTool): boolean {
+  return CONCEPT_TOOL_VIEWS[tool] != null && CONCEPT_TOOLS.some((t) => t.id === tool);
+}
 
 /** Label of a tool (falls back to the id for a tool this build does not know). */
 export function conceptToolLabel(tool: ConceptTool): string {
@@ -39,6 +63,8 @@ export function ConceptView({ tool }: ConceptViewProps = {}) {
   const setView = useStore((s) => s.setView);
   const [fallback, setFallback] = useState<ConceptTool>('subnetting');
   const current = tool ?? stored ?? fallback;
+  // An id from outside the contract (an old saved link) has no entry at all: treat it as not built.
+  const view = Object.prototype.hasOwnProperty.call(CONCEPT_TOOL_VIEWS, current) ? CONCEPT_TOOL_VIEWS[current] : null;
 
   const choose = (next: ConceptTool): void => {
     setFallback(next);
@@ -69,14 +95,10 @@ export function ConceptView({ tool }: ConceptViewProps = {}) {
           </button>
         )}
       </div>
-      {current === 'ipv6' ? (
-        <Ipv6Explorer />
-      ) : current === 'subnetting' ? (
-        <SubnetWorkbench />
-      ) : (
-        // P3 (ARCHITECTURE-P3 D24; the architect's W0 stub): a ConceptToolId whose tool is not built yet ('queueing',
-        // 'data-formats', [S9] 'wildcard'); each web-concept item adds its tool to CONCEPT_TOOLS and a case here.
+      {view === null ? (
         <p className="dim">This concept tool is not available in this build.</p>
+      ) : (
+        <Suspense fallback={<p className="dim">Loading the tool…</p>}>{view()}</Suspense>
       )}
     </div>
   );

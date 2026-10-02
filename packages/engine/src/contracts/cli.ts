@@ -38,7 +38,8 @@ import type { TraceEvent, TraceSink } from './trace.js';
 import type { DeviceClockView } from './clock.js';
 import type { EgressQueueView } from './link.js';
 import type { PortSnapshot } from './snapshot.js';
-import type { BuildStage, Capability, CliGrammar, PortRole } from './catalog.js';
+import type { BuildStage, Capability, CliGrammar, DefaultsProfile, PortRole } from './catalog.js';
+import type { FileSystemId, StoredFile, StoredFileMeta } from './storage.js';
 
 export type CliMode =
   | 'user-exec'
@@ -503,6 +504,21 @@ export interface CommandCtx {
   qosCounters?(port: PortId): PortSnapshot['qos'];
   /** @since P3 [S20] The held queues of a scheduler port (`show policy-map interface`). */
   egressQueues?(port: PortId): EgressQueueView | undefined;
+  /**
+   * @since P3 (W2 fix, verified finding 8; a minimal additive contract member, optional by meaning) The world's defaults
+   * profile (`DeviceRuntime.profile`), so a show handler can print a profile default (proxy ARP is off in a P1 world).
+   * The CLI runtime always fills it; absent on a hand-built test context, where it reads as 'P1' (the Simulation's
+   * default profile).
+   */
+  readonly profile?: DefaultsProfile;
+  /**
+   * @since P3 (W2 fix, the cli-b report's contract gap; minimal additive members, optional by meaning) [S25] Switch log
+   * printing on this session on or off (`terminal monitor`); [S32] the files of the device's `files:` store and one
+   * file of it (hosts only; empty elsewhere). cli/command-ctx-p3.ts `ctxP3` reads the same members.
+   */
+  setMonitor?(on: boolean): void;
+  files?(fs: FileSystemId): readonly StoredFileMeta[];
+  readFile?(fs: FileSystemId, path: string): StoredFile | undefined;
 }
 
 export interface CommandOutcome {
@@ -572,7 +588,7 @@ export const MODES: Readonly<Record<string, ModeDef>> = Object.freeze({
   'config-if': { name: 'config-if', class: 'config', parent: 'config', prompt: '(config-if)#', contextKey: 'interface', grammars: ['nfos'] },
   'config-line': { name: 'config-line', class: 'config', parent: 'config', prompt: '(config-line)#', contextKey: 'line', grammars: ['nfos'] },
   'dhcp-config': { name: 'dhcp-config', class: 'config', parent: 'config', prompt: '(dhcp-config)#', contextKey: 'ip dhcp pool', grammars: ['nfos'] },
-  'config-router': { name: 'config-router', class: 'config', parent: 'config', prompt: '(config-router)#', contextKey: 'router', grammars: ['nfos'], reserved: true },
+  'config-router': { name: 'config-router', class: 'config', parent: 'config', prompt: '(config-router)#', contextKey: 'router', grammars: ['nfos'] },
   'config-subif': { name: 'config-subif', class: 'config', parent: 'config', prompt: '(config-subif)#', contextKey: 'interface', grammars: ['nfos'] },
   'config-vlan': { name: 'config-vlan', class: 'config', parent: 'config', prompt: '(config-vlan)#', contextKey: 'vlan', grammars: ['nfos'] },
   // ── P2 (ARCHITECTURE-P2 §2.11, §9.2 W2 item 12b). A mode is registered RESERVED until the cli item whose grammar
@@ -589,17 +605,17 @@ export const MODES: Readonly<Record<string, ModeDef>> = Object.freeze({
   // ── P3 (ARCHITECTURE-P3 §2.11). Registered RESERVED, as P2 did: the cli item whose grammar enters a mode drops its
   // flag in that change, so the mode helpers (`modesOfClass`, pinned by cli.modes-rules.test.ts) change only together
   // with the grammar. `config-router` keeps its flag until the W2 cli item enters it (refined to ospf entries). ──
-  'config-ext-nacl': { name: 'config-ext-nacl', class: 'config', parent: 'config', prompt: '(config-ext-nacl)#', contextKey: 'ip access-list extended', grammars: ['nfos'], reserved: true },
-  'config-cmap': { name: 'config-cmap', class: 'config', parent: 'config', prompt: '(config-cmap)#', contextKey: 'class-map', grammars: ['nfos'], reserved: true },
-  'config-pmap': { name: 'config-pmap', class: 'config', parent: 'config', prompt: '(config-pmap)#', contextKey: 'policy-map', grammars: ['nfos'], reserved: true },
-  'config-pmap-c': { name: 'config-pmap-c', class: 'config', parent: 'config-pmap', prompt: '(config-pmap-c)#', contextKey: 'class', grammars: ['nfos'], reserved: true },
+  'config-ext-nacl': { name: 'config-ext-nacl', class: 'config', parent: 'config', prompt: '(config-ext-nacl)#', contextKey: 'ip access-list extended', grammars: ['nfos'] },
+  'config-cmap': { name: 'config-cmap', class: 'config', parent: 'config', prompt: '(config-cmap)#', contextKey: 'class-map', grammars: ['nfos'] },
+  'config-pmap': { name: 'config-pmap', class: 'config', parent: 'config', prompt: '(config-pmap)#', contextKey: 'policy-map', grammars: ['nfos'] },
+  'config-pmap-c': { name: 'config-pmap-c', class: 'config', parent: 'config-pmap', prompt: '(config-pmap-c)#', contextKey: 'class', grammars: ['nfos'] },
   // [C1]
-  'config-router-eigrp': { name: 'config-router-eigrp', class: 'config', parent: 'config', prompt: '(config-router)#', contextKey: 'router eigrp', grammars: ['nfos'], reserved: true },
+  'config-router-eigrp': { name: 'config-router-eigrp', class: 'config', parent: 'config', prompt: '(config-router)#', contextKey: 'router eigrp', grammars: ['nfos'] },
   // [C13]
-  'config-ikev2-keyring': { name: 'config-ikev2-keyring', class: 'config', parent: 'config', prompt: '(config-ikev2-keyring)#', contextKey: 'crypto ikev2 keyring', grammars: ['nfos'], reserved: true },
-  'config-ikev2-keyring-peer': { name: 'config-ikev2-keyring-peer', class: 'config', parent: 'config-ikev2-keyring', prompt: '(config-ikev2-keyring-peer)#', contextKey: 'peer', grammars: ['nfos'], reserved: true },
-  'config-ikev2-profile': { name: 'config-ikev2-profile', class: 'config', parent: 'config', prompt: '(config-ikev2-profile)#', contextKey: 'crypto ikev2 profile', grammars: ['nfos'], reserved: true },
-  'config-ipsec-profile': { name: 'config-ipsec-profile', class: 'config', parent: 'config', prompt: '(ipsec-profile)#', contextKey: 'crypto ipsec profile', grammars: ['nfos'], reserved: true },
+  'config-ikev2-keyring': { name: 'config-ikev2-keyring', class: 'config', parent: 'config', prompt: '(config-ikev2-keyring)#', contextKey: 'crypto ikev2 keyring', grammars: ['nfos'] },
+  'config-ikev2-keyring-peer': { name: 'config-ikev2-keyring-peer', class: 'config', parent: 'config-ikev2-keyring', prompt: '(config-ikev2-keyring-peer)#', contextKey: 'peer', grammars: ['nfos'] },
+  'config-ikev2-profile': { name: 'config-ikev2-profile', class: 'config', parent: 'config', prompt: '(config-ikev2-profile)#', contextKey: 'crypto ikev2 profile', grammars: ['nfos'] },
+  'config-ipsec-profile': { name: 'config-ipsec-profile', class: 'config', parent: 'config', prompt: '(ipsec-profile)#', contextKey: 'crypto ipsec profile', grammars: ['nfos'] },
 });
 
 /** @since P0.5 Debug categories are data (`debug <category>` grammar and validation derive from the registry). */

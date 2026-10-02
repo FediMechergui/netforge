@@ -30,6 +30,14 @@
  *
  * In-flight legs are keyed `(pdu, link, to)` in the facade registry (link/inflight.ts). Capture tap: tx is recorded
  * when the frame starts (before corruption), rx in `admit` (after corruption).
+ *
+ * P3 (ARCHITECTURE-P3; W2 media):
+ *   • D16, ruling R15: a frame committed behind a busy transmitter (`txStart > now`) records its IP DSCP on its leg
+ *     (`frameDscp`, read before any corruption), so `InflightRegistry.queued` can show the waiting frames' classes in
+ *     `PortSnapshot.txBacklog`. A leg that starts at once records nothing; no draw, trace or count changes.
+ *   • [S19] D17: the sending end's gate is `serialControlExempt` (`link/serial.ts`), which answers every non-PPP frame
+ *     exactly as `keepaliveExempt` did and also lets a PPP control frame (LCP, PAP, CHAP, IPCP, IPv6CP) leave a `ppp`
+ *     port whose line protocol is down only by PPP, so PPP can negotiate. No P1/P2 world has a `ppp` port.
  */
 import type { CaptureLinkType } from '../../contracts/capture.js';
 import type { LinkId, PortRef } from '../../contracts/ids.js';
@@ -43,8 +51,9 @@ import type { SimTime } from '../../contracts/time.js';
 import { propagationNs, serializationNs } from '../../contracts/time.js';
 import type { PduSummary, TraceEvent } from '../../contracts/trace.js';
 import { phyOverheadBytes } from '../cabling.js';
+import { frameDscp } from '../inflight.js';
 import { foldPerIntoLossPct } from '../rf/mcs.js';
-import { keepaliveExempt } from '../serial.js';
+import { serialControlExempt } from '../serial.js';
 import type { FrameArrivalBody, InflightLeg, MediumHost, MediumStrategy } from './types.js';
 
 /** Frame check sequence bytes of the outer codecs that carry one (corruption never lands in them). */
@@ -71,10 +80,18 @@ export function summarizePdu(pdu: Pdu): PduSummary {
   // carries. Control messages and keep-alives carry no frame; P0/P1 PDUs never hold a capwap layer (bytes unchanged).
   // A tunnelled frame has at least five layers (frame, ipv4, udp, capwap, inner frame): shorter PDUs, the hot path
   // of every frame event, skip the walk.
+  // P3 [S18] (§2.7; W2 fix, the eigrp-gre report's cross-owner need): a GRE leg — a gre layer after the frame and the
+  // outer ipv4, followed by the packet it carries — is tagged 'gre' (the first tunnel layer found decides), the same
+  // rule as device/process-ctx.ts `pduSummary`, so the link's frameTx/frameRx carry it. No P1/P2 PDU holds a gre layer.
   const ls = pdu.layers;
   if (ls.length >= 5) {
     for (let i = 1; i < ls.length - 1; i++) {
-      if (ls[i]!.proto !== 'capwap') continue;
+      const proto = ls[i]!.proto;
+      if (proto === 'gre') {
+        s.tunnel = 'gre';
+        break;
+      }
+      if (proto !== 'capwap') continue;
       const inner = ls[i + 1]!.proto;
       if (inner === 'dot11' || inner === 'ethernet') s.tunnel = 'capwap';
       break;
@@ -103,6 +120,9 @@ export function captureLinkTypeOf(pdu: Pick<Pdu, 'layers'>): CaptureLinkType {
   const outer = pdu.layers[0]?.proto;
   if (outer === 'dot11') return 'ieee802_11';
   if (outer === 'hdlc') return 'c_hdlc';
+  // P3 [S19] (ruling R4; W2 fix, the capture report's cross-owner need): a PPP-framed leg is captured as PPP in HDLC-like
+  // framing (pcap link type 50), never as Ethernet
+  if (outer === 'ppp') return 'ppp_hdlc';
   if (outer === 'ipv4' || outer === 'ipv6') return 'raw';
   return 'ethernet';
 }
@@ -190,7 +210,7 @@ export function createCableP2P(host: MediumHost, options: CableP2POptions): Medi
       const peer = state ? peerRef(state, from) : undefined;
       const peerPort = peer ? host.port(peer) : undefined;
       const carrier = state ? (state.carrier ?? state.up) : false;
-      const endUp = port !== undefined && (port.operUp || keepaliveExempt(pdu, port));
+      const endUp = port !== undefined && (port.operUp || serialControlExempt(pdu, port));
 
       if (!port || !state || !peer || !peerPort || !carrier || !endUp || state.negotiatedBps === undefined) {
         const detail = !state ? 'no cable' : (state.downReason ?? port?.phy?.lineProtocolReason);
@@ -212,6 +232,8 @@ export function createCableP2P(host: MediumHost, options: CableP2POptions): Medi
 
       const txStart = Math.max(now, port.tx.busyUntil);
       const txEnd = txStart + serializationNs(pdu.size + phyOverheadBytes(state.resolvedMedia), state.negotiatedBps);
+      // P3 (D16, R15): a frame that waits behind the transmitter keeps its class for the FIFO view (before corruption)
+      const dscp = txStart > now ? frameDscp(pdu) : undefined;
 
       // Five draws per frame, always in this order: loss, corrupt, jitter, corrupt-offset, corrupt-bit.
       const perMille = tune?.perMille ?? 0;
@@ -268,6 +290,7 @@ export function createCableP2P(host: MediumHost, options: CableP2POptions): Medi
       if (tune?.rateBps !== undefined) leg.rateBps = tune.rateBps;
       if (pdu.meta.background === true) leg.background = true;
       if (arrivalSeq !== undefined) leg.arrivalSeq = arrivalSeq;
+      if (dscp !== undefined) leg.dscp = dscp;
       host.inflight.add(leg);
 
       const result: Extract<TransmitResult, { ok: true }> = { ok: true, link: linkId, txStart, txEnd, arrive };

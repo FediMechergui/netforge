@@ -10,10 +10,14 @@
  *     SNAPSHOT_EVERY_MS while playing and after every mutating API call while paused;
  *   - nothing otherwise.
  * Mutating calls always post (`mutation: true`), playing or paused, so paused edits never go stale (§12 item 24).
+ * P3 (ARCHITECTURE-P3 D16, §2.8; §7 W2 sim): a port's FIFO backlog (`PortSnapshot.txBacklog`) shrinks at each
+ * `txComplete`, which writes no trace event, so the engine's `TxBacklogWatch` (sim/snapshot-cache.ts) sees every drained
+ * event too and its `drain(now)` is merged into the dirty set on every post: a sender stays in the deltas while it has
+ * a waiting frame, and once more after its last committed frame ended, so the store never keeps a stale backlog.
  * A batch without events, snapshot or delta is skipped unless forced or due as a keep-alive while playing.
  * At most `maxEventsPerBatch` events are posted (the newest); the rest are counted in `eventsTruncated`.
  */
-import type { DeviceId, SimSnapshot, Simulation } from '@netforge/engine';
+import { createTxBacklogWatch, type DeviceId, type SimSnapshot, type Simulation } from '@netforge/engine';
 import {
   FULL_SNAPSHOT_EVERY_MS,
   MAX_EVENTS_PER_BATCH,
@@ -85,6 +89,8 @@ export function createBatcher(host: BatchHost): Batcher {
     const l = host.sim().link(id);
     return l === undefined ? undefined : [l.a.device, l.b.device];
   });
+  /** P3 (D16): the senders whose `txBacklog` may have changed since the last post (file header). */
+  const backlog = createTxBacklogWatch();
 
   function full(s: Simulation, wall: number): SimSnapshot {
     const snap = s.snapshot();
@@ -119,6 +125,7 @@ export function createBatcher(host: BatchHost): Batcher {
     reset(restartCursor) {
       if (restartCursor) cursor = 0;
       dirty.clear();
+      backlog.clear();
       lastTopology = undefined;
       lastFullWall = Number.NEGATIVE_INFINITY;
       lastSnapshotWall = Number.NEGATIVE_INFINITY;
@@ -129,7 +136,12 @@ export function createBatcher(host: BatchHost): Batcher {
       const playing = host.playing();
       const drained = s.trace(cursor);
       cursor = drained.next;
-      for (const ev of drained.events) dirty.observe(ev);
+      for (const ev of drained.events) {
+        dirty.observe(ev);
+        backlog.observe(ev);
+      }
+      // P3 (D16): a draining FIFO emits nothing, so its sender is re-marked until its backlog is gone, plus once more
+      dirty.markDevices(backlog.drain(s.now));
 
       let events = drained.events;
       let truncated = 0;

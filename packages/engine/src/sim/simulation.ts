@@ -21,6 +21,7 @@
  *   userCommand  → cli.exec
  *   fault        → the fault handler (cable-cut, port-flap, power-loss, link-impairment, config-fragment)
  *   deviceConfigure → the CLI core's headless configure, then `config.result` to the issuer (P3 D21; sim/configure.ts)
+ *   remoteCli    → the CLI core's openRemote / execRemote / closeRemote / setRemote (P3 [S13] D14; sim/configure.ts)
  * Events addressed to a device that no longer exists are ignored.
  *
  * Devices (§3.3): `addDevice` validates the type and the module installs (the spec's list, else the model's default
@@ -83,6 +84,14 @@
  * P3 (ARCHITECTURE-P3 §9.2 item 16, W1 sim): every such P2 rule reads "P2 or later" — a P3 world exports
  * `profile: 'P3'` with `schema = schemaIdFor(t)` (1.3) and its snapshot carries `profile: 'P3'`; P1 and P2 worlds are
  * unchanged byte for byte.
+ * P3 W2 sim (§2.9, ruling R5, R20): `hostRequest` gains the Traffic app (`traffic.start` / `traffic.stop` → traffic)
+ * and the [S32] automation workspace (`script.run` with the ticket as the run's token, `script.stop`, `file.write`,
+ * `file.delete` → script-host). A `file.write` is refused, spending no ticket, when its name, its text or the store's
+ * file count would leave the io limits an export must reload (io/schema.ts).
+ * P3 W2 sim [S13] (D14): the `remoteCli` event is dispatched to the CLI core's remote-session methods
+ * (sim/configure.ts `dispatchRemoteCli`); the CLI core's `remoteOutput` dep is the facade's `deliverVtyOutput`, so a
+ * via-'vty' session's output reaches the device's vty daemon as `vty.output` and never the trace; and
+ * `FacadeCounters.remote` is resumed and reported only when present (a P1/P2 world's counters keep their shape).
  *
  * [S1] Time travel (D18, §2.13, §3.13; the `// [S1]` block below): the facade journals every OUTERMOST mutating call
  * through sim/journal.ts — `{at: position(), op, traceHead}`, the op deep-copied at record time — and nothing reached
@@ -130,7 +139,7 @@ import type { Pdu, PduView } from '../contracts/pdu.js';
 import { ERR_DISABLE_CAUSES, type ErrDisableCause } from '../contracts/port.js';
 import type { Rng } from '../contracts/rng.js';
 import type { SimSnapshot } from '../contracts/snapshot.js';
-import type { Action, ProcessRequest } from '../contracts/process.js';
+import type { Action, ProcessRequest, TrafficFlowSpec } from '../contracts/process.js';
 import {
   TopologyLoadError,
   type AddDeviceSpec,
@@ -164,7 +173,17 @@ import { createDevice } from '../device/device.js';
 import type { LinkModelImpl } from '../link/link.js';
 import { PROCESS_FACTORIES } from '../protocols/index.js';
 import { createCliRuntime } from '../cli/runtime.js';
-import { MAX_METRES_PER_UNIT, deviceUiSchema, formatIssues, prepareTopologyLoad, topologyLoadError } from '../io/schema.js';
+import {
+  MAX_METRES_PER_UNIT,
+  MAX_TOPOLOGY_FILE_CHARS,
+  MAX_TOPOLOGY_FILE_NAME_CHARS,
+  MAX_TOPOLOGY_FILES_PER_DEVICE,
+  deviceUiSchema,
+  formatIssues,
+  isTopologyFileName,
+  prepareTopologyLoad,
+  topologyLoadError,
+} from '../io/schema.js';
 import { createCaptureHub, resolveCapturePoints, type CapturePointResolver } from '../capture/tap.js';
 import type { CaptureStoreImpl } from '../capture/store.js';
 import { createIdGen, type IdGen } from './ids.js';
@@ -173,15 +192,18 @@ import { createMediaWiring, type MediaWiring } from './media-wiring.js';
 import {
   configFragmentCommands,
   configureDevice,
+  deliverVtyOutput,
   dispatchDeviceConfigure,
+  dispatchRemoteCli,
   insertModule as insertModuleOp,
   removeModule as removeModuleOp,
   CONFIG_FRAGMENT_OPTIONS,
   unknownDeviceError,
   type ConfigureEnv,
   type DeviceConfigureEnv,
+  type RemoteCliEnv,
 } from './configure.js';
-import { buildSimSnapshot, createRenderCache } from './snapshot-cache.js';
+import { buildSimSnapshot, createRenderCache, storedFilesOf } from './snapshot-cache.js';
 import { createJournalRecorder } from './journal.js';
 
 /** Trace ring capacity when `SimulationOptions.traceCapacity` is not given (turbo mode: 0). */
@@ -213,25 +235,40 @@ export function isErrDisableCause(v: unknown): v is ErrDisableCause {
 /** @since P2 [S1] The facade counters of a world built from nothing (`FacadeCounters`, all zero). */
 export const ZERO_FACADE_COUNTERS: FacadeCounters = Object.freeze({ traceHead: 0, sessions: 0, headless: 0, requests: 0, topologyVersion: 0 });
 
-/** @since P2 [S1] Validated copy of `SimulationOptions.resume`; throws a RangeError for a counter that is not a non-negative safe integer. */
+/**
+ * @since P2 [S1] Validated copy of `SimulationOptions.resume`; throws a RangeError for a counter that is not a non-negative safe integer.
+ * P3 [S13] (D14): the optional `remote` counter is validated and copied only when present, so a P2 resume copies as before.
+ */
 export function checkedFacadeCounters(c: FacadeCounters): FacadeCounters {
   const keys = ['traceHead', 'sessions', 'headless', 'requests', 'topologyVersion'] as const;
   for (const k of keys) {
     const v = c[k];
     if (!Number.isSafeInteger(v) || v < 0) throw new RangeError(`resume.${k} must be a non-negative integer, got ${String(v)}`);
   }
-  return { traceHead: c.traceHead, sessions: c.sessions, headless: c.headless, requests: c.requests, topologyVersion: c.topologyVersion };
+  const out = { traceHead: c.traceHead, sessions: c.sessions, headless: c.headless, requests: c.requests, topologyVersion: c.topologyVersion };
+  if (c.remote === undefined) return out;
+  if (!Number.isSafeInteger(c.remote) || c.remote < 0) throw new RangeError(`resume.remote must be a non-negative integer, got ${String(c.remote)}`);
+  return { ...out, remote: c.remote };
 }
 
 /**
  * @since P1 The allowlist behind `hostRequest` (§4.4 step 0): the daemon each GUI app request is mapped onto.
  * A request for anything else, or to a device that is not running that daemon, is refused with an original error.
+ * P3 (ARCHITECTURE-P3 §2.9, ruling R5; W2 sim): the Traffic app's rows (M13, `traffic`) and the [S32] automation
+ * workspace's rows (`script-host`, which runs only on NF-DEVHOST from the W6 flip).
  */
 export const HOST_APP_PROCESS: Readonly<Record<HostAppRequest['app'], ProcessName>> = Object.freeze({
   'http.get': 'http-client',
   'wifi.scan': 'wlan-client',
   'dhcp.renew': 'dhcp-client',
   'dhcp.release': 'dhcp-client',
+  'traffic.start': 'traffic',
+  'traffic.stop': 'traffic',
+  // [S32]
+  'script.run': 'script-host',
+  'script.stop': 'script-host',
+  'file.write': 'script-host',
+  'file.delete': 'script-host',
 });
 
 /** Default spacing between `port-flap` toggles. */
@@ -369,7 +406,15 @@ export function createSimulation(opts: SimulationOptions): Simulation {
 
   let world: World = makeWorld(DEFAULT_METRES_PER_UNIT, profile0);
 
-  /** The CLI core counts the console/vty sessions (`s_<n>`) and headless runs (`h_<n>`), seeded from `resume` ([S1]). */
+  /**
+   * The CLI core counts the console/vty sessions (`s_<n>`) and headless runs (`h_<n>`), seeded from `resume` ([S1]).
+   * P3 [S13] (D14): it also counts the remote sessions (`v_<n>`, `FacadeCounters.remote`, resumed when present), and
+   * the output of every via-'vty' session is handed to the device's vty daemon as `vty.output`, never as a
+   * `cliOutput` trace event. The CLI core produces that output wherever it is (a debug line arrives through the trace
+   * sink, in the middle of a daemon's handler), so it is never applied there: each piece is scheduled as a zero-delay
+   * `SimEvent remoteOutput` and delivered by `deliverVtyOutput` in that event's own dispatch, a fresh top-level
+   * `applyActions` with its own budget, in production order (W2 fix, verified finding 5).
+   */
   const cliCore = createCliRuntime({
     device: (id) => world.devices.get(id),
     catalog,
@@ -377,7 +422,11 @@ export function createSimulation(opts: SimulationOptions): Simulation {
     now: () => world.scheduler.now,
     radioView: (ref) => world.media.links.radioPortView(ref),
     airView: (device) => world.media.links.airView(device),
-    resume: { sessions: resume.sessions, headless: resume.headless },
+    resume: resume.remote === undefined ? { sessions: resume.sessions, headless: resume.headless } : { sessions: resume.sessions, headless: resume.headless, remote: resume.remote },
+    remoteOutput: (device, ev, now) => {
+      const w = world;
+      w.scheduler.schedule(Math.max(now, w.scheduler.now), { kind: 'remoteOutput', device, out: ev });
+    },
   });
 
   // [S1] ── facade counters and the input journal (file header; sim/journal.ts) ──────────────────────────────────
@@ -386,7 +435,9 @@ export function createSimulation(opts: SimulationOptions): Simulation {
   /** The counters a replay must start from so ids and cursors match this world. */
   const counters = (): FacadeCounters => {
     const cli = cliCore.counters();
-    return { traceHead: ring.head, sessions: cli.sessions, headless: cli.headless, requests: requestCounter, topologyVersion };
+    const out: FacadeCounters = { traceHead: ring.head, sessions: cli.sessions, headless: cli.headless, requests: requestCounter, topologyVersion };
+    // P3 [S13]: present only once a remote session has been opened (or resumed), so P1/P2 counters keep their shape
+    return cli.remote === undefined ? out : { ...out, remote: cli.remote };
   };
   const journalOrigin = (profile: DefaultsProfile, topology: Topology | null): JournalOrigin => ({ seed, mode, profile, topology, counters: counters() });
   const recorder = createJournalRecorder({ position, traceHead: () => ring.head }, journalOrigin(profile0, null), opts.journal ?? true);
@@ -830,6 +881,14 @@ export function createSimulation(opts: SimulationOptions): Simulation {
     caller: SIM_PROCESS_NAME,
   };
 
+  /** P3 [S13] (D14): the `remoteCli` dispatch calls the CLI core's remote-session methods directly, never journaled. */
+  const remoteCliEnv: RemoteCliEnv = {
+    device: (id) => world.devices.get(id),
+    cli: cliCore,
+    syncClock,
+    caller: SIM_PROCESS_NAME,
+  };
+
   // ── faults ────────────────────────────────────────────────────────────────
 
   function followUp(fault: FaultSpec, at: SimTime, params: Record<string, unknown>): void {
@@ -932,6 +991,49 @@ export function createSimulation(opts: SimulationOptions): Simulation {
     return r.ref.port;
   }
 
+  /** @since P3 A non-empty text field of an app request; throws `message` otherwise. */
+  function checkedName(value: unknown, message: string): string {
+    if (typeof value !== 'string' || value.trim() === '') throw new Error(message);
+    return value;
+  }
+
+  /**
+   * @since P3 (M13) The flow of a `traffic.start` app request: an object with a destination address, copied. Every
+   * other rule of TrafficFlowSpec (sizes, rates, caps) is the traffic daemon's, which reports a refusal itself.
+   */
+  function checkedFlow(flow: unknown): TrafficFlowSpec {
+    if (flow === null || typeof flow !== 'object' || Array.isArray(flow)) throw new Error('A traffic flow needs its settings.');
+    const spec = flow as TrafficFlowSpec;
+    checkedName(spec.dst, 'A traffic flow needs the address it is sent to.');
+    return { ...spec };
+  }
+
+  /** @since P3 [S32] The arguments of a `script.run` app request: a list of texts, copied. */
+  function checkedArgv(argv: unknown): string[] {
+    if (!Array.isArray(argv) || argv.some((a) => typeof a !== 'string')) throw new Error('The arguments of a script must be a list of words.');
+    return [...(argv as string[])];
+  }
+
+  /**
+   * @since P3 [S32] (ruling R20) The path and content of a `file.write` app request, within the io limits every export
+   * must reload (io/schema.ts): a plain file name of at most MAX_TOPOLOGY_FILE_NAME_CHARS characters, text of at most
+   * MAX_TOPOLOGY_FILE_CHARS characters, and at most MAX_TOPOLOGY_FILES_PER_DEVICE files in the store (replacing a file
+   * is always allowed).
+   */
+  function checkedFileWrite(dev: DeviceRuntime, path: unknown, content: unknown): { path: string; content: string } {
+    const name = checkedName(path, 'Saving a file needs its name.');
+    if (name.length > MAX_TOPOLOGY_FILE_NAME_CHARS || !isTopologyFileName(name)) {
+      throw new Error(`"${name}" cannot be a file name here: use a plain name of at most ${MAX_TOPOLOGY_FILE_NAME_CHARS} characters, without folders.`);
+    }
+    if (typeof content !== 'string') throw new Error(`Saving ${name} needs the text to save.`);
+    if (content.length > MAX_TOPOLOGY_FILE_CHARS) throw new Error(`${name} is too large to save: a file holds at most ${MAX_TOPOLOGY_FILE_CHARS} characters.`);
+    const files = storedFilesOf(dev);
+    if (files.length >= MAX_TOPOLOGY_FILES_PER_DEVICE && !files.some((f) => f.path === name)) {
+      throw new Error(`${dev.spec.name} already keeps ${MAX_TOPOLOGY_FILES_PER_DEVICE} files. Delete one before saving ${name}.`);
+    }
+    return { path: name, content };
+  }
+
   /** The port a Wi-Fi scan runs on: the one asked for, else this device's first wireless interface. */
   function scanPort(dev: DeviceRuntime, port: PortId | undefined): PortId {
     if (port !== undefined && port !== null) return checkedPort(dev, port);
@@ -962,8 +1064,32 @@ export function createSimulation(opts: SimulationOptions): Simulation {
       case 'wifi.scan':
         body = { kind: 'wlan.scan', port: scanPort(dev, req.port) };
         break;
-      default:
+      case 'dhcp.renew':
+      case 'dhcp.release':
         body = { kind: 'dhcp.client', iface: checkedPort(dev, req.port), op: req.app === 'dhcp.renew' ? 'renew' : 'release' };
+        break;
+      // P3 (M13, ruling R5): the Traffic app; the traffic daemon applies the caps of TrafficFlowSpec itself
+      case 'traffic.start':
+        body = { kind: 'traffic.start', flow: checkedFlow(req.flow) };
+        break;
+      case 'traffic.stop':
+        body = { kind: 'traffic.stop', id: checkedName(req.id, 'Stopping a flow needs the id of the flow.') };
+        break;
+      // P3 [S32]: the automation workspace (the ticket is the run's token)
+      case 'script.run': {
+        const run: Extract<ProcessRequest, { kind: 'script.run' }> = { kind: 'script.run', token, file: checkedName(req.file, 'Running a script needs the name of its file.') };
+        if (req.argv !== undefined) run.argv = checkedArgv(req.argv);
+        body = run;
+        break;
+      }
+      case 'script.stop':
+        body = { kind: 'script.stop', token: checkedName(req.run, 'Stopping a script needs the id of its run.') };
+        break;
+      case 'file.write':
+        body = { kind: 'file.write', ...checkedFileWrite(dev, req.path, req.content) };
+        break;
+      case 'file.delete':
+        body = { kind: 'file.delete', path: checkedName(req.path, 'Deleting a file needs its name.') };
         break;
     }
     requestCounter++;
@@ -1041,6 +1167,14 @@ export function createSimulation(opts: SimulationOptions): Simulation {
       case 'deviceConfigure':
         // P3 (D21): the one caller of the CLI core's headless configure for a daemon, in this event's own dispatch.
         dispatchDeviceConfigure(deviceConfigureEnv, ev);
+        return;
+      case 'remoteCli':
+        // P3 [S13] (D14): the CLI core's remote-session call for a vty / vty-client action, in this event's own dispatch.
+        dispatchRemoteCli(remoteCliEnv, ev);
+        return;
+      case 'remoteOutput':
+        // P3 [S13] (W2 fix): a remote session's output, to the device's vty daemon in this event's own dispatch.
+        deliverVtyOutput(remoteCliEnv, ev.device, ev.out, at);
         return;
       default:
         return;

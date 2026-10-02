@@ -17,8 +17,9 @@
  *
  * The envelope (spec §12.4, `LabAssertionNotes`): a FAILING assertion that carries `feedback` shows it after its own
  * detail, so the learner reads what is wrong and then the author's advice; a passing one shows nothing. `misconception`
- * is an analytics tag and is not shown: `LabCheckResult` has no member that could carry it (reported to the architect
- * in the W1 wave report). P1 and P2 labs carry no notes, so their status is byte-identical (`accept.p3.lab-status`).
+ * is an analytics tag and is never shown: since the W2 sim item (ruling R18) `evaluateLab` carries the tag of a failed
+ * task's first failing assertion that has one in `LabCheckResult.misconception` (sim/lab-checks.ts `misconceptionOf`).
+ * P1 and P2 labs carry no notes, so their status is byte-identical (`accept.p3.lab-status`).
  */
 import type { LabAssertion, LabAssertionNotes } from '../../contracts/scenario.js';
 import type { Simulation } from '../../contracts/simulation.js';

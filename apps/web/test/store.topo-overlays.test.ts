@@ -9,7 +9,15 @@
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import type { DeviceSnapshot, SimSnapshot } from '@netforge/engine';
-import { OVERLAY_MENU, TOPO_OVERLAY_MENU, VLAN_MENU_MAX, VLAN_SELECTOR_MENU, vlanChoices } from '../src/app/TopBar';
+import {
+  OVERLAY_MENU,
+  ROUTING_OVERLAY_MENU,
+  ROUTING_SELECTOR_MENU,
+  TOPO_OVERLAY_MENU,
+  VLAN_MENU_MAX,
+  VLAN_SELECTOR_MENU,
+  vlanChoices,
+} from '../src/app/TopBar';
 import { OVERLAY_MODULES, TOPO_OVERLAY_DEFAULTS } from '../src/canvas/overlays/registry';
 import {
   DEFAULT_TOPO_OVERLAYS,
@@ -39,7 +47,21 @@ describe('the slice', () => {
   it('starts with every overlay off and no VLAN chosen — the values the canvas registry falls back to', () => {
     expect(store.getState().topoOverlays).toEqual(DEFAULT_TOPO_OVERLAYS);
     expect(DEFAULT_TOPO_OVERLAYS).toEqual(TOPO_OVERLAY_DEFAULTS);
-    expect(Object.keys(DEFAULT_TOPO_OVERLAYS).sort()).toEqual(['capwap', 'stp', 'stpVlan', 'vlan', 'vlanFocus']);
+    // ARCHITECTURE-P3 §9.2 item 23: the default object gains the P3 keys (qos; [S1] ospf, ospfArea; [S18]/[S19] wan;
+    // [C1] eigrp, eigrpPrefix), still pinned exactly
+    expect(Object.keys(DEFAULT_TOPO_OVERLAYS).sort()).toEqual([
+      'capwap',
+      'eigrp',
+      'eigrpPrefix',
+      'ospf',
+      'ospfArea',
+      'qos',
+      'stp',
+      'stpVlan',
+      'vlan',
+      'vlanFocus',
+      'wan',
+    ]);
     expect(Object.isFrozen(DEFAULT_TOPO_OVERLAYS)).toBe(true);
   });
 
@@ -56,7 +78,20 @@ describe('the slice', () => {
     store.getState().setTopoOverlay('vlanFocus', 20);
     store.getState().setTopoOverlay('stp', true);
     store.getState().setTopoOverlay('capwap', true);
-    expect(store.getState().topoOverlays).toEqual({ vlan: true, stp: true, capwap: true, stpVlan: 10, vlanFocus: 20 });
+    // §9.2 item 23: the whole slice, with the P3 keys at their defaults
+    expect(store.getState().topoOverlays).toEqual({
+      vlan: true,
+      stp: true,
+      capwap: true,
+      stpVlan: 10,
+      vlanFocus: 20,
+      qos: false,
+      ospf: false,
+      ospfArea: null,
+      wan: false,
+      eigrp: false,
+      eigrpPrefix: null,
+    });
     store.getState().setTopoOverlay('stpVlan', null);
     expect(store.getState().topoOverlays.stpVlan).toBeNull();
   });
@@ -106,7 +141,20 @@ describe('persistence', () => {
   it('a stored slice comes back as stored when every value is valid', () => {
     const raw = { topoOverlays: { vlan: true, stp: false, capwap: true, stpVlan: 4094, vlanFocus: 1 }, learn: { lastCourse: 'ccna1' } };
     const out = sanitizePersistedUi(raw);
-    expect(out.topoOverlays).toEqual(raw.topoOverlays);
+    // §9.2 item 23: a P2 slice comes back as stored, with the P3 keys at their defaults (the persisted-slice migration)
+    expect(out.topoOverlays).toEqual({
+      vlan: true,
+      stp: false,
+      capwap: true,
+      stpVlan: 4094,
+      vlanFocus: 1,
+      qos: false,
+      ospf: false,
+      ospfArea: null,
+      wan: false,
+      eigrp: false,
+      eigrpPrefix: null,
+    });
     expect(out.learn).toEqual({ lastCourse: 'ccna1' });
   });
 
@@ -175,12 +223,14 @@ describe('the "Switching overlays" menu model', () => {
       .filter(([, v]) => typeof v === 'boolean')
       .map(([k]) => k)
       .sort();
-    expect(TOPO_OVERLAY_MENU.map((m) => m.key).sort()).toEqual(booleans);
+    // §9.2 item 23: the P3 booleans have their toggles in the "Routing, WAN and QoS overlays" section
+    expect([...TOPO_OVERLAY_MENU, ...ROUTING_OVERLAY_MENU].map((m) => m.key).sort()).toEqual(booleans);
     const vlanKeys = Object.entries(DEFAULT_TOPO_OVERLAYS)
       .filter(([, v]) => v === null)
       .map(([k]) => k)
       .sort();
-    expect(VLAN_SELECTOR_MENU.map((s) => s.key).sort()).toEqual(vlanKeys);
+    // §9.2 item 23: the P3 selectors ([S1] ospfArea, [C1] eigrpPrefix) are that section's
+    expect([...VLAN_SELECTOR_MENU, ...ROUTING_SELECTOR_MENU].map((s) => s.key).sort()).toEqual(vlanKeys);
     expect(VLAN_SELECTOR_MENU.map((s) => s.id)).toEqual(['stp-vlan', 'vlan-focus']);
     for (const sel of VLAN_SELECTOR_MENU) expect(TOPO_OVERLAY_MENU.some((m) => m.key === sel.shows)).toBe(true);
   });
