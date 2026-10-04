@@ -76,7 +76,8 @@ describe('help lists', () => {
   it("'show ' lists the show subtree for the device kind", () => {
     // ARCHITECTURE-P2 §9.2 W4 item 18: a router's show subtree gains `access-lists` and `standby`
     // ARCHITECTURE-P3 §9.2 W2 item 21b (the W2 subset of item 21's show list): `class-map`, `clock` and `policy-map`
-    expect(tokens(help(GRAMMAR, priv, 'show '))).toEqual(['access-lists', 'arp', 'class-map', 'clock', 'history', 'hosts', 'interfaces', 'ip', 'ipv6', 'policy-map', 'running-config', 'standby', 'startup-config', 'version']);
+    // ARCHITECTURE-P3 §9.2 W3 item 30e: item 21's final router show list (the W3 shows join)
+    expect(tokens(help(GRAMMAR, priv, 'show '))).toEqual(['access-lists', 'arp', 'cdp', 'class-map', 'clock', 'crypto', 'history', 'hosts', 'interfaces', 'ip', 'ipv6', 'lldp', 'logging', 'ntp', 'policy-map', 'ppp', 'restconf', 'running-config', 'ssh', 'standby', 'startup-config', 'users', 'version']);
     expect(tokens(help(GRAMMAR, sw, 'show '))).toContain('mac');
     expect(tokens(help(GRAMMAR, pc, 'show '))).toEqual(['arp', 'history', 'hosts', 'interfaces', 'ip', 'running-config', 'version']);
   });
@@ -85,7 +86,8 @@ describe('help lists', () => {
     const h = help(GRAMMAR, priv, 'show ip ');
     // ARCHITECTURE-P2 §9.2 W4 item 18: `show ip nat …` joins on a router
     // ARCHITECTURE-P3 §9.2 W2 item 21b: `show ip access-lists` (§5.8) and `show ip ospf …` join on a router
-    expect(tokens(h)).toEqual(['access-lists', 'arp', 'dhcp', 'interface', 'nat', 'ospf', 'route', 'sockets']);
+    // ARCHITECTURE-P3 §9.2 W3 item 30e: `show ip eigrp …` [C1], `show ip protocols` and `show ip ssh` join
+    expect(tokens(h)).toEqual(['access-lists', 'arp', 'dhcp', 'eigrp', 'interface', 'nat', 'ospf', 'protocols', 'route', 'sockets', 'ssh']);
     expect(h.cr).toBeUndefined();
     expect(h.items.find((i) => i.token === 'interface')?.help).toBe('Interface status and settings');
     expect(h.items.find((i) => i.token === 'route')?.help).toBe('The IPv4 routing table');
@@ -135,8 +137,9 @@ describe('help lists', () => {
 
   it("'debug ' and 'debug ip ' list the categories", () => {
     // ARCHITECTURE-P2 §9.2 W4 item 18: the routing row's hsrp and nat add `standby` and `ip nat` through the registry
-    expect(tokens(help(GRAMMAR, priv, 'debug '))).toEqual(['all', 'arp', 'dhcp', 'dns', 'ethernet', 'ip', 'ipv6', 'standby', 'tcp', 'traceroute', 'udp']);
-    expect(tokens(help(GRAMMAR, priv, 'debug ip '))).toEqual(['icmp', 'nat', 'packet', 'routing']);
+    // ARCHITECTURE-P3 §9.2 W3 item 30e: every §5.8 debug category (the MUST rows and the approved items') joins
+    expect(tokens(help(GRAMMAR, priv, 'debug '))).toEqual(['all', 'arp', 'cdp', 'crypto', 'dhcp', 'dns', 'eigrp', 'ethernet', 'ip', 'ipv6', 'lldp', 'ntp', 'ppp', 'restconf', 'standby', 'tcp', 'telnet', 'traceroute', 'tunnel', 'udp']);
+    expect(tokens(help(GRAMMAR, priv, 'debug ip '))).toEqual(['access-list', 'icmp', 'nat', 'ospf', 'packet', 'routing', 'ssh']);
     expect(tokens(help(GRAMMAR, priv, 'debug ip i'))).toEqual(['icmp']);
   });
 

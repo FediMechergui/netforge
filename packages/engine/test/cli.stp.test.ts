@@ -462,7 +462,8 @@ describe('the W3 fragments, folded into the table by W4 (ARCHITECTURE-P2 §7 W3 
     // the rows are filled by the W4 catalog (§2.1): since the flip a routing model offers the categories of its
     // routing row's daemons — `standby` (hsrp) and, under `debug ip`, `nat` (§9.2 W4 item 18)
     const router = help(GRAMMAR, matchContextFor(catalogModel('router.nf2911'), 'priv-exec'), 'debug ').items.map((i) => i.token);
-    expect(router).toEqual(['all', 'arp', 'dhcp', 'dns', 'ethernet', 'ip', 'ipv6', 'standby', 'tcp', 'traceroute', 'udp']);
+    // ARCHITECTURE-P3 §9.2 W3 item 30e: every §5.8 debug category (the MUST rows and the approved items') joins
+    expect(router).toEqual(['all', 'arp', 'cdp', 'crypto', 'dhcp', 'dns', 'eigrp', 'ethernet', 'ip', 'ipv6', 'lldp', 'ntp', 'ppp', 'restconf', 'standby', 'tcp', 'telnet', 'traceroute', 'tunnel', 'udp']);
   });
 
   it('uses original wording in help, args and messages', () => {

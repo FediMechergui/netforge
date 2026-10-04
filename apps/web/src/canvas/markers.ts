@@ -19,9 +19,16 @@
  * store's event stream by `dropEventsToMark` (the store's marker spawn follows the same rule, W2 web-shell). An idle
  * current-defaults world with two PCs drops a BPDU every 2 s per PC; without this rule the canvas would show a
  * permanent rain of "dropped" pills over hosts that are doing exactly what a host should.
+ *
+ * @since P3 (ARCHITECTURE-P3 §6, §3.3 step 6; W3 web-canvas) A drop that a POLICY made carries `rule` (D12, D13: an
+ * access list, DHCP snooping, ARP inspection), and its marker's detail line names that rule in short form instead of
+ * the engine's sentence: `ACL NO-WEB-PC1 #10`, `ACL 10 implicit deny`, `DHCP snooping on FastEthernet0/24`
+ * (`dropRuleLabel`). The store's `DropMarker` does not copy the rule, so the layer keeps the rules of the drop events
+ * it ingests, keyed by PDU and sim time (`dropRuleKey`), and a marker reads its own `rule` first should it ever carry
+ * one (`ruleOfMarker`). A drop without a rule (every P1/P2 drop) keeps its detail exactly as before.
  */
 import { Container, Graphics, type Text } from 'pixi.js';
-import type { LinkId, PduId, PortRef, TraceEvent } from '@netforge/engine';
+import type { DropRule, LinkId, PduId, PortRef, SimTime, TraceEvent } from '@netforge/engine';
 import { DROP_MARKER_MS, type DropMarker } from '../store/types';
 import { dropTag } from '../vocab/drops';
 import { bezierAt, type CableGeom, type Pt } from './cables';
@@ -55,6 +62,64 @@ export function dropEventsToMark(events: readonly TraceEvent[], showBackground: 
 /** Title and optional detail line for a marker (vocabulary wording; `other` shows its detail as the title). */
 export function dropReasonText(reason: string, detail?: string): { title: string; detail: string } {
   return dropTag(reason, detail);
+}
+
+// ── P3: the policy rule behind a drop ────────────────────────────────────────
+
+/** Drop rules the layer keeps at most (the store keeps at most 200 markers). */
+export const MAX_DROP_RULES = 256;
+
+/**
+ * The short form of a policy rule, for a marker's detail line: `ACL NO-WEB-PC1 #10`, `ACL 10 implicit deny`,
+ * `DHCP snooping on FastEthernet0/24`, `ARP inspection on FastEthernet0/5`.
+ */
+export function dropRuleLabel(rule: Pick<DropRule, 'kind' | 'list' | 'seq' | 'iface'>): string {
+  switch (rule.kind) {
+    case 'acl': {
+      const list = rule.list === undefined ? 'ACL' : `ACL ${rule.list}`;
+      if (rule.seq === 'implicit') return `${list} implicit deny`;
+      return rule.seq === undefined ? list : `${list} #${rule.seq}`;
+    }
+    case 'dhcp-snooping':
+      return rule.iface === undefined ? 'DHCP snooping' : `DHCP snooping on ${rule.iface}`;
+    case 'arp-inspection':
+      return rule.iface === undefined ? 'ARP inspection' : `ARP inspection on ${rule.iface}`;
+  }
+}
+
+/** Key of a drop's rule: the dropped PDU and the instant (what a `DropMarker` keeps of its event). */
+export function dropRuleKey(pdu: PduId, t: SimTime): string {
+  return `${pdu}|${t}`;
+}
+
+/** The rule behind a marker: its own `rule` when it carries one, else the one the layer kept for its drop event. */
+export function ruleOfMarker(
+  marker: Pick<DropMarker, 'pdu' | 'simTime'> & { readonly rule?: DropRule },
+  rules: ReadonlyMap<string, DropRule>,
+): DropRule | undefined {
+  return marker.rule ?? rules.get(dropRuleKey(marker.pdu, marker.simTime));
+}
+
+/** Title and detail line of a marker: the detail names the rule when the drop has one, else the engine's detail. */
+export function dropMarkerText(reason: string, detail: string | undefined, rule: DropRule | undefined): { title: string; detail: string } {
+  return dropTag(reason, rule === undefined ? detail : dropRuleLabel(rule));
+}
+
+/** Record the rules of the drop events in `events[from…]` (oldest first), keeping the newest `MAX_DROP_RULES`. */
+export function collectDropRules(rules: Map<string, DropRule>, events: readonly TraceEvent[], from = 0): void {
+  for (let i = from; i < events.length; i++) {
+    const ev = events[i];
+    if (ev?.kind !== 'drop' || ev.rule === undefined) continue;
+    const key = dropRuleKey(ev.pdu.id, ev.t);
+    rules.delete(key);
+    rules.set(key, ev.rule);
+  }
+  let excess = rules.size - MAX_DROP_RULES;
+  if (excess <= 0) return;
+  for (const key of rules.keys()) {
+    if (excess-- <= 0) break;
+    rules.delete(key);
+  }
 }
 
 /** Where a drop marker floats. */
@@ -188,6 +253,8 @@ export class MarkerLayer {
   private readonly views = new Map<number, MarkerView>();
   private readonly burstViews = new Map<string, BurstView>();
   private bursts: CollisionBurst[] = [];
+  /** P3: the policy rules of the drop events ingested so far (`dropRuleKey` → rule). */
+  private readonly rules = new Map<string, DropRule>();
   private nextBurstId = 1;
   private lastEvents: readonly TraceEvent[] | null = null;
   private lastSeen: TraceEvent | null = null;
@@ -198,7 +265,8 @@ export class MarkerLayer {
 
   /**
    * Turn new `collision` events of the store's event ring into bursts. The first call only remembers where the
-   * ring ends, so history from before the canvas mounted does not flash.
+   * ring ends, so history from before the canvas mounted does not flash (P3: it still keeps the ring's drop rules,
+   * since the store's markers for those drops may still be floating).
    */
   ingest(events: readonly TraceEvent[], wallNow: number): void {
     if (events === this.lastEvents) return;
@@ -207,9 +275,11 @@ export class MarkerLayer {
     if (!this.primed) {
       this.primed = true;
       this.lastSeen = tail;
+      collectDropRules(this.rules, events);
       return;
     }
     const start = indexAfter(events, this.lastSeen);
+    collectDropRules(this.rules, events, start);
     for (let i = start; i < events.length; i++) {
       const ev = events[i];
       if (ev?.kind !== 'collision') continue;
@@ -219,9 +289,10 @@ export class MarkerLayer {
     this.lastSeen = tail;
   }
 
-  /** Forget bursts (new simulation generation). */
+  /** Forget bursts and the kept drop rules (new simulation generation). */
   clearBursts(): void {
     this.bursts = [];
+    this.rules.clear();
   }
 
   /** Place and fade every live marker and burst. Returns how many are visible. */
@@ -249,7 +320,7 @@ export class MarkerLayer {
       visible += 1;
 
       const selected = input.selectedPdu === m.pdu;
-      const text = dropReasonText(m.reason, m.detail);
+      const text = dropMarkerText(m.reason, m.detail, ruleOfMarker(m, this.rules));
       const sig = `${text.title}|${text.detail}|${selected}|${theme.stamp}|${input.textResolution}`;
       if (sig !== view.sig) {
         view.sig = sig;
@@ -386,5 +457,6 @@ export class MarkerLayer {
     this.views.clear();
     this.burstViews.clear();
     this.bursts = [];
+    this.rules.clear();
   }
 }

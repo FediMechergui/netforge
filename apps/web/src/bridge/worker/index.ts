@@ -774,9 +774,13 @@ const api: EngineApi = {
       if (!timeMachine.reviewing) throw new Error(REPLAY_READ_ONLY_MESSAGE);
       return reviewAdvance(() => timeMachine.reviewRunToLive());
     }
-    s.runToIdle(maxEvents);
+    const stats = s.runToIdle(maxEvents);
     clock.prune(s.now);
-    return postFull();
+    const snap = postFull();
+    // R31: say when the cap stopped the run (the posted snapshot itself is untouched). Ruling R40: the engine's runToIdle
+    // sets `RunStats.stopped` exactly when non-periodic work is still pending after the cap, so nothing else is read
+    // (a run that reached idle on exactly its last allowed event is not capped).
+    return stats.stopped === 'maxEvents' ? { ...snap, runStopped: 'maxEvents' as const } : snap;
   },
 
   // simulation mode (§4.11)

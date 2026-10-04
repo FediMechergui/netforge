@@ -57,6 +57,18 @@
  *     changes on a link where either end is `ppp` (`serialLineNotifies`), both ends get MediumEvent `serial-line
  *     {ready}` (after the `carrier` notifications of the same recompute), so an HDLC-only link never sees one. A link
  *     with no `ppp` end takes exactly the P1 path: same evaluation, same events.
+ *
+ * P3 [S20]/[S21] (ARCHITECTURE-P3 D16, §3.11, §4.2; W3 media) — the held queue of a scheduler port lives in the cable
+ * strategy (link/media/p2p.ts, its file header); the facade only routes to it:
+ *   • `transmit(from, pdu, now, opts)` hands `opts` (`TransmitOptions.qosClass`) to the strategy; only a cable whose
+ *     port has a spec (`LinkModelDeps.egressPolicy`) reads it.
+ *   • `onMediumTimer` routes a medium id with the prefix `qos:` (the shaper gate) to the cable strategy.
+ *   • `onPortChanged` of a port with a link, after the recompute, re-reads the spec of BOTH ends (`syncEgress`): the
+ *     `service-policy output` line is a PHY line of scheduler ports, so this is where a queue is installed, replaced or
+ *     removed; an end that no longer routes to the cable strategy (a segment formed) hands its held frames back to the
+ *     virtual FIFO. Without `LinkModelDeps.egressPolicy` (every P1/P2 harness) this reads nothing at all.
+ *   • `egressQueues(ref)`: the held queues' display view at the scheduler's `now`, for a port that routes to the cable
+ *     strategy; undefined for every other port.
  */
 import type { DeviceId, LinkId, PortId, PortRef } from '../contracts/ids.js';
 import { portKey } from '../contracts/ids.js';
@@ -74,6 +86,7 @@ import type {
   OperChanges,
   PhyEndView,
   PortPhy,
+  TransmitOptions,
   TransmitResult,
 } from '../contracts/link.js';
 import { NO_IMPAIRMENTS, linkKindOf } from '../contracts/link.js';
@@ -100,7 +113,7 @@ import {
 import { clearScope, createInflightRegistry } from './inflight.js';
 import { createAirMedium } from './media/air.js';
 import { CELL_NOMINAL_UE, createCellularCell } from './media/cell.js';
-import { createCableP2P, summarizePdu } from './media/p2p.js';
+import { QOS_MEDIUM_PREFIX, createCableP2P, summarizePdu } from './media/p2p.js';
 import { createRadioLink, effectiveRadio } from './media/radio.js';
 import { createSharedSegment, type CollisionStormParams } from './media/segment.js';
 import type { FrameArrivalBody, MediumHost, MediumRouteInput, MediumStrategy, QueuedFrame } from './media/types.js';
@@ -721,6 +734,15 @@ export function createLinkModel(deps: LinkModelDeps): LinkModelImpl {
   const peerRef = (state: LinkState, ref: PortRef): PortRef =>
     ref.device === state.a.device && ref.port === state.a.port ? state.b : state.a;
 
+  /** @since P3 [S20] Re-read the egress spec of both ends of link `id` (file header); a no-op without schedulers. */
+  const syncEgressOf = (id: LinkId, now: SimTime): void => {
+    // without the dependency no port can hold a queue (deps never change): nothing to read
+    if (deps.egressPolicy === undefined || cable.syncEgress === undefined) return;
+    const state = links.get(id)?.state;
+    if (state === undefined) return;
+    for (const end of [state.a, state.b]) cable.syncEgress(end, now, mediumFor(end) === 'cable');
+  };
+
   // ── radio port views ──
 
   const radioPortView = (ref: PortRef): RadioPortView | undefined => {
@@ -948,10 +970,10 @@ export function createLinkModel(deps: LinkModelDeps): LinkModelImpl {
       return { device: peer.device, port: peer.port };
     },
 
-    transmit(from, pdu, now): TransmitResult {
+    transmit(from, pdu, now, opts?: TransmitOptions): TransmitResult {
       return run(() => {
         touch(from);
-        return strategyOf(mediumFor(from)).transmit(from, pdu, now);
+        return strategyOf(mediumFor(from)).transmit(from, pdu, now, opts);
       });
     },
 
@@ -993,8 +1015,10 @@ export function createLinkModel(deps: LinkModelDeps): LinkModelImpl {
         }
         const changes: OperChanges = [];
         const id = p?.link ?? byPort.get(portKey(ref));
-        if (id !== undefined) changes.push(...recomputeLink(id, now, cause));
-        else if (p === undefined && cellularSeen.has(portKey(ref))) changes.push(...cell.onPortChanged(ref, now, cause));
+        if (id !== undefined) {
+          changes.push(...recomputeLink(id, now, cause));
+          syncEgressOf(id, now); // P3 [S20]: install, replace or remove the held queues of both ends
+        } else if (p === undefined && cellularSeen.has(portKey(ref))) changes.push(...cell.onPortChanged(ref, now, cause));
         else if (p !== undefined && roleOf(p) === 'repeater' && segment.segments().length > 0) segment.rebuild(now);
         return changes;
       });
@@ -1005,6 +1029,8 @@ export function createLinkModel(deps: LinkModelDeps): LinkModelImpl {
         if (medium.startsWith('seg:')) return segment.onMediumTimer?.(medium, key, now) ?? [];
         if (medium.startsWith('bss:')) return air.onMediumTimer(medium, key, now);
         if (medium.startsWith('cell:')) return cell.onMediumTimer(medium, key, now);
+        // P3 [S21]: the shaper gate of a cable scheduler port
+        if (medium.startsWith(QOS_MEDIUM_PREFIX)) return cable.onMediumTimer?.(medium, key, now) ?? [];
         return radio.onMediumTimer?.(medium, key, now) ?? [];
       });
     },
@@ -1091,6 +1117,11 @@ export function createLinkModel(deps: LinkModelDeps): LinkModelImpl {
 
     queued(ref, now) {
       return inflight.queued(ref, now);
+    },
+
+    egressQueues(ref) {
+      if (deps.port(ref) === undefined || mediumFor(ref) !== 'cable') return undefined;
+      return cable.egressQueues?.(ref, scheduler.now);
     },
 
     cut(id, on, now) {

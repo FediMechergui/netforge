@@ -313,6 +313,12 @@ export interface CliRuntimeDeps {
    * Absent: both start at 0.
    */
   resume?: { sessions: number; headless: number };
+  /**
+   * @since P3 (optional by meaning) [S20] Ruling R32: the held queues of a scheduler port (the link model's
+   * `egressQueues`), fed by the Simulation; feeds `CommandCtx.egressQueues`, so `show policy-map interface` and `show
+   * interfaces` print the queue lines in a real world. Absent: no queue view (focused CLI harnesses).
+   */
+  egressQueues?(ref: PortRef): EgressQueueView | undefined;
 }
 
 /** @since P0.5 Options of a headless configure run (D9). */

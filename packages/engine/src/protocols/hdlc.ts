@@ -195,6 +195,8 @@ function seconds(ns: SimTime): string {
 /** Create the HDLC keepalive daemon (`name: 'hdlc'`, `handles: HDLC_HANDLES`). One instance per routing device. */
 export function createHdlc(): Process {
   const lines = new Map<PortId, SerialLine>();
+  /** P3 [S19] The effective encapsulation this daemon last acted on, per serial port of a daemon role (internal). */
+  const encapSeen = new Map<PortId, PortEncap>();
   const ring: DebugEvent[] = [];
   let started = false;
   let sentTotal = 0;
@@ -315,6 +317,41 @@ export function createHdlc(): Process {
     return out;
   }
 
+  /**
+   * P3 [S19] (ARCHITECTURE-P3 D17, §3.9 step 2) — an `encapsulation` line on a serial port of a daemon role, after
+   * `init`: the effective encapsulation (already set by the runtime) is compared with the one this daemon last acted on
+   * (`encapSeen`, recorded at `init` and here; a port it never saw counts as HDLC exactly when it has a line). Unchanged
+   * → nothing at all (no action, no debug line, no state). Left HDLC → `ka:<port>` is cancelled, this end's own
+   * keepalive latch is released (`line-protocol up:true`, only when it was set) and the port's line is forgotten, so the
+   * StateView lists HDLC ports only. Back to HDLC → a fresh line with the configured keepalive period, armed when the
+   * carrier is up (as at `init`).
+   */
+  function encapsulationChanged(ctx: ProcessCtx, port: PortId): Action[] {
+    if (!started) return [];
+    const view = ctx.ports.get(port);
+    if (view === undefined || view.spec.kind !== 'serial' || !HDLC_DAEMON_ROLES.includes(roleOf(ctx, view))) return [];
+    const now = encapOf(view);
+    const before = encapSeen.get(port) ?? (lines.has(port) ? 'hdlc' : now);
+    encapSeen.set(port, now);
+    if (before === now || (before !== 'hdlc' && now !== 'hdlc')) return [];
+    const out: Action[] = [];
+    if (now !== 'hdlc') {
+      const line = lines.get(port);
+      if (line === undefined) return out;
+      disarm(ctx, line, `the interface left HDLC (encapsulation ${now})`, out);
+      reportUp(ctx, line, `the interface left HDLC (encapsulation ${now})`, out);
+      lines.delete(port);
+      return out;
+    }
+    const line = lineFor(port);
+    line.intervalNs = keepaliveIntervalFromConfig(ctx.config, port);
+    line.carrier = view.phy?.carrier === true;
+    line.down = false;
+    if (line.carrier && line.intervalNs > 0) arm(ctx, line, out);
+    else debug(ctx, `${port} uses HDLC again; keepalives wait for ${line.intervalNs > 0 ? 'carrier' : 'a keepalive period'}`, { port });
+    return out;
+  }
+
   return {
     name: HDLC_PROCESS,
     handles: HDLC_HANDLES,
@@ -323,6 +360,8 @@ export function createHdlc(): Process {
       started = true;
       const out: Action[] = [];
       for (const view of ctx.ports.values()) {
+        // P3 [S19]: the encapsulation each serial port of a daemon role starts with (the switch compares with it)
+        if (view.spec.kind === 'serial' && HDLC_DAEMON_ROLES.includes(roleOf(ctx, view))) encapSeen.set(view.id, encapOf(view));
         if (!isKeepalivePort(ctx, view)) continue;
         const line = lineFor(view.id);
         line.intervalNs = keepaliveIntervalFromConfig(ctx.config, view.id);
@@ -347,6 +386,8 @@ export function createHdlc(): Process {
       const head = delta.context[0];
       if (delta.context.length !== 1 || head === undefined || head[0] !== 'interface' || head[1] === undefined) return [];
       const port = head[1];
+      // P3 [S19]: the encapsulation switch (a strict no-op when the effective encapsulation does not change)
+      if (delta.line[0] === 'encapsulation') return encapsulationChanged(ctx, port);
       const interval = keepaliveIntervalFromDelta(delta);
       if (interval === undefined) {
         if (delta.line[0] === 'keepalive' && delta.op === 'set') {

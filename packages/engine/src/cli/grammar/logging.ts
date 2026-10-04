@@ -13,11 +13,22 @@
  * Scope: the `logger` daemon rows of §2.1 (routing, managed-switch, wireless-controller) for the network lines; the
  * `server` capability (the `syslog-server` row) for `service syslog`. `terminal monitor` is privileged EXEC, so the
  * user EXEC help lists keep their §9.2 item 21 shape. Help strings are original wording (spec §1.6).
+ *
+ * W3 cli (cli-b, §5.8): `show logging`, `clear logging` and the [S25] `syslog` debug category.
  */
 import type { ArgSpec, CommandSpec } from '../../contracts/cli.js';
 import type { Capability } from '../../contracts/catalog.js';
 import { LOGGER_LEVEL_NAMES, LOGGING_BUFFER_MAX_BYTES, LOGGING_BUFFER_MIN_BYTES } from '../../protocols/logger.js';
-import { choiceArg, HOST_ONLY, ifaceArg, intArg, ipv4Arg, NFOS_ONLY } from './core-exec.js';
+import {
+  choiceArg,
+  debugSpecs,
+  HOST_ONLY,
+  ifaceArg,
+  intArg,
+  ipv4Arg,
+  NFOS_ONLY,
+  type GrammarDebugCategory,
+} from './core-exec.js';
 
 /** @since P3 [S24]/[S25] Handler ids of the logging fragment. Never rename. */
 export const LOGGING_HANDLERS = {
@@ -31,6 +42,9 @@ export const LOGGING_HANDLERS = {
   configServiceTimestamps: 'config.service-timestamps',
   execTerminalMonitor: 'exec.terminal-monitor',
   hostServiceSyslog: 'host.service-syslog',
+  // W3 cli (cli-b): the buffer's show and clear (§5.8)
+  showLogging: 'show.logging',
+  execClearLogging: 'exec.clear-logging',
 } as const;
 
 /**
@@ -65,6 +79,21 @@ export const SYSLOG_SERVER_LINE: readonly string[] = Object.freeze(['syslog-serv
 export const LOGGER_CAPABILITIES: readonly Capability[] = Object.freeze(['routing', 'managed-switch', 'wireless-controller'] as Capability[]);
 /** @since P3 [S25] Capabilities whose devices run the syslog server (§2.1 rows). */
 export const SYSLOG_SERVER_CAPABILITIES: readonly Capability[] = Object.freeze(['server'] as Capability[]);
+
+/** @since P3 (W3 cli) [S24] The daemon that keeps the log buffer (`show logging` reads its StateView). */
+export const LOGGER_PROCESS = 'logger';
+
+/**
+ * @since P3 (W3 cli) [S25] The debug category of the syslog server (§5.8): `syslog`. Scoped by the syslog-server row of
+ * §2.1 (`server`), whose host shell has no `debug`: registered (the registry and `debug all` know it) but offered on
+ * no device, as `traffic` is.
+ */
+export const LOGGING_DEBUG_CATEGORIES: readonly GrammarDebugCategory[] = Object.freeze([
+  { category: 'syslog', help: 'Trace syslog messages received and stored', requiresAny: SYSLOG_SERVER_CAPABILITIES, since: 'P3' },
+]);
+
+/** @since P3 (W3 cli) Objectives of the logging debug category. */
+export const LOGGING_DEBUG_OBJECTIVES: Readonly<Record<string, readonly string[]>> = Object.freeze({ syslog: ['CCNA3.management.3'] });
 
 const H = LOGGING_HANDLERS;
 
@@ -211,6 +240,31 @@ export const LOGGING_GRAMMAR: readonly CommandSpec[] = Object.freeze<CommandSpec
     since: 'P3',
     objectives: ['CCNA3.management.3'],
   },
+  // ── W3 cli (cli-b): the buffer's show and clear, and the debug category (§5.8) ──
+  {
+    path: ['show', 'logging'],
+    mode: '@exec',
+    privilege: 1,
+    help: 'Logging settings, counters and the log buffer',
+    handler: H.showLogging,
+    filterable: true,
+    grammars: NFOS_ONLY,
+    requiresAny: LOGGER_CAPABILITIES,
+    since: 'P3',
+    objectives: ['CCNA3.management.3'],
+  },
+  {
+    path: ['clear', 'logging'],
+    mode: 'priv-exec',
+    privilege: 15,
+    help: 'Empty the log buffer',
+    handler: H.execClearLogging,
+    grammars: NFOS_ONLY,
+    requiresAny: LOGGER_CAPABILITIES,
+    since: 'P3',
+    objectives: ['CCNA3.management.3'],
+  },
+  ...debugSpecs(LOGGING_DEBUG_CATEGORIES, LOGGING_DEBUG_OBJECTIVES),
 ]);
 
 /** @since P3 [S24]/[S25] Help of the intermediate logging keywords (merged into `LITERAL_HELP` by the fold). */

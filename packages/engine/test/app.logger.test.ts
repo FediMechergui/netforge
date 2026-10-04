@@ -141,7 +141,16 @@ describe('app.logger: the buffer on a real device (W1 emitLog)', () => {
     sim.runFor(1 * SEC);
     const evs = sim.trace(cursor).events;
     const debugs = evs.filter((e): e is Extract<TraceEvent, { kind: 'debug' }> => e.kind === 'debug' && e.event.device === 'r1');
-    const printed = evs.filter((e): e is Extract<TraceEvent, { kind: 'cliOutput' }> => e.kind === 'cliOutput' && /^\*\d{2}:\d{2}:\d{2}\.\d{6}: /.test(e.text));
+    // §9.2 W3 item 30i: since the W3 [S25] log branch a P3 console also prints the shut's log lines with the same
+    // prefix; `printed` keeps the debug lines (a log line's message starts with `%`), and the log lines are pinned below
+    const stamped = evs.filter((e): e is Extract<TraceEvent, { kind: 'cliOutput' }> => e.kind === 'cliOutput' && /^\*\d{2}:\d{2}:\d{2}\.\d{6}: /.test(e.text));
+    const printed = stamped.filter((e) => !/^\*\d{2}:\d{2}:\d{2}\.\d{6}: %/.test(e.text));
+    const logged = stamped.filter((e) => /^\*\d{2}:\d{2}:\d{2}\.\d{6}: %/.test(e.text)).map((p) => p.text.replace(/\r?\n$/, ''));
+    expect(logged).toEqual([
+      `*${formatSimTime(t)}: %LINK-3: Interface GigabitEthernet0/1 administratively down`,
+      `*${formatSimTime(t)}: %LINEPROTO-5-UPDOWN: Interface GigabitEthernet0/1: line protocol is down`,
+      `*${formatSimTime(t)}: %SYS-5-CONFIGURED: Configuration changed from the console.`,
+    ]);
     expect(debugs.length).toBeGreaterThan(0);
     expect(printed.length).toBe(debugs.length);
     expect(printed.map((p) => p.text.replace(/\r?\n$/, ''))).toEqual(debugs.map((d) => formatDebugLine(d.event, sim.device('r1')!.clockView(d.t), undefined)));

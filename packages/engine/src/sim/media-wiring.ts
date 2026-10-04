@@ -15,8 +15,9 @@
  *     notify                                → DeviceRuntime.onMediumEvent → Process.onMediumEvent
  *     devices / devicePorts                 → device creation order / canonical port order
  *     capture (P1)                          → the Simulation's NetScope capture hub (capture/tap.ts)
+ *     egressPolicy (P3 [S20], ruling R32)   → DeviceRuntime.egressPolicy (undefined on a port without a queueing policy)
  *   device deps                             → link model
- *     transmit                              → LinkModel.transmit
+ *     transmit                              → LinkModel.transmit (the fourth argument, `{qosClass}`, only when given)
  *     onPortAdmin, onPortPhyConfig          → LinkModel.onPortChanged, then the OperChanges fan-out
  *     airView                               → LinkModel.airView (ProcessCtx.air)
  *     mediumOp                              → LinkModel.mediumOp, then the fan-out
@@ -152,6 +153,8 @@ export function createMediaWiring(world: MediaWorld, opts: MediaWiringOptions): 
       return d === undefined ? [] : [...d.ports.keys()];
     },
     capture: opts.capture,
+    // P3 [S20] (ruling R32): the compiled output scheduler of a port; undefined for every P1/P2 port (no policy)
+    egressPolicy: (ref) => devices.get(ref.device)?.egressPolicy(ref.port),
   });
 
   const fanOut = (changes: OperChanges | undefined, now: SimTime): void => {
@@ -187,7 +190,8 @@ export function createMediaWiring(world: MediaWorld, opts: MediaWiringOptions): 
 
   return {
     links,
-    transmit: (from, pdu, now) => links.transmit(from, pdu, now),
+    // P3 [S20] (ruling R32): the class options travel only when the device gives them (a scheduler port)
+    transmit: (from, pdu, now, opts) => (opts === undefined ? links.transmit(from, pdu, now) : links.transmit(from, pdu, now, opts)),
     onPortAdmin(ref, _adminUp, now) {
       fanOut(links.onPortChanged(ref, now), now);
     },

@@ -15,7 +15,9 @@
  *   • in both list sections an entry may start with its sequence number (`15 permit …`), `no <seq>` removes one, and
  *     `remark <text>` annotates; `ip access-list resequence <list> <start> <step>` renumbers (not stored);
  *   • `ip access-group <list> in|out` on L3 interfaces (one per direction, D12), `clear access-list counters [<list>]`,
- *     `show access-lists [<list>]`, `show ip access-lists [<list>]` and `show ip interface [<if>]`.
+ *     `show access-lists [<list>]`, `show ip access-lists [<list>]` and `show ip interface [<if>]`;
+ *   • (W3, cli part 2) the debug category `ip access-list` (§5.8, a NetForge extension: matches and log aggregation;
+ *     protocols/acl.ts `ACL_DEBUG_CATEGORY`), `ACL_DEBUG_CATEGORIES`.
  * Every ACL line is offered on `routing` and `managed-switch` models (D14: lessons 15 and 19 put a vty list on a
  * switch); the P2 specs are widened to the same scope. An address is `any`, `host <a>` or `<a> <wildcard>`; ports are
  * `eq|neq|lt|gt <port>` or `range <low> <high>` with core/acl's port names; ICMP messages by name or `<type> <code>`.
@@ -25,7 +27,7 @@
 import type { ArgSpec, CommandSpec, PortRequirement } from '../../contracts/cli.js';
 import type { Capability, PortRole } from '../../contracts/catalog.js';
 import { ACL_ICMP_NAMES, ACL_TCP_PORT_NAMES, ACL_UDP_PORT_NAMES } from '../../core/acl.js';
-import { choiceArg, ifaceArg, intArg, ipv4Arg, NFOS_ONLY, restArg, wordArg } from './core-exec.js';
+import { choiceArg, debugSpecs, type GrammarDebugCategory, ifaceArg, intArg, ipv4Arg, NFOS_ONLY, restArg, wordArg } from './core-exec.js';
 
 /** Handler ids of the access-list fragment. Never rename. */
 export const ACL_HANDLERS = {
@@ -404,6 +406,17 @@ function standardEntrySpecs(lead: EntryLead, literalLog: boolean): CommandSpec[]
   ];
 }
 
+/**
+ * @since P3 The access-list debug category (§5.8, a NetForge extension: every match and the log aggregation; the acl
+ * daemon's `ACL_DEBUG_CATEGORY`), offered where the acl daemon runs. A literal (rule 12).
+ */
+export const ACL_DEBUG_CATEGORIES: readonly GrammarDebugCategory[] = Object.freeze([
+  { category: 'ip access-list', help: 'Trace access-list matches and the aggregated log lines', requiresAny: ACL_CAPABILITIES, since: 'P3' },
+]);
+
+/** @since P3 Objectives of the access-list debug category. */
+export const ACL_DEBUG_OBJECTIVES: Readonly<Record<string, readonly string[]>> = Object.freeze({ 'ip access-list': ['CCNA3.acl.7', 'CCNA3.acl.8'] });
+
 const P3_GLOBAL = {
   mode: 'config',
   privilege: 15,
@@ -588,4 +601,6 @@ export const ACL_P3_GRAMMAR: readonly CommandSpec[] = Object.freeze<CommandSpec[
     since: 'P3',
     objectives: ['CCNA3.acl.6', 'CCNA3.acl.7'],
   },
+  // W3 cli part 2: `debug ip access-list` (§5.8)
+  ...debugSpecs(ACL_DEBUG_CATEGORIES, ACL_DEBUG_OBJECTIVES),
 ]);

@@ -55,8 +55,9 @@ export type MediumOp =
   | { op: 'cell-detach'; reason?: string }
   /**
    * @since P3 [S19] (ARCHITECTURE-P3 §2.7, D17; ruling R4: added by the W2 [S19] media item with its `link/link.ts` case)
-   * The ppp daemon's line-protocol report on its serial port: `up` once LCP, authentication and the NCPs are open;
-   * otherwise down with the reason (`ppp-negotiating` when absent). The link model keeps the last report per end while
+   * The ppp daemon's line-protocol report on its serial port: `up` once LCP is open and authentication has passed
+   * (§3.9 step 4, ruling R37: the Network phase, before the NCPs open, so IPCP and IPv6CP can run over it); otherwise
+   * down with the reason (`ppp-negotiating` when absent). The link model keeps the last report per end while
    * the line is ready (carrier, clock, one encapsulation) and forgets it when the line stops being ready.
    */
   | { op: 'ppp-link'; up: boolean; reason?: 'ppp-negotiating' | 'ppp-auth-failed' | 'keepalive-missed' };

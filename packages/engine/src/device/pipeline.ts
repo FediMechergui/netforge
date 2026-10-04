@@ -47,6 +47,11 @@
  * (LCP, PAP, CHAP, IPCP, IPv6CP) is still received on a `ppp` port that has carrier and whose line protocol is down only
  * by PPP (`downOnlyBySerialPpp`, link/serial.ts), so the link can negotiate, authenticate and recover. The HDLC
  * keepalive branch is unchanged.
+ *
+ * P3 (ARCHITECTURE-P3 D16, §3.0 (b) step 10c; W3 device): step 10c (input QoS) is the runtime's, after the verdict —
+ * on `deliver` (the port's own input policy) and on `subif` (the subinterface's) before the tag pop. Two pure helpers
+ * live here: `QOS_POLICY_ROLES` (where a service policy acts) and `poppedFrameView`, the view of a tagged frame after
+ * the pop that lets the runtime preview the subinterface's verdict, so a frame the pipeline drops is never classified.
  */
 import { ipv4ToU32, isIpv4, type MacAddress } from '../contracts/addr.js';
 import type { PortId, ProcessName } from '../contracts/ids.js';
@@ -687,4 +692,38 @@ export function subinterfaceVerdict(input: Omit<IngressInput, 'layer'>): FrameVe
 export function loopIngressLayer(frame: Pick<FrameLike, 'layers'>): DemuxLayer {
   const outer = frame.layers[0]?.proto;
   return isDemuxLayer(outer) ? outer : 'ipv4';
+}
+
+// ── P3 (ARCHITECTURE-P3 D16, §3.0 (a) step 9 and (b) step 10c; W3 device): where QoS policies act ──────────────────
+
+/**
+ * @since P3 The effective roles whose `service-policy` lines the runtime applies (D16): routed physical ports, serial
+ * WAN ports and subinterfaces — exactly the ports `service-policy` attaches to (`cli/handlers/qos.ts`; SVIs and
+ * switchports refuse it with `qosPortUnsupported`). A stray line on any other role (a port that became a switchport
+ * after the line was stored) is ignored: its frames take the P2 path.
+ */
+export const QOS_POLICY_ROLES: readonly PortRole[] = Object.freeze(['routed', 'wan', 'subif']);
+
+/** @since P3 True when a port of effective role `role` applies its service policies (`QOS_POLICY_ROLES`). */
+export function qosPolicyRole(role: PortRole): boolean {
+  return QOS_POLICY_ROLES.includes(role);
+}
+
+/**
+ * @since P3 (D16 step 10c) A read-only view of `frame` as step 10a's pop would leave it — `[ethernet {…, type: the
+ * tag's type}, …the layers after the tag]`, 4 bytes shorter — or `frame` itself when its second layer is not an 802.1Q
+ * tag. The runtime previews the subinterface's verdict (`subinterfaceVerdict`, which reads only the destination, the
+ * type and the port) on it, so step 10c classifies a `subif` frame before the pop only when the subinterface will
+ * deliver it: a flooded frame for another MAC is never classified or counted (review T9). Never changes the PDU.
+ */
+export function poppedFrameView(frame: FrameLike): FrameLike {
+  const eth = frame.layers[0];
+  const tag = frame.layers[1];
+  if (eth === undefined || tag === undefined || tag.proto !== 'dot1q') return frame;
+  const layers: FrameLayerLike[] = [{ proto: eth.proto, fields: { ...eth.fields, type: tag.fields['type'] as FieldValue } }, ...frame.layers.slice(2)];
+  return {
+    layers,
+    size: frame.size - DOT1Q_HEADER,
+    layer: (proto: ProtoName) => layers.find((l) => l.proto === proto),
+  };
 }

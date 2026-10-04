@@ -25,6 +25,11 @@
  * untagged (its access VLAN or its trunk's native VLAN, `untaggedVlan`). A tagged leg also carries a `Q` badge beside
  * its protocol letter, so a tagged frame is told from an untagged one without colour. "Colour by flow" keeps
  * precedence: an explicit choice of the learner beats the overlay's tint.
+ *
+ * @since P3 (ARCHITECTURE-P3 §6 WAN row; ruling R42, W3 fix step) A tunnel leg is told apart without colour, from its
+ * summary's `tunnel` member through the WAN model's `tunnelLegStyle`: a GRE leg carries a `G` badge (top-left, opposite
+ * the `Q` badge); an IPsec (ESP) leg carries a small padlock there and breathes (`encryptedPulseAlpha`, a slow alpha
+ * pulse on wall time), static under reduced motion. Every other leg draws exactly as before.
  */
 import { Container, Graphics, type Text } from 'pixi.js';
 import {
@@ -40,6 +45,7 @@ import {
   type SimTime,
 } from '@netforge/engine';
 import { protocolVocab, type PacketShape } from '../vocab/protocols';
+import { encryptedPulseAlpha, tunnelLegStyle } from './overlays/wan-model';
 import { bezierAt, bezierTangent, geomBounds, type CableGeom, type Pt } from './cables';
 import { vlanColor } from './l2';
 import { isRadioLink } from './ports';
@@ -139,6 +145,19 @@ export function legColor(
 /** Where the `Q` badge sits relative to the capsule centre (top-right, just outside the body). */
 export function tagBadgeOffset(r: number, scale: number): Pt {
   return { x: r * 1.7, y: -r * 1.35 - 1.5 * scale };
+}
+
+/** @since P3 (ruling R42) Where a tunnel leg's `G` badge or padlock sits (top-left, opposite the `Q` badge). */
+export function tunnelBadgeOffset(r: number, scale: number): Pt {
+  return { x: -r * 1.7, y: -r * 1.35 - 1.5 * scale };
+}
+
+/** @since P3 (ruling R42) Draw the small padlock of an IPsec leg, centred on (0, 0), `size` world units tall. */
+export function drawPadlock(g: Graphics, size: number, color: number, theme: Pick<ThemeColors, 'bg'>): void {
+  const w = size * 0.8;
+  const h = size * 0.55;
+  g.roundRect(-w / 2, -h / 2 + size * 0.15, w, h, size * 0.1).fill({ color }).stroke({ width: Math.max(0.8, size * 0.08), color: theme.bg });
+  g.arc(0, -h / 2 + size * 0.15, w * 0.3, Math.PI, 0).stroke({ width: Math.max(0.9, size * 0.12), color });
 }
 
 /** Capsule radius from frame size: 64 B → 4.5, doubling adds 1.6, clamped at 11. */
@@ -275,6 +294,13 @@ class PacketView {
   tag: Text | null = null;
   tagged = false;
   tagColor = 0;
+  /** @since P3 (R42) The `G` badge of a GRE leg (created on first use). */
+  tunnel: Text | null = null;
+  tunnelBadge = '';
+  /** @since P3 (R42) The padlock of an IPsec leg (created on first use). */
+  lock: Graphics | null = null;
+  locked = false;
+  lockSig = '';
   scale = 1;
   bodySig = '';
   x = 0;
@@ -307,6 +333,10 @@ export interface PacketUpdateInput {
   /** Visible world rectangle (capsules outside it are hidden). */
   view: Rect;
   textResolution: number;
+  /** @since P3 (R42) Wall time in ms, for the IPsec pulse (absent: no pulse). */
+  wall?: number;
+  /** @since P3 (R42) Reduced motion: the IPsec pulse stays static. */
+  reducedMotion?: boolean;
 }
 
 export class PacketLayer {
@@ -390,11 +420,34 @@ export class PacketLayer {
 
       if (pv.letter) pv.letter.visible = false;
       if (pv.tag) pv.tag.visible = false;
+      if (pv.tunnel) pv.tunnel.visible = false;
       pv.letterText = letterFor(proto);
       pv.letterColor = place.aborted ? color : theme.bg;
       pv.tagged = isTaggedLeg(f.pdu);
       pv.tagColor = color;
       pv.scale = scale;
+      // P3 (R42): a GRE leg's `G` badge, an IPsec leg's padlock and pulse (static under reduced motion)
+      const reduced = input.reducedMotion === true;
+      const legStyle = tunnelLegStyle(f.pdu, reduced);
+      pv.tunnelBadge = legStyle.badge;
+      pv.locked = legStyle.lock;
+      pv.root.alpha = legStyle.lock && input.wall !== undefined ? encryptedPulseAlpha(input.wall, !legStyle.pulse) : 1;
+      if (pv.locked) {
+        if (!pv.lock) {
+          pv.lock = new Graphics();
+          pv.root.addChild(pv.lock);
+        }
+        const size = 7 * scale;
+        const lockSig = `${size}|${color}|${theme.stamp}`;
+        if (lockSig !== pv.lockSig) {
+          pv.lockSig = lockSig;
+          pv.lock.clear();
+          drawPadlock(pv.lock, size, color, theme);
+        }
+        const off = tunnelBadgeOffset(r, scale);
+        pv.lock.position.set(head.x + off.x, head.y + off.y);
+        pv.lock.visible = true;
+      } else if (pv.lock) pv.lock.visible = false;
     }
 
     // protocol letters (and the Q badge of tagged legs): only when zoomed in and the screen is not crowded
@@ -413,6 +466,19 @@ export class PacketLayer {
         if (pv.letter.style.fontSize !== size) pv.letter.style.fontSize = size;
         pv.letter.position.set(pv.x, pv.y);
         pv.letter.visible = true;
+      }
+      if (pv.tunnelBadge !== '') {
+        if (!pv.tunnel) {
+          pv.tunnel = makeText('', 6, theme.text, theme.mono, 'bold');
+          pv.tunnel.anchor.set(0.5);
+          pv.root.addChild(pv.tunnel);
+        }
+        setText(pv.tunnel, pv.tunnelBadge, pv.tagColor, theme.mono, input.textResolution);
+        const size = 6 * pv.scale;
+        if (pv.tunnel.style.fontSize !== size) pv.tunnel.style.fontSize = size;
+        const off = tunnelBadgeOffset(pv.r, pv.scale);
+        pv.tunnel.position.set(pv.x + off.x, pv.y + off.y);
+        pv.tunnel.visible = true;
       }
       if (pv.tagged) {
         if (!pv.tag) {

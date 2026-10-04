@@ -16,6 +16,13 @@ vi.mock('comlink', () => ({
   proxy: <T>(x: T) => x,
 }));
 
+// ARCHITECTURE-P3 §9.2 W3 item 30m (ruling R28 carried to the engine's copy of a worker test): `vi.resetModules()` gives
+// the case a fresh worker, but the engine behind it is pure, so it is evaluated once, while the file is collected, and
+// kept: a manual mock that returns the real module is cached apart from the module registry, which `vi.resetModules()`
+// leaves alone. Only the worker's own modules are evaluated inside the case.
+vi.mock('@netforge/engine', async (importOriginal) => await importOriginal());
+import '@netforge/engine';
+
 const WORKER = '../../../apps/web/src/bridge/engine.worker.ts';
 
 beforeEach(() => {

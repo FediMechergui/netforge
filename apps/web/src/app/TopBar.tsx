@@ -23,7 +23,7 @@
 import { DEFAULT_METRES_PER_UNIT, type SimSnapshot } from '@netforge/engine';
 import { engine, defaultSeed } from '../bridge/client';
 import type { PlaybackMode } from '../bridge/protocol';
-import { OVERLAY_MODULES, VLAN_OVERLAY, type OverlayId } from '../canvas/overlays/registry';
+import { ROUTING_OVERLAY_MODULES, SWITCHING_OVERLAY_MODULES, VLAN_OVERLAY, type OverlayId } from '../canvas/overlays/registry';
 import { eigrpPrefixesOf } from '../canvas/overlays/eigrp-model';
 import { ospfAreasOf } from '../canvas/overlays/ospf-model';
 import { CONCEPT_TOOLS, isConceptToolBuilt } from '../concept/ConceptView';
@@ -66,9 +66,13 @@ export interface TopoOverlayMenuEntry {
   readonly hint: string;
 }
 
-/** Switching overlay toggles, in menu order (one per registered overlay; exhaustive over the slice's booleans). */
+/**
+ * Switching overlay toggles, in menu order (one per P2 overlay of the registry, `SWITCHING_OVERLAY_MODULES`; exhaustive
+ * over the slice's P2 booleans). §9.2 item 30g: the registry's `OVERLAY_MODULES` holds the eight overlays since W3, so
+ * this menu reads the P2 list.
+ */
 export const TOPO_OVERLAY_MENU: readonly TopoOverlayMenuEntry[] = Object.freeze(
-  OVERLAY_MODULES.map((m) => Object.freeze({ id: `topo-overlay-${m.id}` as const, key: m.toggle, label: m.label, hint: m.hint })),
+  SWITCHING_OVERLAY_MODULES.map((m) => Object.freeze({ id: `topo-overlay-${m.id}` as const, key: m.toggle, label: m.label, hint: m.hint })),
 );
 
 /** A VLAN selector of the slice: which VLAN an overlay draws (null = the `none` choice). Shown while `shows` is on. */
@@ -137,33 +141,13 @@ export interface RoutingOverlayMenuEntry {
   readonly hint: string;
 }
 
-/** @since P3 The routing, WAN and QoS overlay toggles, in menu order (exhaustive over the slice's P3 booleans). */
-export const ROUTING_OVERLAY_MENU: readonly RoutingOverlayMenuEntry[] = Object.freeze([
-  Object.freeze<RoutingOverlayMenuEntry>({
-    id: 'topo-overlay-qos',
-    key: 'qos',
-    label: 'Queues and link load',
-    hint: 'Stacks the frames waiting at each congested port and wraps each cable in a sleeve as thick as its load.',
-  }),
-  Object.freeze<RoutingOverlayMenuEntry>({
-    id: 'topo-overlay-ospf',
-    key: 'ospf',
-    label: 'OSPF adjacencies',
-    hint: 'Draws how far each neighbour relationship has come, the DR and BDR letters, interface costs and areas.',
-  }),
-  Object.freeze<RoutingOverlayMenuEntry>({
-    id: 'topo-overlay-wan',
-    key: 'wan',
-    label: 'WAN links and tunnels',
-    hint: 'Shows the phases a PPP link has passed and draws each tunnel over the network that carries it.',
-  }),
-  Object.freeze<RoutingOverlayMenuEntry>({
-    id: 'topo-overlay-eigrp',
-    key: 'eigrp',
-    label: 'EIGRP successors',
-    hint: 'For one destination, marks the route each router uses and the backup routes it keeps ready.',
-  }),
-]);
+/**
+ * @since P3 The routing, WAN and QoS overlay toggles, in menu order (exhaustive over the slice's P3 booleans): one per
+ * P3 overlay of the registry with a toggle, `ROUTING_OVERLAY_MODULES` (§9.2 item 30g; the SPF overlay has none).
+ */
+export const ROUTING_OVERLAY_MENU: readonly RoutingOverlayMenuEntry[] = Object.freeze(
+  ROUTING_OVERLAY_MODULES.map((m) => Object.freeze<RoutingOverlayMenuEntry>({ id: `topo-overlay-${m.toggle}` as const, key: m.toggle, label: m.label, hint: m.hint })),
+);
 
 /** @since P3 A routing selector of the slice: which area or destination an overlay draws (null = `none`). */
 export interface RoutingSelectorMenuEntry {

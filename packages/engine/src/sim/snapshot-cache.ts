@@ -44,8 +44,10 @@
  *
  * P3 (ARCHITECTURE-P3 §2.8, D16, D19, D21; W2 sim). Every member is optional by meaning and appended after the P2 ones,
  * so no P1 or P2 snapshot changes:
- *   PortSnapshot.qos       the port's QoS view from `DeviceRuntime.qosCounters(port)` (M13 marking counters; [S20] the
- *                          queue view), copied; present only when the runtime returns one (a port with a policy).
+ *   PortSnapshot.qos       the port's QoS view from `DeviceRuntime.qosCounters(port)` (M13 marking counters, with the
+ *                          R26 policer counts, ruling R35), copied; [S20] (ruling R32) its `queue` from the link model's
+ *                          `egressQueues` (a scheduler port); present only when either has something (a port with a
+ *                          policy, or with interface `fair-queue`).
  *   PortSnapshot.txBacklog the virtual FIFO of the egress port (D16): `LinkModelImpl.queued(port, now)` — the frames
  *                          committed with `txStart > now` — as `{depth, frames}` with at most TX_BACKLOG_FRAMES (8) of
  *                          them, oldest first, each `{pdu, summary, txStart, bytes, dscp?}` (`dscp` recorded by the medium
@@ -232,7 +234,7 @@ function copyPhy(phy: PortPhy): PortPhy {
 /** What port and device snapshots read beyond the runtime itself. */
 export interface SnapshotSources {
   /** P3 (D16): `queued` is the source of `PortSnapshot.txBacklog`. */
-  readonly links: Pick<LinkModelImpl, 'radioPortView' | 'list' | 'inflight' | 'media' | 'queued'>;
+  readonly links: Pick<LinkModelImpl, 'radioPortView' | 'list' | 'inflight' | 'media' | 'queued'> & Partial<Pick<LinkModelImpl, 'egressQueues'>>;
   readonly cache: RenderCache;
 }
 
@@ -278,6 +280,13 @@ export function createTxBacklogWatch(): TxBacklogWatch {
   const until = new Map<DeviceId, SimTime>();
   return {
     observe(ev) {
+      // [S20] (ruling R32): a frame held by a scheduler port changes its queue view; the device is due at the next drain
+      // (each later dequeue writes a `frameTx` and each scheduler drop a `drop`, which the worker's dirty set reads)
+      if (ev.kind === 'frameQueued') {
+        const prev = until.get(ev.device);
+        if (prev === undefined || ev.t > prev) until.set(ev.device, ev.t);
+        return;
+      }
       if (ev.kind !== 'frameTx' || ev.txStart <= ev.t) return;
       const device = ev.from.device;
       const prev = until.get(device);
@@ -302,7 +311,14 @@ export function copyQosView(view: PortQosView): PortQosView {
   const out: PortQosView = {
     ...(view.input !== undefined ? { input: view.input } : {}),
     ...(view.output !== undefined ? { output: view.output } : {}),
-    classes: view.classes.map((c) => ({ name: c.name, matched: c.matched, matchedBytes: c.matchedBytes, marked: c.marked })),
+    // ruling R35: a class's policer counts (R26) are copied after the M13 members, only when present
+    classes: view.classes.map((c) => ({
+      name: c.name,
+      matched: c.matched,
+      matchedBytes: c.matchedBytes,
+      marked: c.marked,
+      ...(c.police !== undefined ? { police: { ...c.police } } : {}),
+    })),
   };
   if (view.queue !== undefined) out.queue = structuredClone(view.queue);
   return out;
@@ -373,7 +389,13 @@ export function buildPortSnapshot(dev: DeviceRuntime, p: PortState, sources: Pic
   if (p.dot1q !== undefined) s.dot1q = { vid: p.dot1q.vid, native: p.dot1q.native };
   // P3 (§2.8, optional by meaning): appended after every P2 member, absent unless there is something to show
   const qos = dev.qosCounters?.(p.id);
-  if (qos !== undefined) s.qos = copyQosView(qos);
+  // [S20] (ruling R32): a scheduler port's held queues come from the link model (`egressQueues`)
+  const queue = typeof sources.links.egressQueues === 'function' ? sources.links.egressQueues({ device: dev.id, port: p.id }) : undefined;
+  if (qos !== undefined || queue !== undefined) {
+    const view = copyQosView(qos ?? { classes: [] });
+    if (view.queue === undefined && queue !== undefined) view.queue = structuredClone(queue);
+    s.qos = view;
+  }
   if (now !== undefined && typeof sources.links.queued === 'function') {
     const backlog = txBacklogOf(sources.links.queued({ device: dev.id, port: p.id }, now));
     if (backlog !== undefined) s.txBacklog = backlog;

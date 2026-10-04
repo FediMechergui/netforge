@@ -25,6 +25,13 @@ vi.mock('comlink', () => ({
   },
   proxy: <T>(x: T) => x,
 }));
+// ARCHITECTURE-P3 ruling R28: `vi.resetModules()` gives each test a fresh worker, but the engine behind it is pure,
+// so it is evaluated once per file and kept: a manual mock that returns the real module is cached apart from the
+// module registry, which `vi.resetModules()` leaves alone. Only the worker's own modules are evaluated again.
+vi.mock('@netforge/engine', async (importOriginal) => await importOriginal());
+// R28: this file imports nothing else that reaches the engine, so it is evaluated here, while the file is collected,
+// and no test pays for it.
+import '@netforge/engine';
 
 const WORKER = '../src/bridge/engine.worker.ts';
 

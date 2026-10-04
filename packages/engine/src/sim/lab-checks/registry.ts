@@ -6,9 +6,9 @@
  * added to the contract without a checker does not compile. It is plain data whose entries read the checker modules
  * at call time (rule 12), so no module is read while this one evaluates. The P1 and P2 checkers (core, switching,
  * routing) are the P2 grader's functions moved verbatim; `neighbor` and `fact` run the data-driven frameworks of
- * facts.ts; the kinds whose checker a later wave item brings — `acl` and `aclDecision` (the W3 acl adapter), [S13]
- * `service`, [S18] `path` and [S20] `traffic` (W5 sim) — fail with the one original detail the W0 stubs gave, until
- * that item replaces the entry (a reviewed edit of this file).
+ * facts.ts; `acl` and `aclDecision` run the W3 acl adapter (sim/lab-checks/acl.ts, a reviewed edit of this file);
+ * the kinds whose checker a later wave item brings — [S13] `service`, [S18] `path` and [S20] `traffic` (W5 sim) — fail
+ * with the one original detail the W0 stubs gave, until that item replaces the entry (a reviewed edit of this file).
  *
  * `runCheck` is the one dispatch: an unknown kind fails with an original detail, any error a checker throws becomes
  * the failing detail (as the closed switch of the P2 grader did), and the envelope is applied. `checkStatic` is the
@@ -36,6 +36,7 @@ import {
   type Check,
   type CloneHost,
 } from './core.js';
+import { checkAcl, checkAclDecision } from './acl.js';
 import { checkFact, checkNeighbor } from './facts.js';
 import { checkFhrp, checkNat, checkRoute } from './routing.js';
 import { checkEtherchannel, checkPortSecurity, checkStp, checkSwitchport, checkVlan } from './switching.js';
@@ -55,8 +56,6 @@ export type CheckerTable = { readonly [K in LabAssertion['kind']]: Checker<K> };
 
 /** @since P3 The details of the kinds whose checker a later wave item brings (the W0 stub texts, unchanged). */
 export const UNAVAILABLE_KIND_DETAILS = {
-  acl: 'Access list checks are not available in this build.',
-  aclDecision: 'Access list decision checks are not available in this build.',
   service: 'Remote login checks are not available in this build.',
   path: 'Path checks are not available in this build.',
   traffic: 'Traffic flow checks are not available in this build.',
@@ -85,8 +84,8 @@ export const CHECKERS = {
   fhrp: (ctx, a) => checkFhrp(ctx.sim, a),
   neighbor: (ctx, a) => checkNeighbor(ctx.sim, a),
   fact: (ctx, a) => checkFact(ctx.sim, a),
-  acl: () => fail(UNAVAILABLE_KIND_DETAILS.acl),
-  aclDecision: () => fail(UNAVAILABLE_KIND_DETAILS.aclDecision),
+  acl: (ctx, a) => checkAcl(ctx.sim, a),
+  aclDecision: (ctx, a) => checkAclDecision(ctx.sim, a),
   service: () => fail(UNAVAILABLE_KIND_DETAILS.service),
   path: () => fail(UNAVAILABLE_KIND_DETAILS.path),
   traffic: () => fail(UNAVAILABLE_KIND_DETAILS.traffic),

@@ -10,16 +10,31 @@
  *
  * Scope: the `vty-client` rows of §2.1 — `routing` and `managed-switch` for the network OS, `host` for the host shell.
  * The target is an address (the `vty.connect` contract carries an `IpAddress`). Help strings are original wording.
+ *
+ * W3 cli (cli-b, §5.8): `show users` and `show ssh` (routers and managed switches, D14) and the `ip ssh` / `telnet` debug
+ * categories.
  */
 import type { CommandSpec } from '../../contracts/cli.js';
 import type { Capability } from '../../contracts/catalog.js';
-import { choiceArg, HOST_ONLY, intArg, ipArg, NFOS_ONLY, wordArg } from './core-exec.js';
+import { choiceArg, debugSpecs, HOST_ONLY, intArg, ipArg, NFOS_ONLY, wordArg, type GrammarDebugCategory } from './core-exec.js';
 
 /** @since P3 [S13] Handler ids of the remote terminal client. Never rename. */
 export const REMOTE_HANDLERS = {
   execTelnet: 'exec.telnet',
   execSsh: 'exec.ssh',
+  // W3 cli (cli-b): the sessions' shows (§5.8; M10 and [S13])
+  showUsers: 'show.users',
+  showSsh: 'show.ssh',
 } as const;
+
+/** @since P3 (W3 cli) [S13] The daemon that serves remote sessions (its StateView lists them for `show users`). */
+export const VTY_PROCESS = 'vty';
+
+/**
+ * @since P3 (W3 cli) Capabilities offered `show users` and `show ssh`: the device-access scope of D14 (routers and
+ * managed switches, the SSH lines' `SSH_CAPABILITIES`).
+ */
+export const SESSION_SHOW_CAPABILITIES: readonly Capability[] = Object.freeze(['routing', 'managed-switch'] as Capability[]);
 
 /** @since P3 [S13] The daemon that owns the client jobs. */
 export const VTY_CLIENT_PROCESS = 'vty-client';
@@ -31,6 +46,22 @@ export const REMOTE_DEPTH_CAP = 4;
 export const REMOTE_CLIENT_CAPABILITIES: readonly Capability[] = Object.freeze(['routing', 'managed-switch'] as Capability[]);
 /** @since P3 [S13] Capabilities whose host shell runs the vty-client (§2.1 rows). */
 export const REMOTE_HOST_CAPABILITIES: readonly Capability[] = Object.freeze(['host'] as Capability[]);
+
+/**
+ * @since P3 (W3 cli) [S13] The debug categories of the remote terminal (§5.8): `ip ssh` and `telnet`, written by vty and
+ * vty-client. Scoped by capability literals like the rest of the P3 grammar: the network OS of the vty rows of §2.1
+ * (the host shell has no `debug`).
+ */
+export const REMOTE_DEBUG_CATEGORIES: readonly GrammarDebugCategory[] = Object.freeze([
+  { category: 'ip ssh', help: 'Trace SSH connections, logins and refusals', requiresAny: REMOTE_CLIENT_CAPABILITIES, since: 'P3' },
+  { category: 'telnet', help: 'Trace Telnet connections, logins and refusals', requiresAny: REMOTE_CLIENT_CAPABILITIES, since: 'P3' },
+]);
+
+/** @since P3 (W3 cli) Objectives of the remote terminal's debug categories. */
+export const REMOTE_DEBUG_OBJECTIVES: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  'ip ssh': ['CCNA3.hardening.1'],
+  telnet: ['CCNA3.hardening.1'],
+});
 
 const H = REMOTE_HANDLERS;
 
@@ -80,4 +111,33 @@ function clientSpecs(shell: 'nfos' | 'host'): CommandSpec[] {
 }
 
 /** @since P3 [S13] The remote terminal client command table (network OS first, then the host shell). */
-export const REMOTE_GRAMMAR: readonly CommandSpec[] = Object.freeze<CommandSpec[]>([...clientSpecs('nfos'), ...clientSpecs('host')]);
+export const REMOTE_GRAMMAR: readonly CommandSpec[] = Object.freeze<CommandSpec[]>([
+  ...clientSpecs('nfos'),
+  ...clientSpecs('host'),
+  // ── W3 cli (cli-b): the sessions' shows and the debug categories (§5.8) ──
+  {
+    path: ['show', 'users'],
+    mode: '@exec',
+    privilege: 1,
+    help: 'Terminal sessions on this device: the console and every remote login',
+    handler: H.showUsers,
+    filterable: true,
+    grammars: NFOS_ONLY,
+    requiresAny: SESSION_SHOW_CAPABILITIES,
+    since: 'P3',
+    objectives: ['CCNA3.hardening.1', 'CCNA3.security.4'],
+  },
+  {
+    path: ['show', 'ssh'],
+    mode: '@exec',
+    privilege: 1,
+    help: 'SSH connections into and out of this device',
+    handler: H.showSsh,
+    filterable: true,
+    grammars: NFOS_ONLY,
+    requiresAny: SESSION_SHOW_CAPABILITIES,
+    since: 'P3',
+    objectives: ['CCNA3.hardening.1'],
+  },
+  ...debugSpecs(REMOTE_DEBUG_CATEGORIES, REMOTE_DEBUG_OBJECTIVES),
+]);

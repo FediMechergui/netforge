@@ -24,6 +24,14 @@
  * each lightweight access point to its controller, filled as far as the join has got, with the controller's own
  * sessions read from the same snapshot. It is redrawn in the style pass only (nothing on it animates).
  *
+ * @since P3 (W3 web-canvas, ARCHITECTURE-P3 §6) Five more layers join through the same registry, each with its own
+ * underlay container (paint order: OSPF, EIGRP, SPF, WAN, QoS, above the P2 ones and below the cables) and its chips
+ * among the labels: the QoS overlay (`qos.ts`: load sleeves, FIFO stacks, [S20] class lanes) from
+ * `topoOverlays.qos`; [S1] OSPF (`ospf.ts`), rebuilt every frame while an interface is Waiting (its draining bar),
+ * its forming chips breathing on wall time; [C1] EIGRP (`eigrp.ts`); [S18]/[S19] WAN (`wan.ts`); and [S3] the SPF
+ * layer (`spf.ts`), which has no toggle: it draws the SPF stepper's frame (`routingUi`) while the link-state browser
+ * is the dock's tab. Every animating layer runs its `animate` every frame (none waits for another to go quiet).
+ *
  * Keyboard bridge: `registerCanvasA11y(api)` is the pinned hook the a11y layer calls to hand the canvas its
  * `focusDevice` / `screenPoint` / `beginCable` functions; it returns the unregister function.
  *
@@ -47,17 +55,35 @@ import { AirLayer, CANVAS_OVERLAY_DEFAULTS, legGeometry } from './air';
 import { CableLayer } from './cables';
 import { CapwapLayer } from './capwap';
 import { DeviceLayer } from './devices';
+import { EigrpLayer } from './eigrp';
 import { attachInteraction, deleteDevice, setDevicePower, type ContextMenuRequest, type InteractionA11y } from './interaction';
 import { L2Layer, untaggedVlanOf } from './l2';
 import { MarkerLayer } from './markers';
+import { OspfLayer, ospfModelNeedsClock } from './ospf';
 import type { DeviceL2, L2OverlayModel } from './overlays/l2-model';
-import { CAPWAP_OVERLAY, STP_OVERLAY, TOPO_OVERLAY_DEFAULTS, VLAN_OVERLAY } from './overlays/registry';
+import type { OspfOverlayModel } from './overlays/ospf-model';
+import {
+  CAPWAP_OVERLAY,
+  EIGRP_OVERLAY,
+  OSPF_OVERLAY,
+  QOS_OVERLAY,
+  SPF_OVERLAY,
+  STP_OVERLAY,
+  TOPO_OVERLAY_DEFAULTS,
+  VLAN_OVERLAY,
+  WAN_OVERLAY,
+  resetQosHistory,
+  type OverlayRoutingInput,
+} from './overlays/registry';
 import type { StpOverlayModel } from './overlays/stp-model';
 import { PacketLayer } from './packets';
 import { computeLayout, deviceBounds, emptyLayout, snapshotReplaced, type Layout, type Position } from './ports';
+import { QosLayer } from './qos';
 import { DEFAULT_METRES_PER_UNIT, RfLayer } from './rf';
 import { Scene, lodFor, textResolutionFor, viewKey } from './scene';
+import { SpfLayer } from './spf';
 import { StpLayer, modelNeedsClock } from './stp';
+import { WanLayer } from './wan';
 import { CanvasOutline } from './a11y/CanvasOutline';
 import './canvas.css';
 
@@ -318,6 +344,12 @@ function runCanvas(scene: Scene, tip: HTMLElement, openMenu: (m: ContextMenuRequ
   const l2 = new L2Layer(scene.topoLayer(VLAN_OVERLAY.id), scene.layers.labels);
   const stp = new StpLayer(scene.topoLayer(STP_OVERLAY.id), scene.layers.labels);
   const capwap = new CapwapLayer(scene.topoLayer(CAPWAP_OVERLAY.id), scene.layers.labels);
+  // P3 topology overlays (W3): the same shape, one underlay container each (registry ids = scene layer ids).
+  const ospf = new OspfLayer(scene.topoLayer(OSPF_OVERLAY.id), scene.layers.labels);
+  const eigrp = new EigrpLayer(scene.topoLayer(EIGRP_OVERLAY.id), scene.layers.labels);
+  const spf = new SpfLayer(scene.topoLayer(SPF_OVERLAY.id), scene.layers.labels);
+  const wan = new WanLayer(scene.topoLayer(WAN_OVERLAY.id), scene.layers.labels);
+  const qos = new QosLayer(scene.topoLayer(QOS_OVERLAY.id), scene.layers.labels);
 
   let layout: Layout = emptyLayout();
   let layoutDirty = true;
@@ -372,8 +404,12 @@ function runCanvas(scene: Scene, tip: HTMLElement, openMenu: (m: ContextMenuRequ
   let lastViewKey = '';
   let lastOverlays: WirelessOverlayState | undefined = initial.overlays;
   let lastTopo: TopoOverlayState | undefined = initial.topoOverlays;
+  let lastRoutingUi = initial.routingUi;
+  let lastRoutingShown = initial.dockTab === 'routing';
+  let lastReduced = scene.reducedMotion;
   let l2Model: L2OverlayModel | null = null;
   let stpModel: StpOverlayModel | null = null;
+  let ospfModel: OspfOverlayModel | null = null;
   // the VLAN overlay's per-device ends of the current snapshot (untagged-leg colouring), rebuilt per snapshot
   let l2Ends: { snap: SimSnapshot; ends: ReadonlyMap<DeviceId, DeviceL2> } | null = null;
   let lastFocus = initial.a11y.canvasFocus;
@@ -450,6 +486,8 @@ function runCanvas(scene: Scene, tip: HTMLElement, openMenu: (m: ContextMenuRequ
     if (st.epoch !== lastEpoch) {
       lastEpoch = st.epoch;
       markers.clearBursts();
+      // P3: a new world's load sleeves never compare with the old world's counters
+      resetQosHistory();
     }
 
     const snap = st.snapshot;
@@ -521,6 +559,10 @@ function runCanvas(scene: Scene, tip: HTMLElement, openMenu: (m: ContextMenuRequ
     const sampleWall = scene.reducedMotion ? Math.floor(wall / REDUCED_MOTION_SAMPLE_MS) * REDUCED_MOTION_SAMPLE_MS : wall;
     const now = extrapolatedNow(st, Math.max(st.nowWall, sampleWall));
     const cableGeometry = (id: Parameters<typeof cables.geometry>[0]) => cables.geometry(id);
+    // [S3] the SPF layer follows the stepper while the link-state browser is the dock's tab
+    const routingShown = st.dockTab === 'routing';
+    const routing: OverlayRoutingInput = { ui: st.routingUi, shown: routingShown };
+    const reducedMotion = scene.reducedMotion;
     if (
       styleDirty ||
       st.selection !== lastSelection ||
@@ -531,7 +573,10 @@ function runCanvas(scene: Scene, tip: HTMLElement, openMenu: (m: ContextMenuRequ
       res !== lastRes ||
       lod !== lastLod ||
       overlays !== lastOverlays ||
-      topo !== lastTopo
+      topo !== lastTopo ||
+      st.routingUi !== lastRoutingUi ||
+      routingShown !== lastRoutingShown ||
+      reducedMotion !== lastReduced
     ) {
       styleDirty = false;
       lastSelection = st.selection;
@@ -543,6 +588,9 @@ function runCanvas(scene: Scene, tip: HTMLElement, openMenu: (m: ContextMenuRequ
       lastLod = lod;
       lastOverlays = overlays;
       lastTopo = topo;
+      lastRoutingUi = st.routingUi;
+      lastRoutingShown = routingShown;
+      lastReduced = reducedMotion;
       const theme = scene.theme;
       const metresPerUnit = snap?.media?.metresPerUnit ?? DEFAULT_METRES_PER_UNIT;
       rf.sync({
@@ -602,17 +650,39 @@ function runCanvas(scene: Scene, tip: HTMLElement, openMenu: (m: ContextMenuRequ
         selection: st.selection,
         hover: st.hover,
       });
+      // P3 (W3): OSPF, EIGRP, SPF, WAN and QoS, from the same registry (null when off)
+      const input = { state: topo, snapshot: snap, now, reducedMotion, routing };
+      ospfModel = OSPF_OVERLAY.sync(input);
+      ospf.sync({ model: ospfModel, layout, theme, zoom, lod, view, textResolution: res, wall, cableGeometry });
+      eigrp.sync({ model: EIGRP_OVERLAY.sync(input), layout, theme, zoom, lod, view, textResolution: res, wall, cableGeometry });
+      spf.sync({ model: SPF_OVERLAY.sync(input), layout, theme, zoom, lod, view, textResolution: res, cableGeometry });
+      wan.sync({ model: WAN_OVERLAY.sync(input), layout, theme, zoom, lod, view, textResolution: res, wall, cableGeometry });
+      qos.sync({ model: QOS_OVERLAY.sync(input), layout, theme, zoom, lod, view, textResolution: res, cableGeometry });
       interaction.refresh();
       scene.dirty = true;
-    } else if (stpModel !== null && modelNeedsClock(stpModel)) {
-      // a forward-delay phase is running somewhere: the draining bars follow the sim clock
-      stpModel = STP_OVERLAY.sync({ state: topo, snapshot: snap, now });
-      stp.sync({ model: stpModel, layout, theme: scene.theme, zoom, lod, view, textResolution: res, wall, cableGeometry });
-      scene.dirty = true;
+    } else {
+      // a timed phase is running somewhere: the draining bars follow the sim clock
+      if (stpModel !== null && modelNeedsClock(stpModel)) {
+        stpModel = STP_OVERLAY.sync({ state: topo, snapshot: snap, now });
+        stp.sync({ model: stpModel, layout, theme: scene.theme, zoom, lod, view, textResolution: res, wall, cableGeometry });
+        scene.dirty = true;
+      }
+      if (ospfModel !== null && ospfModelNeedsClock(ospfModel)) {
+        ospfModel = OSPF_OVERLAY.sync({ state: topo, snapshot: snap, now, reducedMotion, routing });
+        ospf.sync({ model: ospfModel, layout, theme: scene.theme, zoom, lod, view, textResolution: res, wall, cableGeometry });
+        scene.dirty = true;
+      }
     }
 
     const animating = devices.animate(wall, scene.reducedMotion);
-    const overlayAnimating = l2.animate(wall, scene.reducedMotion, scene.theme) || stp.animate(wall, scene.reducedMotion, scene.theme);
+    // every layer animates every frame (an `||` chain would starve the later ones while an earlier one pulses)
+    const overlayAnimating = [
+      l2.animate(wall, scene.reducedMotion, scene.theme),
+      stp.animate(wall, scene.reducedMotion, scene.theme),
+      ospf.animate(wall, scene.reducedMotion, scene.theme),
+      eigrp.animate(wall, scene.reducedMotion, scene.theme),
+      wan.animate(wall, scene.reducedMotion, scene.theme),
+    ].some(Boolean);
     const selectedPdu = st.selection?.kind === 'pdu' ? st.selection.id : null;
 
     if (topo.vlan && snap !== null && (l2Ends === null || l2Ends.snap !== snap)) l2Ends = { snap, ends: VLAN_OVERLAY.select(snap) };
@@ -630,6 +700,9 @@ function runCanvas(scene: Scene, tip: HTMLElement, openMenu: (m: ContextMenuRequ
       colourByFlow: st.colourByFlow,
       selectedPdu,
       trails: !scene.reducedMotion,
+      // P3 (R42): the IPsec legs' pulse runs on wall time, static under reduced motion
+      wall,
+      reducedMotion: scene.reducedMotion,
       showBackground: overlays.backgroundFrames,
       vlanColours: topo.vlan,
       untaggedVlan: ends === null ? undefined : (from) => untaggedVlanOf(ends, from),
@@ -671,6 +744,11 @@ function runCanvas(scene: Scene, tip: HTMLElement, openMenu: (m: ContextMenuRequ
     l2.destroy();
     stp.destroy();
     capwap.destroy();
+    ospf.destroy();
+    eigrp.destroy();
+    spf.destroy();
+    wan.destroy();
+    qos.destroy();
     air.destroy();
     rf.destroy();
     cables.destroy();

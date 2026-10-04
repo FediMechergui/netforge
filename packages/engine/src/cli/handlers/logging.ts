@@ -15,14 +15,18 @@
  *                                    log|debug`
  *   exec.terminal-monitor            `terminal monitor` / `terminal no monitor` (a session flag, never stored)
  *   host.service-syslog              `service syslog on|off` → `syslog-server enable` / its removal
+ *   show.logging                     (W3 cli) `show logging`: the logger StateView (`LoggerStateView`, R25)
+ *   exec.clear-logging               (W3 cli) `clear logging` → the logger's `ext.logging.clear` request
  *
  * A level is stored as its keyword (`logging trap 4` → `logging trap warnings`). The logger and the syslog server read
  * these lines; the console and monitor printing reads them through cli/log-render.ts (the logger's renderer, D20).
  * Messages are original wording.
  */
-import type { CommandHandler } from '../../contracts/cli.js';
+import type { CommandCtx, CommandHandler } from '../../contracts/cli.js';
+import type { LoggerOutputView, LoggerStateView, ProcessRequest } from '../../contracts/process.js';
 import {
   LOG_LEVEL_NAMES,
+  LOGGER_PROCESS,
   LOGGING_HANDLERS,
   LOGGING_HOST_FORM_ARG,
   MONITOR_STATE_ARG,
@@ -134,6 +138,79 @@ const serviceSyslog: CommandHandler = (ctx, args) => {
   return { output: on ? 'Syslog receiver started.' : 'Syslog receiver stopped.' };
 };
 
+// ── W3 cli (cli-b): `show logging` / `clear logging` (§5.8, D20) ──────────────────────────────────────────────────
+
+/** @since P3 (W3 cli) [S24] `show logging` / `clear logging` on a device that runs no logger. */
+export const MSG_NO_LOGGER = '% This device keeps no log buffer.';
+
+/**
+ * @since P3 (W3 cli) [S24] The request `clear logging` sends to the logger: the brief gives the command (§5.8) but the
+ * contract no built-in request kind, so it travels in the `ext.` extension slot of `ProcessRequest` (no contract change):
+ * the logger empties its buffer (the lines and the used bytes) and keeps its counters.
+ */
+export const LOGGING_CLEAR_REQUEST = 'ext.logging.clear';
+
+/** @since P3 (W3 cli) [S24] The logger StateView (`LoggerStateView`, ruling R25), or undefined where no logger runs. */
+export function loggerStateView(ctx: Pick<CommandCtx, 'processState'>): LoggerStateView | undefined {
+  const sv = ctx.processState(LOGGER_PROCESS);
+  return sv === undefined ? undefined : (sv.state as unknown as LoggerStateView);
+}
+
+/** A severity as `show logging` prints it: `debugging (7)`. */
+export function levelText(level: number): string {
+  return `${LOG_LEVEL_NAMES[level] ?? 'level'} (${level})`;
+}
+
+/** An output's switch and level: `on, level warnings (4)` / `off`. */
+function outputText(o: LoggerOutputView): string {
+  return o.enabled ? `on, level ${levelText(o.level)}` : 'off';
+}
+
+/** A syslog facility number as its keyword (`local7` for 23). */
+export function facilityText(n: number): string {
+  return n >= 16 && n <= 23 ? `local${n - 16}` : String(n);
+}
+
+/**
+ * `show logging` (§5.8, D20): the buffer, console, monitor and [S25] syslog settings with their levels, the timestamp
+ * forms, the counters, then the buffered lines as the logger rendered them, oldest first.
+ */
+const showLogging: CommandHandler = (ctx) => {
+  const v = loggerStateView(ctx);
+  if (v === undefined) return { error: MSG_NO_LOGGER };
+  const lines = [
+    `Buffer logging: ${outputText(v.buffered)}${v.buffered.enabled ? `, ${v.buffered.sizeBytes} bytes (${v.buffered.usedBytes} used)` : ''}`,
+    `Console logging: ${outputText(v.console)}`,
+    `Monitor logging: ${outputText(v.monitor)}`,
+  ];
+  const s = v.syslog;
+  if (s === undefined) {
+    lines.push('Syslog logging: off (no logging host)');
+  } else {
+    lines.push(`Syslog logging: level ${levelText(s.trap)}, facility ${facilityText(s.facility)}, ${s.sent} message${s.sent === 1 ? '' : 's'} sent`);
+    for (const h of s.hosts) lines.push(`  Host ${h.address}: ${h.sent} message${h.sent === 1 ? '' : 's'} sent`);
+  }
+  lines.push(`Timestamps: log ${v.timestamps.log ?? 'not set'}, debug ${v.timestamps.debug ?? 'not set'}`);
+  const c = v.counts;
+  lines.push(`Messages: ${c.seen} logged, ${c.buffered} buffered, ${c.filtered} not buffered (level or buffer off), ${c.overflowed} pushed out of a full buffer`);
+  lines.push('');
+  if (v.entries.length === 0) {
+    lines.push('Log buffer: empty');
+  } else {
+    lines.push(`Log buffer (${v.entries.length} line${v.entries.length === 1 ? '' : 's'}, oldest first):`);
+    for (const e of v.entries) lines.push(e.text);
+  }
+  return { output: lines.join('\n') };
+};
+
+/** `clear logging`: the logger empties its buffer (`LOGGING_CLEAR_REQUEST`). */
+const clearLogging: CommandHandler = (ctx) => {
+  if (!ctx.model.processes.includes(LOGGER_PROCESS)) return { error: MSG_NO_LOGGER };
+  const req: ProcessRequest = { kind: LOGGING_CLEAR_REQUEST, session: ctx.session.id };
+  ctx.request(LOGGER_PROCESS, req);
+  return {};
+};
+
 /** @since P3 [S24]/[S25] Registry fragment: logging handler id → handler. */
 export const loggingHandlers: Readonly<Record<string, CommandHandler>> = {
   [LOGGING_HANDLERS.configLoggingBuffered]: levelLine('buffered'),
@@ -146,4 +223,6 @@ export const loggingHandlers: Readonly<Record<string, CommandHandler>> = {
   [LOGGING_HANDLERS.configServiceTimestamps]: serviceTimestamps,
   [LOGGING_HANDLERS.execTerminalMonitor]: terminalMonitor,
   [LOGGING_HANDLERS.hostServiceSyslog]: serviceSyslog,
+  [LOGGING_HANDLERS.showLogging]: showLogging,
+  [LOGGING_HANDLERS.execClearLogging]: clearLogging,
 };

@@ -19,15 +19,21 @@
  * A failing `exists` names the first neighbour found in the wrong state or role, so the learner sees what is there.
  *
  * Facts (`fact` kind, FACT_READERS). Each fact name has a reader with a declared value type ('string', 'number',
- * 'boolean' or 'address') and the table or configuration it reads (rule 20). `equals` compares by text for strings,
- * numbers and booleans (`true` matches 'true', 10 matches '10'); an 'address' fact compares against a device NAME
- * through the identities, or against a literal address. `atLeast` / `atMost` bound a 'number' fact. With none of the
- * three the fact must simply be present.
+ * 'boolean', 'address' or 'port') and the table or configuration it reads (rule 20). `equals` compares by text for
+ * strings, numbers and booleans (`true` matches 'true', 10 matches '10'); an 'address' fact compares against a device
+ * NAME through the identities, or against a literal address; a 'port' fact (an interface of the graded device, read as
+ * its canonical name) compares against an interface name the device resolves in either form (`Fa0/1` matches
+ * `FastEthernet0/1`, as the `table` kind compares port columns), and a name the device does not have fails with the
+ * usual detail. `atLeast` / `atMost` bound a 'number' fact. With none of the three the fact must simply be present.
  *
- * W1 state: the frameworks are complete; every protocol source, every fact reader and the router-id identity sources
- * are `undefined` ("not available in this build", one original detail each). Each W3 area adapter
- * (`sim/lab-checks/<area>.ts`, owned by the area, §7) fills its entries here as a reviewed edit: the entry becomes
- * `{…, read: (…) => areaReader(…)}`, whose call-time read of the adapter module keeps rule 12.
+ * The area adapters (W3, §7; rule 18: each `sim/lab-checks/<area>.ts` is owned by the area that knows the feature)
+ * export their entries as `<AREA>_FACT_READERS`, `<AREA>_NEIGHBOR_SOURCES` and `<AREA>_IDENTITY_SOURCES`
+ * (Partial records): ospf.ts, acl.ts, hardening.ts, qos.ts and [C1] eigrp.ts (grader part A); discovery.ts, time.ts,
+ * automation.ts and wan.ts (grader part B). FACT_AREAS, NEIGHBOR_AREAS and the two router-id rows of IDENTITY_SOURCES
+ * say, exhaustively by type, which adapter holds each entry. The registries are built of getters that read the adapter
+ * module only when an entry is read (`lazyEntries`), so no adapter module is read while this module evaluates (rule
+ * 12), whatever order the modules load in; an adapter imports only types from here. An entry its adapter leaves out
+ * reads `undefined` and fails with the "not available in this build" detail.
  *
  * Nothing here draws randomness, advances time or emits trace: readers are plain reads of tables and configuration.
  */
@@ -40,8 +46,29 @@ import type { Simulation } from '../../contracts/simulation.js';
 import type { TableName } from '../../contracts/tables.js';
 import { normalizeIpv6 } from '../../core/addr6.js';
 import { PASS, deviceNamed, fail, noDevice, noPort, portNamed, sameValue, type Check } from './core.js';
+import { ACL_FACT_READERS } from './acl.js';
+import { AUTOMATION_FACT_READERS } from './automation.js';
+import { DISCOVERY_FACT_READERS, DISCOVERY_NEIGHBOR_SOURCES } from './discovery.js';
+import { EIGRP_FACT_READERS, EIGRP_IDENTITY_SOURCES, EIGRP_NEIGHBOR_SOURCES } from './eigrp.js';
+import { HARDENING_FACT_READERS } from './hardening.js';
+import { OSPF_FACT_READERS, OSPF_IDENTITY_SOURCES, OSPF_NEIGHBOR_SOURCES } from './ospf.js';
+import { QOS_FACT_READERS } from './qos.js';
+import { TIME_FACT_READERS } from './time.js';
+import { WAN_FACT_READERS, WAN_NEIGHBOR_SOURCES } from './wan.js';
 
 const hasOwn = (o: object, k: string): boolean => Object.prototype.hasOwnProperty.call(o, k);
+
+/**
+ * A frozen record whose every key reads its value from the adapter table `areas[key]()` returns, at the moment the key
+ * is read (file header: rule 12). Building it calls no thunk.
+ */
+function lazyEntries<K extends string, V>(areas: { readonly [k in K]: () => Partial<Record<K, V>> }): { readonly [k in K]: V | undefined } {
+  const out = {} as { [k in K]: V | undefined };
+  for (const key of Object.keys(areas) as K[]) {
+    Object.defineProperty(out, key, { enumerable: true, get: () => areas[key]()[key] });
+  }
+  return Object.freeze(out);
+}
 
 // ── identities ───────────────────────────────────────────────────────────────
 
@@ -70,16 +97,21 @@ function macsOf(dev: DeviceRuntime): string[] {
 }
 
 /**
- * @since P3 D5 IDENTITY_SOURCES. `undefined` = not available in this build: W3 ospf fills `ospf` (the `routerId` of the
- * device's ospf-interfaces rows), W3 eigrp [C1] fills `eigrp`.
+ * @since P3 D5 IDENTITY_SOURCES: the three every device has, and the router ids of the W3 adapters, read at call time
+ * (file header): `ospf` the `routerId` column of the device's ospf-interfaces rows (sim/lab-checks/ospf.ts), [C1]
+ * `eigrp` the configured `eigrp router-id` (sim/lab-checks/eigrp.ts).
  */
-export const IDENTITY_SOURCES: { readonly [N in IdentitySourceName]: IdentitySource | undefined } = {
-  name: { source: 'the topology name and the configured hostname', read: (dev) => [dev.spec.name, dev.hostname] },
+export const IDENTITY_SOURCES: { readonly [N in IdentitySourceName]: IdentitySource | undefined } = Object.freeze({
+  name: { source: 'the topology name and the configured hostname', read: (dev: DeviceRuntime) => [dev.spec.name, dev.hostname] },
   address: { source: 'the interface addresses', read: addressesOf },
   mac: { source: 'the base MAC and the port MACs', read: macsOf },
-  ospf: undefined,
-  eigrp: undefined,
-};
+  get ospf(): IdentitySource | undefined {
+    return OSPF_IDENTITY_SOURCES.ospf;
+  },
+  get eigrp(): IdentitySource | undefined {
+    return EIGRP_IDENTITY_SOURCES.eigrp;
+  },
+});
 
 /** @since P3 The comparison key of an identity: `mac:…`, `ip:…` (IPv4), `ip6:…` (IPv6) in canonical form, else `name:…`. */
 export function identityKey(text: string): string {
@@ -155,17 +187,20 @@ export const NEIGHBOR_PROTOCOL_LABELS: { readonly [P in NeighborProtocol]: strin
 };
 
 /**
- * @since P3 D5 NEIGHBOR_SOURCES. `undefined` = not available in this build: W3 ospf (`ospf-neighbors`), disc (`cdp` and
+ * @since P3 Which adapter holds each neighbour protocol's source (file header): ospf (`ospf-neighbors`), disc (`cdp` and
  * `lldp`: `cdp-neighbours`, `lldp-neighbours`), wan [S19] (`ppp`: the `ppp` rows, state = the LCP state) and eigrp [C1]
- * (`eigrp-neighbors`, state 'up') fill their entries.
+ * (`eigrp-neighbors`, state 'up').
  */
-export const NEIGHBOR_SOURCES: { readonly [P in NeighborProtocol]: NeighborSource | undefined } = {
-  ospf: undefined,
-  cdp: undefined,
-  lldp: undefined,
-  ppp: undefined,
-  eigrp: undefined,
-};
+export const NEIGHBOR_AREAS: { readonly [P in NeighborProtocol]: () => Partial<Record<NeighborProtocol, NeighborSource>> } = Object.freeze({
+  ospf: () => OSPF_NEIGHBOR_SOURCES,
+  cdp: () => DISCOVERY_NEIGHBOR_SOURCES,
+  lldp: () => DISCOVERY_NEIGHBOR_SOURCES,
+  ppp: () => WAN_NEIGHBOR_SOURCES,
+  eigrp: () => EIGRP_NEIGHBOR_SOURCES,
+});
+
+/** @since P3 D5 NEIGHBOR_SOURCES, exhaustive over NeighborProtocol, each entry read from its adapter at call time. */
+export const NEIGHBOR_SOURCES: { readonly [P in NeighborProtocol]: NeighborSource | undefined } = lazyEntries(NEIGHBOR_AREAS);
 
 /** The detail of a neighbour protocol whose source a later wave item brings. */
 export function neighborUnavailableDetail(protocol: NeighborProtocol): string {
@@ -248,8 +283,11 @@ export function checkNeighbor(
 
 // ── facts ────────────────────────────────────────────────────────────────────
 
-/** @since P3 The declared value type of a fact (a lint can check every lab's `equals` against it). */
-export type FactType = 'string' | 'number' | 'boolean' | 'address';
+/**
+ * @since P3 The declared value type of a fact (a lint can check every lab's `equals` against it). 'port' (W3): an
+ * interface of the graded device, compared through its port names (file header).
+ */
+export type FactType = 'string' | 'number' | 'boolean' | 'address' | 'port';
 
 /** @since P3 A fact's value. */
 export type FactValue = string | number | boolean;
@@ -275,56 +313,59 @@ export interface FactReader {
 }
 
 /**
- * @since P3 D5 FACT_READERS, exhaustive over LabFactName. `undefined` = not available in this build; each W3 area
- * adapter fills its facts (the sources are named in contracts/scenario.ts `LabFactName`).
+ * @since P3 Which adapter holds each fact's reader, exhaustive by type (file header; the sources are named in
+ * contracts/scenario.ts `LabFactName` and in each adapter's header).
  */
-export const FACT_READERS: { readonly [F in LabFactName]: FactReader | undefined } = {
-  'ospf.routerId': undefined,
-  'ospf.referenceBandwidthMbps': undefined,
-  'ospf.defaultOriginate': undefined,
-  'ospf.ifaceArea': undefined,
-  'ospf.ifaceCost': undefined,
-  'ospf.ifaceNetworkType': undefined,
-  'ospf.ifaceState': undefined,
-  'ospf.ifacePriority': undefined,
-  'ospf.passive': undefined,
-  'ospf.lsdbSynced': undefined,
-  'snooping.enabled': undefined,
-  'dai.enabled': undefined,
-  'dai.dropped': undefined,
-  'snooping.trusted': undefined,
-  'dai.trusted': undefined,
-  'snooping.bindingPort': undefined,
-  'ssh.enabled': undefined,
-  'ssh.version': undefined,
-  'ssh.keyBits': undefined,
-  'vty.transport': undefined,
-  'vty.loginLocal': undefined,
-  'vty.accessClass': undefined,
-  'qos.inputPolicy': undefined,
-  'qos.outputPolicy': undefined,
-  'cdp.enabled': undefined,
-  'lldp.enabled': undefined,
-  'ntp.synced': undefined,
-  'ntp.peer': undefined,
-  'ntp.stratum': undefined,
-  'clock.source': undefined,
-  'clock.offsetMs': undefined,
-  'vty.logins': undefined,
-  'tunnel.up': undefined,
-  'ppp.lcp': undefined,
-  'ppp.ipcp': undefined,
-  'ppp.auth': undefined,
-  'qos.admitted': undefined,
-  'logging.buffered': undefined,
-  'logging.trap': undefined,
-  'automation.lastRun': undefined,
-  'eigrp.fd': undefined,
-  'eigrp.successor': undefined,
-  'eigrp.feasibleSuccessor': undefined,
-  'eigrp.kValues': undefined,
-  'ipsec.sa': undefined,
-};
+export const FACT_AREAS: { readonly [F in LabFactName]: () => Partial<Record<LabFactName, FactReader>> } = Object.freeze({
+  'ospf.routerId': () => OSPF_FACT_READERS,
+  'ospf.referenceBandwidthMbps': () => OSPF_FACT_READERS,
+  'ospf.defaultOriginate': () => OSPF_FACT_READERS,
+  'ospf.ifaceArea': () => OSPF_FACT_READERS,
+  'ospf.ifaceCost': () => OSPF_FACT_READERS,
+  'ospf.ifaceNetworkType': () => OSPF_FACT_READERS,
+  'ospf.ifaceState': () => OSPF_FACT_READERS,
+  'ospf.ifacePriority': () => OSPF_FACT_READERS,
+  'ospf.passive': () => OSPF_FACT_READERS,
+  'ospf.lsdbSynced': () => OSPF_FACT_READERS,
+  'snooping.enabled': () => HARDENING_FACT_READERS,
+  'dai.enabled': () => HARDENING_FACT_READERS,
+  'dai.dropped': () => HARDENING_FACT_READERS,
+  'snooping.trusted': () => HARDENING_FACT_READERS,
+  'dai.trusted': () => HARDENING_FACT_READERS,
+  'snooping.bindingPort': () => HARDENING_FACT_READERS,
+  'ssh.enabled': () => HARDENING_FACT_READERS,
+  'ssh.version': () => HARDENING_FACT_READERS,
+  'ssh.keyBits': () => HARDENING_FACT_READERS,
+  'vty.transport': () => HARDENING_FACT_READERS,
+  'vty.loginLocal': () => HARDENING_FACT_READERS,
+  'vty.accessClass': () => HARDENING_FACT_READERS,
+  'qos.inputPolicy': () => QOS_FACT_READERS,
+  'qos.outputPolicy': () => QOS_FACT_READERS,
+  'cdp.enabled': () => DISCOVERY_FACT_READERS,
+  'lldp.enabled': () => DISCOVERY_FACT_READERS,
+  'ntp.synced': () => TIME_FACT_READERS,
+  'ntp.peer': () => TIME_FACT_READERS,
+  'ntp.stratum': () => TIME_FACT_READERS,
+  'clock.source': () => TIME_FACT_READERS,
+  'clock.offsetMs': () => TIME_FACT_READERS,
+  'vty.logins': () => ACL_FACT_READERS,
+  'tunnel.up': () => WAN_FACT_READERS,
+  'ppp.lcp': () => WAN_FACT_READERS,
+  'ppp.ipcp': () => WAN_FACT_READERS,
+  'ppp.auth': () => WAN_FACT_READERS,
+  'qos.admitted': () => QOS_FACT_READERS,
+  'logging.buffered': () => TIME_FACT_READERS,
+  'logging.trap': () => TIME_FACT_READERS,
+  'automation.lastRun': () => AUTOMATION_FACT_READERS,
+  'eigrp.fd': () => EIGRP_FACT_READERS,
+  'eigrp.successor': () => EIGRP_FACT_READERS,
+  'eigrp.feasibleSuccessor': () => EIGRP_FACT_READERS,
+  'eigrp.kValues': () => EIGRP_FACT_READERS,
+  'ipsec.sa': () => WAN_FACT_READERS,
+});
+
+/** @since P3 D5 FACT_READERS, exhaustive over LabFactName, each entry read from its adapter at call time. */
+export const FACT_READERS: { readonly [F in LabFactName]: FactReader | undefined } = lazyEntries(FACT_AREAS);
 
 /** The detail of a fact whose reader a later wave item brings. */
 export function factUnavailableDetail(fact: LabFactName): string {
@@ -334,14 +375,23 @@ export function factUnavailableDetail(fact: LabFactName): string {
 /** A value for a detail: `not set` when absent. */
 const valueText = (v: FactValue | undefined): string => (v === undefined ? 'not set' : String(v));
 
-/** Does `value` (of `type`) equal what the author wrote? An 'address' compares through the identities. */
+/**
+ * Does `value` (of `type`) equal what the author wrote? An 'address' compares through the identities, a 'port' through
+ * the port names of `dev`.
+ */
 function factEquals(
   sim: Simulation,
+  dev: DeviceRuntime,
   type: FactType,
   value: FactValue | undefined,
   want: FactValue,
   identities: { readonly [N in IdentitySourceName]: IdentitySource | undefined },
 ): { readonly pass: boolean } | { readonly problem: Check } {
+  if (type === 'port') {
+    const port = portNamed(dev, String(want).trim());
+    if (port === undefined) return { problem: noPort(dev.spec.name, String(want)) };
+    return { pass: value !== undefined && port.id === String(value) };
+  }
   if (value === undefined) return { pass: false };
   if (type !== 'address') return { pass: sameValue(value, want) };
   const target = identityTarget(sim, String(want), identities);
@@ -376,7 +426,7 @@ export function checkFact(
   const expected: string[] = [];
   let pass = true;
   if (a.equals !== undefined) {
-    const r = factEquals(sim, reader.type, value, a.equals, identities);
+    const r = factEquals(sim, dev, reader.type, value, a.equals, identities);
     if ('problem' in r) return r.problem;
     if (!r.pass) pass = false;
     expected.push(String(a.equals));

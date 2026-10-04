@@ -18,7 +18,7 @@ import {
   VLAN_SELECTOR_MENU,
   vlanChoices,
 } from '../src/app/TopBar';
-import { OVERLAY_MODULES, TOPO_OVERLAY_DEFAULTS } from '../src/canvas/overlays/registry';
+import { SWITCHING_OVERLAY_MODULES, TOPO_OVERLAY_DEFAULTS } from '../src/canvas/overlays/registry';
 import {
   DEFAULT_TOPO_OVERLAYS,
   VLAN_ID_MAX,
@@ -211,9 +211,9 @@ describe('persistence', () => {
 
 describe('the "Switching overlays" menu model', () => {
   it('lists one toggle per registered overlay, in registry order, with stable ids', () => {
-    expect(TOPO_OVERLAY_MENU.map((m) => m.key)).toEqual(OVERLAY_MODULES.map((m) => m.toggle));
+    expect(TOPO_OVERLAY_MENU.map((m) => m.key)).toEqual(SWITCHING_OVERLAY_MODULES.map((m) => m.toggle));
     expect(TOPO_OVERLAY_MENU.map((m) => m.id)).toEqual(['topo-overlay-vlan', 'topo-overlay-stp', 'topo-overlay-capwap']);
-    expect(TOPO_OVERLAY_MENU.map((m) => m.label)).toEqual(OVERLAY_MODULES.map((m) => m.label));
+    expect(TOPO_OVERLAY_MENU.map((m) => m.label)).toEqual(SWITCHING_OVERLAY_MODULES.map((m) => m.label));
     expect(new Set(TOPO_OVERLAY_MENU.map((m) => m.id)).size).toBe(TOPO_OVERLAY_MENU.length);
     expect(Object.isFrozen(TOPO_OVERLAY_MENU)).toBe(true);
   });

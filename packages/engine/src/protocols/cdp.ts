@@ -38,7 +38,8 @@
  *
  * `stateSnapshot()` (display only, rule 20; read by the W3 `show cdp`, `show cdp interface`, `show cdp traffic`):
  * `{ process: 'cdp', state: { running, timerS, holdtimeS, advertiseV2, disabled: [ports with no cdp enable,
- * ascending], nextTxAt?, sent, received, errors } }`.
+ * ascending], nextTxAt?, sent, received, errors } }`. `clear cdp counters` sends `cdp.clearCounters` (ruling R39, the
+ * W3 fix step): the three counters start again from zero, silently; the rows stay.
  */
 import type { MacAddress } from '../contracts/addr.js';
 import { ROLE_TRAITS, defaultRoleFor, profileIncludes, type DefaultsProfile, type PortRole } from '../contracts/catalog.js';
@@ -47,7 +48,7 @@ import type { DeviceModel } from '../contracts/device.js';
 import type { PortId } from '../contracts/ids.js';
 import { NF_L2_CONTROL_MAC, NF_OUI, NF_PID_CDP, type FieldValue, type LayerSpec, type Pdu } from '../contracts/pdu.js';
 import type { PortView } from '../contracts/port.js';
-import type { Action, DebugEvent, Process, ProcessCtx, StateView } from '../contracts/process.js';
+import type { Action, DebugEvent, Process, ProcessCtx, ProcessRequest, StateView } from '../contracts/process.js';
 import type { CdpNeighbourRow, DtpRow, Table, TableRow } from '../contracts/tables.js';
 import { SEC, type SimTime } from '../contracts/time.js';
 import { operOf } from './l2/membership.js';
@@ -462,6 +463,16 @@ class CdpDaemon implements Process {
     const actions: Action[] = [this.advertise(ctx, port)];
     if (this.nextTxAt === undefined) actions.push(...this.armTx(ctx));
     return actions;
+  }
+
+  /** Ruling R39: `clear cdp counters` (`cdp.clearCounters`) zeroes the announcement counters; silent, rows kept. */
+  onRequest(_ctx: ProcessCtx, req: ProcessRequest): Action[] {
+    if (req.kind === 'cdp.clearCounters') {
+      this.sent = 0;
+      this.received = 0;
+      this.errors = 0;
+    }
+    return [];
   }
 
   stateSnapshot(): StateView {

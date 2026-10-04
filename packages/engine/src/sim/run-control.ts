@@ -312,6 +312,9 @@ export function createRunControl(host: RunLoopHost): RunControl {
         if (step() === undefined) break;
         events++;
       }
+      // P3 (ruling R40, R31's engine half): the cap stopped the run only when non-periodic work is still pending after
+      // `maxEvents` dispatches; a run that reached idle on exactly its last allowed event is not capped. Not traced.
+      if (events >= maxEvents && host.scheduler().nonPeriodic > 0) return { events, from, to: host.scheduler().now, stopped: 'maxEvents' };
       return { events, from, to: host.scheduler().now };
     },
     nextEventTime: () => host.scheduler().peekTime(),

@@ -15,10 +15,26 @@
  * ponytail: both grammars are built because §6 names both line forms, but the host shell has no expansion for
  * `ip host` or `ip dhcp excluded-address`, so those two forms are shown only where they can be written; the
  * address service keeps ONE pool (`SERVICE_POOL_NAME` on the host shell), which is what a one-subnet lab needs.
+ *
+ * P3 (ARCHITECTURE-P3 §5.5, §5.7, §5.9 "Services panel", D19, D20; §7 W3 web-inspector): two more sections, each shown
+ * only when the device runs the daemon. **Time service** (M15, `ntp`): on/off writes `service ntp on|off` (the host
+ * shell's expansion of `ntp master 1` and its removal; on nfos the `ntp master` lines themselves), with the stratum
+ * served and the clients answered (the ntp StateView's `master` and `served`). **Syslog** ([S25], `syslog-server`):
+ * on/off writes `service syslog on|off` (`syslog-server enable`), and the received messages (`syslog-messages` rows)
+ * fill a table filtered by severity — each severity as its number and name, the received stamp beside the message's
+ * own stamp, newest first.
  */
 import { useId, useState } from 'react';
-import { DNS_DEFAULT_TTL_S, DNS_RECORD_TYPES, SERVICE_POOL_NAME, walkConfigText } from '@netforge/engine';
-import type { CliGrammar, DeviceSnapshot } from '@netforge/engine';
+import {
+  DNS_DEFAULT_TTL_S,
+  DNS_RECORD_TYPES,
+  NTP_MASTER_DEFAULT_STRATUM,
+  SERVICE_POOL_NAME,
+  SYSLOG_FACILITY_NAMES,
+  SYSLOG_SEVERITY_NAMES,
+  walkConfigText,
+} from '@netforge/engine';
+import type { CliGrammar, DeviceSnapshot, SyslogMessageRow } from '@netforge/engine';
 import { engine } from '../bridge/client';
 import { PANEL_CONFIGURE_OPTIONS } from '../gui/commands';
 import type { CommandPlan, FieldSpan, PlanLine, Token } from '../gui/commands';
@@ -321,6 +337,118 @@ export function validateExcluded(form: ExcludedForm): FormErrors {
   return errors;
 }
 
+// ── P3: the time service (M15) and the syslog server ([S25]) ─────────────────
+
+/** @since P3 Names of the two P3 services in the panel. */
+export const NTP_SERVICE_LABEL = 'Time service (NTP)';
+export const SYSLOG_SERVICE_LABEL = 'Syslog server';
+
+/** @since P3 The stratum `service ntp on` serves (its expansion is `ntp master 1`, §5.5). */
+export const SERVICE_NTP_STRATUM = 1;
+
+/**
+ * @since P3 `service ntp on|off` on the host shell (§5.5: `ntp master 1` / its removal); on nfos the lines themselves,
+ * `ntp master 1` / `no ntp master`.
+ */
+export function ntpSwitchCommands(grammar: CliGrammar, on: boolean): CommandPlan {
+  const f = null;
+  if (grammar === 'host') return planOf(grammar, [makeLine([['service', f], ['ntp', f], [on ? 'on' : 'off', f]])]);
+  return planOf(grammar, [makeLine(on ? [['ntp', f], ['master', f], [String(SERVICE_NTP_STRATUM), f]] : [['no', f], ['ntp', f], ['master', f]])]);
+}
+
+/**
+ * @since P3 [S25] `service syslog on|off` on the host shell (§5.7: the extension line `syslog-server enable` / its
+ * removal); on nfos the extension line itself and its `no` form.
+ */
+export function syslogSwitchCommands(grammar: CliGrammar, on: boolean): CommandPlan {
+  const f = null;
+  if (grammar === 'host') return planOf(grammar, [makeLine([['service', f], ['syslog', f], [on ? 'on' : 'off', f]])]);
+  const line: Token[] = [['syslog-server', f], ['enable', f]];
+  return planOf(grammar, [makeLine(on ? line : [['no', f], ...line])]);
+}
+
+/** @since P3 What the running configuration says about the time service and the syslog server. */
+export interface TimeServicesView {
+  /** The stratum of a top-level `ntp master [n]` line (8 when the line names none), undefined without one. */
+  readonly ntpMaster?: number;
+  /** The `ntp server` addresses, in configuration order. */
+  readonly ntpServers: readonly string[];
+  /** [S25] A top-level `syslog-server enable` (the host's `service syslog on`). */
+  readonly syslogEnabled: boolean;
+}
+
+/** @since P3 Read the time service and syslog server lines out of a rendered running config (negations ignored). */
+export function timeServicesViewOf(runningConfig: string): TimeServicesView {
+  let ntpMaster: number | undefined;
+  let syslogEnabled = false;
+  const ntpServers: string[] = [];
+  for (const l of walkConfigText(runningConfig)) {
+    if (l.context.length !== 0) continue;
+    const t = l.tokens;
+    if (t[0] === 'ntp' && t[1] === 'master') {
+      if (l.negate) ntpMaster = undefined;
+      else {
+        const n = t[2] === undefined ? NTP_MASTER_DEFAULT_STRATUM : Number(t[2]);
+        ntpMaster = Number.isInteger(n) && n >= 1 && n <= 15 ? n : NTP_MASTER_DEFAULT_STRATUM;
+      }
+    } else if (t[0] === 'ntp' && t[1] === 'server' && t[2] !== undefined && !l.negate) ntpServers.push(t[2]);
+    else if (t[0] === 'syslog-server' && t[1] === 'enable') syslogEnabled = !l.negate;
+  }
+  return { ...(ntpMaster !== undefined ? { ntpMaster } : {}), ntpServers, syslogEnabled };
+}
+
+/** True when the device runs the daemon `name`. */
+export function runsProcess(device: Pick<DeviceSnapshot, 'processes'>, name: string): boolean {
+  return device.processes.some((p) => p.process === name);
+}
+
+/** @since P3 The ntp StateView's served count and master stratum (display only). */
+export interface NtpServing {
+  readonly served: number;
+  readonly masterStratum?: number;
+}
+
+/** @since P3 What the ntp daemon reports about serving time (zeros when it reports nothing). */
+export function ntpServingOf(device: Pick<DeviceSnapshot, 'processes'>): NtpServing {
+  const st = device.processes.find((p) => p.process === 'ntp')?.state;
+  const served = typeof st?.served === 'number' ? st.served : 0;
+  const master = st?.master;
+  const stratum = typeof master === 'object' && master !== null ? (master as { stratum?: unknown }).stratum : undefined;
+  return { served, ...(typeof stratum === 'number' ? { masterStratum: stratum } : {}) };
+}
+
+/** @since P3 [S25] A severity as its number and name: `5 notifications`. */
+export function severityText(severity: number): string {
+  const name = SYSLOG_SEVERITY_NAMES[severity];
+  return name === undefined ? String(severity) : `${severity} ${name}`;
+}
+
+/** @since P3 [S25] A facility as its name (`local7`), or its number when it has none. */
+export function facilityText(facility: number): string {
+  return SYSLOG_FACILITY_NAMES[facility] ?? String(facility);
+}
+
+/** @since P3 [S25] The severity filter's choices: 7 (every message) down to 0 (emergencies only). */
+export const SYSLOG_FILTER_LEVELS: readonly number[] = Object.freeze([7, 6, 5, 4, 3, 2, 1, 0]);
+
+/** @since P3 [S25] Words of a filter choice: `0 emergencies only`, `4 warnings and more severe`, `7 every message`. */
+export function syslogFilterText(level: number): string {
+  if (level >= 7) return `${severityText(7)} (every message)`;
+  if (level <= 0) return `${severityText(0)} only`;
+  return `${severityText(level)} and more severe`;
+}
+
+/** @since P3 [S25] The `syslog-messages` rows of a device. */
+export function syslogRowsOf(device: Pick<DeviceSnapshot, 'tables'>): readonly SyslogMessageRow[] {
+  const t = device.tables.extra?.find((x) => x.name === 'syslog-messages');
+  return t === undefined ? [] : (t.rows as unknown as SyslogMessageRow[]);
+}
+
+/** @since P3 [S25] The messages at `maxSeverity` or more severe (a lower number), newest first. */
+export function filterSyslogRows(rows: readonly SyslogMessageRow[], maxSeverity: number): SyslogMessageRow[] {
+  return rows.filter((r) => r.severity <= maxSeverity).sort((a, b) => b.seq - a.seq);
+}
+
 // ── panel ────────────────────────────────────────────────────────────────────
 
 const EMPTY_PAGE: HttpPageForm = { path: '', text: '' };
@@ -342,6 +470,9 @@ export function ServicesPanel({ device }: { device: DeviceSnapshot }) {
   // The pool form opens on what the device already leases from, so editing one value keeps the others.
   const [pool, setPool] = useState<DhcpPoolForm>(() => ({ network: view.dhcp.pool?.network ?? '', mask: view.dhcp.pool?.mask ?? '', router: view.dhcp.pool?.router ?? '' }));
   const [excluded, setExcluded] = useState<ExcludedForm>(EMPTY_EXCLUDED);
+  // [S25] the syslog table's severity filter (7 = every message)
+  const [syslogLevel, setSyslogLevel] = useState<number>(7);
+  const time = timeServicesViewOf(device.runningConfig);
 
   const send = async (errors: FormErrors, build: () => CommandPlan, done?: () => void): Promise<void> => {
     const result = await submit.run(() => runPanelSubmit(engine, device.id, errors, build));
@@ -853,6 +984,122 @@ export function ServicesPanel({ device }: { device: DeviceSnapshot }) {
             </div>
           </>
         )}
+      </section>,
+    );
+  }
+
+  if (runsProcess(device, 'ntp')) {
+    // M15: the time service. "On" is an `ntp master` line (what `service ntp on` writes on a server).
+    const on = time.ntpMaster !== undefined;
+    const state = serviceStateText(on);
+    const serving = ntpServingOf(device);
+    const stratum = serving.masterStratum ?? time.ntpMaster;
+    sections.push(
+      <section key="ntp" className="insp-section" aria-label={NTP_SERVICE_LABEL}>
+        <div className="panel-title">{NTP_SERVICE_LABEL}</div>
+        <p className="insp-note">
+          <span aria-hidden="true">{state.glyph} </span>
+          {on
+            ? `The time service is ${state.text}: it answers time requests with this device's clock at stratum ${stratum ?? SERVICE_NTP_STRATUM}.`
+            : 'The time service is stopped: this device serves no time of its own.'}
+        </p>
+        <div className="insp-actions">
+          <button type="button" className="btn btn-primary" disabled={disabled} onClick={() => void send({}, () => ntpSwitchCommands(grammar, !on))}>
+            {on ? 'Stop the time service' : 'Start the time service'}
+          </button>
+        </div>
+        <dl className="kv">
+          <dt>Stratum</dt>
+          <dd className="mono">{on && stratum !== undefined ? stratum : '—'}</dd>
+          <dt>Requests answered</dt>
+          <dd className="mono">{serving.served}</dd>
+          {time.ntpServers.length > 0 && (
+            <>
+              <dt>Follows</dt>
+              <dd className="mono">{time.ntpServers.join(', ')}</dd>
+            </>
+          )}
+        </dl>
+      </section>,
+    );
+  }
+
+  if (runsProcess(device, 'syslog-server')) {
+    // [S25] the syslog receiver and its messages
+    const on = time.syslogEnabled;
+    const state = serviceStateText(on);
+    const all = syslogRowsOf(device);
+    const shown = filterSyslogRows(all, syslogLevel);
+    const filterId = `${uid}-syslog-level`;
+    sections.push(
+      <section key="syslog" className="insp-section" aria-label={SYSLOG_SERVICE_LABEL}>
+        <div className="panel-title">{SYSLOG_SERVICE_LABEL}</div>
+        <p className="insp-note">
+          <span aria-hidden="true">{state.glyph} </span>
+          {on
+            ? `The syslog server is ${state.text}: it keeps every message sent to UDP port 514.`
+            : 'The syslog server is stopped: messages sent to it are refused (port closed).'}
+        </p>
+        <div className="insp-actions">
+          <button type="button" className="btn btn-primary" disabled={disabled} onClick={() => void send({}, () => syslogSwitchCommands(grammar, !on))}>
+            {on ? 'Stop the syslog server' : 'Start the syslog server'}
+          </button>
+        </div>
+        <dl className="kv">
+          <dt>
+            <label htmlFor={filterId}>Show severity</label>
+          </dt>
+          <dd>
+            <select id={filterId} className="select" value={syslogLevel} onChange={(e) => setSyslogLevel(Number(e.target.value))}>
+              {SYSLOG_FILTER_LEVELS.map((n) => (
+                <option key={n} value={n}>
+                  {syslogFilterText(n)}
+                </option>
+              ))}
+            </select>
+          </dd>
+        </dl>
+        <table className="table compact">
+          <caption className="dim">
+            Messages received: {all.length}
+            {shown.length !== all.length ? `, ${shown.length} shown` : ''}; newest first.
+          </caption>
+          <thead>
+            <tr>
+              <th scope="col" className="num">
+                #
+              </th>
+              <th scope="col">Severity</th>
+              <th scope="col">From</th>
+              <th scope="col">Message time</th>
+              <th scope="col">Received</th>
+              <th scope="col">Message</th>
+            </tr>
+          </thead>
+          <tbody>
+            {shown.length === 0 ? (
+              <tr>
+                <td colSpan={6}>{all.length === 0 ? 'No message has arrived yet.' : 'No message at this severity or more severe.'}</td>
+              </tr>
+            ) : (
+              shown.map((r) => (
+                <tr key={r.seq}>
+                  <td className="num">{r.seq}</td>
+                  <td className="mono">{severityText(r.severity)}</td>
+                  <td className="mono">
+                    {r.hostname !== undefined && r.hostname !== '' ? r.hostname : r.from}
+                    <div className="dim">
+                      {r.from} · {facilityText(r.facility)}
+                    </div>
+                  </td>
+                  <td className="mono">{r.stamp === '' ? '—' : r.stamp}</td>
+                  <td className="mono">{r.receivedStamp}</td>
+                  <td className="mono">{r.message}</td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
       </section>,
     );
   }

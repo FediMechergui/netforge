@@ -22,17 +22,41 @@
  * The shows read the `ospf-interfaces` and `ospf-neighbors` rows (absent tables read as empty) and the ospf StateView
  * (`OspfStateView`, §2.6) for the countdowns. Every string is original wording (spec §1.6); RFC state words (FULL,
  * DR, BDR, 2WAY) are protocol facts.
+ *
+ * W3 (cli part 2, §5.8): `show ip ospf neighbor detail` (one block per neighbour: area, state and how long, role, the
+ * DR/BDR the neighbour announced, "Dead in" from the StateView's `neighbors[].deadAt`, the retransmission queue and
+ * who led the database exchange); `show ip ospf database [router|network|external] [self-originate]` over the
+ * `ospf-lsdb` rows (a summary line per LSA, or one block per LSA of the type named; the live age is `lsaAgeAt`, D10's
+ * database order `compareLsdbRows`); `show ip protocols` (the OSPF section from the configuration, the StateView's
+ * process and `spf` statistics and the LSDB's advertising routers; the [C1] EIGRP section from the configuration, the
+ * `eigrp` StateView and the `eigrp-neighbors` rows when `router eigrp` is configured).
  */
-import { ipv4ToU32, parseIpv4, u32ToIpv4 } from '../../contracts/addr.js';
+import { ipv4ToU32, maskToPrefixLen, parseIpv4, u32ToIpv4 } from '../../contracts/addr.js';
 import { PORT_FAMILIES } from '../../contracts/catalog.js';
 import { CLI_MESSAGES, type CommandCtx, type CommandHandler, type CommandOutcome } from '../../contracts/cli.js';
 import type { ConfigNode } from '../../contracts/config.js';
 import type { PortId } from '../../contracts/ids.js';
 import type { PortView } from '../../contracts/port.js';
-import type { OspfInterfaceRow, OspfIsmState, OspfNeighborRow, OspfNsmState, OspfStateView } from '../../contracts/tables.js';
-import { readOspfConfig } from '../../protocols/ospf/config.js';
+import {
+  AD_EIGRP,
+  AD_OSPF,
+  type EigrpNeighborRow,
+  type EigrpStateView,
+  type OspfInterfaceRow,
+  type OspfIsmState,
+  type OspfLsaRow,
+  type OspfNeighborRow,
+  type OspfNsmState,
+  type OspfRouterLink,
+  type OspfStateView,
+} from '../../contracts/tables.js';
+import type { SimTime } from '../../contracts/time.js';
+import { lsaAgeAt } from '../../core/ospf-lsa.js';
+import { readEigrpProcess, type EigrpProcessConfig } from '../../protocols/eigrp/config.js';
+import { readOspfConfig, type OspfConfig, type OspfProcessConfig } from '../../protocols/ospf/config.js';
+import { compareLsdbRows } from '../../protocols/ospf/lsdb.js';
 import { fmtDuration, fmtSince, table } from '../format.js';
-import { OSPF_HANDLERS, OSPF_PASSIVE_DEFAULT_ARG, OSPF_SHOW_BRIEF_ARG } from '../grammar/ospf.js';
+import { OSPF_DB_SELF_ARG, OSPF_DB_TYPE_ARG, OSPF_HANDLERS, OSPF_PASSIVE_DEFAULT_ARG, OSPF_SHOW_BRIEF_ARG, OSPF_SHOW_DETAIL_ARG } from '../grammar/ospf.js';
 import { enterMode, fillTemplate, globalContext, MSG_NO_INTERFACE_SELECTED, outcomeOf, selectedInterface } from './common.js';
 
 /** `show ip ospf …` / `clear ip ospf process` without a `router ospf` section. */
@@ -51,6 +75,10 @@ export const MSG_NO_OSPF_NEIGHBOUR = 'No OSPF neighbour has been heard yet.';
 export const MSG_NO_OSPF_INTERFACE = 'No interface runs OSPF yet.';
 /** `clear ip ospf process` answered with anything but yes. */
 export const MSG_CLEAR_OSPF_CANCELLED = 'Nothing was restarted.';
+/** @since P3 `show ip ospf database` with no LSA (or none of the type or origin asked for). */
+export const MSG_OSPF_DB_EMPTY = 'The link-state database holds no LSA of this kind yet.';
+/** @since P3 `show ip protocols` without any routing process. */
+export const MSG_NO_ROUTING_PROCESS = 'No routing process is configured.';
 
 /** The ospf daemon's process name. */
 const OSPF_PROCESS = 'ospf';
@@ -248,7 +276,7 @@ const ifIpOspf: CommandHandler = (ctx, args, negate) => {
 // ── shows ────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 /** Rows of a table this device may not declare (read as empty). */
-function rowsOf<R extends { key: string }>(ctx: CommandCtx, name: 'ospf-interfaces' | 'ospf-neighbors'): R[] {
+function rowsOf<R extends { key: string }>(ctx: CommandCtx, name: 'ospf-interfaces' | 'ospf-neighbors' | 'ospf-lsdb' | 'eigrp-neighbors'): R[] {
   const t = ctx.tables.get(name);
   return t === undefined ? [] : (t.rows() as unknown as R[]);
 }
@@ -350,8 +378,31 @@ const showIpOspf: CommandHandler = (ctx) => {
   return { output: lines.join('\n') };
 };
 
-/** `show ip ospf neighbor`. */
-const showIpOspfNeighbor: CommandHandler = (ctx) => {
+/** The DR or BDR address a neighbour announced ('0.0.0.0' = none). */
+function announced(address: string): string {
+  return address === '0.0.0.0' ? 'none' : address;
+}
+
+/** One `show ip ospf neighbor detail` block (§5.8; "Dead in" from the StateView's `neighbors[].deadAt`). */
+function neighborBlock(ctx: CommandCtx, r: OspfNeighborRow, sv: OspfStateView | undefined, areaOf: ReadonlyMap<PortId, string>): string {
+  const live = sv?.neighbors.find((n) => n.port === r.port && n.routerId === r.routerId);
+  const area = areaOf.get(r.port);
+  const lines = [`Neighbour ${r.routerId}, interface address ${r.address}`];
+  lines.push(`  On ${r.port}${area === undefined ? '' : `, area ${area}`}, priority ${r.priority}`);
+  lines.push(`  State ${NSM_WORD[r.state] ?? r.state.toUpperCase()} for ${fmtSince(r.stateSince, ctx.now)}, role ${ROLE_WORD[r.role] ?? '-'}`);
+  lines.push(`  It announces designated router ${announced(r.dr)}, backup ${announced(r.bdr)}`);
+  if (live === undefined) {
+    lines.push('  Dead in -');
+  } else {
+    const queue = live.retransmitQueue;
+    lines.push(`  Dead in ${fmtDuration(live.deadAt - ctx.now)}; ${queue} LSA${queue === 1 ? '' : 's'} waiting for an acknowledgement`);
+  }
+  if (r.master !== undefined) lines.push(`  Database exchange led by ${r.master ? 'the neighbour' : 'this router'} (master)`);
+  return lines.join('\n');
+}
+
+/** `show ip ospf neighbor [detail]`. */
+const showIpOspfNeighbor: CommandHandler = (ctx, args) => {
   if (readOspfConfig(ctx.running).process === undefined) return { output: MSG_NO_OSPF };
   const order = portIndex(ctx);
   const rows = rowsOf<OspfNeighborRow>(ctx, 'ospf-neighbors').sort(
@@ -359,6 +410,10 @@ const showIpOspfNeighbor: CommandHandler = (ctx) => {
   );
   if (rows.length === 0) return { output: MSG_NO_OSPF_NEIGHBOUR };
   const sv = ospfStateView(ctx);
+  if (args[OSPF_SHOW_DETAIL_ARG] !== undefined) {
+    const areaOf = new Map<PortId, string>(rowsOf<OspfInterfaceRow>(ctx, 'ospf-interfaces').map((i) => [i.port, i.area]));
+    return { output: rows.map((r) => neighborBlock(ctx, r, sv, areaOf)).join('\n\n') };
+  }
   const out: string[][] = [['Neighbour ID', 'Pri', 'State', 'Dead in', 'Address', 'Interface']];
   for (const r of rows) {
     const live = sv?.neighbors.find((n) => n.port === r.port && n.routerId === r.routerId);
@@ -417,6 +472,205 @@ const showIpOspfInterface: CommandHandler = (ctx, args) => {
   return { output: rows.map((r) => interfaceBlock(ctx, r, sv)).join('\n\n') };
 };
 
+// ── show ip ospf database (W3) ─────────────────────────────────────────────────────────────────────────────────
+
+/** The router id the shows name: the one in use, else the configured one, else the interface rows'. */
+function routerIdShown(ctx: CommandCtx, cfg: OspfProcessConfig, sv: OspfStateView | undefined): string {
+  return sv?.process?.routerId ?? cfg.routerId ?? rowsOf<OspfInterfaceRow>(ctx, 'ospf-interfaces')[0]?.routerId ?? 'not chosen yet';
+}
+
+/** `0x80000001`: an LSA sequence number as eight hex digits. */
+export function lsaSeqHex(seq: number): string {
+  return `0x${(seq >>> 0).toString(16).padStart(8, '0')}`;
+}
+
+/** `0x1a2b`: an LSA checksum as four hex digits. */
+export function lsaChecksumHex(checksum: number): string {
+  return `0x${(checksum & 0xffff).toString(16).padStart(4, '0')}`;
+}
+
+const LSA_TYPE_WORD: Readonly<Record<number, string>> = Object.freeze({ 1: 'router', 2: 'network', 5: 'external' });
+const LSA_TYPE_OF_WORD: Readonly<Record<string, number>> = Object.freeze({ router: 1, network: 2, external: 5 });
+
+/** The heading of one database section: `Router LSAs, area 0.0.0.0 (type 1)`, `External LSAs (type 5)`. */
+function sectionTitle(scope: string, type: number): string {
+  const word = LSA_TYPE_WORD[type] ?? `Type ${type}`;
+  const name = `${word.charAt(0).toUpperCase()}${word.slice(1)} LSAs`;
+  return scope === 'as' ? `${name} (type ${type})` : `${name}, area ${scope} (type ${type})`;
+}
+
+/** `255.255.255.0 (/24)`. */
+function maskText(mask: string | undefined): string {
+  if (mask === undefined) return 'unknown';
+  const len = maskToPrefixLen(mask);
+  return len === null ? mask : `${mask} (/${len})`;
+}
+
+/** One link of a router LSA, in words (RFC 2328 §A.4.2: what the link id and data mean for each kind). */
+function routerLinkText(l: OspfRouterLink): string {
+  switch (l.kind) {
+    case 'p2p':
+      return `Point-to-point: neighbour ${l.id}, own address ${l.data}, cost ${l.metric}`;
+    case 'transit':
+      return `Transit network: designated router address ${l.id}, own address ${l.data}, cost ${l.metric}`;
+    case 'stub':
+      return `Stub network: ${l.id}, mask ${maskText(l.data)}, cost ${l.metric}`;
+  }
+}
+
+/** The summary row of one LSA (`show ip ospf database`). */
+function lsaSummaryRow(r: OspfLsaRow, now: SimTime): string[] {
+  const row = [r.lsid, r.advRouter, String(lsaAgeAt(r, now)), lsaSeqHex(r.seq), lsaChecksumHex(r.checksum)];
+  if (r.type === 1) row.push(String(r.links?.length ?? 0));
+  if (r.type === 5) row.push(`${r.external?.e2 === false ? 'E1' : 'E2'} ${r.metric ?? 0}`);
+  return row;
+}
+
+/** One block of the typed forms (`show ip ospf database router|network|external`). */
+function lsaBlock(r: OspfLsaRow, now: SimTime): string {
+  const lines = [`  Link ID ${r.lsid}${r.type === 2 ? ' (the designated router\'s address)' : ''}, advertised by ${r.advRouter}${r.self ? ' (this router)' : ''}`];
+  lines.push(`    Age ${lsaAgeAt(r, now)} s, sequence ${lsaSeqHex(r.seq)}, checksum ${lsaChecksumHex(r.checksum)}, length ${r.length}`);
+  if (r.maxAge === true) lines.push('    Being flushed: it reached the maximum age');
+  if (r.type === 1) {
+    const flags = [r.flags?.b === true ? 'area border router' : '', r.flags?.e === true ? 'AS boundary router' : '', r.flags?.v === true ? 'virtual link end' : ''].filter((f) => f !== '');
+    lines.push(`    Flags: ${flags.length === 0 ? 'none' : flags.join(', ')}`);
+    const links = r.links ?? [];
+    lines.push(`    ${links.length} link${links.length === 1 ? '' : 's'}${links.length === 0 ? '' : ':'}`);
+    for (const l of links) lines.push(`      ${routerLinkText(l)}`);
+  } else if (r.type === 2) {
+    lines.push(`    Mask ${maskText(r.mask)}`);
+    const attached = r.attached ?? [];
+    lines.push(`    Attached routers: ${attached.length === 0 ? 'none' : attached.join(', ')}`);
+  } else if (r.type === 5) {
+    lines.push(`    Mask ${maskText(r.mask)}, metric type ${r.external?.e2 === false ? 1 : 2}, metric ${r.metric ?? 0}`);
+    lines.push(`    Forwarding address ${r.external?.forward ?? '0.0.0.0'}, tag ${r.external?.tag ?? 0}`);
+  }
+  return lines.join('\n');
+}
+
+/** `show ip ospf database [router|network|external] [self-originate]` (§5.8). */
+const showIpOspfDatabase: CommandHandler = (ctx, args) => {
+  const cfg = readOspfConfig(ctx.running);
+  if (cfg.process === undefined) return { output: MSG_NO_OSPF };
+  const sv = ospfStateView(ctx);
+  const typeWord = args[OSPF_DB_TYPE_ARG];
+  const type = typeWord === undefined ? undefined : LSA_TYPE_OF_WORD[typeWord];
+  const selfOnly = args[OSPF_DB_SELF_ARG] !== undefined;
+  const rows = rowsOf<OspfLsaRow>(ctx, 'ospf-lsdb')
+    .filter((r) => (type === undefined || r.type === type) && (!selfOnly || r.self))
+    .sort(compareLsdbRows);
+  const out = [`OSPF router ${routerIdShown(ctx, cfg.process, sv)}, process ${cfg.process.pid}`];
+  if (rows.length === 0) return { output: `${out[0]}\n\n${MSG_OSPF_DB_EMPTY}` };
+  const sections: { scope: string; type: number; rows: OspfLsaRow[] }[] = [];
+  for (const r of rows) {
+    const last = sections[sections.length - 1];
+    if (last !== undefined && last.scope === r.scope && last.type === r.type) last.rows.push(r);
+    else sections.push({ scope: r.scope, type: r.type, rows: [r] });
+  }
+  for (const sec of sections) {
+    out.push('');
+    out.push(sectionTitle(sec.scope, sec.type));
+    if (type !== undefined) {
+      for (const r of sec.rows) out.push('', lsaBlock(r, ctx.now));
+      continue;
+    }
+    const head = ['Link ID', 'Advertised by', 'Age', 'Sequence', 'Checksum'];
+    if (sec.type === 1) head.push('Links');
+    if (sec.type === 5) head.push('Metric');
+    out.push(table([head, ...sec.rows.map((r) => lsaSummaryRow(r, ctx.now))], { gap: 2, minWidths: [15, 15, 4, 10, 8] }));
+  }
+  return { output: out.join('\n') };
+};
+
+// ── show ip protocols (W3) ─────────────────────────────────────────────────────────────────────────────────────
+
+/** `Routing information sources` rows: a gateway, its distance and a time column. */
+function sourcesTable(rows: readonly (readonly [string, number, string])[], timeHeading: string): string[] {
+  if (rows.length === 0) return ['  Routing information sources: none yet'];
+  const t = table([['Gateway', 'Distance', timeHeading], ...rows.map(([g, d, t2]) => [g, String(d), t2])], { gap: 2, indent: '    ', minWidths: [15, 8] });
+  return ['  Routing information sources:', t];
+}
+
+/** The passive-interface line of a process (`passive-interface default` names its exceptions). */
+function passiveText(passiveDefault: boolean, passive: readonly string[], notPassive: readonly string[]): string {
+  if (passiveDefault) return `every interface (passive-interface default)${notPassive.length === 0 ? '' : `, except ${notPassive.join(', ')}`}`;
+  return passive.length === 0 ? 'none' : passive.join(', ');
+}
+
+/** The OSPF section of `show ip protocols`. */
+function ospfProtocolSection(ctx: CommandCtx, cfg: OspfConfig, proc: OspfProcessConfig): string[] {
+  const sv = ospfStateView(ctx);
+  const routerId = routerIdShown(ctx, proc, sv);
+  const lines = [`Routing process "ospf ${proc.pid}"`, `  Router ID ${routerId}`];
+  lines.push(proc.networks.length === 0 ? '  Network lines: none' : '  Network lines:');
+  for (const n of proc.networks) lines.push(`    ${n.address} ${n.wildcard} area ${areaNumber(n.area)}`);
+  const byLine = [...cfg.interfaces.values()].filter((i) => i.area !== undefined && i.area.pid === proc.pid);
+  if (byLine.length > 0) lines.push(`  Interfaces enabled by their own "ip ospf … area" line: ${byLine.map((i) => `${i.port} (area ${areaNumber(i.area!.area)})`).join(', ')}`);
+  lines.push(`  Passive interfaces: ${passiveText(proc.passiveDefault, proc.passive, proc.notPassive)}`);
+  const reference = sv?.process?.referenceBandwidthMbps ?? proc.referenceBandwidthMbps;
+  const paths = sv?.process?.maximumPaths ?? proc.maximumPaths;
+  lines.push(`  Reference bandwidth ${reference} Mb/s; up to ${paths} equal-cost path${paths === 1 ? '' : 's'} per destination`);
+  const origin = sv?.process?.defaultOriginate ?? proc.defaultOriginate;
+  lines.push(`  Default route: ${origin === 'always' ? 'always advertised' : origin === 'on' ? 'advertised while this router has one' : 'not advertised'}`);
+  if (sv !== undefined) {
+    const spf = sv.spf;
+    const last = spf.lastAt === undefined ? 'never run' : `last run ${fmtSince(spf.lastAt, ctx.now)} ago`;
+    const next = spf.nextAt === undefined ? 'no run scheduled' : `next run in ${fmtDuration(spf.nextAt - ctx.now)}`;
+    const hold = spf.holdUntil !== undefined && spf.holdUntil > ctx.now ? `; no new run before ${fmtDuration(spf.holdUntil - ctx.now)} from now` : '';
+    lines.push(`  Shortest-path calculation: ${spf.runs} run${spf.runs === 1 ? '' : 's'}, ${last}; ${next}${hold}`);
+  }
+  // the routers whose LSAs this one holds, with the time since the newest of them was installed
+  const newest = new Map<string, SimTime>();
+  for (const r of rowsOf<OspfLsaRow>(ctx, 'ospf-lsdb')) {
+    if (r.self || r.advRouter === routerId) continue;
+    const seen = newest.get(r.advRouter);
+    if (seen === undefined || r.installedAt > seen) newest.set(r.advRouter, r.installedAt);
+  }
+  const sources = [...newest.entries()]
+    .sort((a, b) => (ipv4ToU32(a[0]) >>> 0) - (ipv4ToU32(b[0]) >>> 0))
+    .map(([g, at]) => [g, AD_OSPF, fmtSince(at, ctx.now)] as const);
+  lines.push(...sourcesTable(sources, 'Last update'));
+  lines.push(`  Distance: ${AD_OSPF}`);
+  return lines;
+}
+
+/** The [C1] eigrp StateView, when the daemon runs. */
+function eigrpStateView(ctx: Pick<CommandCtx, 'processState'>): EigrpStateView | undefined {
+  const sv = ctx.processState('eigrp');
+  return sv === undefined ? undefined : (sv.state as unknown as EigrpStateView);
+}
+
+/** The [C1] EIGRP section of `show ip protocols` (the configuration, the eigrp StateView and the `eigrp-neighbors` rows). */
+function eigrpProtocolSection(ctx: CommandCtx, cfg: EigrpProcessConfig): string[] {
+  const sv = eigrpStateView(ctx);
+  const routerId = sv?.process?.routerId ?? cfg.routerId ?? 'not chosen yet';
+  const k = sv?.process?.kValues ?? cfg.kValues;
+  const lines = [`Routing process "eigrp ${cfg.as}"`, `  Router ID ${routerId}`];
+  lines.push(`  Metric weights K1 ${k[0] ?? 0}, K2 ${k[1] ?? 0}, K3 ${k[2] ?? 0}, K4 ${k[3] ?? 0}, K5 ${k[4] ?? 0}`);
+  lines.push(cfg.networks.length === 0 ? '  Network lines: none' : '  Network lines:');
+  for (const n of cfg.networks) lines.push(`    ${n.address}${n.classful ? ' (classful network)' : ` ${n.wildcard}`}`);
+  lines.push(`  Passive interfaces: ${passiveText(cfg.passiveDefault, cfg.passiveInterfaces, cfg.activeInterfaces)}`);
+  const paths = sv?.process?.maximumPaths ?? cfg.maximumPaths;
+  lines.push(`  Up to ${paths} equal-cost path${paths === 1 ? '' : 's'} per destination`);
+  const up = rowsOf<EigrpNeighborRow>(ctx, 'eigrp-neighbors')
+    .filter((n) => n.state === 'up' && n.as === cfg.as)
+    .sort((a, b) => (ipv4ToU32(a.address) >>> 0) - (ipv4ToU32(b.address) >>> 0));
+  lines.push(...sourcesTable(up.map((n) => [n.address, AD_EIGRP, fmtSince(n.upSince, ctx.now)] as const), 'Up for'));
+  lines.push(`  Distance: internal ${AD_EIGRP}`);
+  return lines;
+}
+
+/** `show ip protocols` (§5.8): the OSPF section, then the [C1] EIGRP section when `router eigrp` is configured. */
+const showIpProtocols: CommandHandler = (ctx) => {
+  const ospf = readOspfConfig(ctx.running);
+  const eigrp = readEigrpProcess(ctx.running.root);
+  const sections: string[][] = [];
+  if (ospf.process !== undefined) sections.push(ospfProtocolSection(ctx, ospf, ospf.process));
+  if (eigrp !== undefined) sections.push(eigrpProtocolSection(ctx, eigrp));
+  if (sections.length === 0) return { output: MSG_NO_ROUTING_PROCESS };
+  return { output: sections.map((s) => s.join('\n')).join('\n\n') };
+};
+
 /** `clear ip ospf process`: confirm, then `ospf.clear` (D7: the new router id applies; neighbours restart). */
 const clearIpOspf: CommandHandler = (ctx) => {
   if (readOspfConfig(ctx.running).process === undefined) return { output: MSG_NO_OSPF };
@@ -443,4 +697,7 @@ export const ospfHandlers: Readonly<Record<string, CommandHandler>> = {
   [OSPF_HANDLERS.showIpOspfNeighbor]: showIpOspfNeighbor,
   [OSPF_HANDLERS.showIpOspfInterface]: showIpOspfInterface,
   [OSPF_HANDLERS.execClearIpOspf]: clearIpOspf,
+  // W3 cli part 2
+  [OSPF_HANDLERS.showIpOspfDatabase]: showIpOspfDatabase,
+  [OSPF_HANDLERS.showIpProtocols]: showIpProtocols,
 };

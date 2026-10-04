@@ -45,12 +45,23 @@ export async function stepOneMs(): Promise<void> {
   }
 }
 
+/** The event cap of "Run to idle". */
+export const RUN_TO_IDLE_MAX_EVENTS = 200_000;
+
+/** @since P3 (R31) The warning "Run to idle" shows when the cap stopped the run. */
+export const RUN_TO_IDLE_CAP_WARNING = 'Stopped after 200 000 events; the queue is still busy.';
+
+/**
+ * Run until idle. R31 (ARCHITECTURE-P3 §9.2): the warning shows only when the run stopped at its event cap
+ * (`runStopped`, from `RunStats.stopped`); a world that reached idle keeps its periodic maintenance timers pending, so
+ * `pendingEvents > 0` alone is no reason to warn.
+ */
 export async function runToIdle(): Promise<void> {
   if (!store.getState().ready) return;
   try {
-    const snap = await engine.runToIdle(200_000);
-    if (snap.pendingEvents > 0) {
-      store.getState().toast('Stopped after 200 000 events; the queue is still busy.', 'warn');
+    const snap = await engine.runToIdle(RUN_TO_IDLE_MAX_EVENTS);
+    if (snap.runStopped === 'maxEvents') {
+      store.getState().toast(RUN_TO_IDLE_CAP_WARNING, 'warn');
     }
   } catch (err) {
     reportError(err);

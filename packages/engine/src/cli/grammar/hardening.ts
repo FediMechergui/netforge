@@ -9,7 +9,12 @@
  *              inspection limit rate <pps> [burst interval <s>]` / `ip arp inspection limit none`
  * eth-switch reads the lines (protocols/l2/{dhcp-snooping,arp-inspection}.ts, steps 7b/7c); the VLAN lists are
  * stored one line per VLAN (the config rules' `<vlan-list>` element). The `errdisable recovery cause` choices gain
- * `dhcp-rate-limit` and `arp-inspection` in errdisable.ts. The shows are W3's.
+ * `dhcp-rate-limit` and `arp-inspection` in errdisable.ts.
+ *
+ * Verification (W3, cli part 2, §5.8): `show ip dhcp snooping [binding]` and `show ip arp inspection [vlan <list> |
+ * interfaces | statistics]`, reading the configuration and the stage-filtered `dhcp-snooping` / `arp-inspection` rows
+ * (absent tables read as empty); the debug categories `ip dhcp snooping` and `ip arp inspection` (§5.8: eth-switch's
+ * snooping and DAI messages only, protocols/l2/{dhcp-snooping,arp-inspection}.ts).
  *
  * Scope: `managed-switch` (D13: the decisions run in the VLAN-aware path of managed switches; the controller, which
  * also runs `vlan`, never derives the tables). Interface lines take switched ports and Port-channels. Help strings are
@@ -17,7 +22,7 @@
  */
 import type { ArgSpec, CommandSpec, PortRequirement } from '../../contracts/cli.js';
 import type { Capability } from '../../contracts/catalog.js';
-import { ifaceArg, intArg, ipv4Arg, NFOS_ONLY } from './core-exec.js';
+import { debugSpecs, type GrammarDebugCategory, ifaceArg, intArg, ipv4Arg, NFOS_ONLY } from './core-exec.js';
 
 /** Handler ids of the hardening fragment. Never rename. */
 export const HARDENING_HANDLERS = {
@@ -26,6 +31,9 @@ export const HARDENING_HANDLERS = {
   configArpInspection: 'config.ip-arp-inspection',
   ifDhcpSnooping: 'if.ip-dhcp-snooping',
   ifArpInspection: 'if.ip-arp-inspection',
+  // W3 cli part 2
+  showIpDhcpSnooping: 'show.ip-dhcp-snooping',
+  showIpArpInspection: 'show.ip-arp-inspection',
 } as const;
 
 /** @since P3 Capabilities that run the access-layer checks (D13). */
@@ -33,6 +41,12 @@ export const HARDENING_CAPABILITIES: readonly Capability[] = Object.freeze(['man
 
 /** @since P3 `fixedArgs` key naming the sub-form of a hardening line. */
 export const HARDENING_FORM_ARG = 'form';
+
+/**
+ * @since P3 `fixedArgs` key naming the view of a hardening show: `binding` (`show ip dhcp snooping binding`), `vlan`,
+ * `interfaces` or `statistics` (`show ip arp inspection …`).
+ */
+export const HARDENING_SHOW_ARG = 'view';
 
 /** @since P3 Highest `ip dhcp snooping limit rate` / `ip arp inspection limit rate` (packets per second). */
 export const HARDENING_RATE_MAX = 2048;
@@ -42,6 +56,32 @@ export const HARDENING_BURST_MAX_S = 15;
 const H = HARDENING_HANDLERS;
 const OBJ_SNOOP = ['CCNA3.hardening.3'];
 const OBJ_DAI = ['CCNA3.hardening.4'];
+
+/**
+ * @since P3 The access-layer debug categories (§5.8: eth-switch passes them for its snooping and DAI messages only;
+ * protocols/l2/dhcp-snooping.ts `DHCP_SNOOPING_DEBUG_CATEGORY`, arp-inspection.ts `ARP_INSPECTION_DEBUG_CATEGORY`).
+ * Literals (rule 12).
+ */
+export const HARDENING_DEBUG_CATEGORIES: readonly GrammarDebugCategory[] = Object.freeze([
+  { category: 'ip dhcp snooping', help: 'Trace DHCP snooping: bindings learned and removed, and every DHCP message refused', requiresAny: HARDENING_CAPABILITIES, since: 'P3' },
+  { category: 'ip arp inspection', help: 'Trace ARP inspection: every ARP message refused and every rate-limit breach', requiresAny: HARDENING_CAPABILITIES, since: 'P3' },
+]);
+
+/** @since P3 Objectives of the access-layer debug categories. */
+export const HARDENING_DEBUG_OBJECTIVES: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  'ip dhcp snooping': OBJ_SNOOP,
+  'ip arp inspection': OBJ_DAI,
+});
+
+/** The show specs' common members (any exec mode, filterable). */
+const SHOW = {
+  mode: '@exec',
+  privilege: 1,
+  filterable: true,
+  grammars: NFOS_ONLY,
+  requiresAny: HARDENING_CAPABILITIES,
+  since: 'P3',
+} as const;
 
 const GLOBAL = {
   mode: 'config',
@@ -181,4 +221,54 @@ export const HARDENING_GRAMMAR: readonly CommandSpec[] = Object.freeze<CommandSp
     fixedArgs: { [HARDENING_FORM_ARG]: 'limit-none' },
     objectives: OBJ_DAI,
   },
+  // W3 cli part 2: the shows (§5.8)
+  {
+    ...SHOW,
+    path: ['show', 'ip', 'dhcp', 'snooping'],
+    help: 'DHCP snooping: whether it runs, its VLANs, and the trusted and rate-limited ports',
+    handler: H.showIpDhcpSnooping,
+    objectives: OBJ_SNOOP,
+  },
+  {
+    ...SHOW,
+    path: ['show', 'ip', 'dhcp', 'snooping', 'binding'],
+    help: 'The address bindings snooping learned or was given',
+    handler: H.showIpDhcpSnooping,
+    fixedArgs: { [HARDENING_SHOW_ARG]: 'binding' },
+    objectives: OBJ_SNOOP,
+  },
+  {
+    ...SHOW,
+    path: ['show', 'ip', 'arp', 'inspection'],
+    help: 'ARP inspection per VLAN: whether it runs, its counters and its trusted ports',
+    handler: H.showIpArpInspection,
+    objectives: OBJ_DAI,
+  },
+  {
+    ...SHOW,
+    path: ['show', 'ip', 'arp', 'inspection', 'vlan', '<vlans>'],
+    help: 'ARP inspection of some VLANs only',
+    args: { vlans: VLAN_LIST_ARG },
+    handler: H.showIpArpInspection,
+    fixedArgs: { [HARDENING_SHOW_ARG]: 'vlan' },
+    objectives: OBJ_DAI,
+  },
+  {
+    ...SHOW,
+    path: ['show', 'ip', 'arp', 'inspection', 'interfaces'],
+    help: 'Trust and rate limit of every switched port',
+    handler: H.showIpArpInspection,
+    fixedArgs: { [HARDENING_SHOW_ARG]: 'interfaces' },
+    objectives: OBJ_DAI,
+  },
+  {
+    ...SHOW,
+    path: ['show', 'ip', 'arp', 'inspection', 'statistics'],
+    help: 'ARP messages forwarded and dropped per inspected VLAN',
+    handler: H.showIpArpInspection,
+    fixedArgs: { [HARDENING_SHOW_ARG]: 'statistics' },
+    objectives: OBJ_DAI,
+  },
+  // `debug ip dhcp snooping`, `debug ip arp inspection` (§5.8)
+  ...debugSpecs(HARDENING_DEBUG_CATEGORIES, HARDENING_DEBUG_OBJECTIVES),
 ]);

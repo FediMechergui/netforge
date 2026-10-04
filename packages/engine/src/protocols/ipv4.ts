@@ -97,6 +97,11 @@
  *    (`dormantTransportEligible`), protocols 17 / 6 are treated as having no listener — P2's `unsupported-protocol`
  *    and ICMP 3/2 — until a `DORMANT_TRANSPORT_OWNERS` line is stored (protocols/ip-upper.ts). Internal state (not in
  *    the StateView, no handle), recomputed at `init` and in every `onConfig`.
+ *    [S13] Rulings R17/R27 (W3): an outbound telnet/ssh client session opened from the switch itself also wakes it,
+ *    for as long as the session lasts: `ext.ipv4.transportHold {owner, key, hold}` (protocols/ip-upper.ts
+ *    `transportHoldRequest`, sent by vty-client) sets or releases a hold; the transport is awake while a configured
+ *    line OR a hold exists. Internal state (no debug line, not in the StateView); a world that never opens a client
+ *    session on a switch never sets one.
  *  • `ipv4.send` with `iface` and a multicast destination and no `nextHop`: the next hop is the group itself (arp's
  *    IPv4-multicast framing rule then frames it to `01:00:5e` + the low 23 bits).
  *  • [S18] a third wire selector `{layer: 'ipv4', roles: ['tunnel']}`: the tunnel owner's `ingress {port: 'Tunnel0',
@@ -166,7 +171,7 @@ import type { SimTime } from '../contracts/time.js';
 import type { RibChangedEvent } from '../contracts/transport.js';
 import { createRibArbiter, type RibArbiter, type RibDecision, type RibRemoveReason } from '../core/rib-arbiter.js';
 import { readAccessGroups, type AclInterfaceGroups } from './acl.js';
-import { dormantTransportEligible, ipv4UpperProcess, transportWakeLine } from './ip-upper.js';
+import { dormantTransportEligible, ipv4UpperProcess, TRANSPORT_HOLD_REQUEST, transportWakeLine } from './ip-upper.js';
 
 /** Process name, as registered in the protocol registry. */
 const NAME = 'ipv4';
@@ -579,6 +584,8 @@ export function createIpv4(): Process {
   let transportAwake = false;
   /** @since P3 D22: which of udp / tcp are dormant-eligible on the model last seen (recomputed when the model changes). */
   let dormantModel: { model: DeviceModel; udp: boolean; tcp: boolean } | undefined;
+  /** @since P3 [S13] R17/R27: outbound client sessions holding the dormant transport awake, by `${owner}|${key}`. */
+  const transportHolds = new Set<string>();
   const ring: DebugEvent[] = [];
   let arbiter: RibArbiter<RouteRow> | undefined;
   let forwarding = false;
@@ -1344,9 +1351,20 @@ export function createIpv4(): Process {
 
   /** D22: `target` (udp or tcp) is dormant on this device — treated as having no listener. */
   function transportDormant(ctx: ProcessCtx, target: ProcessName): boolean {
-    if (transportAwake || (target !== 'udp' && target !== 'tcp')) return false;
+    // [S13] R27: an outbound client session's hold wakes it like a configured service line
+    if (transportAwake || transportHolds.size > 0 || (target !== 'udp' && target !== 'tcp')) return false;
     const e = dormantEligibility(ctx);
     return target === 'udp' ? e.udp : e.tcp;
+  }
+
+  /** [S13] R17/R27: set or release an outbound session's hold on the dormant transport (`ext.ipv4.transportHold`). */
+  function transportHold(req: ProcessRequest): Action[] {
+    const r = req as { owner?: unknown; key?: unknown; hold?: unknown };
+    if (typeof r.owner !== 'string' || typeof r.key !== 'string' || typeof r.hold !== 'boolean') return [];
+    const id = `${r.owner}|${r.key}`;
+    if (r.hold) transportHolds.add(id);
+    else transportHolds.delete(id);
+    return [];
   }
 
   // ── NAT roles, virtual addresses and groups (D14, D15, S2) ────────────────
@@ -1774,6 +1792,9 @@ export function createIpv4(): Process {
         return routesRequest(ctx, req);
       case 'ipv4.ribWatch':
         return ribWatchRequest(ctx, req);
+      // ── P3 [S13] R17/R27 ──
+      case TRANSPORT_HOLD_REQUEST:
+        return transportHold(req);
       default:
         return [];
     }

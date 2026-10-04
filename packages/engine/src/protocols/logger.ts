@@ -25,24 +25,65 @@
  * [<level>]` / `no logging console`; `logging monitor [<level>]` / `no logging monitor`. Buffering is on by default at
  * level debugging, as on real devices. A record whose severity is above the buffered level is counted, not kept.
  * The buffer is bounded in bytes (each line plus its newline); the oldest lines go first. Shrinking the size trims it.
+ * The console's default is `cli/log-render.ts` `consoleLogLevel`'s (ruling R25): without a `logging console` line a
+ * P3 world prints every level (debugging) and a P1/P2 world prints none (`enabled: false`) — the world's profile is
+ * read for this invisible default only.
  *
- * stateSnapshot (kind 'logger'): { buffered: { enabled, level, sizeBytes, usedBytes }, console: { enabled, level },
- *   monitor: { enabled, level }, timestamps: { log, debug } (the configured forms as text, or null), counts: { seen,
- *   buffered, filtered, overflowed }, entries: [{ seq, at, severity, facility, mnemonic?, message, text }] (oldest
- *   first) }.
+ * [S25] The UDP 514 sender (the delimited W3 svc block below; D20, §3.7 step 8, §4.3): with at least one `logging host
+ * <a>` (or its alias `logging <a>`), every record whose severity is at or below `logging trap` (informational when not
+ * set) leaves at once — no timer, no queue — as one datagram per host, in configuration order, `[ipv4, udp 514 → 514,
+ * syslog {pri = facility × 8 + severity, timestamp, hostname, message}]`: the facility is `logging facility local0-7`
+ * (local7 = 23 when not set), the timestamp the stamp of the buffered line (the same renderer, the device clock and
+ * `service timestamps log`), the hostname the device's, the message `%FAC-SEV[-MNEMONIC]: text`. The source address is
+ * `logging source-interface`'s when that interface has one, else udp's choice. The daemon owns socket `logger#514`
+ * (0.0.0.0, the fixed RFC 3164 source port 514: no ephemeral draw, §4.1) only while a host is configured; with none it
+ * opens no socket and sends nothing (silence, §4.3), and a P1/P2 file never holds the line (the P1/P2 grammars refused
+ * it). On a managed switch the line also wakes the dormant transport (D22, `DORMANT_TRANSPORT_OWNERS`, l3). A send udp
+ * refuses (no route, no address) is udp's `sock.error`, ignored here: syslog is fire-and-forget.
+ *
+ * stateSnapshot (kind 'logger', `LoggerStateView` of contracts/process.ts, R25): { buffered: { enabled, level,
+ *   sizeBytes, usedBytes }, console: { enabled, level }, monitor: { enabled, level }, timestamps: { log, debug } (the
+ *   configured forms as text, or null), counts: { seen, buffered, filtered, overflowed }, entries: [{ seq, at, severity,
+ *   facility, mnemonic?, message, text }] (oldest first), syslog?: { trap, facility, hosts: [{ address, sent }], sent }
+ *   ([S25]: only while a `logging host` is configured) }.
  *
  * ponytail: no `logging discriminator`, no rate limiting, no sequence-number service; the history of a reload is lost
- * (the buffer is RAM, as on real devices).
+ * (the buffer is RAM, as on real devices); syslog over IPv4 only (the grammar takes IPv4 hosts), no TCP or TLS
+ * transport, no per-host trap level.
  */
+import { profileIncludes } from '../contracts/catalog.js';
 import { formatClock, type DeviceClockView } from '../contracts/clock.js';
+import { isIpv4, type Ipv4Address } from '../contracts/addr.js';
 import type { ConfigNode } from '../contracts/config.js';
-import type { ProcessName } from '../contracts/ids.js';
-import type { Action, DebugEvent, Process, ProcessCtx, Severity, StateView } from '../contracts/process.js';
+import type { PortId, ProcessName } from '../contracts/ids.js';
+import { UDP_PORT_SYSLOG, type FieldValue } from '../contracts/pdu.js';
+import type {
+  Action,
+  DebugEvent,
+  LoggerEntryView,
+  LoggerOutputView,
+  LoggerStateView,
+  LoggerSyslogView,
+  Process,
+  ProcessCtx,
+  ProcessRequest,
+  Severity,
+  StateView,
+} from '../contracts/process.js';
 import { formatSimTime, HOUR, MIN, SEC, type SimTime } from '../contracts/time.js';
 import type { LogRecordEvent, ProcessEvent } from '../contracts/transport.js';
 import { configTextLinesOf } from '../cli/config-text.js';
 
+/** @since P3 [S24] The logger StateView is a contract type (ruling R25); re-exported here for the daemon's callers. */
+export type { LoggerStateView } from '../contracts/process.js';
+
 const NAME: ProcessName = 'logger';
+
+/**
+ * @since P3 (W3 fix, ruling R38) The request `clear logging` sends (`cli/handlers/logging.ts` `LOGGING_CLEAR_REQUEST`, the
+ * same text): the contract's `ext.` slot; the logger empties its buffer's lines and used bytes and keeps its counters.
+ */
+export const LOGGER_CLEAR_REQUEST = 'ext.logging.clear';
 /** Syslog level keywords, index = severity (§5.7). */
 export const LOGGER_LEVEL_NAMES: readonly string[] = Object.freeze([
   'emergencies',
@@ -152,11 +193,8 @@ export function formatDebugLine(ev: Pick<DebugEvent, 'at' | 'category' | 'messag
 
 // ── configuration ────────────────────────────────────────────────────────────
 
-/** One output's switch and level. */
-export interface LogOutput {
-  readonly enabled: boolean;
-  readonly level: Severity;
-}
+/** One output's switch and level (the contract's `LoggerOutputView`, R25). */
+export type LogOutput = LoggerOutputView;
 
 /** What the logging lines of a running configuration ask for (§5.7, [S24]). */
 export interface LoggingConfig {
@@ -167,10 +205,15 @@ export interface LoggingConfig {
   readonly debug?: TimestampFormat;
 }
 
-/** Read `logging buffered|console|monitor …` and `service timestamps …` from `root` (defaults: on, debugging, 4096 B). */
-export function loggingConfigOf(root: ConfigNode): LoggingConfig {
+/**
+ * Read `logging buffered|console|monitor …` and `service timestamps …` from `root` (defaults: on, debugging, 4096 B).
+ * `p3World` (R25) is the console's default, as `cli/log-render.ts` `consoleLogLevel` decides it: without a `logging
+ * console` line a P3 world prints every level and a P1/P2 world (`false`) prints none. The logger passes its world's
+ * profile; the default `true` is the logger's own stage.
+ */
+export function loggingConfigOf(root: ConfigNode, p3World = true): LoggingConfig {
   let buffered = { enabled: true, level: LOGGING_DEFAULT_LEVEL, sizeBytes: LOGGING_BUFFER_DEFAULT_BYTES };
-  let consoleOut: LogOutput = { enabled: true, level: LOGGING_DEFAULT_LEVEL };
+  let consoleOut: LogOutput = { enabled: p3World, level: LOGGING_DEFAULT_LEVEL };
   let monitorOut: LogOutput = { enabled: true, level: LOGGING_DEFAULT_LEVEL };
   let log: TimestampFormat | undefined;
   let debug: TimestampFormat | undefined;
@@ -210,33 +253,94 @@ export function loggingConfigOf(root: ConfigNode): LoggingConfig {
   return cfg;
 }
 
+// ── [S25] the UDP 514 sender: configuration (W3 svc; a delimited block of the W2 logger) ─────────────────────────
+
+/** @since P3 [S25] The logger's syslog socket: 0.0.0.0:514, the fixed RFC 3164 source port (no ephemeral draw, §4.1). */
+export const LOGGER_SYSLOG_SOCKET = 'logger#514';
+/** @since P3 [S25] `logging trap` when not set: informational (§5.7). */
+export const LOGGING_TRAP_DEFAULT: Severity = 6;
+/** @since P3 [S25] The RFC 3164 number of facility local0 (`logging facility local<n>` is 16 + n). */
+export const SYSLOG_FACILITY_LOCAL0 = 16;
+/** @since P3 [S25] `logging facility` when not set: local7 (23), so a severity-3 line has priority 187 (§3.7). */
+export const LOGGING_FACILITY_DEFAULT = 23;
+/** @since P3 [S25] The tag of every syslog datagram the logger builds. */
+export const SYSLOG_PDU_TAG = 'syslog';
+
+/** @since P3 [S25] What the syslog lines of a running configuration ask for (§5.7). */
+export interface SyslogConfig {
+  /** `logging host <a>` and its alias `logging <a>`, in running-configuration order, each address once. */
+  readonly hosts: readonly Ipv4Address[];
+  /** `logging trap <level>` (informational when not set). */
+  readonly trap: Severity;
+  /** `logging facility local0-7` as its RFC 3164 number (local7 = 23 when not set). */
+  readonly facility: number;
+  /** `logging source-interface <if>`. */
+  readonly sourceInterface?: string;
+}
+
+/** @since P3 [S25] The RFC 3164 number of `local0`–`local7`, else undefined. */
+export function syslogFacilityOf(token: string | undefined): number | undefined {
+  const m = token === undefined ? null : /^local([0-7])$/.exec(token.toLowerCase());
+  return m === null ? undefined : SYSLOG_FACILITY_LOCAL0 + Number(m[1]);
+}
+
+/** @since P3 [S25] Read `logging host|trap|facility|source-interface` and `logging <a>` from `root` (§5.7). */
+export function syslogConfigOf(root: ConfigNode): SyslogConfig {
+  const hosts: Ipv4Address[] = [];
+  let trap: Severity = LOGGING_TRAP_DEFAULT;
+  let facility = LOGGING_FACILITY_DEFAULT;
+  let sourceInterface: string | undefined;
+  for (const l of configTextLinesOf(root)) {
+    const t = l.tokens;
+    if (l.context.length !== 0 || l.negate || t[0] !== 'logging') continue;
+    const what = t[1] ?? '';
+    if (what === 'host' || (t.length === 2 && isIpv4(what))) {
+      const address = what === 'host' ? t[2] : what;
+      if (address !== undefined && isIpv4(address) && !hosts.includes(address)) hosts.push(address);
+    } else if (what === 'trap') trap = loggerLevelOf(t[2]) ?? LOGGING_TRAP_DEFAULT;
+    else if (what === 'facility') facility = syslogFacilityOf(t[2]) ?? LOGGING_FACILITY_DEFAULT;
+    else if (what === 'source-interface' && t[2] !== undefined) sourceInterface = t[2];
+  }
+  return sourceInterface === undefined ? { hosts, trap, facility } : { hosts, trap, facility, sourceInterface };
+}
+
+/**
+ * @since P3 [S25] The hostname a syslog header can carry (the codec's rule: one word, no ':', not starting with '%'):
+ * runs of white space and ':' become '-', leading '%' are dropped. An empty result sends the message without a
+ * header (no timestamp, no hostname), which the codec allows.
+ */
+export function syslogHostname(name: string): string {
+  return name.replace(/[\s:]+/g, '-').replace(/^%+/, '');
+}
+
+/** @since P3 [S25] The syslog fields of one record (§3.7 step 8): priority, the line's stamp, the hostname, the message. */
+export function syslogFields(
+  rec: Pick<LogRecordEvent, 'severity' | 'facility' | 'message' | 'mnemonic'>,
+  facility: number,
+  stamp: string,
+  hostname: string,
+): Record<string, FieldValue> {
+  const host = syslogHostname(hostname);
+  return {
+    pri: facility * 8 + rec.severity,
+    timestamp: host === '' ? '' : stamp,
+    hostname: host,
+    message: formatLogMessage(rec.severity, rec.facility, rec.message, rec.mnemonic),
+  };
+}
+
+// ── end of the [S25] configuration block ──────────────────────────────────────────────────────────────────────────
+
 // ── the daemon ───────────────────────────────────────────────────────────────
 
-/** One buffered line. */
-export interface LoggerEntry {
-  readonly seq: number;
-  readonly at: SimTime;
-  readonly severity: Severity;
-  readonly facility: string;
-  readonly mnemonic?: string;
-  readonly message: string;
-  /** The line as rendered when it was logged. */
-  readonly text: string;
-}
+/** One buffered line (the contract's `LoggerEntryView`, R25). */
+export type LoggerEntry = LoggerEntryView;
 
-/** The logger StateView (kind 'logger', display only: `show logging`). */
-export interface LoggerStateView {
-  readonly buffered: LogOutput & { readonly sizeBytes: number; readonly usedBytes: number };
-  readonly console: LogOutput;
-  readonly monitor: LogOutput;
-  readonly timestamps: { readonly log: string | null; readonly debug: string | null };
-  readonly counts: { readonly seen: number; readonly buffered: number; readonly filtered: number; readonly overflowed: number };
-  readonly entries: readonly LoggerEntry[];
-}
-
-/** Create the logger daemon ([S24]; silent: it never sends, and buffering writes no trace). */
+/** Create the logger daemon ([S24]: buffering is silent; [S25]: it sends only with a `logging host` line). */
 export function createLogger(): Process {
   let cfg: LoggingConfig | undefined;
+  /** R25: the world's profile decides the console's default (read for that invisible default only). */
+  let p3World = true;
   let bootAt: SimTime = 0;
   let seq = 0;
   let usedBytes = 0;
@@ -245,8 +349,20 @@ export function createLogger(): Process {
   let filtered = 0;
   let overflowed = 0;
   const entries: LoggerEntry[] = [];
+  // [S25] the UDP 514 sender's state
+  let syslog: SyslogConfig | undefined;
+  let syslogOpen = false;
+  let syslogSent = 0;
+  const sentTo = new Map<Ipv4Address, number>();
 
-  const config = (ctx: ProcessCtx): LoggingConfig => (cfg ??= loggingConfigOf(ctx.config.root));
+  function readConfig(ctx: ProcessCtx): LoggingConfig {
+    p3World = profileIncludes(ctx.profile, 'P3');
+    const next = loggingConfigOf(ctx.config.root, p3World);
+    cfg = next;
+    return next;
+  }
+
+  const config = (ctx: ProcessCtx): LoggingConfig => cfg ?? readConfig(ctx);
 
   /** Drop the oldest lines until the buffer fits `size` bytes. */
   function trim(size: number): void {
@@ -257,31 +373,88 @@ export function createLogger(): Process {
     }
   }
 
-  function record(ctx: ProcessCtx, ev: LogRecordEvent): void {
+  function record(ctx: ProcessCtx, ev: LogRecordEvent): Action[] {
     seen++;
     const c = config(ctx);
-    if (!c.buffered.enabled || ev.severity > c.buffered.level) {
-      filtered++;
-      return;
+    // one stamp per record, shared by the buffered line and the [S25] syslog header (one renderer, D20)
+    let stamp: string | undefined;
+    const stampOf = (): string => (stamp ??= formatLogTimestamp(ev.at, ctx.clock(), c.log, ev.at - bootAt));
+    if (!c.buffered.enabled || ev.severity > c.buffered.level) filtered++;
+    else {
+      const text = `${stampOf()}: ${formatLogMessage(ev.severity, ev.facility, ev.message, ev.mnemonic)}`;
+      const entry: LoggerEntry =
+        ev.mnemonic !== undefined
+          ? { seq: ++seq, at: ev.at, severity: ev.severity, facility: ev.facility, mnemonic: ev.mnemonic, message: ev.message, text }
+          : { seq: ++seq, at: ev.at, severity: ev.severity, facility: ev.facility, message: ev.message, text };
+      entries.push(entry);
+      usedBytes += text.length + 1;
+      bufferedCount++;
+      trim(c.buffered.sizeBytes);
     }
-    const text = formatLogLine(ev, ctx.clock(), c.log, ev.at - bootAt);
-    const entry: LoggerEntry =
-      ev.mnemonic !== undefined
-        ? { seq: ++seq, at: ev.at, severity: ev.severity, facility: ev.facility, mnemonic: ev.mnemonic, message: ev.message, text }
-        : { seq: ++seq, at: ev.at, severity: ev.severity, facility: ev.facility, message: ev.message, text };
-    entries.push(entry);
-    usedBytes += text.length + 1;
-    bufferedCount++;
-    trim(c.buffered.sizeBytes);
+    return sendSyslog(ctx, ev, stampOf);
   }
+
+  // ── [S25] the UDP 514 sender (W3 svc; a delimited block of the W2 logger) ──────────────────────────────────────
+
+  const syslogConfig = (ctx: ProcessCtx): SyslogConfig => (syslog ??= syslogConfigOf(ctx.config.root));
+
+  function openSyslog(): Action {
+    syslogOpen = true;
+    return { type: 'request', to: 'udp', req: { kind: 'udp.open', owner: NAME, socket: LOGGER_SYSLOG_SOCKET, family: 4, localAddr: '0.0.0.0', localPort: UDP_PORT_SYSLOG } };
+  }
+
+  /** Re-read the syslog lines and converge the socket: open while a host is configured, closed otherwise (§4.3). */
+  function syncSyslog(ctx: ProcessCtx): Action[] {
+    const next = syslogConfigOf(ctx.config.root);
+    syslog = next;
+    for (const host of [...sentTo.keys()]) if (!next.hosts.includes(host)) sentTo.delete(host);
+    if (next.hosts.length > 0 && !syslogOpen) return [openSyslog()];
+    if (next.hosts.length === 0 && syslogOpen) {
+      syslogOpen = false;
+      return [{ type: 'request', to: 'udp', req: { kind: 'udp.close', socket: LOGGER_SYSLOG_SOCKET } }];
+    }
+    return [];
+  }
+
+  /** One datagram per configured host for a record at or below the trap level, at once (§3.7 step 8, §4.2). */
+  function sendSyslog(ctx: ProcessCtx, ev: LogRecordEvent, stampOf: () => string): Action[] {
+    const s = syslogConfig(ctx);
+    if (s.hosts.length === 0 || ev.severity > s.trap) return [];
+    const out: Action[] = syslogOpen ? [] : [openSyslog()];
+    const fields = syslogFields(ev, s.facility, stampOf(), ctx.hostname);
+    const src = s.sourceInterface === undefined ? undefined : ctx.ports.get(s.sourceInterface as PortId)?.l3.ipv4?.address;
+    for (const host of s.hosts) {
+      const req: Extract<ProcessRequest, { kind: 'udp.send' }> = {
+        kind: 'udp.send',
+        socket: LOGGER_SYSLOG_SOCKET,
+        dst: host,
+        dstPort: UDP_PORT_SYSLOG,
+        tag: SYSLOG_PDU_TAG,
+        app: [{ proto: 'syslog', fields: { ...fields } }],
+      };
+      if (src !== undefined) req.src = src;
+      out.push({ type: 'request', to: 'udp', req });
+      sentTo.set(host, (sentTo.get(host) ?? 0) + 1);
+      syslogSent++;
+    }
+    return out;
+  }
+
+  function syslogView(): LoggerSyslogView | undefined {
+    const s = syslog;
+    if (s === undefined || s.hosts.length === 0) return undefined;
+    return { trap: s.trap, facility: s.facility, hosts: s.hosts.map((address) => ({ address, sent: sentTo.get(address) ?? 0 })), sent: syslogSent };
+  }
+
+  // ── end of the [S25] sender block ──────────────────────────────────────────────────────────────────────────────
 
   return {
     name: NAME,
 
     init(ctx): Action[] {
       bootAt = ctx.now;
-      cfg = loggingConfigOf(ctx.config.root);
-      return [];
+      readConfig(ctx);
+      return syncSyslog(ctx);
     },
 
     onPdu(_ctx, pdu, port): Action[] {
@@ -290,12 +463,12 @@ export function createLogger(): Process {
 
     onConfig(ctx, delta): Action[] {
       if (delta.context.length !== 0 || (delta.line[0] !== 'logging' && delta.line[0] !== 'service')) return [];
-      cfg = loggingConfigOf(ctx.config.root);
-      if (!cfg.buffered.enabled) {
+      const c = readConfig(ctx);
+      if (!c.buffered.enabled) {
         entries.length = 0;
         usedBytes = 0;
-      } else trim(cfg.buffered.sizeBytes);
-      return [];
+      } else trim(c.buffered.sizeBytes);
+      return delta.line[0] === 'logging' ? syncSyslog(ctx) : [];
     },
 
     onTimer(): Action[] {
@@ -303,17 +476,29 @@ export function createLogger(): Process {
     },
 
     onEvent(ctx, ev: ProcessEvent): Action[] {
-      if (ev.kind === 'log.record') record(ctx, ev);
+      // [S25] sock.opened / sock.error / sock.datagram of `logger#514` need no answer: syslog is fire-and-forget
+      return ev.kind === 'log.record' ? record(ctx, ev) : [];
+    },
+
+    /**
+     * Ruling R38: `clear logging` (`ext.logging.clear`) empties the buffer's lines and used bytes and keeps every
+     * counter (seen, buffered, filtered, overflowed). Silent: no trace action, no debug line.
+     */
+    onRequest(_ctx, req: ProcessRequest): Action[] {
+      if (req.kind === LOGGER_CLEAR_REQUEST) {
+        entries.length = 0;
+        usedBytes = 0;
+      }
       return [];
     },
 
     stateSnapshot(): StateView {
       const c: LoggingConfig = cfg ?? {
         buffered: { enabled: true, level: LOGGING_DEFAULT_LEVEL, sizeBytes: LOGGING_BUFFER_DEFAULT_BYTES },
-        console: { enabled: true, level: LOGGING_DEFAULT_LEVEL },
+        console: { enabled: p3World, level: LOGGING_DEFAULT_LEVEL },
         monitor: { enabled: true, level: LOGGING_DEFAULT_LEVEL },
       };
-      const view: LoggerStateView = {
+      const view: { -readonly [K in keyof LoggerStateView]: LoggerStateView[K] } = {
         buffered: { ...c.buffered, usedBytes },
         console: { ...c.console },
         monitor: { ...c.monitor },
@@ -321,6 +506,8 @@ export function createLogger(): Process {
         counts: { seen, buffered: bufferedCount, filtered, overflowed },
         entries: entries.map((e) => ({ ...e })),
       };
+      const sl = syslogView(); // [S25] optional by meaning: only while a `logging host` is configured
+      if (sl !== undefined) view.syslog = sl;
       return { process: NAME, state: { ...view } };
     },
 

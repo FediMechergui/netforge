@@ -5,11 +5,14 @@
  * cli.runtime.fake.ts, parser contexts and recording command contexts over catalog models, and a tunnel port view.
  * Not a test file itself.
  */
-import type { CliMode, CommandHandler, CommandSpec } from '../src/contracts/cli.js';
+import type { CliMode, CommandCtx, CommandHandler, CommandSpec } from '../src/contracts/cli.js';
 import type { DeviceModel } from '../src/contracts/device.js';
 import type { ProcessName } from '../src/contracts/ids.js';
 import type { PortView } from '../src/contracts/port.js';
 import type { DefaultsProfile } from '../src/contracts/catalog.js';
+import type { Table, TableName, TableRow } from '../src/contracts/tables.js';
+import type { SimTime } from '../src/contracts/time.js';
+import { createTable } from '../src/core/table.js';
 import { BUILTIN_GRAMMAR } from '../src/cli/grammar/index.js';
 import { P3_APPROVED_GRAMMAR } from '../src/cli/grammar/p3-approved.js';
 import { HANDLER_REGISTRY } from '../src/cli/handlers/index.js';
@@ -99,4 +102,66 @@ export function withProcesses(d: FakeDevice, ...names: ProcessName[]): FakeDevic
 export function withProfile(d: FakeDevice, profile: DefaultsProfile): FakeDevice {
   Object.defineProperty(d, 'profile', { value: profile, writable: false, configurable: true });
   return d;
+}
+
+// ── W3 cli (cli-b): command contexts for the approved items' shows ───────────────────────────────────────────────
+
+/** Options of `showCtx`: table rows by table name, StateViews by daemon, the sim time and any other member. */
+export interface ShowCtxOptions {
+  readonly rows?: Readonly<Record<string, readonly TableRow[]>>;
+  readonly states?: Readonly<Record<string, Record<string, unknown>>>;
+  readonly now?: SimTime;
+  readonly patch?: Partial<CommandCtx>;
+}
+
+/**
+ * A command context over a recording one, with the approved items' tables filled from `rows` (fake tables of
+ * core/table.ts; a name not given falls back to the recording context's tables), fake StateViews and the sim time.
+ */
+export function showCtx(rec: RecordingCtx, opts: ShowCtxOptions = {}): CommandCtx {
+  const sink = { emit: (): void => undefined };
+  const now = opts.now ?? rec.ctx.now;
+  const tables = new Map<string, Table<TableRow>>();
+  for (const [name, list] of Object.entries(opts.rows ?? {})) {
+    const t = createTable<TableRow>({ name, device: 'd_1', sink, now: () => now });
+    for (const r of list) t.set(r);
+    tables.set(name, t);
+  }
+  const base = rec.ctx;
+  return {
+    ...base,
+    now,
+    tables: {
+      cam: base.tables.cam,
+      arp: base.tables.arp,
+      rib: base.tables.rib,
+      get: <R extends TableRow = TableRow>(name: TableName) => (tables.get(name) ?? base.tables.get(name)) as unknown as Table<R> | undefined,
+      names: () => [...base.tables.names(), ...tables.keys()],
+    },
+    processState: (name) => {
+      const state = opts.states?.[name];
+      return state !== undefined ? { process: name, state } : base.processState(name);
+    },
+    ...opts.patch,
+  };
+}
+
+/** Run one approved handler on a command context. */
+export function runOn(ctx: CommandCtx, id: string, args: Record<string, string> = {}, negate = false): ReturnType<CommandHandler> {
+  const h = APPROVED_HANDLERS[id];
+  if (h === undefined) throw new Error(`no handler ${id}`);
+  return h(ctx, args, negate);
+}
+
+/** The output lines of one approved show handler (throws on an error outcome). */
+export function showLines(ctx: CommandCtx, id: string, args: Record<string, string> = {}): string[] {
+  const out = runOn(ctx, id, args);
+  if (out.error !== undefined) throw new Error(`${id}: ${out.error}`);
+  return (out.output ?? '').split('\n');
+}
+
+/** A catalog model with extra daemons in its process list (the W4 flip adds the approved ones). */
+export function modelWith(type: string, ...processes: ProcessName[]): DeviceModel {
+  const m = catalogModel(type);
+  return { ...m, processes: [...m.processes, ...processes] };
 }

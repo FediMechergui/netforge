@@ -41,6 +41,8 @@ import {
   QOS_DEFAULT_QUEUE_LIMIT,
   type EgressAdmission,
 } from '../link/qos/scheduler.js';
+import type { PortRole } from '../contracts/catalog.js';
+import { routingBandwidthKbps } from '../protocols/ospf/cost.js';
 
 // ── value names ─────────────────────────────────────────────────────────────
 
@@ -231,7 +233,10 @@ export type QosRate = { readonly kbps: number } | { readonly percent: number };
 /** @since P3 [S20] A `bandwidth` reservation, or (`remaining percent`) a share of what is left after the reservations. */
 export type QosBandwidth = QosRate | { readonly remainingPercent: number };
 
-/** @since P3 [S21] What a policer does with a conforming or an exceeding packet. */
+/**
+ * @since P3 [S21] What a policer does with a conforming or an exceeding packet (the read-only form of the contract's
+ * `PolicerAction`, ruling R26).
+ */
 export type QosPoliceAction = { readonly kind: 'transmit' } | { readonly kind: 'drop' } | { readonly kind: 'set-dscp-transmit'; readonly dscp: number };
 
 /** @since P3 [S21] A `police` line: rate (b/s), burst (bytes; the default when omitted) and the two actions. */
@@ -551,6 +556,56 @@ export function compilePortQosPolicy(
   return name === undefined ? undefined : compileQosPolicy(config, name, opts);
 }
 
+/**
+ * @since P3 What the interface sections of a running configuration attach (W3 device: the runtime's per-generation
+ * index, so a port without any of these lines costs one map lookup per frame): the `service-policy input|output`
+ * names and [S21] interface `fair-queue`. Ports in configuration order; a port without any of the three is absent.
+ */
+export interface QosAttachment {
+  readonly input?: string;
+  readonly output?: string;
+  readonly fairQueue?: true;
+}
+
+/** @since P3 Every interface's QoS attachment (`QosAttachment`), keyed by the interface name as stored. */
+export function readQosAttachments(config: Pick<ConfigAst, 'root'>): Map<string, QosAttachment> {
+  const out = new Map<string, QosAttachment>();
+  for (const node of config.root.children) {
+    if (node.key !== 'interface' || node.args.length !== 1) continue;
+    const port = node.args[0]!;
+    if (out.has(port)) continue;
+    let input: string | undefined;
+    let output: string | undefined;
+    let fairQueue = false;
+    for (const c of node.children) {
+      if (c.key === 'service-policy' && c.args.length === 2) {
+        if (c.args[0] === 'input') input ??= c.args[1];
+        else if (c.args[0] === 'output') output ??= c.args[1];
+      } else if (c.key === 'fair-queue' && c.args.length === 0) {
+        fairQueue = true;
+      }
+    }
+    if (input === undefined && output === undefined && !fairQueue) continue;
+    out.set(port, {
+      ...(input === undefined ? {} : { input }),
+      ...(output === undefined ? {} : { output }),
+      ...(fairQueue ? { fairQueue: true as const } : {}),
+    });
+  }
+  return out;
+}
+
+/**
+ * @since P3 [S21] The `PolicerSpec` (contracts/link.ts) of a `police` line: its rate and burst, and (ruling R26) its
+ * actions when they are not the defaults (conform transmit, exceed drop), so a default policer keeps the W0 shape.
+ */
+export function qosPolicerSpecOf(p: Pick<QosPoliceSpec, 'rateBps' | 'burstBytes' | 'conform' | 'exceed'>): PolicerSpec {
+  const spec: PolicerSpec = { rateBps: p.rateBps, burstBytes: p.burstBytes };
+  if (p.conform.kind !== 'transmit') spec.conform = { ...p.conform };
+  if (p.exceed.kind !== 'drop') spec.exceed = { ...p.exceed };
+  return spec;
+}
+
 /** @since P3 [S21] True when the interface `port` carries `fair-queue` (WFQ on the whole port). */
 export function readInterfaceFairQueue(config: Pick<ConfigAst, 'root'>, port: string): boolean {
   return interfaceNode(config, port)?.children.some((c) => c.key === 'fair-queue' && c.args.length === 0) === true;
@@ -564,6 +619,18 @@ export function qosReferenceBps(config: Pick<ConfigAst, 'root'>, port: string, n
   const line = interfaceNode(config, port)?.children.find((c) => c.key === 'bandwidth' && c.args.length === 1);
   const kbps = line === undefined ? undefined : decimal(line.args[0], 10_000_000_000);
   return kbps !== undefined && kbps > 0 ? kbps * 1000 : negotiatedBps;
+}
+
+/**
+ * @since P3 (W3 fix, ruling R34) THE QoS reference rate of a port (b/s), one helper for every reader: its `bandwidth
+ * <kbps>` line, else its routing bandwidth (`routingBandwidthKbps` of its effective role and speed: the `BW` of `show
+ * interfaces`, 1544 kb/s on serial, the negotiated rate on Ethernet). The 75 % admission of `service-policy output`
+ * (cli), the compiled scheduler (`DeviceRuntime.egressPolicy`) and the `qos.admitted` fact all read it, so the CLI, the
+ * runtime and the grader never disagree.
+ */
+export function qosPortReferenceRateBps(config: Pick<ConfigAst, 'root'>, port: string, role: PortRole, speedBps: number | undefined): number {
+  const routing = routingBandwidthKbps(speedBps === undefined ? { role } : { role, speedBps }) * 1000;
+  return qosReferenceBps(config, port, routing);
 }
 
 // ── [S20]/[S21] the scheduler spec and its admission ────────────────────────
@@ -635,10 +702,7 @@ export function egressSchedulerSpecOf(policy: QosPolicy, refBps: number): Egress
     };
     if (kind === 'priority') spec.rateBps = bps;
     if (kind !== 'priority' && c.fairQueue === true) spec.fairQueue = true;
-    if (c.police !== undefined && qosPoliceInScheduler(c.police)) {
-      const police: PolicerSpec = { rateBps: c.police.rateBps, burstBytes: c.police.burstBytes };
-      spec.police = police;
-    }
+    if (c.police !== undefined && qosPoliceInScheduler(c.police)) spec.police = qosPolicerSpecOf(c.police);
     return spec;
   });
   const shape = policy.classes[policy.classes.length - 1]!.shape;

@@ -292,6 +292,11 @@ export function pduSummary(pdu: Pdu): PduSummary {
         s.tunnel = 'gre';
         break;
       }
+      // P3 [C13] (ruling R36): an ESP leg of a VTI — an esp layer after the frame and the outer ipv4 — is tagged 'ipsec'
+      if (proto === 'esp') {
+        s.tunnel = 'ipsec';
+        break;
+      }
       if (proto !== 'capwap') continue;
       const inner = ls[i + 1]!.proto;
       if (inner === 'dot11' || inner === 'ethernet') s.tunnel = 'capwap';

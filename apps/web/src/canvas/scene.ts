@@ -3,9 +3,11 @@
  *
  * One `Scene` per <Canvas/> mount. It owns the Pixi `Application`, the camera
  * (world container transform), the background dot grid, and the draw layers in
- * paint order: rf (range rings) → vlan → stp → capwap (the topology overlays'
- * underlays: VLAN tints and trunk rails, the active spanning tree, controller
- * tunnels; ARCHITECTURE-P2 §6) → cables → air (association lines, radio beams)
+ * paint order: rf (range rings) → vlan → stp → capwap → ospf → eigrp → spf →
+ * wan → qos (the topology overlays' underlays: VLAN tints and trunk rails, the
+ * active spanning tree, controller tunnels; ARCHITECTURE-P2 §6; @since P3 the
+ * OSPF zones and adjacencies, EIGRP successors, the SPF tree, WAN rails and
+ * tunnels, QoS load sleeves, ARCHITECTURE-P3 §6) → cables → air (association lines, radio beams)
  * → packets → markers → devices → labels (signal bars, dBm text, phase badges,
  * channel labels, VLAN chips, spanning-tree letters and crowns, controller-tunnel
  * badges) → overlay
@@ -227,7 +229,7 @@ export function viewKey(view: Rect, zoom: number): string {
  * The topology overlays' underlay containers, in paint order (bottom first) — the same order and ids as the overlay
  * registry (`canvas/overlays/registry.ts` `OVERLAY_MODULES`), so a registry entry finds its container by id.
  */
-export const TOPO_LAYER_ORDER = Object.freeze(['vlan', 'stp', 'capwap'] as const);
+export const TOPO_LAYER_ORDER = Object.freeze(['vlan', 'stp', 'capwap', 'ospf', 'eigrp', 'spf', 'wan', 'qos'] as const);
 export type TopoLayerId = (typeof TOPO_LAYER_ORDER)[number];
 
 export interface SceneLayers {
@@ -242,6 +244,16 @@ export interface SceneLayers {
    * controller and its join-progress fill (badges, padlocks and discovery arcs go to `labels`).
    */
   capwap: Container;
+  /** @since P3 [S1] OSPF overlay underlay (W3, `ospf.ts`): area zones and adjacency underlays. */
+  ospf: Container;
+  /** @since P3 [C1] EIGRP overlay underlay (W3, `eigrp.ts`): successor and feasible-successor underlays. */
+  eigrp: Container;
+  /** @since P3 [S3] SPF layer underlay (W3, `spf.ts`): the tree on the real cables. */
+  spf: Container;
+  /** @since P3 [S18]/[S19] WAN overlay underlay (W3, `wan.ts`): tunnel tubes and PPP rails. */
+  wan: Container;
+  /** @since P3 QoS overlay underlay (W3, `qos.ts`): the load sleeves (stacks and lanes go to `labels`). */
+  qos: Container;
   cables: Container;
   /** Association lines and point-to-point radio beams. */
   air: Container;
@@ -313,6 +325,11 @@ export class Scene {
       vlan: new Container(),
       stp: new Container(),
       capwap: new Container(),
+      ospf: new Container(),
+      eigrp: new Container(),
+      spf: new Container(),
+      wan: new Container(),
+      qos: new Container(),
       cables: new Container(),
       air: new Container(),
       packets: new Container(),
@@ -328,7 +345,7 @@ export class Scene {
     app.stage.addChild(this.grid);
     app.stage.addChild(this.world);
     const l = this.layers;
-    this.world.addChild(l.rf, l.vlan, l.stp, l.capwap, l.cables, l.air, l.packets, l.markers, l.devices, l.labels, l.overlay);
+    this.world.addChild(l.rf, ...TOPO_LAYER_ORDER.map((id) => l[id]), l.cables, l.air, l.packets, l.markers, l.devices, l.labels, l.overlay);
 
     const size = hostSize(host);
     this.width = size.width;

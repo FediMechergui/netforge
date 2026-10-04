@@ -128,6 +128,15 @@ const EXPECTED_IDS = [
   'config.logging-trap', 'config.logging-source-interface', 'config.logging-facility', 'config.service-timestamps',
   'exec.terminal-monitor', 'host.service-syslog', 'exec.telnet', 'exec.ssh', 'host.python', 'host.type', 'host.del',
   'host.dir',
+  // ARCHITECTURE-P3 §9.2 W3 item 30e: W3 cli part 2, the 20 cli-a ids (the MUST shows and clears) and the 12 cli-b ids
+  // (the approved items' shows and clears), and ruling R39's `clear cdp counters` (the W3 fix step)
+  'show.ip-ospf-database', 'show.ip-protocols', 'show.ip-dhcp-snooping', 'show.ip-arp-inspection', 'show.cdp',
+  'show.cdp-neighbors', 'show.cdp-entry', 'show.cdp-interface', 'show.cdp-traffic', 'exec.clear-cdp-table',
+  'show.lldp', 'show.lldp-neighbors', 'show.lldp-entry', 'show.lldp-interface', 'show.lldp-traffic',
+  'exec.clear-lldp-table', 'show.ntp-associations', 'show.ntp-status', 'show.restconf', 'show.ip-ssh',
+  'show.ip-eigrp-neighbors', 'show.ip-eigrp-topology', 'show.ip-eigrp-interfaces', 'exec.clear-ip-eigrp-neighbors',
+  'show.interfaces-tunnel', 'show.ppp-interface', 'show.crypto-ikev2-sa', 'show.crypto-ipsec-sa', 'show.logging',
+  'exec.clear-logging', 'show.users', 'show.ssh', 'exec.clear-cdp-counters',
 ];
 
 /** Test label of a context (the device kind is no longer part of MatchContext: scope is grammar and capabilities). */

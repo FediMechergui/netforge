@@ -14,16 +14,24 @@
  *   if.ppp-pap-sent-username     [S19] `ppp pap sent-username <n> password <pw>` / its `no` form
  *   if.peer-neighbor-route       [S19] `peer neighbor-route` (the default) / `no peer neighbor-route` (stored)
  *   config.username-password     [S19] `username <n> password <pw>` / `no username <n>`
+ *   show.interfaces-tunnel       (W3 cli) [S18] `show interfaces tunnel [<n>]`: the `show interfaces` block of every tunnel
+ *                                (or of Tunnel<n>), with its tunnel lines (handlers/show.ts `tunnelLines`)
+ *   show.ppp-interface           (W3 cli) [S19] `show ppp interface [<if>]`: phase, LCP, authentication, peer, NCPs and
+ *                                failures of every PPP serial line (or of one), from the `ppp` row
  *
  * Passwords PPP sends or checks are stored recoverably (PAP sends them, CHAP hashes them): in the clear, or `nf7 <hex>`
  * under `service password-encryption`, exactly like `enable password`. Messages are original wording (spec §1.6).
  */
 import type { CommandCtx, CommandHandler } from '../../contracts/cli.js';
 import { CLI_MESSAGES } from '../../contracts/cli.js';
+import type { PortView } from '../../contracts/port.js';
+import type { PppPhase, PppRow } from '../../contracts/tables.js';
+import { fmtSince } from '../format.js';
 import { TUNNEL_MODE_ARG, TUNNEL_MODE_IPSEC, WAN_HANDLERS } from '../grammar/wan.js';
 import { encodeReversibleSecret, secretTokens } from '../secrets.js';
-import { fillTemplate, interfaceLine, MSG_NO_INTERFACE_SELECTED, outcomeOf, selectedInterface } from './common.js';
+import { encapOf, fillTemplate, interfaceLine, MSG_NO_INTERFACE_SELECTED, outcomeOf, roleOf, selectedInterface } from './common.js';
 import { passwordEncryptionOn } from './line-auth.js';
+import { PPP_FSM_TEXT, pppAuthText, pppRowOf, renderInterface } from './show.js';
 
 /** @since P3 [S18] `tunnel source` naming the tunnel itself. */
 export const MSG_TUNNEL_SOURCE_SELF = '% A tunnel cannot carry itself: name the interface its packets leave through.';
@@ -152,6 +160,79 @@ const usernamePassword: CommandHandler = (ctx, args, negate) => {
   return outcomeOf(ctx.config(['username', name, 'password', ...recoverablePasswordTokens(ctx, plain)], false, []));
 };
 
+// ── W3 cli (cli-b): the shows (§5.8) ─────────────────────────────────────────────────────────────────────────────
+
+/** @since P3 (W3 cli) [S18] `show interfaces tunnel` on a device with no tunnel interface. */
+export const MSG_NO_TUNNEL = 'No tunnel interface is configured.';
+/** @since P3 (W3 cli) [S19] `show ppp interface` on a device where no serial line runs PPP. */
+export const MSG_NO_PPP = 'No interface runs PPP.';
+
+/** The tunnel interfaces of the device, in port order. */
+function tunnelPorts(ctx: CommandCtx): PortView[] {
+  return [...ctx.ports.values()].filter((p) => roleOf(ctx, p) === 'tunnel');
+}
+
+/** `show interfaces tunnel [<n>]`: the `show interfaces` block of every tunnel (or of Tunnel<n>). */
+const showInterfacesTunnel: CommandHandler = (ctx, args) => {
+  const n = args['number'];
+  if (n !== undefined && n !== '') {
+    const name = `Tunnel${Number(n)}`;
+    const p = ctx.ports.get(name);
+    if (p === undefined || roleOf(ctx, p) !== 'tunnel') return { error: `% No interface named "${name}" exists on this device.` };
+    return { output: renderInterface(ctx, p) };
+  }
+  const tunnels = tunnelPorts(ctx);
+  if (tunnels.length === 0) return { output: MSG_NO_TUNNEL };
+  return { output: tunnels.map((p) => renderInterface(ctx, p)).join('\n') };
+};
+
+/** @since P3 (W3 cli) [S19] RFC 1661 link phases as `show ppp interface` prints them. */
+export const PPP_PHASE_TEXT: Readonly<Record<PppPhase, string>> = Object.freeze({
+  dead: 'dead (the line is down)',
+  establish: 'establish (LCP is negotiating)',
+  authenticate: 'authenticate',
+  network: 'network (the network protocols run)',
+  terminate: 'terminate',
+});
+
+/** A PPP magic number as 8 hex digits. */
+function magicText(v: number): string {
+  return `0x${(v >>> 0).toString(16).padStart(8, '0')}`;
+}
+
+/** True when a serial port runs PPP: its encapsulation, or a `ppp` row the daemon wrote. */
+function runsPpp(ctx: CommandCtx, p: PortView): boolean {
+  return p.spec.kind === 'serial' && (encapOf(p) === 'ppp' || pppRowOf(ctx, p.id) !== undefined);
+}
+
+/** One `show ppp interface` block (§3.9): phase, LCP, authentication, peer, the NCPs and the failures. */
+function pppBlock(ctx: CommandCtx, p: PortView, r: PppRow | undefined): string {
+  if (r === undefined) return `${p.id}: PPP has not started (the line is down)`;
+  const lines = [`${p.id}: PPP, phase ${PPP_PHASE_TEXT[r.phase] ?? r.phase}, for ${fmtSince(r.since, ctx.now)}`];
+  lines.push(`  LCP ${PPP_FSM_TEXT[r.lcp] ?? r.lcp}, magic ${magicText(r.magic)}${r.peerMagic !== undefined ? `, peer magic ${magicText(r.peerMagic)}` : ''}`);
+  lines.push(`  Authentication: ${pppAuthText(r)}`);
+  if (r.peerName !== undefined) lines.push(`  Peer name: ${r.peerName}`);
+  lines.push(`  IPCP ${PPP_FSM_TEXT[r.ipcp] ?? r.ipcp}${r.peerAddress !== undefined ? `, peer address ${r.peerAddress}` : ''}`);
+  lines.push(r.ipv6cp !== undefined ? `  IPV6CP ${PPP_FSM_TEXT[r.ipv6cp] ?? r.ipv6cp}` : '  IPV6CP not negotiated');
+  lines.push(`  Failures: ${r.failures}${r.lastFailure !== undefined ? `, the last: ${r.lastFailure}` : ''}`);
+  return lines.join('\n');
+}
+
+/** `show ppp interface [<if>]`: the PPP state of one serial line, or of every line that runs PPP. */
+const showPppInterface: CommandHandler = (ctx, args) => {
+  const name = args['iface'];
+  if (name !== undefined && name !== '') {
+    const id = ctx.ports.has(name) ? name : ctx.resolvePort(name);
+    const p = id === undefined ? undefined : ctx.ports.get(id);
+    if (p === undefined || p.spec.kind !== 'serial') return { error: `% No serial interface named "${name}" exists on this device.` };
+    if (!runsPpp(ctx, p)) return { output: `${p.id} runs ${encapOf(p).toUpperCase()}, not PPP.` };
+    return { output: pppBlock(ctx, p, pppRowOf(ctx, p.id)) };
+  }
+  const ports = [...ctx.ports.values()].filter((p) => runsPpp(ctx, p));
+  if (ports.length === 0) return { output: MSG_NO_PPP };
+  return { output: ports.map((p) => pppBlock(ctx, p, pppRowOf(ctx, p.id))).join('\n\n') };
+};
+
 /** @since P3 [S18]/[S19]/[C13] Registry fragment: WAN handler id → handler. */
 export const wanHandlers: Readonly<Record<string, CommandHandler>> = {
   [WAN_HANDLERS.ifTunnelSource]: tunnelSource,
@@ -164,4 +245,6 @@ export const wanHandlers: Readonly<Record<string, CommandHandler>> = {
   [WAN_HANDLERS.ifPppPapSentUsername]: pppPapSentUsername,
   [WAN_HANDLERS.ifPeerNeighborRoute]: peerNeighborRoute,
   [WAN_HANDLERS.configUsernamePassword]: usernamePassword,
+  [WAN_HANDLERS.showInterfacesTunnel]: showInterfacesTunnel,
+  [WAN_HANDLERS.showPppInterface]: showPppInterface,
 };

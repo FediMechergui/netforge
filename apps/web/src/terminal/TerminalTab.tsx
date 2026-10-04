@@ -16,6 +16,12 @@
  *
  * Jobs (§4.10): while a job holds the console the tab prints one status line naming the key that stops it, and
  * `^C` sends `cliInterrupt` straight away (never through the serial queue, which may be parked on that very job).
+ *
+ * P3 [S13] remote sessions (ARCHITECTURE-P3 §6, §3.14; W3 web-shell; `remote-session.ts`): a console running `telnet`
+ * or `ssh -l` relays a session on another device. The far end's prompt arrives as the session prompt and its password
+ * questions as masked input (the same `input` channel), so both work as above. The tab adds the chip
+ * "remote: R1 via SSH" (from `CliSessionView.remote`), prints no job line after a relayed line (the far end answers
+ * with its prompt), and does not answer `?` or Tab from the local grammar while relaying.
  */
 import { useCallback, useEffect, useRef } from 'react';
 import { Terminal, type IDisposable, type ITheme } from '@xterm/xterm';
@@ -25,7 +31,8 @@ import type { CliCompletion, CliInputRequest, SessionId } from '@netforge/engine
 import { engine } from '../bridge/client';
 import { store, useStore } from '../store/store';
 import type { TerminalTab as TerminalTabInfo } from '../store/types';
-import { LineEditor, editorModeFor, isInterruptKey, jobStatusLine, sanitizeInsert, type KeyEventLike } from './line-editor';
+import { LineEditor, editorModeFor, isInterruptKey, sanitizeInsert, type KeyEventLike } from './line-editor';
+import { REMOTE_HELP_NOTE, busyStatusLine, relaysRemote, remoteChipText } from './remote-session';
 import { nextStoreChange, useSessionOutput, type SessionCursor } from './use-session-output';
 import './terminal.css';
 
@@ -430,9 +437,18 @@ class ConsoleController {
         await this.runLine(action.line);
         return;
       case 'complete':
+        // [S13] the local grammar is not the far end's
+        if (this.relaying()) {
+          this.emit([BELL]);
+          return;
+        }
         await this.complete(action.partial);
         return;
       case 'help':
+        if (this.relaying()) {
+          this.remoteHelp();
+          return;
+        }
         await this.help(action.partial);
         return;
       case 'interrupt':
@@ -460,6 +476,8 @@ class ConsoleController {
     }
     // Anything that arrived before this command belongs above it.
     this.drainNow();
+    // [S13] decided before the line runs: the line that starts `ssh` is a local job, the lines after it are relayed
+    const relayed = this.relaying();
 
     let result;
     try {
@@ -484,9 +502,11 @@ class ConsoleController {
     if (this.disposed || this.state === 'closed') return;
     if (busy) {
       this.state = 'busy';
-      this.ensureNewline();
-      this.writeText(`${jobStatusLine(this.jobLabel())}
-`);
+      const status = busyStatusLine(relayed, this.jobLabel());
+      if (status !== undefined) {
+        this.ensureNewline();
+        this.writeText(`${status}\n`);
+      }
     } else {
       this.newPrompt();
     }
@@ -522,6 +542,21 @@ class ConsoleController {
   /** Label of the job holding this session, from the mirrored session view ('ping', 'tracert', …). */
   private jobLabel(): string {
     return store.getState().snapshot?.sessions.find((s) => s.id === this.session)?.job?.label ?? '';
+  }
+
+  /** [S13] Whether this session relays a remote session now (from the mirrored session view). */
+  private relaying(): boolean {
+    return relaysRemote(store.getState().snapshot?.sessions.find((s) => s.id === this.session));
+  }
+
+  /** [S13] `?` while relaying: one note, then the line as it was. */
+  private remoteHelp(): void {
+    this.emit(this.editor.moveToEnd());
+    this.emit(['?\r\n']);
+    this.lineVisible = false;
+    this.atLineStart = true;
+    this.writeText(`${REMOTE_HELP_NOTE}\n`);
+    this.restorePrompt();
   }
 
   private async complete(partial: string): Promise<void> {
@@ -637,6 +672,9 @@ export function TerminalTab({ tab, active }: TerminalTabProps) {
     hostnameRef.current = hostname;
   }, [hostname]);
 
+  // [S13] the remote-session chip, from the mirrored session view
+  const remote = useStore((s) => remoteChipText(s.snapshot?.sessions.find((v) => v.id === tab.session)));
+
   const onNew = useCallback(() => controllerRef.current?.scheduleDrain(), []);
   const cursor = useSessionOutput(tab.session, onNew);
 
@@ -662,10 +700,20 @@ export function TerminalTab({ tab, active }: TerminalTabProps) {
 
   return (
     <div
-      ref={hostRef}
-      className={`terminal-host ${active ? '' : 'is-hidden'}`}
+      className={`terminal-host ${active ? '' : 'is-hidden'}${remote === undefined ? '' : ' is-remote'}`}
       role="tabpanel"
-      aria-label={`Console on ${hostname}`}
-    />
+      aria-label={remote === undefined ? `Console on ${hostname}` : `Console on ${hostname}, ${remote}`}
+    >
+      {/* Always mounted (empty and unstyled outside a remote session), so a screen reader hears the chip appear. */}
+      <span className="terminal-remote-chip" role="status" aria-live="polite">
+        {remote !== undefined && (
+          <>
+            <span aria-hidden="true">⇄ </span>
+            {remote}
+          </>
+        )}
+      </span>
+      <div ref={hostRef} className="terminal-xterm" />
+    </div>
   );
 }

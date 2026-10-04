@@ -22,10 +22,12 @@ import type { DeviceId, LinkId, PduId, PortRef } from '../../contracts/ids.js';
 import { portKey } from '../../contracts/ids.js';
 import type {
   ArrivalVerdict,
+  EgressQueueView,
   LinkKind,
   LinkModelDeps,
   LinkState,
   OperChanges,
+  TransmitOptions,
   TransmitResult,
   TxOutcome,
 } from '../../contracts/link.js';
@@ -124,8 +126,11 @@ export interface MediumHost {
  */
 export interface MediumStrategy {
   readonly kind: MediumKind;
-  /** Egress of `pdu` on `from` (the facade already routed the port to this strategy). Follows `LinkModel.transmit`. */
-  transmit(from: PortRef, pdu: Pdu, now: SimTime): TransmitResult;
+  /**
+   * Egress of `pdu` on `from` (the facade already routed the port to this strategy). Follows `LinkModel.transmit`.
+   * `opts` @since P3 [S20] (optional by meaning): the frame's output-policy class, read only by a cable's held queue.
+   */
+  transmit(from: PortRef, pdu: Pdu, now: SimTime, opts?: TransmitOptions): TransmitResult;
   /** A popped arrival scheduled by this medium: prune the leg, record rx capture, rewrap/authorize, decide delivery. */
   admit(ev: FrameArrivalBody, now: SimTime): ArrivalVerdict;
   /** Serialization of the head-of-line frame on `port` finished. */
@@ -144,6 +149,16 @@ export interface MediumStrategy {
   abort(scope: LinkId | MediumId, now: SimTime, detail?: string): void;
   /** Append this medium's segments/BSSs/cells/associations to a snapshot under construction. */
   contribute?(now: SimTime, into: MediaSnapshot): void;
+
+  // ── P3 [S20]/[S21] (ARCHITECTURE-P3 D16; W3 media): the held queue of a cable scheduler port (link/media/p2p.ts) ──
+  /**
+   * @since P3 [S20] Bring the held queue of `ref` in line with its current `LinkModelDeps.egressPolicy` (the facade calls
+   * it for both ends of a link after `onPortChanged`). `viaThisMedium` false = the port no longer routes to this medium:
+   * its held frames go to the virtual FIFO and no queue is kept.
+   */
+  syncEgress?(ref: PortRef, now: SimTime, viaThisMedium: boolean): void;
+  /** @since P3 [S20] Display view of the held queues of a scheduler port (`LinkModel.egressQueues`); undefined elsewhere. */
+  egressQueues?(ref: PortRef, now: SimTime): EgressQueueView | undefined;
 }
 
 /** Inputs of `routeMedium`. */

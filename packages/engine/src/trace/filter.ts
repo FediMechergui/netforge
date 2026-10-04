@@ -7,7 +7,8 @@
  *   therefore matches nothing. `undefined` keys are ignored.
  * - `kinds`: `event.kind`.
  * - `protos`: any of `PduSummary.layers`, or `[PduSummary.proto]` when `layers` is absent. Events without a
- *   PduSummary (`frameTx`, `frameRx`, `drop`, `pduCreated`, `pduConsumed`, `frameAbort` carry one) never match.
+ *   PduSummary (`frameTx`, `frameRx`, `drop`, `pduCreated`, `pduConsumed`, `frameAbort` and, @since P3 [S20] (ruling
+ *   R32), `frameQueued` carry one) never match.
  * - `devices`: every device the event refers to — `device` fields, `debug.event.device`, `mutation.mutation.device`,
  *   the device of every PortRef
  *   (`frameTx`/`frameAbort` from/to, `assocState` station/ap, `rfState` port/peer, `collision` stations,
@@ -16,7 +17,7 @@
  * - `links`: link or medium ids — `frameTx`/`frameAbort`/`linkState`/`phyNegotiated` `link`, `drop` `link` and
  *   `medium`, `collision`/`segmentChanged` `segment`, `assocState` `medium`, `topologyChanged` link events.
  * - `ports`: every (device, port) pair the event refers to — PortRef fields as above, plus `device`+`port` pairs
- *   (`frameRx`, `drop` when both are set, `portState`, `backoff`, `carrierDefer`).
+ *   (`frameRx`, `drop` when both are set, `portState`, `backoff`, `carrierDefer`, @since P3 `frameQueued`).
  * - `tables`: `tableWrite`/`tableExpire` `table`.
  * - `tags`: `PduSummary.tag`, exact string equality.
  * - `includeBackground`: unless it is `true`, a `frameTx` flagged `background` never matches (keepalives, beacons),
@@ -40,6 +41,7 @@ function pduOf(ev: TraceEvent): PduSummary | undefined {
     case 'pduCreated':
     case 'pduConsumed':
     case 'frameAbort':
+    case 'frameQueued':
       return ev.pdu;
     default:
       return undefined;
@@ -56,6 +58,7 @@ function portsOf(ev: TraceEvent): PortRef[] {
     case 'portState':
     case 'backoff':
     case 'carrierDefer':
+    case 'frameQueued':
       return [{ device: ev.device, port: ev.port }];
     case 'drop':
       return ev.device !== undefined && ev.port !== undefined ? [{ device: ev.device, port: ev.port }] : [];

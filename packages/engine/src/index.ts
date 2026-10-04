@@ -225,6 +225,11 @@ export * from './protocols/gre.js';
 export * from './protocols/ntp.js';
 export * from './protocols/traffic.js';
 export * from './protocols/logger.js';
+// protocols — P3 W3 svc [S25]: the syslog receiver of servers
+export * from './protocols/syslog-server.js';
+// protocols — P3 W3 svc [S13]: the remote terminal server and client (telnet, simulated SSH)
+export * from './protocols/vty.js';
+export * from './protocols/vty-client.js';
 
 // cli
 export * from './cli/runtime.js';
@@ -296,3 +301,10 @@ export * from './qos/config.js';
 export * from './qos/classify.js';
 export * from './qos/mark.js';
 export * from './link/qos/scheduler.js';
+
+// wan — P3 W3 wan [S19] (ARCHITECTURE-P3 D17, §3.9): the ppp daemon and what it reads from the configuration
+export * from './protocols/ppp/config.js';
+export * from './protocols/ppp.js';
+// wan — P3 W3 wan [C13] (ARCHITECTURE-P3 D27, §3.13; ruling R36): the ike daemon and the crypto sections it reads
+export * from './protocols/ike/config.js';
+export * from './protocols/ike.js';

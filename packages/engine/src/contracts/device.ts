@@ -353,13 +353,17 @@ export interface DeviceRuntime {
 
   // ── P3 (ARCHITECTURE-P3 §2.9; optional during the transition, required in the item that implements them — hand-built
   //    typed fakes spread `P3_DEVICE` from test/port.fixtures.ts). No DeviceRuntimeDeps member is added (D14, D21).
-  //    Required since W1 device: `clockView`, `setClock`, [S24] `emitLog` (§0 rule 2, §9.2 item 19). ──
+  //    Required since W1 device: `clockView`, `setClock`, [S24] `emitLog`; since W3 device: `qosCounters` and [S20]
+  //    `egressPolicy` (§0 rule 2, §2.15, §9.2 item 19). ──
   /** @since P3 The device clock at `now` (D19). Required since W1 device. */
   clockView(now: SimTime): DeviceClockView;
   /** @since P3 Rebase the device clock (the ntp daemon's `clock` action, D19). Required since W1 device. */
   setClock(op: ClockAction, now: SimTime): void;
-  /** @since P3 A port's QoS marking counters (M13; undefined without a policy): the snapshot cache and the shows. */
-  qosCounters?(port: PortId): PortSnapshot['qos'];
+  /**
+   * @since P3 A port's QoS marking counters (M13; undefined without a policy): the snapshot cache and the shows; [S21]
+   * the conform and exceed counts of the runtime's policers (ruling R26). Required since W3 device.
+   */
+  qosCounters(port: PortId): PortSnapshot['qos'];
   /**
    * @since P3 [S24] The one log path (D20): emits the unchanged `log` TraceEvent and, when the model runs `logger`,
    * delivers ProcessEvent `log.record` to it depth-first inside the same action budget. Required since W1 device.
@@ -367,9 +371,10 @@ export interface DeviceRuntime {
   emitLog(severity: Severity, facility: string, message: string, now: SimTime, mnemonic?: string): void;
   /**
    * @since P3 [S20] A port's compiled output scheduler (from its output policy), read by the link model through
-   * LinkModelDeps.egressPolicy; [S21] adds fair-queue, police and shape to it. Undefined = the virtual FIFO.
+   * LinkModelDeps.egressPolicy; [S21] adds fair-queue, police and shape to it. Undefined = the virtual FIFO. Required
+   * since W3 device.
    */
-  egressPolicy?(port: PortId): EgressSchedulerSpec | undefined;
+  egressPolicy(port: PortId): EgressSchedulerSpec | undefined;
   /**
    * @since P3 [S32] (W2 fix, the media-sim and cli-b reports' contract gap; minimal additive members, optional by meaning)
    * The files of the device's `files:` store in path order (hosts only; empty elsewhere) and one file of it, as the W1

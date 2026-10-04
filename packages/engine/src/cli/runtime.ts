@@ -930,6 +930,8 @@ export function createCliRuntime(deps: CliRuntimeDepsP3, handlers?: Record<strin
       profile: dev.profile,
       // P3 (§2.9, M13; W2 cli): a port's QoS marking counters for `show policy-map interface`, when the runtime has them
       ...(dev.qosCounters !== undefined ? { qosCounters: (port: PortId) => dev.qosCounters?.(port) } : {}),
+      // P3 [S20] (ruling R32): the held queues of a scheduler port, from the link model, when the Simulation supplies them
+      ...(deps.egressQueues !== undefined ? { egressQueues: (port: PortId) => deps.egressQueues?.({ device: dev.id, port }) } : {}),
       // ── P3 approved items (cli/command-ctx-p3.ts) ──
       // [S25] `terminal monitor` / `terminal no monitor`
       setMonitor: (on) => {

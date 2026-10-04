@@ -12,15 +12,18 @@
  *                  routed Ethernet ports, subinterfaces and [S18] tunnels (cli/grammar/serial.ts `BANDWIDTH_PORT`).
  * Verification (§5.8, W2 part): `show ip ospf`, `show ip ospf neighbor`, `show ip ospf interface [brief|<if>]`, `show
  * ip route ospf` (the `show.ip-route` handler with the source filter `O`) and the interactive `clear ip ospf process`.
- * The ospf daemon reads the lines (protocols/ospf/config.ts); the shows read the `ospf-*` tables and the ospf
- * StateView (§2.6).
+ * (W3, cli part 2): `show ip ospf neighbor detail`, `show ip ospf database [router|network|external]
+ * [self-originate]`, `show ip protocols` (the OSPF section, and the [C1] EIGRP section when `router eigrp` runs) and the
+ * five OSPF debug categories of §5.8 (`OSPF_DEBUG_CATEGORIES`, the strings the ospf daemon passes to `ctx.debug` and
+ * `ctx.transition`). The ospf daemon reads the lines (protocols/ospf/config.ts); the shows read the `ospf-*` tables
+ * and the ospf StateView (§2.6).
  *
  * Scope: the `routing` capability (routers and multilayer switches), written as a literal (rule 12: no module-scope
  * read of another module's derived lists). Help strings are original wording (spec §1.6).
  */
 import type { ArgSpec, CommandSpec, PortRequirement } from '../../contracts/cli.js';
 import type { Capability } from '../../contracts/catalog.js';
-import { choiceArg, ifaceArg, intArg, ipv4Arg, NFOS_ONLY } from './core-exec.js';
+import { choiceArg, debugSpecs, type GrammarDebugCategory, ifaceArg, intArg, ipv4Arg, NFOS_ONLY } from './core-exec.js';
 
 /** Handler ids of the OSPF fragment. Never rename. */
 export const OSPF_HANDLERS = {
@@ -36,6 +39,9 @@ export const OSPF_HANDLERS = {
   showIpOspfNeighbor: 'show.ip-ospf-neighbor',
   showIpOspfInterface: 'show.ip-ospf-interface',
   execClearIpOspf: 'exec.clear-ip-ospf-process',
+  // W3 cli part 2
+  showIpOspfDatabase: 'show.ip-ospf-database',
+  showIpProtocols: 'show.ip-protocols',
 } as const;
 
 /** @since P3 Capabilities that run OSPF (the W4 catalog adds the daemon to `routing`, §2.1). */
@@ -49,6 +55,14 @@ export const OSPF_IF_SETTINGS = Object.freeze(['area', 'cost', 'priority', 'hell
 export const OSPF_PASSIVE_DEFAULT_ARG = 'default';
 /** @since P3 Arg (`fixedArgs`) of the `show ip ospf interface` forms: `brief` lists one row per interface. */
 export const OSPF_SHOW_BRIEF_ARG = 'brief';
+/** @since P3 Arg (`fixedArgs`) of `show ip ospf neighbor detail`: one block per neighbour instead of the table. */
+export const OSPF_SHOW_DETAIL_ARG = 'detail';
+/** @since P3 Arg (`fixedArgs`) of the typed `show ip ospf database` forms: which LSA type to print in full. */
+export const OSPF_DB_TYPE_ARG = 'type';
+/** @since P3 Values of OSPF_DB_TYPE_ARG (§5.8): router (type 1), network (type 2) and external (type 5) LSAs. */
+export const OSPF_DB_TYPES = Object.freeze(['router', 'network', 'external'] as const);
+/** @since P3 Arg (`fixedArgs`) of `show ip ospf database … self-originate`: only the LSAs this router originated. */
+export const OSPF_DB_SELF_ARG = 'self';
 /** @since P3 The `show ip route` source filter value of `show ip route ospf` (`RouteRow.source`). */
 export const OSPF_ROUTE_SOURCE = 'O';
 
@@ -69,6 +83,35 @@ const OBJ_COST = ['CCNA3.ospf.5'];
 const OBJ_DR = ['CCNA3.ospf.2', 'CCNA3.ospf.3'];
 const OBJ_TIMERS = ['CCNA3.ospf.4'];
 const OBJ_DEFAULT = ['CCNA3.ospf.13'];
+const OBJ_LSDB = ['CCNA3.ospf.8', 'CCNA3.ospf.12'];
+const OBJ_LSA_TYPE: Readonly<Record<(typeof OSPF_DB_TYPES)[number], readonly string[]>> = Object.freeze({
+  router: ['CCNA3.ospf.12'],
+  network: ['CCNA3.ospf.12'],
+  external: ['CCNA3.ospf.13'],
+});
+const OBJ_PROTOCOLS = ['CCNA3.ospf.1', 'CCNA3.eigrp.1'];
+
+/**
+ * @since P3 The OSPF debug categories (§5.8, binding across the daemon and cli seam: protocols/ospf.ts `OSPF_DEBUG`
+ * passes exactly these strings to `ctx.debug` and `ctx.transition`), offered where OSPF runs. Written as literals (rule
+ * 12); cli.debug.p3.test.ts pins them to the daemon's constants.
+ */
+export const OSPF_DEBUG_CATEGORIES: readonly GrammarDebugCategory[] = Object.freeze([
+  { category: 'ip ospf adj', help: 'Trace OSPF interface and neighbour state changes and the DR/BDR elections', requiresAny: OSPF_CAPABILITIES, since: 'P3' },
+  { category: 'ip ospf hello', help: 'Trace OSPF hellos sent and received, and every refused hello with its reason', requiresAny: OSPF_CAPABILITIES, since: 'P3' },
+  { category: 'ip ospf flood', help: 'Trace OSPF updates, requests and acknowledgements, and LSAs installed or flushed', requiresAny: OSPF_CAPABILITIES, since: 'P3' },
+  { category: 'ip ospf spf', help: 'Trace OSPF shortest-path runs, their reasons and the route changes they make', requiresAny: OSPF_CAPABILITIES, since: 'P3' },
+  { category: 'ip ospf packet', help: 'Trace every OSPF packet sent or received, one line each', requiresAny: OSPF_CAPABILITIES, since: 'P3' },
+]);
+
+/** @since P3 Objectives of the OSPF debug categories. */
+export const OSPF_DEBUG_OBJECTIVES: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  'ip ospf adj': OBJ_DR,
+  'ip ospf hello': OBJ_TIMERS,
+  'ip ospf flood': OBJ_LSDB,
+  'ip ospf spf': ['CCNA3.ospf.8'],
+  'ip ospf packet': OBJ_ON,
+});
 
 const GLOBAL = {
   mode: 'config',
@@ -114,6 +157,35 @@ const AREA_ARG: ArgSpec = Object.freeze({ type: 'ipv4', help: 'Area: a number (0
 /** `ip ospf <setting> <value>` specs. */
 function ipOspf(setting: (typeof OSPF_IF_SETTINGS)[number], path: string[], help: string, args: Record<string, ArgSpec>, objectives: readonly string[]): CommandSpec {
   return { ...IF_LINE, path, help, args, handler: H.ifIpOspf, noArgsOptional: true, fixedArgs: { [OSPF_IF_SETTING_ARG]: setting }, objectives };
+}
+
+/**
+ * The `show ip ospf database [router|network|external] [self-originate]` specs (§5.8): the plain form lists every LSA
+ * by type, one line each; the typed forms print one block per LSA of that type.
+ */
+function ospfDatabaseSpecs(): CommandSpec[] {
+  const base = { mode: '@exec', privilege: 1, handler: H.showIpOspfDatabase, filterable: true, grammars: NFOS_ONLY, requiresAny: OSPF_CAPABILITIES, since: 'P3' } as const;
+  const self = { [OSPF_DB_SELF_ARG]: 'self-originate' };
+  const out: CommandSpec[] = [
+    { ...base, path: ['show', 'ip', 'ospf', 'database'], help: 'The link-state database: one line per LSA this router holds', objectives: OBJ_LSDB },
+    { ...base, path: ['show', 'ip', 'ospf', 'database', 'self-originate'], help: 'Only the LSAs this router originated', fixedArgs: self, objectives: OBJ_LSDB },
+  ];
+  const typeHelp: Readonly<Record<(typeof OSPF_DB_TYPES)[number], string>> = {
+    router: "Router LSAs (type 1) in full: each router's links and their costs",
+    network: "Network LSAs (type 2) in full: each segment's mask and attached routers",
+    external: 'External LSAs (type 5) in full: routes from outside OSPF, such as a default route',
+  };
+  for (const type of OSPF_DB_TYPES) {
+    out.push({ ...base, path: ['show', 'ip', 'ospf', 'database', type], help: typeHelp[type], fixedArgs: { [OSPF_DB_TYPE_ARG]: type }, objectives: OBJ_LSA_TYPE[type] });
+    out.push({
+      ...base,
+      path: ['show', 'ip', 'ospf', 'database', type, 'self-originate'],
+      help: 'Only the LSAs this router originated',
+      fixedArgs: { [OSPF_DB_TYPE_ARG]: type, ...self },
+      objectives: OBJ_LSA_TYPE[type],
+    });
+  }
+  return out;
 }
 
 /** The OSPF command table. */
@@ -268,6 +340,32 @@ export const OSPF_GRAMMAR: readonly CommandSpec[] = Object.freeze<CommandSpec[]>
     objectives: OBJ_DR,
   },
   {
+    path: ['show', 'ip', 'ospf', 'neighbor', 'detail'],
+    mode: '@exec',
+    privilege: 1,
+    help: 'Every OSPF neighbour in full: area, state, role, timers and queue',
+    handler: H.showIpOspfNeighbor,
+    fixedArgs: { [OSPF_SHOW_DETAIL_ARG]: 'detail' },
+    filterable: true,
+    grammars: NFOS_ONLY,
+    requiresAny: OSPF_CAPABILITIES,
+    since: 'P3',
+    objectives: OBJ_DR,
+  },
+  ...ospfDatabaseSpecs(),
+  {
+    path: ['show', 'ip', 'protocols'],
+    mode: '@exec',
+    privilege: 1,
+    help: 'The routing processes: what they advertise, their settings and where their routes come from',
+    handler: H.showIpProtocols,
+    filterable: true,
+    grammars: NFOS_ONLY,
+    requiresAny: OSPF_CAPABILITIES,
+    since: 'P3',
+    objectives: OBJ_PROTOCOLS,
+  },
+  {
     path: ['show', 'ip', 'route', 'ospf'],
     mode: '@exec',
     privilege: 1,
@@ -292,4 +390,6 @@ export const OSPF_GRAMMAR: readonly CommandSpec[] = Object.freeze<CommandSpec[]>
     since: 'P3',
     objectives: OBJ_RID,
   },
+  // W3 cli part 2: `debug ip ospf adj|hello|flood|spf|packet` (§5.8)
+  ...debugSpecs(OSPF_DEBUG_CATEGORIES, OSPF_DEBUG_OBJECTIVES),
 ]);

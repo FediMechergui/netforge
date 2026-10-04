@@ -69,6 +69,9 @@ export class P05Device implements DeviceRuntime {
   clockView = P3_DEVICE.clockView;
   setClock = P3_DEVICE.setClock;
   emitLog = P3_DEVICE.emitLog;
+  // P3 (ARCHITECTURE-P3 §9.2 item 19, W3 device): `qosCounters` and [S20] `egressPolicy` are required now too.
+  qosCounters = P3_DEVICE.qosCounters;
+  egressPolicy = P3_DEVICE.egressPolicy;
   readonly configCalls: ConfigCall[] = [];
   readonly actionCalls: ActionCall[] = [];
   /** When set, `applyConfigLine` fails with the returned message for matching lines. */

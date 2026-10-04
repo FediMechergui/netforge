@@ -12,9 +12,15 @@
  *
  * P2 [S14] (§6, W6 web-inspector): under it, the state-machine history strip of the port (`FsmStrip`): spanning-tree,
  * trunk negotiation, bundle and port-security transitions, oldest first with their causes; hidden while there are none.
+ *
+ * P3 (ARCHITECTURE-P3 §5.9 "Port inspector", §6; §7 W3 web-inspector): every data port has a QoS line — the input and
+ * output service policies and, per class, the packets matched and marked (and [S21] the policer's conform and exceed
+ * counts) from `PortSnapshot.qos` (M13), or "no service policy". Then the approved sections, each shown only when its
+ * table row or view exists: [S20] Policy (the held class queues), [S1] OSPF, [S19] PPP and [S18]/[C13] Tunnel.
  */
 import { Fragment, useState } from 'react';
-import type { DeviceSnapshot, PortCounters, PortId, PortRef, PortSnapshot } from '@netforge/engine';
+import { QOS_CLASS_DEFAULT, walkConfigText } from '@netforge/engine';
+import type { DeviceSnapshot, PortCounters, PortId, PortQosView, PortRef, PortSnapshot } from '@netforge/engine';
 import { engine } from '../bridge/client';
 import { portAdminCommands } from '../gui/commands';
 import { deviceGrammar, mapConfigureResult } from '../gui/forms';
@@ -24,9 +30,13 @@ import { formatBps, formatSignal } from '../vocab/fields';
 import { lineProtocolText } from '../vocab/media';
 import { assocStateVocab } from '../vocab/trace-kinds';
 import { FsmStrip } from './FsmStrip';
+import { OspfSection, ospfPortFacts } from './OspfSection';
 import { toastError, useDeviceIndex } from './PacketInspector';
+import { PolicySection } from './PolicySection';
+import { PppSection } from './PppSection';
 import { SwitchportSection, switchportSectionApplies } from './SwitchportSection';
 import { useTickNow } from './TablesView';
+import { TunnelSection } from './TunnelSection';
 import {
   PHY_VIA_TEXT,
   catalogModel,
@@ -35,6 +45,7 @@ import {
   associationOfStation,
   deviceById,
   formatDistance,
+  isDataPort,
   linkById,
   portOf,
   portToggleState,
@@ -97,6 +108,76 @@ export async function setPortEnabled(device: Pick<DeviceSnapshot, 'id' | 'cli'>,
   }
 }
 
+// ── P3: the QoS line (M13, D16) ─────────────────────────────────────────────
+
+/** @since P3 One direction of a port's QoS view: its policy and that policy's classes with their counters. */
+export interface QosDirectionLine {
+  readonly dir: 'input' | 'output';
+  readonly policy: string;
+  readonly classes: PortQosView['classes'];
+}
+
+/** True when the running configuration defines `policy-map <name>` (a missing policy-map contributes no classes). */
+function policyMapDefined(runningConfig: string, name: string): boolean {
+  return walkConfigText(runningConfig).some((l) => l.context.length === 0 && !l.negate && l.tokens[0] === 'policy-map' && l.tokens[1] === name);
+}
+
+/**
+ * @since P3 Split `PortSnapshot.qos.classes` by direction: the runtime lists the input policy's classes (class-default
+ * last) and then the output policy's, and none for a policy-map that does not exist (W3 device, `qosCounters`), so the
+ * input part ends at its class-default when the input policy-map is defined.
+ */
+export function splitQosClasses(qos: PortQosView, runningConfig: string): QosDirectionLine[] {
+  const out: QosDirectionLine[] = [];
+  let rest = qos.classes;
+  if (qos.input !== undefined) {
+    let take = 0;
+    if (policyMapDefined(runningConfig, qos.input)) {
+      const end = rest.findIndex((c) => c.name === QOS_CLASS_DEFAULT);
+      take = end < 0 ? rest.length : end + 1;
+    }
+    out.push({ dir: 'input', policy: qos.input, classes: rest.slice(0, take) });
+    rest = rest.slice(take);
+  }
+  if (qos.output !== undefined) out.push({ dir: 'output', policy: qos.output, classes: rest });
+  return out;
+}
+
+/** @since P3 The QoS line's summary: `input MARK · output WAN-EDGE`, or `no service policy`. */
+export function qosSummaryText(qos: PortQosView | undefined): string {
+  if (qos === undefined || (qos.input === undefined && qos.output === undefined)) return 'no service policy';
+  const parts: string[] = [];
+  if (qos.input !== undefined) parts.push(`input ${qos.input}`);
+  if (qos.output !== undefined) parts.push(`output ${qos.output}`);
+  return parts.join(' · ');
+}
+
+/** @since P3 One class of the QoS line: `VOICE 120 matched (14400 bytes), 120 marked` (+ [S21] the policer's counts). */
+export function qosClassText(c: PortQosView['classes'][number]): string {
+  let s = `${c.name} ${c.matched} matched (${c.matchedBytes} bytes), ${c.marked} marked`;
+  if (c.police !== undefined) s += `; policed: ${c.police.conform} conform, ${c.police.exceed} exceed`;
+  return s;
+}
+
+/** The QoS line of a data port (in the port's key-value list). */
+function QosLine({ qos, runningConfig }: { qos: PortQosView | undefined; runningConfig: string }) {
+  const lines = qos === undefined ? [] : splitQosClasses(qos, runningConfig);
+  return (
+    <>
+      <dt>QoS</dt>
+      <dd>
+        <span className="mono">{qosSummaryText(qos)}</span>
+        {lines.map((l) => (
+          <div key={l.dir} className="dim mono">
+            {l.dir} {l.policy}:{' '}
+            {l.classes.length === 0 ? 'the policy-map does not exist, so nothing is classified' : l.classes.map(qosClassText).join(' · ')}
+          </div>
+        ))}
+      </dd>
+    </>
+  );
+}
+
 // ── component ───────────────────────────────────────────────────────────────
 
 const COUNTER_ROWS: { label: string; rx?: keyof PortCounters; tx?: keyof PortCounters }[] = [
@@ -140,7 +221,11 @@ function PortDetails({ device, port }: { device: DeviceSnapshot; port: PortSnaps
   const association = useStore((s) => (port.radio !== undefined ? associationOfStation(s.snapshot, { device: device.id, port: port.id }) : undefined));
   const model = useStore((s) => catalogModel(s.catalog, device.type));
   const switching = switchportSectionApplies(device, port, model);
-  const now = useTickNow(1000, switching);
+  // P3: the OSPF section counts down a Waiting interface, so it ticks too; the Policy section's sparkline follows the
+  // snapshot's own time
+  const ospf = ospfPortFacts(device, port.id) !== undefined;
+  const now = useTickNow(1000, switching || ospf);
+  const snapshotNow = useStore((s) => s.snapshot?.now ?? 0);
   const segmentId = port.phy?.segment ?? link?.segment;
   const status = portStatus(port, device);
   const address = portAddress(port);
@@ -361,11 +446,17 @@ function PortDetails({ device, port }: { device: DeviceSnapshot; port: PortSnaps
             <dd className="mono">
               {port.txQueue} frame{port.txQueue === 1 ? '' : 's'}
             </dd>
+            {isDataPort(port) && <QosLine qos={port.qos} runningConfig={device.runningConfig} />}
           </dl>
         </section>
         {switching && <SwitchportSection device={device} port={port} now={now} />}
         {/* [S14] the state changes of this port (a Port-channel shows its members'); nothing while there are none */}
         <FsmStrip device={device.id} port={port.id} hideWhenEmpty />
+        {/* P3: each section renders nothing unless its row or view exists for this port */}
+        <PolicySection port={port} now={snapshotNow} />
+        <OspfSection device={device} port={port} now={now} />
+        <PppSection device={device} port={port} />
+        <TunnelSection device={device} port={port} />
         {radio !== undefined && (
           <section className="insp-section" aria-label="Radio">
             <div className="panel-title">Radio</div>

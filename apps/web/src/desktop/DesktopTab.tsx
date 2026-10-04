@@ -8,7 +8,7 @@
  * Keyboard: the launcher grid is one tab stop; arrow keys, Home and End move between launchers; Enter or Space
  * opens one. Nothing here branches on device kind: the app list is data. Wording and glyphs are original (§1.6).
  */
-import { useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
+import { Suspense, lazy, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { GUI_PANELS } from '@netforge/engine';
 import type { DeviceSnapshot, GuiPanelId } from '@netforge/engine';
 import { useStore } from '../store/store';
@@ -17,11 +17,26 @@ import { GUI_PANEL_VOCAB } from '../vocab/categories.js';
 import { closeWindowAndRestoreFocus, desktopLauncherKey, desktopWindowApp, focusWindowElement, registerDesktopWindowApp, rememberWindowOpener, windowTitle } from './WindowLayer';
 import { BrowserApp } from './apps/BrowserApp';
 import { deviceBusyReason } from './shared.js';
+import type { DesktopAppProps } from './shared.js';
 import './desktop.css';
 
 // P1 W7: the web browser is registered from here, the module that owns the launchers, so a window can only be
 // opened for an app this build can actually show (`desktopAppAvailability`).
 registerDesktopWindowApp('desktop.web-browser', BrowserApp);
+
+// P3 (ARCHITECTURE-P3 §5.9, D24; W3 web-desktop): the traffic generator is a lazy chunk, loaded when its window
+// first opens; the window shows a loading line meanwhile.
+const LazyTrafficApp = lazy(() => import('./apps/TrafficApp').then((m) => ({ default: m.TrafficApp })));
+
+/** @since P3 The traffic generator's window content: the lazy app inside its own Suspense boundary. */
+export function TrafficWindow(props: DesktopAppProps) {
+  return (
+    <Suspense fallback={<p className="desk-empty">Loading the traffic generator…</p>}>
+      <LazyTrafficApp {...props} />
+    </Suspense>
+  );
+}
+registerDesktopWindowApp('desktop.traffic', TrafficWindow);
 
 /** Launchers per row in the grid (arrow-key geometry; the CSS grid uses the same count). */
 export const DESKTOP_GRID_COLUMNS = 3;
@@ -124,6 +139,16 @@ export function DesktopAppGlyph({ app }: { app: GuiPanelId }): ReactNode {
           <circle cx="16" cy="16" r="11" />
           <ellipse cx="16" cy="16" rx="5" ry="11" />
           <line x1="5" y1="16" x2="27" y2="16" />
+        </svg>
+      );
+    case 'desktop.traffic':
+      return (
+        <svg {...GLYPH_PROPS} className="desk-glyph">
+          <line x1="4" y1="10" x2="24" y2="10" />
+          <path d="M20 6 L25 10 L20 14" />
+          <line x1="4" y1="22" x2="18" y2="22" />
+          <path d="M14 18 L19 22 L14 26" />
+          <circle cx="27" cy="22" r="1.5" className="is-filled" />
         </svg>
       );
     default:

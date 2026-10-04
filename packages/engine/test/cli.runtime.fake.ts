@@ -191,6 +191,9 @@ export class FakeDevice implements DeviceRuntime {
   clockView = P3_DEVICE.clockView;
   setClock = P3_DEVICE.setClock;
   emitLog = P3_DEVICE.emitLog;
+  // P3 (ARCHITECTURE-P3 §9.2 item 19, W3 device): `qosCounters` and [S20] `egressPolicy` are required now too.
+  qosCounters = P3_DEVICE.qosCounters;
+  egressPolicy = P3_DEVICE.egressPolicy;
 
   constructor(readonly id: DeviceId, kind: FakeKind, hostname: string) {
     this.model = MODELS[kind];

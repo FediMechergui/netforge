@@ -12,12 +12,15 @@
  *               unquoted and arrives byte for byte (D21). `-d` therefore comes last.
  * The `username … privilege 15 secret` line the API authenticates against is in ssh.ts.
  *
+ * Verification (W3, cli part 2, §5.8): `show restconf` (the service lines, the users who may log in, the restconf
+ * StateView's counters and the newest `restconf-log` rows) and the debug category `restconf` (protocols/restconf.ts).
+ *
  * Scope: the restconf lines on routers and managed switches (§2.1), `rest` on every host (http-client). Help strings
  * are original wording (spec §1.6).
  */
 import type { CommandSpec } from '../../contracts/cli.js';
 import type { Capability } from '../../contracts/catalog.js';
-import { choiceArg, HOST_ONLY, NFOS_ONLY } from './core-exec.js';
+import { choiceArg, debugSpecs, type GrammarDebugCategory, HOST_ONLY, NFOS_ONLY } from './core-exec.js';
 
 /** Handler ids of the API fragment. Never rename. */
 export const API_HANDLERS = {
@@ -25,6 +28,8 @@ export const API_HANDLERS = {
   configIpHttpAuthentication: 'config.ip-http-authentication',
   configRestconf: 'config.restconf',
   hostRest: 'host.rest',
+  // W3 cli part 2
+  showRestconf: 'show.restconf',
 } as const;
 
 /** @since P3 Capabilities that run restconf (§2.1: routing, managed-switch). */
@@ -39,6 +44,14 @@ export const REST_OPTIONS_MAX = 4000;
 
 const H = API_HANDLERS;
 const OBJ = ['CCNA3.automation.2', 'CCNA3.automation.3'];
+
+/** @since P3 The device-API debug category (§5.8; the restconf daemon's one category). A literal (rule 12). */
+export const API_DEBUG_CATEGORIES: readonly GrammarDebugCategory[] = Object.freeze([
+  { category: 'restconf', help: 'Trace every API request: the method, the resource, the login and the answer', requiresAny: RESTCONF_CAPABILITIES, since: 'P3' },
+]);
+
+/** @since P3 Objectives of the device-API debug category. */
+export const API_DEBUG_OBJECTIVES: Readonly<Record<string, readonly string[]>> = Object.freeze({ restconf: ['CCNA3.automation.3'] });
 
 const GLOBAL = { mode: 'config', privilege: 15, allowNo: true, grammars: NFOS_ONLY, requiresAny: RESTCONF_CAPABILITIES, since: 'P3' } as const;
 
@@ -89,4 +102,19 @@ export const API_GRAMMAR: readonly CommandSpec[] = Object.freeze<CommandSpec[]>(
     since: 'P3',
     objectives: OBJ,
   },
+  // W3 cli part 2
+  {
+    path: ['show', 'restconf'],
+    mode: '@exec',
+    privilege: 1,
+    help: 'The device API: whether it answers, who may log in, and the latest requests',
+    handler: H.showRestconf,
+    filterable: true,
+    grammars: NFOS_ONLY,
+    requiresAny: RESTCONF_CAPABILITIES,
+    since: 'P3',
+    objectives: OBJ,
+  },
+  // `debug restconf` (§5.8)
+  ...debugSpecs(API_DEBUG_CATEGORIES, API_DEBUG_OBJECTIVES),
 ]);

@@ -13,6 +13,10 @@
  * `ip domain-name` (dns.ts) is widened to `managed-switch` in the same change (D14). `crypto key generate rsa` and a
  * `transport input` other than `none` wake a managed switch's dormant transport (D22; l3 reads the lines).
  *
+ * Verification (W3, cli part 2, §5.8): `show ip ssh` (the key, the version, the login limits and what each `line vty`
+ * section accepts). `show ssh` and `show users` (the sessions, local and [S13] remote) are the approved cli item's
+ * (cli/grammar/remote.ts); the [S13] debug categories `ip ssh` and `telnet` are the vty daemons' (the approved cli item).
+ *
  * Scope: routers and managed switches (D14: lessons 15 and 19 configure SSH on a switch). Help strings are original
  * wording (spec §1.6).
  */
@@ -28,6 +32,8 @@ export const SSH_HANDLERS = {
   configUsernamePrivilege: 'config.username-privilege',
   lineTransportInput: 'line.transport-input',
   lineAccessClass: 'line.access-class',
+  // W3 cli part 2
+  showIpSsh: 'show.ip-ssh',
 } as const;
 
 /** @since P3 Capabilities offered the device-access lines (D14). */
@@ -41,6 +47,9 @@ export const RSA_MODULUS_MAX = 4096;
 export const RSA_MODULUS_DEFAULT = 1024;
 /** @since P3 Smallest key SSH version 2 accepts (bits). */
 export const SSH_V2_MIN_MODULUS = 768;
+/** @since P3 Defaults of `ip ssh time-out` (seconds) and `ip ssh authentication-retries` (§5.2; the help says so). */
+export const SSH_TIMEOUT_DEFAULT_S = 120;
+export const SSH_RETRIES_DEFAULT = 3;
 /** @since P3 The `transport input` choices (one keyword, or `ssh telnet` in either order). */
 export const TRANSPORT_INPUT_CHOICES = Object.freeze(['ssh', 'telnet', 'all', 'none'] as const);
 
@@ -148,5 +157,18 @@ export const SSH_GRAMMAR: readonly CommandSpec[] = Object.freeze<CommandSpec[]>(
     handler: H.lineAccessClass,
     noArgsOptional: true,
     objectives: OBJ_VTY_ACL,
+  },
+  // W3 cli part 2
+  {
+    path: ['show', 'ip', 'ssh'],
+    mode: '@exec',
+    privilege: 1,
+    help: 'Whether SSH is on: the key, the version, the login limits and what the remote lines accept',
+    handler: H.showIpSsh,
+    filterable: true,
+    grammars: NFOS_ONLY,
+    requiresAny: SSH_CAPABILITIES,
+    since: 'P3',
+    objectives: OBJ_SSH,
   },
 ]);

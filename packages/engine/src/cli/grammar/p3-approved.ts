@@ -6,16 +6,21 @@
  * (cli/grammar/index.ts): `P3_APPROVED_GRAMMAR_FRAGMENTS` after the P3 MUST fragments, `P3_APPROVED_HANDLER_IDS` into
  * `HANDLERS`, `P3_APPROVED_LITERAL_HELP` into `LITERAL_HELP` (keys the MUST fragments already define keep theirs).
  *
- * No debug category here: the approved items' categories are W3 cli (§5.8).
+ * W3 cli (cli-b) adds the approved items' shows and clears (§5.8) to their fragments, and their debug categories:
+ * each fragment holds its `debug <category>` specs (so `GRAMMAR` has them through the W2 fold), and
+ * `P3_APPROVED_DEBUG_CATEGORIES` lists the categories, in the §5.8 table order, for the fold into `DEBUG_CATEGORY_DEFS`
+ * (cli/grammar/index.ts, cli-a). Every category is scoped by capability literals like the rest of the P3 grammar (the
+ * §2.1 rows of its daemon); `syslog` is registered but offered on no device (servers have the host shell, no `debug`).
  */
 import type { CommandSpec } from '../../contracts/cli.js';
-import { CRYPTO_GRAMMAR, CRYPTO_HANDLERS, CRYPTO_LITERAL_HELP } from './crypto.js';
+import { DEBUG_CATEGORY_ARG, type GrammarDebugCategory } from './core-exec.js';
+import { CRYPTO_DEBUG_CATEGORIES, CRYPTO_DEBUG_OBJECTIVES, CRYPTO_GRAMMAR, CRYPTO_HANDLERS, CRYPTO_LITERAL_HELP } from './crypto.js';
 import { DEVHOST_GRAMMAR, DEVHOST_HANDLERS } from './devhost.js';
-import { EIGRP_GRAMMAR, EIGRP_HANDLERS, EIGRP_LITERAL_HELP } from './eigrp.js';
-import { LOGGING_GRAMMAR, LOGGING_HANDLERS, LOGGING_LITERAL_HELP } from './logging.js';
+import { EIGRP_DEBUG_CATEGORIES, EIGRP_DEBUG_OBJECTIVES, EIGRP_GRAMMAR, EIGRP_HANDLERS, EIGRP_LITERAL_HELP } from './eigrp.js';
+import { LOGGING_DEBUG_CATEGORIES, LOGGING_DEBUG_OBJECTIVES, LOGGING_GRAMMAR, LOGGING_HANDLERS, LOGGING_LITERAL_HELP } from './logging.js';
 import { QOS_QUEUEING_GRAMMAR, QOS_QUEUEING_HANDLERS, QOS_QUEUEING_LITERAL_HELP } from './qos-queueing.js';
-import { REMOTE_GRAMMAR, REMOTE_HANDLERS } from './remote.js';
-import { WAN_GRAMMAR, WAN_HANDLERS, WAN_LITERAL_HELP } from './wan.js';
+import { REMOTE_DEBUG_CATEGORIES, REMOTE_DEBUG_OBJECTIVES, REMOTE_GRAMMAR, REMOTE_HANDLERS } from './remote.js';
+import { WAN_DEBUG_CATEGORIES, WAN_DEBUG_OBJECTIVES, WAN_GRAMMAR, WAN_HANDLERS, WAN_LITERAL_HELP } from './wan.js';
 
 export * from './crypto.js';
 export * from './devhost.js';
@@ -52,6 +57,34 @@ export const P3_APPROVED_HANDLER_IDS = Object.freeze({
 
 /** @since P3 Union of every approved-item handler id. */
 export type P3ApprovedHandlerId = (typeof P3_APPROVED_HANDLER_IDS)[keyof typeof P3_APPROVED_HANDLER_IDS];
+
+/**
+ * @since P3 (W3 cli) The approved items' debug categories in the §5.8 table order: [S13] `ip ssh`, `telnet`; [S18]
+ * `tunnel`; [S19] `ppp negotiation`, `ppp authentication`; [S25] `syslog`; [C1] `eigrp packets`, `eigrp fsm`; [C13]
+ * `crypto ikev2`. Their `debug` specs are already in the fragments above (`P3_APPROVED_DEBUG_GRAMMAR` lists them);
+ * cli-a appends this list to `DEBUG_CATEGORY_DEFS`, which the `debug` handler validates against.
+ */
+export const P3_APPROVED_DEBUG_CATEGORIES: readonly GrammarDebugCategory[] = Object.freeze([
+  ...REMOTE_DEBUG_CATEGORIES,
+  ...WAN_DEBUG_CATEGORIES,
+  ...LOGGING_DEBUG_CATEGORIES,
+  ...EIGRP_DEBUG_CATEGORIES,
+  ...CRYPTO_DEBUG_CATEGORIES,
+]);
+
+/** @since P3 (W3 cli) Objectives of the approved items' debug categories. */
+export const P3_APPROVED_DEBUG_OBJECTIVES: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  ...REMOTE_DEBUG_OBJECTIVES,
+  ...WAN_DEBUG_OBJECTIVES,
+  ...LOGGING_DEBUG_OBJECTIVES,
+  ...EIGRP_DEBUG_OBJECTIVES,
+  ...CRYPTO_DEBUG_OBJECTIVES,
+});
+
+/** @since P3 (W3 cli) The `debug <category>` specs of the approved fragments, in `P3_APPROVED_GRAMMAR` order. */
+export const P3_APPROVED_DEBUG_GRAMMAR: readonly CommandSpec[] = Object.freeze(
+  P3_APPROVED_GRAMMAR.filter((s) => s.path[0] === 'debug' && s.fixedArgs?.[DEBUG_CATEGORY_ARG] !== undefined),
+);
 
 /** @since P3 Help of the approved items' intermediate keywords (the fold merges it under `LITERAL_HELP`). */
 export const P3_APPROVED_LITERAL_HELP: Readonly<Record<string, string>> = Object.freeze({

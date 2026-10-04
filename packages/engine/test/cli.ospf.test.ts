@@ -121,7 +121,8 @@ describe('parsing and scope', () => {
     expect(tokens(matchContextFor(ROUTER, 'config-router'), '')).toEqual([
       'auto-cost', 'default-information', 'do', 'end', 'exit', 'maximum-paths', 'network', 'no', 'passive-interface', 'router-id',
     ]);
-    expect(tokens(matchContextFor(ROUTER, 'priv-exec'), 'show ip ospf ')).toEqual(['interface', 'neighbor', '|', '<cr>'].filter((t) => t !== '<cr>'));
+    // ARCHITECTURE-P3 §9.2 W3 item 30e: `show ip ospf database` joins
+    expect(tokens(matchContextFor(ROUTER, 'priv-exec'), 'show ip ospf ')).toEqual(['database', 'interface', 'neighbor', '|']);
     expect(tokens(matchContextFor(ROUTER, 'priv-exec'), 'show ip route ')).toContain('ospf');
   });
 

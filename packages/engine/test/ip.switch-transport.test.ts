@@ -5,6 +5,8 @@
  * broadcast dies in ipv4 as `unsupported-protocol`, exactly P2's path — until a `DORMANT_TRANSPORT_OWNERS` line is
  * stored (`ntp server`; [S13] `transport input` other than `none` under `line vty`, never `line vty` alone; [S25]
  * `logging host`). Then the datagram draws 3/3 and the SYN a RST; removing the line restores 3/2.
+ * [S13] Rulings R17/R27 (W3 svc, additive case): a telnet/ssh client session opened on the switch's own console wakes
+ * the transport for as long as the session lasts, and only then.
  *
  * The configuration is written with `DeviceRuntime.applyConfigLine` (the config store, rule 13): the grammar for
  * `ntp`, `transport input` and `logging host` arrives with the W2 cli item, and the wake-up reads only what is stored.
@@ -16,6 +18,8 @@ import { SEC } from '../src/contracts/time.js';
 import type { TraceEvent } from '../src/contracts/trace.js';
 import { createConfigAst } from '../src/cli/config-ast.js';
 import { DORMANT_TRANSPORT_OWNERS, dormantTransportEligible, transportWakeLine } from '../src/protocols/ip-upper.js';
+import { createVty } from '../src/protocols/vty.js';
+import { createVtyClient } from '../src/protocols/vty-client.js';
 import { createStagedSimulation } from './staged.world.js';
 
 const SVI = '192.168.1.2';
@@ -245,5 +249,55 @@ describe('ip.switch-transport (D22) on staged.world at stage P3', () => {
     expectAwake(probe(sim));
     setLine(sim, [], ['logging', 'host', '192.168.1.1'], true);
     expectDormant(probe(sim));
+  });
+});
+
+// ── [S13] rulings R17/R27 (W3 svc): the l3 half — an outbound client session wakes the switch for its own life ──
+
+describe('ip.switch-transport [S13] R27: an outbound telnet/ssh session opened on the switch wakes it while it lasts', () => {
+  /** R1 (a telnet vty with a line password), SW1 (no service line: dormant) and PC1; vty and vty-client registered. */
+  function clientWorld(): Simulation {
+    const sim = createStagedSimulation({ seed: SEED, stage: 'P3', factories: { vty: createVty, 'vty-client': createVtyClient } });
+    sim.addDevice({
+      id: 'r1', type: 'router.nf2911', name: 'R1',
+      startupConfig: startup([['hostname R1'], ['interface GigabitEthernet0/0', ' ip address 192.168.1.1 255.255.255.0', ' no shutdown'], ['line vty 0 4', ' password nf', ' login']]),
+    });
+    sim.addDevice({
+      id: 'sw1', type: 'switch.nfc2960', name: 'SW1',
+      startupConfig: startup([['hostname SW1'], ['interface Vlan1', ` ip address ${SVI} 255.255.255.0`, ' no shutdown'], ['ip default-gateway 192.168.1.1']]),
+    });
+    sim.addDevice({ id: 'pc1', type: 'pc.nfpc', name: 'PC1', startupConfig: startup([['hostname PC1'], ['interface GigabitEthernet0', ' ip address 192.168.1.10 255.255.255.0'], ['ip default-gateway 192.168.1.1']]) });
+    sim.addLink({ a: { device: 'pc1', port: 'GigabitEthernet0' }, b: { device: 'sw1', port: 'FastEthernet0/1' } });
+    sim.addLink({ a: { device: 'r1', port: 'GigabitEthernet0/0' }, b: { device: 'sw1', port: 'GigabitEthernet0/1' } });
+    sim.runFor(90 * SEC);
+    return sim;
+  }
+
+  /** A line typed on a console session; the prompt it ends at after `runNs`. */
+  const typeLine = (sim: Simulation, session: string, line: string, runNs = 5 * SEC): string | undefined => {
+    const cursor = sim.trace(0).next;
+    sim.cli.exec(session, line);
+    sim.runFor(runNs);
+    const prompts = sim.trace(cursor).events.filter((e): e is Extract<TraceEvent, { kind: 'cliPrompt' }> => e.kind === 'cliPrompt' && e.session === session);
+    return prompts.at(-1)?.prompt;
+  };
+
+  it('dormant before, awake (3/3, RST) while SW1 is logged in to R1, dormant again once the session ended', () => {
+    const sim = clientWorld();
+    expectDormant(probe(sim));
+    const sw = sim.cli.open('sw1', 'console');
+    expect(typeLine(sim, sw, 'telnet 192.168.1.1')).toBe('Password: ');
+    expect(typeLine(sim, sw, 'nf')).toBe('R1>');
+    expect(sim.cli.session(sw)).toMatchObject({ remote: 'R1 via Telnet', busy: false });
+    // the session's own segments reached SW1's tcp: R1 logged it in
+    expect(sim.device('r1')!.tables.get('vty-logins')!.rows().map((r) => (r as unknown as { result: string }).result)).toEqual(['success']);
+    // while it lasts the transport answers like a configured service
+    expectAwake(probe(sim));
+    expect(sim.cli.session(sw)).toMatchObject({ prompt: 'R1>', remote: 'R1 via Telnet' });
+    expect(typeLine(sim, sw, 'exit', 3 * SEC)).toBe('SW1>');
+    expect(sim.cli.session(sw)?.remote).toBeUndefined();
+    // the hold went with the connection
+    expectDormant(probe(sim));
+    expect(sim.device('sw1')!.tables.get('sockets')?.rows() ?? []).toEqual([]);
   });
 });

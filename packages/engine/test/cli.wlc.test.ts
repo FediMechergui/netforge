@@ -212,7 +212,8 @@ describe('grammar and scope', () => {
     for (const line of ['debug sw-vlan', 'debug port-security', 'no debug sw-vlan', 'no debug port-security']) {
       expect(matchCommand(BUILTIN_GRAMMAR, exec, line), line).toMatchObject({ ok: false, kind: 'unrecognized' });
     }
-    expect(tokens(help(BUILTIN_GRAMMAR, exec, 'debug ').items)).toEqual(['all', 'arp', 'capwap', 'ethernet', 'ip', 'udp']);
+    // ARCHITECTURE-P3 §9.2 W3 item 30e: the controller's §5.8 categories (`cdp …`, `ntp …`) join
+    expect(tokens(help(BUILTIN_GRAMMAR, exec, 'debug ').items)).toEqual(['all', 'arp', 'capwap', 'cdp', 'ethernet', 'ip', 'ntp', 'udp']);
     expect(ok(matchCommand(BUILTIN_GRAMMAR, exec, 'debug capwap'))).toMatchObject({ spec: { handler: HANDLERS.execDebug }, args: { category: 'capwap' } });
     const sw = matchContextFor(catalogModel('switch.nfc2960'), 'priv-exec');
     for (const [line, category] of [['debug sw-vlan', 'sw-vlan'], ['debug port-security', 'port-security']] as const) {

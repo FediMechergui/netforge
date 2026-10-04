@@ -7,9 +7,12 @@
  *  • `udp.open {owner, socket, family, localAddr?, localPort?, iface?}` binds a socket and answers `sock.opened`.
  *    The socket id is chosen by the owner, so it may send right away. A duplicate id or a conflicting bind answers
  *    `sock.error addr-in-use` (the socket never opened). A localPort of 0 or none takes an ephemeral port.
- *  • `udp.send {socket, dst, dstPort, src?, iface?, ttl?, cause?, tag?, triggeredBy?, data | app}` builds
+ *  • `udp.send {socket, dst, dstPort, src?, iface?, ttl?, cause?, tag?, triggeredBy?, dscp?, data | app}` builds
  *    `[ipv4|ipv6, udp, app… | payload]` and hands it to `ipv4.send` / `ipv6.send`. Send-time failures
  *    (no source address, no route, family mismatch) answer `sock.error`; the socket stays open.
+ *    `dscp` (P3, ruling R24; optional by meaning) marks the datagram without a policy: IPv4 `dscp`, IPv6 the upper six
+ *    bits of `trafficClass` (ECN 0). Absent = 0 and no field is written, so every existing send keeps its bytes; a
+ *    value outside 0–63 answers `sock.error bad-socket`.
  *  • `udp.close {socket}` removes the socket and answers `sock.closed`. It is the ONLY way a UDP socket closes.
  *
  * Binding (contracts/transport.ts header): the conflict key is (proto, family, localAddr, localPort, iface ?? '*').
@@ -505,6 +508,10 @@ export function createUdp(): Process {
     if (req.ttl !== undefined && (!Number.isInteger(req.ttl) || req.ttl < 1 || req.ttl > 255)) {
       return [sockError(ctx, s.owner, s.id, 'bad-socket', `time to live ${String(req.ttl)} is outside 1-255`)];
     }
+    // P3 (R24): a DSCP is 6 bits
+    if (req.dscp !== undefined && (!Number.isInteger(req.dscp) || req.dscp < 0 || req.dscp > 63)) {
+      return [sockError(ctx, s.owner, s.id, 'bad-socket', `DSCP ${String(req.dscp)} is outside 0-63`)];
+    }
     const iface = req.iface ?? s.iface;
     if (iface !== undefined && !ctx.ports.has(iface)) return [sockError(ctx, s.owner, s.id, 'bad-socket', `no interface ${iface} on this device`)];
     let src: IpAddress;
@@ -526,8 +533,11 @@ export function createUdp(): Process {
     if (s.family === 4) {
       ipId = (ipId + 1) & 0xffff;
       ip = { proto: 'ipv4', fields: { src, dst, protocol: IPPROTO_UDP, ttl: req.ttl ?? ctx.model.ipDefaults.ttl, id: ipId } };
+      // P3 (R24): only a given DSCP writes the field (absent = 0, today's bytes)
+      if (req.dscp !== undefined) ip.fields.dscp = req.dscp;
     } else {
       ip = { proto: 'ipv6', fields: { src, dst, nextHeader: IPPROTO_UDP, hopLimit: req.ttl ?? ctx.model.ipDefaults.hopLimit } };
+      if (req.dscp !== undefined) ip.fields.trafficClass = req.dscp << 2;
     }
     const meta: Partial<PduMeta> = {
       flow: flowKey(s.family, src, dst, 'udp', s.localPort, req.dstPort),

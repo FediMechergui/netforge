@@ -2,11 +2,14 @@
  * Bottom-dock terminal tab (spec §8.1): a strip of open consoles, an "Open console…"
  * menu over the snapshot's devices, and one live xterm per session. Hidden consoles stay
  * mounted (display:none) so their scrollback and line state survive tab switches.
+ *
+ * P3 [S13] (W3 web-shell): a console relaying a remote session shows its "remote: R1 via SSH" chip in the strip too.
  */
 import type { DeviceSnapshot, SessionId } from '@netforge/engine';
 import { Menu, MenuHeading, MenuItem } from '../app/Menu';
 import { engine } from '../bridge/client';
 import { store, useStore } from '../store/store';
+import { remoteChipText } from './remote-session';
 import { TerminalTab } from './TerminalTab';
 import './terminal.css';
 
@@ -79,7 +82,10 @@ export function TerminalPanel() {
           {terminals.map((t) => {
             const isActive = t.session === activeTerminal;
             const name = devices.find((d) => d.id === t.device)?.name ?? t.title;
-            const busy = sessions?.find((s) => s.id === t.session)?.busy === true;
+            const view = sessions?.find((s) => s.id === t.session);
+            // [S13] a console relaying a remote session shows where it is instead of flickering "running" per line
+            const remote = remoteChipText(view);
+            const busy = view?.busy === true && remote === undefined;
             return (
               <div key={t.session} className={`terminal-chip ${isActive ? 'is-active' : ''}`}>
                 <button
@@ -87,7 +93,7 @@ export function TerminalPanel() {
                   role="tab"
                   aria-selected={isActive}
                   className="terminal-chip-label"
-                  title={`Console on ${name} (session ${t.session}) — middle-click to close`}
+                  title={`Console on ${name} (session ${t.session})${remote === undefined ? '' : `, ${remote}`} — middle-click to close`}
                   onClick={() => setActiveTerminal(t.session)}
                   onAuxClick={(e) => {
                     if (e.button === 1) closeConsole(t.session);
@@ -96,6 +102,7 @@ export function TerminalPanel() {
                   <span className="terminal-chip-name">{name}</span>
                   <span className="terminal-chip-id">{t.session}</span>
                   {busy && <span className="terminal-chip-busy">running</span>}
+                  {remote !== undefined && <span className="terminal-chip-remote">{remote}</span>}
                 </button>
                 <button
                   type="button"

@@ -168,7 +168,7 @@ describe('IPv6 explorer', () => {
 describe('concept view host', () => {
   it('opens the subnetting workbench by default and names both tools', () => {
     const t = text(renderToStaticMarkup(createElement(ConceptView)));
-    expect(CONCEPT_TOOLS.map((c) => c.id)).toEqual(['subnetting', 'ipv6']);
+    expect(CONCEPT_TOOLS.map((c) => c.id)).toEqual(['subnetting', 'ipv6', 'queueing', 'data-formats', 'wildcard']);
     expect(conceptToolLabel('ipv6')).toBe('IPv6');
     expect(t).toContain('Subnetting');
     expect(t).toContain('IPv6');

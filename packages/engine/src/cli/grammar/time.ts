@@ -6,14 +6,19 @@
  *   exec       `clock set <hh:mm:ss> <day> <month> <year>` (also `<month> <day> <year>`): not stored; the CLI sends
  *              `ntp.clockSet`, and ntp sets the clock and writes its `clock` row (rule 20); `show clock [detail]`
  *   host shell `service ntp on|off` (servers): `ntp master 1` / its removal
- * The runtime keeps the clock; the ntp daemon reads the lines (W2 svc). `show ntp …` is W3's.
+ * The runtime keeps the clock; the ntp daemon reads the lines (W2 svc).
+ *
+ * Verification (W3, cli part 2, §5.8): `show ntp associations [detail]` (the `ntp-peers` rows; `when` from the row's
+ * last reply, the next poll from the ntp StateView's `peers[].nextPollAt`) and `show ntp status` (the device clock and
+ * the ntp StateView); the debug categories `ntp packets` and `ntp events` (protocols/ntp.ts `NTP_DEBUG_PACKETS`,
+ * `NTP_DEBUG_EVENTS`).
  *
  * Scope: the network devices that run ntp (§2.1 rows: routing, managed-switch, wireless-controller), and `service ntp`
  * on servers. Help strings are original wording (spec §1.6).
  */
 import type { ArgSpec, CommandSpec } from '../../contracts/cli.js';
 import type { Capability } from '../../contracts/catalog.js';
-import { choiceArg, HOST_ONLY, hostArg, ifaceArg, intArg, NFOS_ONLY, wordArg } from './core-exec.js';
+import { choiceArg, debugSpecs, type GrammarDebugCategory, HOST_ONLY, hostArg, ifaceArg, intArg, NFOS_ONLY, wordArg } from './core-exec.js';
 
 /** Handler ids of the time fragment. Never rename. */
 export const TIME_HANDLERS = {
@@ -24,6 +29,9 @@ export const TIME_HANDLERS = {
   execClockSet: 'exec.clock-set',
   showClock: 'show.clock',
   hostServiceNtp: 'host.service-ntp',
+  // W3 cli part 2
+  showNtpAssociations: 'show.ntp-associations',
+  showNtpStatus: 'show.ntp-status',
 } as const;
 
 /** @since P3 Capabilities that run ntp on network devices (§2.1). */
@@ -35,6 +43,8 @@ export const NTP_SERVER_CAPABILITIES: readonly Capability[] = Object.freeze(['se
 export const TIME_FORM_ARG = 'form';
 export const NTP_PREFER_ARG = 'prefer';
 export const SHOW_CLOCK_DETAIL_ARG = 'detail';
+/** @since P3 `fixedArgs` key of `show ntp associations detail`. */
+export const SHOW_NTP_DETAIL_ARG = 'detail';
 
 /** @since P3 Month names `clock set` accepts (any unambiguous prefix, any letter case). */
 export const CLOCK_MONTHS = Object.freeze([
@@ -46,6 +56,18 @@ export const CLOCK_YEAR_MAX = 2035;
 
 const H = TIME_HANDLERS;
 const OBJ = ['CCNA3.management.2'];
+
+/**
+ * @since P3 The NTP debug categories (§5.8; the ntp daemon's `NTP_DEBUG_PACKETS` and `NTP_DEBUG_EVENTS`), offered
+ * where ntp runs on a device with a command line. Literals (rule 12).
+ */
+export const NTP_DEBUG_CATEGORIES: readonly GrammarDebugCategory[] = Object.freeze([
+  { category: 'ntp packets', help: 'Trace every NTP request and reply sent or received', requiresAny: NTP_CAPABILITIES, since: 'P3' },
+  { category: 'ntp events', help: 'Trace NTP servers added and removed, clock steps, retries and refused replies', requiresAny: NTP_CAPABILITIES, since: 'P3' },
+]);
+
+/** @since P3 Objectives of the NTP debug categories. */
+export const NTP_DEBUG_OBJECTIVES: Readonly<Record<string, readonly string[]>> = Object.freeze({ 'ntp packets': OBJ, 'ntp events': OBJ });
 
 const GLOBAL = { mode: 'config', privilege: 15, allowNo: true, grammars: NFOS_ONLY, requiresAny: NTP_CAPABILITIES, since: 'P3' } as const;
 
@@ -159,6 +181,43 @@ export const TIME_GRAMMAR: readonly CommandSpec[] = Object.freeze<CommandSpec[]>
     objectives: OBJ,
   },
   {
+    path: ['show', 'ntp', 'associations'],
+    mode: '@exec',
+    privilege: 1,
+    help: 'The time servers this device polls: stratum, reach, delay and offset',
+    handler: H.showNtpAssociations,
+    filterable: true,
+    grammars: NFOS_ONLY,
+    requiresAny: NTP_CAPABILITIES,
+    since: 'P3',
+    objectives: OBJ,
+  },
+  {
+    path: ['show', 'ntp', 'associations', 'detail'],
+    mode: '@exec',
+    privilege: 1,
+    help: 'Every time server in full, with its timers',
+    handler: H.showNtpAssociations,
+    fixedArgs: { [SHOW_NTP_DETAIL_ARG]: 'detail' },
+    filterable: true,
+    grammars: NFOS_ONLY,
+    requiresAny: NTP_CAPABILITIES,
+    since: 'P3',
+    objectives: OBJ,
+  },
+  {
+    path: ['show', 'ntp', 'status'],
+    mode: '@exec',
+    privilege: 1,
+    help: 'Whether the clock is synchronised, its stratum and its reference',
+    handler: H.showNtpStatus,
+    filterable: true,
+    grammars: NFOS_ONLY,
+    requiresAny: NTP_CAPABILITIES,
+    since: 'P3',
+    objectives: OBJ,
+  },
+  {
     path: ['service', 'ntp', '<state>'],
     mode: 'user-exec',
     privilege: 15,
@@ -170,4 +229,6 @@ export const TIME_GRAMMAR: readonly CommandSpec[] = Object.freeze<CommandSpec[]>
     since: 'P3',
     objectives: OBJ,
   },
+  // W3 cli part 2: `debug ntp packets|events` (§5.8)
+  ...debugSpecs(NTP_DEBUG_CATEGORIES, NTP_DEBUG_OBJECTIVES),
 ]);

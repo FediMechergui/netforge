@@ -11,19 +11,34 @@
  *   show.clock             `show clock [detail]`: `[*]hh:mm:ss.mmm <zone> <Ddd> <Mmm> <d> <yyyy>` (`*` = not
  *                          authoritative, D19), and with `detail` where the time comes from
  *   host.service-ntp       `service ntp on|off` (servers) → `ntp master 1` / its removal
+ *   show.ntp-associations  (W3) `show ntp associations [detail]`: one row (or block) per configured server, in
+ *                          configuration order, from its `ntp-peers` row (reference, stratum, reach in octal, delay and
+ *                          offset in ms; `When` = seconds since the last reply) and the ntp StateView (`Next` = seconds
+ *                          to `peers[].nextPollAt`, the retries left, the last refusal)
+ *   show.ntp-status        (W3) `show ntp status`: `Clock is synchronised, stratum 2, reference is 10.0.0.10` (§5.8) from
+ *                          the device clock, then the source, the last change from the `clock` row and the requests
+ *                          answered (StateView `served`)
  *
  * Calendar arithmetic is integer only (days from the civil date, no `Date`, contracts/time.ts); `show clock` renders
  * through the contract's pure `formatClock` (ruling R8). Every string is original wording (spec §1.6).
  */
-import type { CommandHandler } from '../../contracts/cli.js';
+import type { CommandCtx, CommandHandler } from '../../contracts/cli.js';
 import { formatClock, type DeviceClockView } from '../../contracts/clock.js';
-import { CLOCK_MONTHS, NTP_PREFER_ARG, SHOW_CLOCK_DETAIL_ARG, TIME_HANDLERS } from '../grammar/time.js';
+import type { ClockRow, NtpPeerRow, NtpStateView } from '../../contracts/tables.js';
+import { SEC, type SimTime } from '../../contracts/time.js';
+import { ntpConfigOf } from '../../protocols/ntp.js';
+import { fmtDuration, fmtSince, table } from '../format.js';
+import { CLOCK_MONTHS, NTP_PREFER_ARG, SHOW_CLOCK_DETAIL_ARG, SHOW_NTP_DETAIL_ARG, TIME_HANDLERS } from '../grammar/time.js';
 import { globalContext, outcomeOf } from './common.js';
 
 /** `clock set` with a time that does not read as hh:mm:ss. */
 export const MSG_CLOCK_TIME = '% Give the time as hh:mm:ss, from 00:00:00 to 23:59:59.';
 /** `clock set` with a day the month does not have. */
 export const MSG_CLOCK_DAY = (day: number, month: string): string => `% ${month} has no day ${day} that year.`;
+/** @since P3 `show ntp associations` without any `ntp server` line. */
+export const MSG_NO_NTP_SERVER = 'No time server is configured ("ntp server <address>" adds one).';
+/** @since P3 The legend under `show ntp associations`. */
+export const NTP_ASSOCIATIONS_LEGEND = 'Marks: * the server this clock follows, + a candidate, - its last reply was refused, ? not reached yet';
 
 const NTP_PROCESS = 'ntp';
 const DAY_MS = 86_400_000;
@@ -159,6 +174,145 @@ const serviceNtp: CommandHandler = (ctx, args) => {
   return { output: on ? 'Time service started (stratum 1).' : 'Time service stopped.' };
 };
 
+// ── show ntp (W3) ────────────────────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * @since P3 An NTP offset (θ = `offsetMs` ms + `offsetSubMsNs` ns, the sub-millisecond part floored toward −∞, so
+ * 0 ≤ `offsetSubMsNs` < 1 000 000; §2.6) as milliseconds with three decimals, truncated toward zero: '0.567', '-1.500'.
+ * Integer arithmetic only (an offset can exceed 2^53 ns).
+ */
+export function ntpOffsetText(offsetMs: number, offsetSubMsNs: number): string {
+  const us3 = (ns: number): string => String(Math.floor(ns / 1000)).padStart(3, '0');
+  if (offsetMs >= 0) return `${offsetMs}.${us3(offsetSubMsNs)}`;
+  if (offsetSubMsNs === 0) return `${offsetMs}.000`;
+  return `-${-offsetMs - 1}.${us3(1_000_000 - offsetSubMsNs)}`;
+}
+
+/** @since P3 A round-trip delay in ns as milliseconds with three decimals ('1.234'). */
+export function ntpDelayText(delayNs: number): string {
+  return `${Math.floor(delayNs / 1_000_000)}.${String(Math.floor(delayNs / 1000) % 1000).padStart(3, '0')}`;
+}
+
+const SELECTED_MARK: Readonly<Record<NtpPeerRow['selected'], string>> = Object.freeze({ 'sys-peer': '*', candidate: '+', reject: '-', unreached: '?' });
+const SELECTED_WORDS: Readonly<Record<NtpPeerRow['selected'], string>> = Object.freeze({
+  'sys-peer': 'the server this clock follows',
+  candidate: 'a candidate',
+  reject: 'its last reply was refused',
+  unreached: 'not reached yet',
+});
+
+/** The ntp StateView, when the daemon runs. */
+function ntpStateView(ctx: Pick<CommandCtx, 'processState'>): NtpStateView | undefined {
+  const sv = ctx.processState(NTP_PROCESS);
+  return sv === undefined ? undefined : (sv.state as unknown as NtpStateView);
+}
+
+/** Whole seconds from `now` to `at` (never negative). */
+function secondsTo(at: SimTime, now: SimTime): number {
+  return Math.max(0, Math.floor((at - now) / SEC));
+}
+
+/** The servers to show: the configured ones in configuration order with their rows, then any other row. */
+function ntpServers(ctx: CommandCtx): { address: string; prefer: boolean; row?: NtpPeerRow }[] {
+  const cfg = ntpConfigOf(ctx.running.root);
+  const rows = (ctx.tables.get('ntp-peers')?.rows() ?? []) as unknown as NtpPeerRow[];
+  const byAddress = new Map<string, NtpPeerRow>(rows.map((r) => [r.address, r]));
+  const out: { address: string; prefer: boolean; row?: NtpPeerRow }[] = [];
+  for (const s of cfg.servers) {
+    const row = byAddress.get(s.address);
+    out.push(row === undefined ? { address: s.address, prefer: s.prefer } : { address: s.address, prefer: s.prefer, row });
+    byAddress.delete(s.address);
+  }
+  for (const row of byAddress.values()) out.push({ address: row.address, prefer: false, row });
+  return out;
+}
+
+/** `show ntp associations [detail]`. */
+const showNtpAssociations: CommandHandler = (ctx, args) => {
+  const servers = ntpServers(ctx);
+  const ignored = ntpConfigOf(ctx.running.root).ignored;
+  const note = ignored.length === 0 ? [] : [`Not used (a name, not an address): ${ignored.join(', ')}`];
+  if (servers.length === 0) return { output: [MSG_NO_NTP_SERVER, ...note].join('\n') };
+  const sv = ntpStateView(ctx);
+  const live = (address: string): NtpStateView['peers'][number] | undefined => sv?.peers.find((p) => p.address === address);
+  if (args[SHOW_NTP_DETAIL_ARG] !== undefined) {
+    const blocks = servers.map(({ address, prefer, row }) => {
+      const peer = live(address);
+      const lines = [`${address}: configured${prefer ? ' (prefer)' : ''}, ${row === undefined ? 'not polled yet' : SELECTED_WORDS[row.selected]}`];
+      if (row !== undefined) {
+        lines.push(`  Stratum ${row.stratum}, reference ${row.refId}`);
+        const last = row.lastRxAt === undefined ? 'no reply yet' : `last reply ${fmtSince(row.lastRxAt, ctx.now)} ago`;
+        lines.push(`  Reach ${(row.reach & 0xff).toString(8)} (octal); poll every ${row.pollS} s; ${last}`);
+        const delay = row.delayNs === undefined ? 'unknown' : `${ntpDelayText(row.delayNs)} ms`;
+        const offset = row.offsetMs === undefined ? 'unknown' : `${ntpOffsetText(row.offsetMs, row.offsetSubMsNs ?? 0)} ms`;
+        lines.push(`  Delay ${delay}, offset ${offset}`);
+      }
+      if (peer !== undefined) {
+        const next = peer.nextPollAt === undefined ? 'No poll scheduled' : `Next poll in ${fmtDuration(peer.nextPollAt - ctx.now)}`;
+        lines.push(`  ${next}; quick retries left ${peer.retriesLeft}`);
+        if (peer.lastReject !== undefined) lines.push(`  Last refusal: ${peer.lastReject}`);
+      }
+      return lines.join('\n');
+    });
+    return { output: [blocks.join('\n\n'), ...note].join('\n') };
+  }
+  const out: string[][] = [['', 'Address', 'Reference', 'Stratum', 'When', 'Poll', 'Next', 'Reach', 'Delay (ms)', 'Offset (ms)']];
+  for (const { address, row } of servers) {
+    const peer = live(address);
+    const next = peer?.nextPollAt === undefined ? '-' : String(secondsTo(peer.nextPollAt, ctx.now));
+    if (row === undefined) {
+      out.push(['?', address, '-', '-', '-', '-', next, '0', '-', '-']);
+      continue;
+    }
+    out.push([
+      SELECTED_MARK[row.selected],
+      address,
+      row.refId,
+      String(row.stratum),
+      row.lastRxAt === undefined ? '-' : String(Math.max(0, Math.floor((ctx.now - row.lastRxAt) / SEC))),
+      String(row.pollS),
+      next,
+      (row.reach & 0xff).toString(8),
+      row.delayNs === undefined ? '-' : ntpDelayText(row.delayNs),
+      row.offsetMs === undefined ? '-' : ntpOffsetText(row.offsetMs, row.offsetSubMsNs ?? 0),
+    ]);
+  }
+  return { output: [table(out, { gap: 2, minWidths: [1, 15, 9] }), NTP_ASSOCIATIONS_LEGEND, ...note].join('\n') };
+};
+
+/** The words of a clock source in `show ntp status`. */
+function sourceWords(view: DeviceClockView): string {
+  switch (view.source) {
+    case 'ntp':
+      return 'NTP';
+    case 'master':
+      return `this device's own clock, served at stratum ${view.stratum ?? 8} (ntp master)`;
+    case 'user':
+      return 'set by hand (clock set); not synchronised';
+    case 'host':
+      return "the host's own clock";
+    case 'unset':
+      return 'none: the clock was never set';
+  }
+}
+
+/** `show ntp status` (§5.8 first line). */
+const showNtpStatus: CommandHandler = (ctx) => {
+  const view = ctx.clock();
+  const synced = view.source === 'ntp' || view.source === 'master';
+  const lines = [
+    synced
+      ? `Clock is synchronised, stratum ${view.stratum ?? 16}, reference is ${view.reference ?? 'unknown'}`
+      : 'Clock is not synchronised, stratum 16, no reference',
+  ];
+  lines.push(`  Time source: ${sourceWords(view)}`);
+  const row = (ctx.tables.get('clock')?.rows() ?? [])[0] as unknown as ClockRow | undefined;
+  if (row !== undefined) lines.push(`  Last set ${fmtSince(row.since, ctx.now)} ago; it reads ${ntpOffsetText(row.offsetMs, row.offsetSubMsNs)} ms from true time`);
+  const sv = ntpStateView(ctx);
+  if (sv !== undefined) lines.push(`  Requests answered as a time server: ${sv.served}`);
+  return { output: lines.join('\n') };
+};
+
 /** @since P3 Registry fragment: the clock and NTP lines (`TIME_HANDLERS` ids). */
 export const timeHandlers: Readonly<Record<string, CommandHandler>> = {
   [TIME_HANDLERS.configClockTimezone]: clockTimezone,
@@ -168,4 +322,7 @@ export const timeHandlers: Readonly<Record<string, CommandHandler>> = {
   [TIME_HANDLERS.execClockSet]: clockSet,
   [TIME_HANDLERS.showClock]: showClock,
   [TIME_HANDLERS.hostServiceNtp]: serviceNtp,
+  // W3 cli part 2
+  [TIME_HANDLERS.showNtpAssociations]: showNtpAssociations,
+  [TIME_HANDLERS.showNtpStatus]: showNtpStatus,
 };

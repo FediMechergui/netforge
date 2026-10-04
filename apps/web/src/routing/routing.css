@@ -1,0 +1,280 @@
+/*
+ * routing/routing.css — [S2]/[S3] the link-state browser and the SPF stepper (ARCHITECTURE-P3 §6).
+ * Theme tokens only (styles.css); every state also has a word, a glyph or a shape (colour is never the only channel).
+ */
+
+.ls-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  font-size: 12px;
+  color: var(--text);
+}
+.ls-empty-panel {
+  padding: 12px;
+  color: var(--text-dim);
+}
+.ls-empty {
+  margin: 8px 10px;
+  color: var(--text-dim);
+}
+
+.ls-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-2);
+}
+.ls-toolbar label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-dim);
+}
+.ls-views {
+  display: inline-flex;
+  gap: 4px;
+}
+.ls-count {
+  color: var(--text-faint);
+  font-family: var(--mono);
+}
+
+.ls-split {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(220px, 2fr);
+  flex: 1;
+  min-height: 0;
+}
+.ls-list-pane,
+.ls-graph-pane,
+.ls-detail-pane,
+.ls-spf-pane {
+  min-height: 0;
+  overflow: auto;
+}
+.ls-detail-pane {
+  border-left: 1px solid var(--border);
+}
+.ls-spf-pane {
+  flex: 1;
+  padding: 6px 10px;
+}
+
+.ls-list tbody tr {
+  cursor: pointer;
+}
+.ls-list tbody tr:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.ls-list tr.ls-maxage td {
+  color: var(--text-faint);
+}
+.ls-list .chip + .chip {
+  margin-left: 4px;
+}
+
+.ls-detail {
+  padding: 6px 10px 10px;
+}
+.ls-heading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0 6px;
+  font-size: 13px;
+}
+.ls-header {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 2px 12px;
+  margin: 0 0 6px;
+}
+.ls-header div {
+  display: flex;
+  gap: 6px;
+}
+.ls-header dt {
+  color: var(--text-dim);
+}
+.ls-header dd {
+  margin: 0;
+}
+.ls-body p,
+.ls-agreement p {
+  margin: 4px 0;
+}
+.ls-links,
+.ls-holders {
+  margin: 2px 0 6px;
+  padding-left: 18px;
+}
+.ls-holders li {
+  margin: 2px 0;
+}
+.ls-packets {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+.ls-filter {
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-2);
+  font-family: var(--mono);
+  font-size: 11px;
+  user-select: all;
+}
+
+.ls-graph {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 100%;
+}
+.ls-edge line {
+  stroke: var(--text-dim);
+  stroke-width: 2;
+}
+.ls-edge-oneway line {
+  stroke: var(--err);
+  stroke-width: 1;
+}
+.ls-cost,
+.ls-oneway {
+  fill: var(--text);
+  font-family: var(--mono);
+  font-size: 10px;
+  text-anchor: middle;
+  paint-order: stroke;
+  stroke: var(--bg);
+  stroke-width: 3px;
+}
+.ls-oneway {
+  fill: var(--err);
+}
+.ls-node rect,
+.ls-node circle {
+  fill: var(--panel);
+  stroke: var(--border-strong);
+  stroke-width: 1.5;
+}
+.ls-node[role='button'] {
+  cursor: pointer;
+}
+.ls-node:focus-visible rect,
+.ls-node:focus-visible circle {
+  stroke: var(--accent);
+  stroke-width: 3;
+}
+.ls-node.is-selected rect,
+.ls-node.is-selected circle {
+  stroke: var(--accent);
+  stroke-width: 3;
+  fill: var(--sel-strong);
+}
+.ls-node:focus {
+  outline: none;
+}
+.ls-node.ls-unplaced rect {
+  stroke-width: 1;
+}
+.ls-node-name,
+.ls-node-sub {
+  fill: var(--text);
+  font-size: 10px;
+  text-anchor: middle;
+}
+.ls-node-name {
+  font-weight: 600;
+}
+.ls-node-sub {
+  fill: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 9px;
+}
+.ls-unplaced .ls-node-sub {
+  font-style: italic;
+}
+
+.ls-spf-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+.ls-spf-pos {
+  margin-left: 8px;
+  color: var(--text-dim);
+}
+.ls-spf-sentence {
+  margin: 6px 0;
+  padding: 6px 8px;
+  border-left: 3px solid var(--accent);
+  background: var(--bg-2);
+  line-height: 1.45;
+}
+.ls-spf-tables {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(160px, 2fr);
+  gap: 12px;
+  align-items: start;
+}
+.ls-tentative caption {
+  padding: 2px 0 4px;
+  color: var(--text-dim);
+  text-align: left;
+  font-weight: 600;
+}
+.ls-tentative tr.ls-next td {
+  font-weight: 600;
+}
+.ls-tentative .chip {
+  margin-left: 6px;
+}
+.ls-settled h4 {
+  margin: 2px 0 4px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.ls-settled ol {
+  margin: 0;
+  padding-left: 22px;
+}
+.ls-settled li {
+  margin: 1px 0;
+}
+.ls-settled li.is-current {
+  font-weight: 600;
+}
+.ls-settled .chip {
+  margin-left: 6px;
+}
+.ls-cost-cell {
+  display: inline-block;
+  min-width: 2.5em;
+  text-align: right;
+}
+.ls-spf-router {
+  margin: 8px 0 2px;
+  color: var(--text-dim);
+}
+
+@media (max-width: 720px) {
+  .ls-split,
+  .ls-spf-tables {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .ls-detail-pane {
+    border-left: none;
+    border-top: 1px solid var(--border);
+  }
+}

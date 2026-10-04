@@ -14,10 +14,25 @@
  * P2 [S14] (§6): the Processes tab opens with the state-machine history of the device-level machines
  * (`DEVICE_FSM_MACHINES`: the bridge's root role, the access point's and the controller's CAPWAP joins); the per-port
  * machines have theirs in the port inspector.
+ *
+ * P3 (ARCHITECTURE-P3 §5.9 "Device inspector overview", D19; §7 W3 web-inspector): the Overview shows the device clock
+ * — `*` while it was never set, where its time comes from and its stratum — extrapolated in the web from
+ * `DeviceSnapshot.clock` (which changes only on a set or a synchronisation) and the extrapolated simulated time.
  */
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { KeyboardEvent } from 'react';
-import type { DeviceModel, DeviceSnapshot, FsmMachine, GuiPanelId, PortSnapshot, StateView } from '@netforge/engine';
+import { formatClock } from '@netforge/engine';
+import type {
+  DeviceClockSnapshot,
+  DeviceClockView,
+  DeviceModel,
+  DeviceSnapshot,
+  FsmMachine,
+  GuiPanelId,
+  PortSnapshot,
+  SimTime,
+  StateView,
+} from '@netforge/engine';
 import { engine } from '../bridge/client';
 import { DesktopTab } from '../desktop/DesktopTab';
 import { store, useStore } from '../store/store';
@@ -119,10 +134,68 @@ export function fmtUptime(ns: number): string {
   return `${s} s`;
 }
 
+// ── P3: the device clock (D19) ──────────────────────────────────────────────
+
+const NS_PER_MS = 1_000_000;
+
+/**
+ * @since P3 The zone label of a clock offset: `UTC`, `UTC+2`, `UTC-3:30`. (`DeviceClockSnapshot` carries the offset
+ * only, not the name typed in `clock timezone`.)
+ */
+export function clockZoneName(offsetMin: number): string {
+  if (offsetMin === 0) return 'UTC';
+  const sign = offsetMin < 0 ? '-' : '+';
+  const a = Math.abs(offsetMin);
+  const h = Math.floor(a / 60);
+  const m = a % 60;
+  return `UTC${sign}${h}${m === 0 ? '' : `:${String(m).padStart(2, '0')}`}`;
+}
+
+/**
+ * @since P3 The clock view of a snapshot clock at `now`: `baseUnixMs + (now − baseAt)`, split into whole milliseconds and
+ * the sub-millisecond rest (the snapshot's `baseAt` is an instant at which the clock reads a whole millisecond), not
+ * authoritative (a leading `*`) only while the source is `unset`.
+ */
+export function deviceClockAt(clock: DeviceClockSnapshot, now: SimTime): DeviceClockView {
+  const elapsed = now - clock.baseAt;
+  const ms = Math.floor(elapsed / NS_PER_MS);
+  return {
+    source: clock.source,
+    authoritative: clock.source !== 'unset',
+    unixMs: clock.baseUnixMs + ms,
+    subMsNs: elapsed - ms * NS_PER_MS,
+    ...(clock.stratum !== undefined ? { stratum: clock.stratum } : {}),
+    ...(clock.reference !== undefined ? { reference: clock.reference } : {}),
+    tz: { name: clockZoneName(clock.tzOffsetMin), offsetMin: clock.tzOffsetMin },
+  };
+}
+
+/** @since P3 The clock as `show clock` prints it (`*00:00:12.500 UTC Wed Jan 1 2020`, `08:05:12.412 UTC Mon Jan 6 2025`). */
+export function deviceClockText(clock: DeviceClockSnapshot, now: SimTime): string {
+  return formatClock(deviceClockAt(clock, now), 'show-clock');
+}
+
+/** @since P3 Where the clock's time comes from, in words, with the stratum when it has one. */
+export function clockSourceText(clock: Pick<DeviceClockSnapshot, 'source' | 'stratum' | 'reference'>): string {
+  const stratum = clock.stratum !== undefined ? `stratum ${clock.stratum}` : '';
+  switch (clock.source) {
+    case 'unset':
+      return 'not set: running from the boot default (shown with *)';
+    case 'user':
+      return 'set by hand (clock set)';
+    case 'ntp':
+      return `synchronised by NTP${stratum === '' ? '' : `, ${stratum}`}${clock.reference !== undefined ? `, from ${clock.reference}` : ''}`;
+    case 'master':
+      return `serves its own clock (ntp master)${stratum === '' ? '' : `, ${stratum}`}`;
+    case 'host':
+      return "the computer's own clock";
+  }
+}
+
 // ── component ───────────────────────────────────────────────────────────────
 
 export function DeviceInspector({ device }: { device: DeviceSnapshot }) {
-  const local = useSyncExternalStore(subscribeTab, getTab);
+  const local = useSyncExternalStore(subscribeTab, getTab, getTab);
   const storeTab = useStore((s) => s.inspectorTab);
   const model = useStore((s) => catalogModel(s.catalog, device.type));
   const tabs = useMemo(() => inspectorTabsFor(device, model), [device, model]);
@@ -366,6 +439,15 @@ function OverviewTab({ device, model }: { device: DeviceSnapshot; model: DeviceM
           <dd>{device.power ? (device.booted ? 'booted' : 'booting') : 'powered off'}</dd>
           <dt>Uptime</dt>
           <dd className="mono">{device.booted ? fmtUptime(uptime) : '—'}</dd>
+          {device.clock !== undefined && (
+            <>
+              <dt>Clock</dt>
+              <dd>
+                <span className="mono">{deviceClockText(device.clock, now)}</span>
+                <div className="dim">{clockSourceText(device.clock)}</div>
+              </dd>
+            </>
+          )}
           <dt>Ports up</dt>
           <dd className="mono">
             {up} / {physical.length}

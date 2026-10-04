@@ -8,8 +8,11 @@
  * model's held queue (W3 media, `link/media/p2p.ts`) drives:
  *
  *   • `enqueue(packet, now, linkBusy)` at `transmit`: the frame's class is `qosClass` (the position of the output-policy
- *     class in `spec.classes`; absent or out of range = class-default). An output policer [S21] (`EgressClassSpec.police`,
- *     conform transmits, exceed drops) runs first, then the W1 scheduler (`core/queueing.ts`): the LLQ class's
+ *     class in `spec.classes`; absent or out of range = class-default). An output policer [S21] (`EgressClassSpec.police`;
+ *     ruling R26: its `conform` / `exceed` actions, absent = transmit / drop, `qosPolicerAction`) runs first — a `drop`
+ *     action drops `policed`, a `transmit` (or a `set-dscp-transmit`, which the scheduler cannot apply: `qos/config.ts`
+ *     never hands it one, the runtime polices those classes) queues the frame — then the W1 scheduler
+ *     (`core/queueing.ts`): the LLQ class's
  *     CONDITIONAL policer (only while the port is congested: the link busy, a frame waiting, or the shaper holding one),
  *     then the class's tail-drop limit. The result names the queue and its depth (the `frameQueued` event) or the drop
  *     reason with its detail text (§3.11 step 4).
@@ -32,7 +35,7 @@
  *
  * Integer only (§4.5): no floating-point maths, no randomness, no clocks, no module state.
  */
-import type { EgressClassSpec, EgressQueueView, EgressSchedulerSpec, PolicerSpec } from '../../contracts/link.js';
+import type { EgressClassSpec, EgressQueueView, EgressSchedulerSpec, PolicerAction, PolicerSpec } from '../../contracts/link.js';
 import type { PduView } from '../../contracts/pdu.js';
 import { SEC, serializationNs, type SimTime } from '../../contracts/time.js';
 import { tupleOf } from '../../core/acl.js';
@@ -82,6 +85,14 @@ export function qosPolicedDetail(className: string, by: 'priority' | 'police', r
   return by === 'priority'
     ? `priority class ${className} is over its ${qosRateText(rateBps)}`
     : `class ${className} is over its police rate of ${qosRateText(rateBps)}`;
+}
+
+/**
+ * @since P3 [S21] Ruling R26: the detail of a drop by a `conform-action drop` (a frame within the police rate that the
+ * class drops anyway): `class BULK drops traffic within its police rate of 64 kb/s`.
+ */
+export function qosPoliceConformDropDetail(className: string, rateBps: number): string {
+  return `class ${className} drops traffic within its police rate of ${qosRateText(rateBps)}`;
 }
 
 // ── admission (the 75 % rule) ───────────────────────────────────────────────
@@ -156,6 +167,17 @@ export function policeQosPacket(p: QosPolicer, bytes: number, now: SimTime): Qos
   p.exceed++;
   p.exceedBytes += bytes;
   return 'exceed';
+}
+
+const POLICE_TRANSMIT: PolicerAction = Object.freeze({ kind: 'transmit' });
+const POLICE_DROP: PolicerAction = Object.freeze({ kind: 'drop' });
+
+/**
+ * @since P3 [S21] Ruling R26: the action a policer of `spec` takes for a verdict — its `conform` / `exceed` action,
+ * absent = transmit / drop (the W0 behaviour).
+ */
+export function qosPolicerAction(spec: Pick<PolicerSpec, 'conform' | 'exceed'>, verdict: QosPolicerResult): PolicerAction {
+  return verdict === 'conform' ? (spec.conform ?? POLICE_TRANSMIT) : (spec.exceed ?? POLICE_DROP);
 }
 
 // ── the shaper [S21] ────────────────────────────────────────────────────────
@@ -394,12 +416,17 @@ export function createPortScheduler<T>(spec: EgressSchedulerSpec, now: SimTime):
       const c = spec.classes[cls]!;
       windowAdd(offered[cls]!, at, p.bytes);
       const policer = policers[cls];
-      if (policer !== undefined && policeQosPacket(policer, p.bytes, at) === 'exceed') {
-        const k = pre[cls]!;
-        k.matched++;
-        k.matchedBytes += p.bytes;
-        k.policed++;
-        return { ok: false, cls, queue: c.name, reason: 'policed', detail: qosPolicedDetail(c.name, 'police', policer.spec.rateBps) };
+      if (policer !== undefined) {
+        const verdict = policeQosPacket(policer, p.bytes, at);
+        if (qosPolicerAction(policer.spec, verdict).kind === 'drop') {
+          const k = pre[cls]!;
+          k.matched++;
+          k.matchedBytes += p.bytes;
+          k.policed++;
+          const rate = policer.spec.rateBps;
+          const detail = verdict === 'exceed' ? qosPolicedDetail(c.name, 'police', rate) : qosPoliceConformDropDetail(c.name, rate);
+          return { ok: false, cls, queue: c.name, reason: 'policed', detail };
+        }
       }
       const r = core.enqueue(
         {

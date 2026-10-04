@@ -180,7 +180,8 @@ describe('serial lines', () => {
     expect(tokens(priv, 'show ')).not.toContain('controllers');
     expect(ok(priv, 'debug serial').args.category).toBe('serial');
     // ARCHITECTURE-P2 §9.2 W4 item 18: `standby` (hsrp, routing row) joins through the registry
-    expect(tokens(priv, 'debug ')).toEqual(['all', 'arp', 'dhcp', 'dns', 'ethernet', 'ip', 'ipv6', 'standby', 'tcp', 'traceroute', 'udp']);
+    // ARCHITECTURE-P3 §9.2 W3 item 30e: every §5.8 debug category (the MUST rows and the approved items') joins
+    expect(tokens(priv, 'debug ')).toEqual(['all', 'arp', 'cdp', 'crypto', 'dhcp', 'dns', 'eigrp', 'ethernet', 'ip', 'ipv6', 'lldp', 'ntp', 'ppp', 'restconf', 'standby', 'tcp', 'telnet', 'traceroute', 'tunnel', 'udp']);
   });
 });
 
@@ -267,8 +268,9 @@ describe('inventory and status tables', () => {
     expect(ok(on('switch.nfc2960', 'priv-exec'), 'show interfaces status').spec.handler).toBe(HANDLERS.showInterfacesStatus);
     const r1 = on('router.nf2911', 'priv-exec');
     // the P0 show list plus (ARCHITECTURE-P2 §9.2 W4 item 18) `access-lists` and `standby`, and (ARCHITECTURE-P3 §9.2 W2
-    // item 21b, the W2 subset of item 21's priv-exec show list) `class-map`, `clock` and `policy-map`
-    expect(tokens(r1, 'show ')).toEqual(['access-lists', 'arp', 'class-map', 'clock', 'history', 'hosts', 'interfaces', 'ip', 'ipv6', 'policy-map', 'running-config', 'standby', 'startup-config', 'version']);
+    // item 21b, the W2 subset of item 21's priv-exec show list) `class-map`, `clock` and `policy-map`, and (W3 item 30e)
+    // item 21's final list
+    expect(tokens(r1, 'show ')).toEqual(['access-lists', 'arp', 'cdp', 'class-map', 'clock', 'crypto', 'history', 'hosts', 'interfaces', 'ip', 'ipv6', 'lldp', 'logging', 'ntp', 'policy-map', 'ppp', 'restconf', 'running-config', 'ssh', 'standby', 'startup-config', 'users', 'version']);
     expect(ok(r1, 'show interfaces serial0/0/0').args.iface).toBe('Serial0/0/0');
   });
 

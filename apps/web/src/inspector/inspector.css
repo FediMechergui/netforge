@@ -46,6 +46,10 @@
 .r-Corruption {
   --reason: var(--err);
 }
+/* P3 (D16, ruling R42): a QoS marking rewrite (`set dscp`, `set cos`, a policer's markdown) */
+.r-QosMark {
+  --reason: var(--yellow);
+}
 .r-Encrypt,
 .r-Decrypt,
 .r-FragmentSplit {

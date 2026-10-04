@@ -19,6 +19,10 @@ import {
   type PortSpecLike,
 } from '../src/link/cabling.js';
 import { testPortSpec } from './port.fixtures.js';
+// ARCHITECTURE-P3 §9.2 W3 item 30m (ruling R28 carried to the engine): the console case below needs the whole
+// simulation; it is imported here, while the file is collected, not inside the case (whose 20 s would pay the import)
+import { createSimulation } from '../src/sim/simulation.js';
+import { device, topology } from './accept.p05.harness.js';
 
 // Wiring comes from the port (§9.2): PC/router MDI, switch ports and hub repeater ports MDI-X.
 const pc = (over: Partial<PortSpecLike> = {}): PortSpecLike => ({ kind: 'ethernet', wiring: 'MDI', hostTerminal: true, label: 'PC1 GigabitEthernet0', ...over });
@@ -465,9 +469,7 @@ describe('link/cabling v2 — connectors and optics', () => {
 });
 
 describe('console cables through the simulation (catalog models, host-shell terminal ends)', () => {
-  it('joins a router console to a PC ethernet port or a laptop USB port, never to a switch or another console', async () => {
-    const { createSimulation } = await import('../src/sim/simulation.js');
-    const { device, topology } = await import('./accept.p05.harness.js');
+  it('joins a router console to a PC ethernet port or a laptop USB port, never to a switch or another console', () => {
     const sim = createSimulation({ seed: 1 });
     sim.loadTopology(
       topology(

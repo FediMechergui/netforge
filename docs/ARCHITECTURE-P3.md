@@ -2972,7 +2972,7 @@ repeat for ever is periodic by this definition (rule 19); tests of the failures 
 | traffic | `flow:<id>` for a continuous flow (used only under `runFor`: its datagrams commit non-periodic link events, so a congested link holds `runToIdle` until the cap) | `flow:<id>` for a flow with `count` or `durationMs` (bounded, so `runToIdle` waits for its end); the 300 s cap of every flow; `flow-flush:<key>` on the receiver (1 s after the last datagram, coalesced: the final `flows` write) |
 | tcp, udp (probes) | — | `probe:<session>` (3 s; only in grader clones) |
 | runtime | — | `deviceConfigure` (zero delay) |
-| [S19] ppp | `lcp-echo:<p>` (keepalive, 10 s); `ppp-retry:<p>` (10 s after a failure or Stopped) | `lcp-restart:<p>`, `ipcp-restart:<p>` (2 s; Max-Configure 10, Max-Terminate 2, Max-Failure 5); `chap-retry:<p>` (2 s × 10) |
+| [S19] ppp | `lcp-echo:<p>` (keepalive, 10 s); `ppp-retry:<p>` (10 s after a failure or Stopped) | `lcp-restart:<p>`, `ipcp-restart:<p>`, `ipv6cp-restart:<p>` (2 s; Max-Configure 10, Max-Terminate 2, Max-Failure 5); `chap-retry:<p>` (2 s × 10); `chap-response:<p>` (the peer's Response resent, 2 s × 10, R43); `pap-retry:<p>` (2 s × 10, R37) |
 | [S18] gre | — ([S36], not approved, would add `recursion-hold:<p>`) | — (the tunnel is re-evaluated on configuration, link changes and `ipv4.ribChanged`) |
 | [S13] vty, vty-client | — | login and idle guards (the P1 CLI job timers); the client's connect timeout (the tcp connect timers) |
 | [S24] logger, [S25] syslog | — | — (sends immediately) |
@@ -4584,6 +4584,134 @@ above; each keeps its assertion's strength (an exact value stays an exact value;
     :61) are removed and their tests get the accepting case (W2 device and cli).
 30b. The protected banner (with item 28): `protectedBy: 'ssh'` [S13], `'esp'` and `'ike'` [C13] add cases; the DTLS
     and TLS cases keep their exact text (W3 web-inspector).
+30e. Pins that the W3 cli shows and debug categories grow (W3 cli; each stays `toEqual` with the complete new literal):
+    `cli.parser.grammar.test.ts:101-130` `EXPECTED_IDS` gains the 20 cli-a ids (`show.ip-ospf-database`,
+    `show.ip-protocols`, `show.ip-dhcp-snooping`, `show.ip-arp-inspection`, the `show.cdp*` and `show.lldp*` ids,
+    `exec.clear-cdp-table`, `exec.clear-lldp-table`, `show.ntp-associations`, `show.ntp-status`, `show.restconf`,
+    `show.ip-ssh`) and the 12 cli-b ids (`show.ip-eigrp-neighbors`, `show.ip-eigrp-topology`,
+    `show.ip-eigrp-interfaces`, `exec.clear-ip-eigrp-neighbors`, `show.interfaces-tunnel`, `show.ppp-interface`,
+    `show.crypto-ikev2-sa`, `show.crypto-ipsec-sa`, `show.logging`, `exec.clear-logging`, `show.users`, `show.ssh`);
+    `cli.parser.help.test.ts:79` and `cli.grammar.p05.test.ts:271` (router `show `) → item 21's final list;
+    `cli.parser.help.test.ts:88` (router `show ip `) → `['access-lists', 'arp', 'dhcp', 'eigrp', 'interface', 'nat',
+    'ospf', 'protocols', 'route', 'sockets', 'ssh']`; `cli.parser.help.test.ts:138`, `cli.grammar.p05.test.ts:183`
+    and `cli.stp.test.ts:465` (router `debug `) → `['all', 'arp', 'cdp', 'crypto', 'dhcp', 'dns', 'eigrp',
+    'ethernet', 'ip', 'ipv6', 'lldp', 'ntp', 'ppp', 'restconf', 'standby', 'tcp', 'telnet', 'traceroute', 'tunnel',
+    'udp']`; `cli.parser.help.test.ts:139` (router `debug ip `) → `['access-list', 'icmp', 'nat', 'ospf', 'packet',
+    'routing', 'ssh']`; `cli.wlc.test.ts:215` (controller `debug `) → `['all', 'arp', 'capwap', 'cdp', 'ethernet',
+    'ip', 'ntp', 'udp']`; `cli.ospf.test.ts:124` (`show ip ospf `) → `['database', 'interface', 'neighbor', '|']`. The
+    fix step re-derives every list from the folded grammar and corrects any value above that the tree contradicts.
+30f. `sim.lab-checks.registry.test.ts` (W1 sim's pins of the stubs the W3 adapters replace): :157's `toBeUndefined()`
+    checks at :161, :162, :164, :165 become `toBeDefined()`; :170-187 drop the `acl` and `aclDecision` texts and
+    `Object.values(UNAVAILABLE_KIND_DETAILS)` equals the three remaining texts (`service`, `path`, `traffic`);
+    :189-206 run with that entry set to `undefined` (`{...NEIGHBOR_SOURCES, [p]: undefined}`, `{...FACT_READERS, [f]:
+    undefined}`), same expected details; :258-274's `acl` row is replaced by a still-stubbed `service` row expecting
+    `'Remote login checks are not available in this build. Come back after the ACL lesson.'`.
+30g. Overlay menus (W3 web-canvas and web-shell): `OVERLAY_MODULES` now holds the eight overlays, so
+    `app/TopBar.tsx` builds the switching menu from `SWITCHING_OVERLAY_MODULES` (and its P3 menu from
+    `ROUTING_OVERLAY_MODULES`), and `store.topo-overlays.test.ts:21, :214, :216` read `SWITCHING_OVERLAY_MODULES`,
+    same exact equalities; `overlays.registry.test.ts` pins the eight ids in paint order (`vlan, stp, capwap, ospf,
+    eigrp, spf, wan, qos`).
+30h. Concept tools built (W3 web-concept, ruling R9's knock-on): `store.topo-overlays.p3.test.ts:293` and `:311` →
+    the five tool ids `['subnetting', 'ipv6', 'queueing', 'data-formats', 'wildcard']`; the "not available" case uses
+    an id outside the contract; `concept.views.test.ts:171` → the same five ids.
+30i. `app.logger.test.ts:143-147` (W2 svc's "without the timestamps line" case; W3 fix step, integration finding 5):
+    since the W3 [S25] sim log branch a P3 console also prints the shut's log lines with the same `*hh:mm:ss.uuuuuu: `
+    prefix, so `printed` keeps the debug lines only (a stamped line whose message starts with `%` is a log line), still
+    `toEqual` against the debug events; a new exact assertion pins the three log lines (`%LINK-3: Interface
+    GigabitEthernet0/1 administratively down`, `%LINEPROTO-5-UPDOWN: … line protocol is down`, `%SYS-5-CONFIGURED:
+    Configuration changed from the console.`). The log branch is unchanged (D20).
+30j. Help golden (item 21, the W3 final lists; W3 fix step): `cli.grammar.help-goldens.test.ts`'s generator records the
+    approved items' modes (`config-router-eigrp` [C1] and the four crypto modes [C13], for every model whose grammar
+    offers more there than `do`/`end`/`exit`/`no`) and the Tunnel interface (`config-if virtual/tunnel` [S18]/[C13],
+    for every model `withTunnelFamily` derives it for: the W4 flip's own derivation, so the flip moves no list); the
+    exact inline lists of :60-64 are unchanged. `goldens/cli-help.p05.json` regenerated, additions only (no key removed,
+    no list lost a word; `cli.help-superset` holds). Regenerated lists: `priv-exec show` and `priv-exec debug` of the
+    13 routing models (item 21's router lists), of the 5 managed 2960 switches (show gains `cdp`, `lldp`, `logging`,
+    `ntp`, `restconf`, `ssh`, `users`; debug gains `cdp`, `lldp`, `ntp`, `restconf`, `telnet`) and of NF-WLC-9800 (show
+    gains `cdp`, `logging`, `ntp`; debug `cdp`, `ntp`); new entries: `config-router-eigrp`, `config-ikev2-keyring`,
+    `config-ikev2-keyring-peer`, `config-ikev2-profile`, `config-ipsec-profile` on the 13 routing models and
+    `config-if virtual/tunnel` (`['bandwidth', 'delay', 'description', 'do', 'end', 'exit', 'ip', 'ipv6', 'no',
+    'shutdown', 'tunnel']`) on the 11 that are not home routers.
+30k. `cli.parser.grammar.test.ts` `EXPECTED_IDS` (with 30e) also gains `exec.clear-cdp-counters` (ruling R39), same
+    `toEqual`.
+30l. Recorded for the fix step's other test edits (no assertion weakened): `wan.ppp.test.ts` (W3 wan's own file) gains
+    the lost-CHAP-Success cases (finding 0); `sim.lab-checks.clone.p3.test.ts` (W3 sim's own) the TCP probe from a
+    dormant switch (finding 2); `ip.switch-transport.test.ts`'s additive R27 case was written by the W3 svc item acting
+    for the l3 item (R27 names l3), with `ipv4.ts` and `ip-upper.ts`'s R27 half, so a later l3 item edits those files
+    knowing svc wrote them.
+30m. Ruling R28 carried to the engine's two cases that import the whole engine inside the case (W3 fix step): with the
+    W3 modules the import alone passes the 20 s case timeout on the current disk, alone or in the suite.
+    `link.cabling.test.ts`'s console case imports `sim/simulation.js` and `accept.p05.harness.js` statically (at
+    collection) instead of with `await import` in the case; `review-web.worker-cli-snapshot.test.ts` keeps the engine
+    evaluated once per file (`vi.mock('@netforge/engine', async (importOriginal) => await importOriginal())` and a
+    static `import '@netforge/engine'`), as R28's web worker tests do. No timeout raised; every assertion unchanged.
+
+**W3 rulings (architect, 2026-10-02, recorded before the W3 fix step; binding on it)**
+
+- **R32. The held queue engages in real worlds.** `sim/media-wiring.ts` passes `egressPolicy: (ref) =>
+  devices.get(ref.device)?.egressPolicy(ref.port)` to the link model and forwards `deps.transmit`'s fourth argument
+  (the class options) only when present; `trace/filter.ts` gives `frameQueued` its pdu and port; the snapshot cache
+  marks a device dirty on `frameQueued`, on a scheduler drop and at a scheduler port's `txComplete`, and fills
+  `PortQosView.queue` from `LinkModel.egressQueues`; `CliRuntimeDeps` gains `egressQueues?(ref)` (additive, fed by the
+  Simulation from the link model) so `show policy-map interface` and `show interfaces` print the queue lines in a real
+  world. P1/P2 bytes unchanged (no port of theirs has a policy).
+- **R33. Control traffic is never queued, classified or counted.** HDLC keepalives, PPP control frames (LCP, PAP,
+  CHAP, IPCP, IPV6CP), CDP, LLDP and BPDUs bypass the class queues of a scheduler port (they leave next, as real
+  routers' high-priority control path does, and are never tail-dropped) and are neither classified nor counted by
+  the device's input or output policy (the §7 W3 device rule for BPDUs, extended). A failing lab keepalive therefore
+  never comes from congestion.
+- **R34. One QoS reference rate.** The 75 % admission (the `service-policy output` handler), the compiled scheduler
+  (`qos/config.ts` `qosReferenceBps`) and the `qos.admitted` fact all use the same helper: the port's `bandwidth`
+  line, else its routing bandwidth (the `BW` of `show interfaces`: 1544 kb/s on serial, the negotiated rate on
+  Ethernet). cli-b's switch to the port rate is reverted to this helper.
+- **R35. Policing.** `TransmitRefusal` gains `'policed'` (additive): a policed output frame answers `{ok: false,
+  reason: 'policed'}` with drop `policed`. The device's `PortQosView` class entry gains `police?: {conform,
+  conformBytes, exceed, exceedBytes}` (accepted); `copyQosView` in `sim/snapshot-cache.ts` copies it; the cli reads
+  that shape. Output policers run by the link scheduler are counted from the queue view, which R32 now delivers.
+- **R36. IPsec seams.** Accepted for W3: the head's sequence rewrap (push esp), the `Encrypt` record through
+  `ctx.mutate(pdu, 'esp.keyId', …)` (R21, encode-only), then encapsulate ipv4 — §3.13 step 7 and §10.1's order wins over
+  D27's "rewraps once". The `meta` cast in `setEspProtection` is replaced at W8 by an additive
+  `ProcessCtx.protect(pdu, by | null)` (W8 item). ESP legs are tagged: `summarizePdu` (`link/media/p2p.ts`) and
+  `pduSummary` (`device/process-ctx.ts`) set `tunnel = 'ipsec'` for an `esp` layer beside the `gre` case. The
+  pre-shared key never reaches the trace: a `configChange` event masks the key of a `pre-shared-key` line with the
+  existing `maskSecretTokens`. `index.ts` exports `protocols/ike.js` and `protocols/ike/config.js`.
+- **R37. PPP notes.** `contracts/medium.ts`'s `ppp-link` comment follows §3.9 step 4 (up after authentication,
+  before the NCPs); §4.2 gains `ipv6cp-restart:<port>` and `pap-retry:<port>` (2 s, at most 10 sends, not periodic);
+  §4.1's `fnv1a32` is `macHash32` (`contracts/addr.ts`); §3.9 step 6: with the connected route gone the CLI answers
+  "No route…" and no drop is traced; `link-down` drops only for a route that survives the port (a `permanent`
+  static).
+- **R38. Remote terminal seams.** Accepted for W3: the `ext.tcp.protect` and `ext.ipv4.transportHold` requests
+  (the contract's `ext.*` slot; W8 decides whether they become named members), the per-packet SSH keystream (FNV-1a
+  over the segment's endpoints, so the inspector decodes any packet from its headers; it replaces §4.1's
+  description), no remote interrupt (^C ends the session). `clear logging` uses `ext.logging.clear`, which the
+  logger handles in this wave (empties the buffer lines and bytes, keeps the counters).
+- **R39. `clear cdp counters`** (§5.8): an additive request `cdp.clearCounters` handled by `protocols/cdp.ts`, and
+  its cli spec and handler, in the W3 fix step.
+- **R40. Run to idle (R31's engine half).** `run-control.ts` `runToIdle` returns `stopped: 'maxEvents'` when it
+  ends with non-periodic events still pending after `maxEvents` dispatches; the worker's fallback
+  (`events >= maxEvents`) is removed. `RunStats` is not traced, so no golden moves.
+- **R41. Grader notes.** Accepted: `FactType` `'port'`; the EIGRP identity is the configured `eigrp router-id`
+  (rule 20); an ICMP probe of `aclDecision` is an echo request; `CloneHost.run(faults, settleNs, key, check)`
+  replaces `get`/`nextSession`; config faults use startup-config semantics. `clock.source` with no `clock` row
+  reads the model's boot source (`'host'` for hosts and servers, which boot with true time, §3.7; else `'unset'`),
+  naming "the model's boot clock (catalog)" as its source. The eigrp identity source guards a device without a
+  running configuration. `logging.trap` reads `syslogConfigOf(root).trap`.
+- **R42. Web notes.** Accepted: every layer's `animate` runs each frame (the old `||` chain skipped STP's while
+  VLAN's pulsed); the SPF layer has no toggle and follows the routing dock tab (shown at W4); `RunToIdleSnapshot`.
+  In the W3 fix step: `canvas/packets.ts` draws the `G` badge on GRE legs and the IPsec pulse (static under reduced
+  motion) from `wan-model.ts`'s `tunnelLegStyle` / `encryptedPulseAlpha`; `inspector.css` gains the `.r-QosMark`
+  reason colour. Deferred to W4 web-shell: NetScope adopting the store's `netscope.applied` (one-click "show the
+  packets that carried it"), `DropMarker.rule`, `DeviceClockSnapshot.tzName?`.
+- **R43. W3 fix residuals (architect, 2026-10-04).** The CHAP peer resends its Response (`chap-response:<port>`,
+  2 s, at most 10 sends, then fails like the PAP peer) and the authenticator answers a repeated Response with Success
+  again: accepted, §4.2 row added. **A serial control frame on a plain FIFO port** (no output policy) is admitted
+  past the 256-frame limit but still waits behind the backlog (about 32 s at 64 kb/s with 1000-byte frames), which can
+  still trip three missed keepalives. Owner: the W4 **media** item. In P3-profile worlds only, a serial control frame
+  entering a backlogged FIFO is committed ahead of the queued data, as a real router's high-priority control path
+  does. The later frames shift by its serialization time, by the mechanism the builder picks; P1/P2 worlds keep
+  today's order, so every golden holds. A W4 acceptance row checks it: a 64 kb/s serial FIFO saturated by the traffic
+  generator for 120 s keeps its line protocol up. `show users` has no "connected for" column: the vty StateViews
+  carry no start time, so the column is not shown (W4 svc may add `since` to the connection entries, additive).
 
 **W4 (the flip)**
 
@@ -4667,6 +4795,9 @@ assertions, stage made explicit" alone cannot hold):
 45. `contracts.optional-by-meaning.test.ts` gains the §2.15 rows; `Course.profile` becomes required (web course
     fixtures gain it).
 46. `customChecks` removed (`contracts/scenario.ts:205`, `:216`; the comment at `sim/lab-checks.ts:103`); no test uses it.
+47. (R36, R38) `setEspProtection`'s `meta` cast is replaced by an additive `ProcessCtx.protect(pdu, by | null)`; the
+    `ext.tcp.protect`, `ext.ipv4.transportHold` and `ext.logging.clear` requests either become named contract members
+    or are recorded as the `ext.*` slot's sanctioned users; no test pins the change of form.
 
 ### 9.3 P1-profile digest changes (the only ones allowed)
 

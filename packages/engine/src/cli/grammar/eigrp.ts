@@ -11,10 +11,15 @@
  * Scope: the `routing` capability (the [C1] `eigrp` daemon row of §2.1). `delay` exists on routed Ethernet ports,
  * serial lines, subinterfaces and tunnels (not on VLAN interfaces, whose help list stays unchanged, §9.2 item 21);
  * the two `ip … eigrp` lines on every interface that holds an address. Help strings are original wording (spec §1.6).
+ *
+ * W3 cli (cli-b, §2.16, §5.8): `show ip eigrp neighbors [<if>]`, `show ip eigrp topology [all-links | <prefix>]`, `show ip
+ * eigrp interfaces`, `show ip route eigrp` (the shared route handler on source 'EIGRP'), `clear ip eigrp neighbors
+ * [<address>]` and the `eigrp packets` / `eigrp fsm` debug categories.
  */
 import type { CommandSpec } from '../../contracts/cli.js';
 import { L3_ROLES, type PortRole } from '../../contracts/catalog.js';
-import { ifaceArg, intArg, ipv4Arg, NFOS_ONLY } from './core-exec.js';
+import { debugSpecs, ifaceArg, intArg, ipv4Arg, NFOS_ONLY, type GrammarDebugCategory } from './core-exec.js';
+import { ROUTE_SOURCE_ARG, SHOW_HANDLERS } from './show.js';
 
 /** @since P3 [C1] Handler ids of the EIGRP fragment. Never rename. */
 export const EIGRP_HANDLERS = {
@@ -29,6 +34,11 @@ export const EIGRP_HANDLERS = {
   ifDelay: 'if.delay',
   ifIpHelloEigrp: 'if.ip-hello-interval-eigrp',
   ifIpHoldEigrp: 'if.ip-hold-time-eigrp',
+  // W3 cli (cli-b): the shows and the clear of §2.16 / §5.8
+  showIpEigrpNeighbors: 'show.ip-eigrp-neighbors',
+  showIpEigrpTopology: 'show.ip-eigrp-topology',
+  showIpEigrpInterfaces: 'show.ip-eigrp-interfaces',
+  execClearIpEigrpNeighbors: 'exec.clear-ip-eigrp-neighbors',
 } as const;
 
 /** @since P3 [C1] The mode `router eigrp` enters (contracts/cli.ts MODES). */
@@ -47,6 +57,30 @@ export const DELAY_ROLES: readonly PortRole[] = Object.freeze(['routed', 'wan', 
 /** @since P3 [C1] Mismatch of `delay` typed on another kind of port. */
 export const MSG_DELAY_PORT = '% The delay applies to routed, serial, subinterface and tunnel interfaces.';
 
+/** @since P3 (W3 cli) [C1] The machine source of an EIGRP route (`RouteRow.source`, D11): `show ip route eigrp` filters on it. */
+export const EIGRP_ROUTE_SOURCE = 'EIGRP';
+
+/** @since P3 (W3 cli) [C1] Arg name (`fixedArgs`) naming the view of `show ip eigrp topology all-links`. */
+export const EIGRP_TOPOLOGY_VIEW_ARG = 'view';
+/** @since P3 (W3 cli) [C1] The value of EIGRP_TOPOLOGY_VIEW_ARG that also lists the paths failing the feasibility condition. */
+export const EIGRP_TOPOLOGY_ALL_LINKS = 'all-links';
+
+/**
+ * @since P3 (W3 cli) [C1] The debug categories of the eigrp daemon (§5.8): `eigrp packets` (one line per packet sent or
+ * received) and `eigrp fsm` (neighbour changes and DUAL). Scoped by capability literals like the rest of the P3
+ * grammar: `routing`, the eigrp row of §2.1.
+ */
+export const EIGRP_DEBUG_CATEGORIES: readonly GrammarDebugCategory[] = Object.freeze([
+  { category: 'eigrp packets', help: 'Trace every EIGRP packet sent or received', requiresAny: ['routing'], since: 'P3' },
+  { category: 'eigrp fsm', help: 'Trace EIGRP neighbour changes and DUAL route computations', requiresAny: ['routing'], since: 'P3' },
+]);
+
+/** @since P3 (W3 cli) Objectives of the EIGRP debug categories. */
+export const EIGRP_DEBUG_OBJECTIVES: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  'eigrp packets': ['CCNA3.eigrp.1'],
+  'eigrp fsm': ['CCNA3.eigrp.2', 'CCNA3.eigrp.4'],
+});
+
 const H = EIGRP_HANDLERS;
 
 const AS_ARG = intArg('Autonomous system number', 1, EIGRP_AS_MAX);
@@ -56,6 +90,16 @@ const PROCESS_LINE = {
   mode: EIGRP_MODE,
   privilege: 15,
   allowNo: true,
+  grammars: NFOS_ONLY,
+  requiresAny: ['routing'],
+  since: 'P3',
+} as const;
+
+/** Shared fields of the EIGRP shows (W3 cli). */
+const SHOW_LINE = {
+  mode: '@exec',
+  privilege: 1,
+  filterable: true,
   grammars: NFOS_ONLY,
   requiresAny: ['routing'],
   since: 'P3',
@@ -184,6 +228,66 @@ export const EIGRP_GRAMMAR: readonly CommandSpec[] = Object.freeze<CommandSpec[]
     portRequires: { roles: L3_ROLES },
     objectives: ['CCNA3.eigrp.1'],
   },
+  // ── W3 cli (cli-b): the shows, the clear and the debug categories (§2.16, §5.8) ──
+  {
+    ...SHOW_LINE,
+    path: ['show', 'ip', 'eigrp', 'neighbors', '<iface>'],
+    help: 'EIGRP neighbours: address, interface, hold time, uptime, SRTT and queue',
+    args: { iface: ifaceArg('Limit the output to one interface', { optional: true }) },
+    handler: H.showIpEigrpNeighbors,
+    objectives: ['CCNA3.eigrp.1', 'CCNA3.eigrp.4'],
+  },
+  {
+    ...SHOW_LINE,
+    path: ['show', 'ip', 'eigrp', 'topology'],
+    help: 'EIGRP topology table: successors and feasible successors of each destination',
+    handler: H.showIpEigrpTopology,
+    objectives: ['CCNA3.eigrp.1', 'CCNA3.eigrp.2'],
+  },
+  {
+    ...SHOW_LINE,
+    path: ['show', 'ip', 'eigrp', 'topology', 'all-links'],
+    help: 'EIGRP topology table with every path, feasible or not',
+    handler: H.showIpEigrpTopology,
+    fixedArgs: { [EIGRP_TOPOLOGY_VIEW_ARG]: EIGRP_TOPOLOGY_ALL_LINKS },
+    objectives: ['CCNA3.eigrp.2'],
+  },
+  {
+    ...SHOW_LINE,
+    path: ['show', 'ip', 'eigrp', 'topology', '<prefix>'],
+    help: 'One destination of the EIGRP topology table, with every path',
+    args: { prefix: { type: 'ipv4-prefix', help: 'Destination as A.B.C.D/len' } },
+    handler: H.showIpEigrpTopology,
+    objectives: ['CCNA3.eigrp.2', 'CCNA3.eigrp.3'],
+  },
+  {
+    ...SHOW_LINE,
+    path: ['show', 'ip', 'eigrp', 'interfaces'],
+    help: 'Interfaces running EIGRP: neighbours, timers, bandwidth and delay',
+    handler: H.showIpEigrpInterfaces,
+    objectives: ['CCNA3.eigrp.1', 'CCNA3.eigrp.3'],
+  },
+  {
+    ...SHOW_LINE,
+    path: ['show', 'ip', 'route', 'eigrp'],
+    help: 'Only the routes EIGRP learned',
+    handler: SHOW_HANDLERS.showIpRoute,
+    fixedArgs: { [ROUTE_SOURCE_ARG]: EIGRP_ROUTE_SOURCE },
+    objectives: ['CCNA3.eigrp.2'],
+  },
+  {
+    path: ['clear', 'ip', 'eigrp', 'neighbors', '<address>'],
+    mode: 'priv-exec',
+    privilege: 15,
+    help: 'Drop every EIGRP neighbour (or the one with this address) and form the adjacencies again',
+    args: { address: ipv4Arg('Neighbour address (every neighbour when left out)', true) },
+    handler: H.execClearIpEigrpNeighbors,
+    grammars: NFOS_ONLY,
+    requiresAny: ['routing'],
+    since: 'P3',
+    objectives: ['CCNA3.eigrp.4'],
+  },
+  ...debugSpecs(EIGRP_DEBUG_CATEGORIES, EIGRP_DEBUG_OBJECTIVES),
 ]);
 
 /** @since P3 [C1] Help of the intermediate EIGRP keywords (merged into `LITERAL_HELP` by the fold). */

@@ -257,7 +257,12 @@ export type ProcessRequest =
    * so a tunnelled frame shows one PduId end to end and no `pduConsumed` before the station or the gateway (§3.12).
    */
   | { kind: 'udp.open'; owner: ProcessName; socket: SocketId; family: IpFamily; localAddr?: IpAddress; localPort?: number; iface?: PortId; tunnel?: true }
-  | ({ kind: 'udp.send'; socket: SocketId; dst: IpAddress; dstPort: number; src?: IpAddress; iface?: PortId; ttl?: number; cause?: string; tag?: string; triggeredBy?: PduId } & AppPayload)
+  /**
+   * `dscp` @since P3 (optional by meaning; ARCHITECTURE-P3 ruling R24, W3 svc): the DSCP (0–63) the datagram carries,
+   * so application traffic can be marked without a policy — IPv4 `dscp`, IPv6 the upper six bits of `trafficClass`
+   * (ECN 0). Absent = 0 and no field is written: today's bytes. A value outside 0–63 answers `sock.error bad-socket`.
+   */
+  | ({ kind: 'udp.send'; socket: SocketId; dst: IpAddress; dstPort: number; src?: IpAddress; iface?: PortId; ttl?: number; cause?: string; tag?: string; triggeredBy?: PduId; dscp?: number } & AppPayload)
   | { kind: 'udp.close'; socket: SocketId }
 
   // ── P1: sockets (tcp) ──
@@ -367,6 +372,11 @@ export type ProcessRequest =
   | { kind: 'acl.filter'; family: 4; dir: 'in' | 'out'; iface: PortId; inPort?: PortId; natted?: true; pdu: Pdu; onPermit: Action }
   /** @since P3 cli → acl: `clear access-list counters [<list>]`. */
   | { kind: 'acl.clear'; list?: string }
+  /**
+   * @since P3 (ruling R39, additive) cli `clear cdp counters` → cdp: its announcement counters (sent, received, errors)
+   * start again from zero; the neighbour rows stay.
+   */
+  | { kind: 'cdp.clearCounters' }
   /**
    * @since P3 a process or the CLI (the host-shell `rest` job, owner 'cli') → http-client: resolve (dns-client for
    * names), tcp.connect {tls: url is https}, send the head and a Content-Length body, parse the response; answer
@@ -553,6 +563,56 @@ export interface CliRemoteAction {
   prompt?: string;
   input?: 'plain' | 'secret';
   remote?: string;
+}
+
+// ── P3 [S24]/[S25] the logger StateView (ARCHITECTURE-P3 D20; ruling R25: a contract type, additive) ──
+
+/** @since P3 [S24] One log output's switch and its most detailed severity (`level`; meaningful only while enabled). */
+export interface LoggerOutputView {
+  readonly enabled: boolean;
+  readonly level: Severity;
+}
+
+/** @since P3 [S24] One buffered log line (oldest first in `LoggerStateView.entries`). */
+export interface LoggerEntryView {
+  readonly seq: number;
+  readonly at: SimTime;
+  readonly severity: Severity;
+  readonly facility: string;
+  readonly mnemonic?: string;
+  readonly message: string;
+  /** The line as rendered when it was logged (the logger's renderer, D20). */
+  readonly text: string;
+}
+
+/**
+ * @since P3 [S25] The UDP 514 sender: the `logging trap` level (informational when not set), the `logging facility`
+ * number (local7 = 23 when not set), and each `logging host` in configuration order with the messages handed to udp
+ * for it. `sent` counts every message handed to udp; a send udp refuses (no route, no address) still counts here and
+ * shows as udp's own `sock.error`.
+ */
+export interface LoggerSyslogView {
+  readonly trap: Severity;
+  readonly facility: number;
+  readonly hosts: readonly { readonly address: Ipv4Address; readonly sent: number }[];
+  readonly sent: number;
+}
+
+/**
+ * @since P3 [S24]/[S25] The logger StateView (kind 'logger', display only: `show logging`; rule 20). The console's
+ * default matches `cli/log-render.ts` `consoleLogLevel`: without a `logging console` line a P3 world prints every
+ * level and a P1/P2 world prints none (`enabled: false`); a stored `no logging console` is `enabled: false` too.
+ * `syslog` is optional by meaning: present only while at least one `logging host` is configured ([S25]).
+ */
+export interface LoggerStateView {
+  readonly buffered: LoggerOutputView & { readonly sizeBytes: number; readonly usedBytes: number };
+  readonly console: LoggerOutputView;
+  readonly monitor: LoggerOutputView;
+  /** The configured `service timestamps log|debug` forms as text (`datetime msec`, `uptime`), or null. */
+  readonly timestamps: { readonly log: string | null; readonly debug: string | null };
+  readonly counts: { readonly seen: number; readonly buffered: number; readonly filtered: number; readonly overflowed: number };
+  readonly entries: readonly LoggerEntryView[];
+  readonly syslog?: LoggerSyslogView;
 }
 
 export type Action =

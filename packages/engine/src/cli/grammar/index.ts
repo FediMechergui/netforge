@@ -49,15 +49,15 @@ import { DHCPV6_DEBUG_CATEGORIES, DHCPV6_DEBUG_OBJECTIVES, DHCPV6_GRAMMAR, DHCPV
 import { HSRP_DEBUG_CATEGORIES, HSRP_DEBUG_OBJECTIVES, HSRP_GRAMMAR, HSRP_HANDLERS } from './hsrp.js';
 import { WLC_DEBUG_CATEGORIES, WLC_DEBUG_OBJECTIVES, WLC_GRAMMAR, WLC_HANDLERS } from './wlc.js';
 // P3 (ARCHITECTURE-P3 §7 W2 cli): the MUST fragments (cli part 1) and the approved items' aggregate (cli part 2)
-import { OSPF_GRAMMAR, OSPF_HANDLERS } from './ospf.js';
-import { ACL_P3_GRAMMAR, ACL_P3_HANDLERS } from './acl.js';
-import { HARDENING_GRAMMAR, HARDENING_HANDLERS } from './hardening.js';
+import { OSPF_DEBUG_CATEGORIES, OSPF_GRAMMAR, OSPF_HANDLERS } from './ospf.js';
+import { ACL_DEBUG_CATEGORIES, ACL_P3_GRAMMAR, ACL_P3_HANDLERS } from './acl.js';
+import { HARDENING_DEBUG_CATEGORIES, HARDENING_GRAMMAR, HARDENING_HANDLERS } from './hardening.js';
 import { QOS_GRAMMAR, QOS_HANDLERS } from './qos.js';
-import { DISCOVERY_GRAMMAR, DISCOVERY_HANDLERS } from './discovery.js';
-import { TIME_GRAMMAR, TIME_HANDLERS } from './time.js';
-import { API_GRAMMAR, API_HANDLERS } from './api.js';
+import { DISCOVERY_DEBUG_CATEGORIES, DISCOVERY_GRAMMAR, DISCOVERY_HANDLERS } from './discovery.js';
+import { NTP_DEBUG_CATEGORIES, TIME_GRAMMAR, TIME_HANDLERS } from './time.js';
+import { API_DEBUG_CATEGORIES, API_GRAMMAR, API_HANDLERS } from './api.js';
 import { SSH_GRAMMAR, SSH_HANDLERS } from './ssh.js';
-import { P3_APPROVED_GRAMMAR_FRAGMENTS, P3_APPROVED_HANDLER_IDS, P3_APPROVED_LITERAL_HELP } from './p3-approved.js';
+import { P3_APPROVED_DEBUG_CATEGORIES, P3_APPROVED_GRAMMAR_FRAGMENTS, P3_APPROVED_HANDLER_IDS, P3_APPROVED_LITERAL_HELP } from './p3-approved.js';
 
 export * from './core-exec.js';
 export * from './show.js';
@@ -192,6 +192,37 @@ export const P2_GRAMMAR: readonly CommandSpec[] = Object.freeze(Object.values(P2
 // MUST fragments (cli part 1), in this order; `P3_APPROVED_GRAMMAR_FRAGMENTS` (cli/grammar/p3-approved.ts, cli part
 // 2) follows them.
 
+/**
+ * @since P3 (W3 cli part 2) The `traffic` debug category (§5.8, a NetForge extension; protocols/traffic.ts
+ * `TRAFFIC_DEBUG`). Its area file, cli/grammar/qos.ts (the host-shell `flow` jobs), belongs to the approved cli item in
+ * W3, so the fold declares the category and composes its `debug` spec into the `qos` fragment below (as the P2 fold
+ * composes `core-exec`). The traffic daemon runs on hosts (`FLOW_CAPABILITIES`, a literal here: rule 12), whose shell
+ * has no `debug`, so the category is registered (the registry and `debug all` know it) but offered on no device.
+ */
+export const TRAFFIC_DEBUG_CATEGORIES: readonly GrammarDebugCategory[] = Object.freeze([
+  { category: 'traffic', help: 'Trace generated traffic: flows started, stopped and finished', requiresAny: ['host'], since: 'P3' },
+]);
+
+/** @since P3 The `debug traffic` spec (composed into the `qos` fragment). */
+export const TRAFFIC_DEBUG_GRAMMAR: readonly CommandSpec[] = Object.freeze(debugSpecs(TRAFFIC_DEBUG_CATEGORIES, { traffic: ['CCNA3.qos.4'] }));
+
+/**
+ * @since P3 (W3 cli part 2) The debug categories of the P3 MUST daemons, in the §5.8 table order: ospf (`ip ospf adj`,
+ * `hello`, `flood`, `spf`, `packet`), acl (`ip access-list`), eth-switch's snooping and DAI messages (`ip dhcp
+ * snooping`, `ip arp inspection`), cdp and lldp (`cdp packets`, `cdp events`, `lldp packets`), ntp (`ntp packets`,
+ * `ntp events`), restconf, traffic. Each area grammar file declares its own and holds its `debug` specs (as dhcp.ts
+ * does); these are scoped by capability literals like the rest of the P3 grammar.
+ */
+export const P3_DEBUG_CATEGORIES: readonly GrammarDebugCategory[] = Object.freeze([
+  ...OSPF_DEBUG_CATEGORIES,
+  ...ACL_DEBUG_CATEGORIES,
+  ...HARDENING_DEBUG_CATEGORIES,
+  ...DISCOVERY_DEBUG_CATEGORIES,
+  ...NTP_DEBUG_CATEGORIES,
+  ...API_DEBUG_CATEGORIES,
+  ...TRAFFIC_DEBUG_CATEGORIES,
+]);
+
 /** @since P3 Handler ids of the P3 MUST fragments (W2 cli part 1). */
 export const P3_HANDLERS = Object.freeze({
   ...OSPF_HANDLERS,
@@ -212,7 +243,8 @@ export const P3_GRAMMAR_FRAGMENTS: Readonly<Record<string, readonly CommandSpec[
   ospf: OSPF_GRAMMAR,
   'acl-p3': ACL_P3_GRAMMAR,
   hardening: HARDENING_GRAMMAR,
-  qos: QOS_GRAMMAR,
+  // W3 cli part 2: the fold adds `debug traffic` (see TRAFFIC_DEBUG_CATEGORIES)
+  qos: Object.freeze([...QOS_GRAMMAR, ...TRAFFIC_DEBUG_GRAMMAR]),
   discovery: DISCOVERY_GRAMMAR,
   time: TIME_GRAMMAR,
   api: API_GRAMMAR,
@@ -302,6 +334,9 @@ export const DEBUG_CATEGORY_DEFS: readonly GrammarDebugCategory[] = Object.freez
   ...TRANSPORT_DEBUG_CATEGORIES,
   ...TRACEROUTE_DEBUG_CATEGORIES,
   ...P2_DEBUG_CATEGORIES,
+  // P3 (W3 cli part 2): the MUST daemons' categories, then the approved items' (cli/grammar/p3-approved.ts)
+  ...P3_DEBUG_CATEGORIES,
+  ...P3_APPROVED_DEBUG_CATEGORIES,
 ]);
 
 /**

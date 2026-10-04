@@ -130,6 +130,38 @@
 .terminal-host .xterm {
   height: 100%;
 }
+.terminal-xterm {
+  height: 100%;
+}
+
+/* [S13] remote session (ARCHITECTURE-P3 §6): the "remote: R1 via SSH" chip over the console, text and an arrow
+   glyph, never colour alone; empty and unstyled while the console is local. */
+.terminal-remote-chip {
+  position: absolute;
+  top: 6px;
+  right: 14px;
+  z-index: 5;
+  pointer-events: none;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 16px;
+}
+.terminal-host.is-remote .terminal-remote-chip {
+  padding: 0 8px;
+  border: 1px solid var(--accent);
+  border-radius: 9px;
+  background: var(--panel);
+  color: var(--accent);
+}
+.terminal-chip-remote {
+  padding: 0 5px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 14px;
+}
 .terminal-host .xterm-viewport {
   scrollbar-width: thin;
 }

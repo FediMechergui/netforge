@@ -127,6 +127,34 @@
  *    `MAX_TOPOLOGY_FILE_NAME_CHARS`-character names, `MAX_TOPOLOGY_FILE_CHARS` characters per file; io/schema.ts), so
  *    every file a host holds survives export and reload (`storageWriteProblem`).
  *
+ * P3 (ARCHITECTURE-P3 D16, §3.0 (a) step 9 and (b) step 10c, §3.5, §3.11; rulings R26; W3 device) — QoS in the runtime:
+ *  - the policy cache: one compiled policy per (port, direction) (`qos/config.ts` `compileQosPolicy`), tagged with the
+ *    QoS configuration generation (`qosGen`: +1 for every `isQosConfigDelta` delta — class-map, policy-map,
+ *    access-list, ip access-list, the interface service-policy / bandwidth / fair-queue lines — and at power-off) and
+ *    the port version; a lookup whose tag is stale recompiles, so an edit of a class-map or of its ACL reaches the next
+ *    frame. Only routed physical ports, serial WAN ports and subinterfaces apply a policy (`QOS_POLICY_ROLES`). A port
+ *    without a `service-policy` line costs one map lookup per frame and its frames take the P2 path byte for byte;
+ *  - step 10c (input): on a `deliver` verdict with the port's own input policy, on a `subif` verdict with the
+ *    subinterface's — before the tag pop, so `match cos` sees the PCP, and only when the subinterface's previewed verdict
+ *    delivers (`poppedFrameView`), so a frame the pipeline drops (flooded unicast for another MAC, a BPDU, a control
+ *    frame) is never classified or counted: classify, count matched (and marked), mark with `Pdu.mutate(…, 'QosMark',
+ *    'policy-map P class C set …')` (each rewrite followed by its derived ChecksumRecompute / FcsRecompute records, all
+ *    mirrored as `mutation` events), then [S21] police after the marking (`police … conform-action … exceed-action …`;
+ *    a drop is `policed` with the class's detail and counts inDrops; `set-dscp-transmit` rewrites the DSCP, `QosMark`);
+ *  - output marking: a routed physical port's output policy in `transmitOn` before `deps.transmit` (every frame the
+ *    port sends, a subinterface's included), a subinterface's right after `vlanPush` keyed by the subinterface, so
+ *    `set cos` writes the pushed tag's PCP; [S21] an output policer drop counts outDrops on the port it policed;
+ *  - `qosCounters(port)`: the per-class matched / marked counts (display only) and [S21] (R26) the conform / exceed
+ *    counts of every policer the runtime runs;
+ *  - ruling R33 (W3 fix): control traffic (`isQosControlFrame`: HDLC keepalives, PPP control frames, CDP, LLDP and
+ *    BPDUs) is never classified, counted, marked or policed by an input or output policy, and gets no `{qosClass}`;
+ *  - [S20]/[S21]: `egressPolicy(port)` compiles a physical port's scheduler spec (`compileEgressScheduler`: an output
+ *    policy with a queueing action within the 75 % admission, else interface `fair-queue`); `transmitOn` passes the
+ *    frame's class as `{qosClass}` on a scheduler port (and only there: every other port keeps the three-argument call);
+ *    `service-policy output` and `fair-queue` are PHY lines of physical ports (`isSchedulerPhyLine`), and any QoS delta
+ *    that changes a port's spec tells the link model (`onPortPhyConfig`). An output policer the spec carries (a
+ *    transmit/drop pair, `qosPoliceInScheduler`) is the link scheduler's; every other one is the runtime's.
+ *
  * Power-off semantics (RAM is lost, NVRAM survives): every daemon's `onShutdown` runs first (its actions apply while the
  * ports are still up; P1), then tables are cleared (declared order), processes and timers
  * dropped, virtual interfaces other than the auto ones removed, roles/encapsulations/admin state/counters/L3
@@ -165,7 +193,7 @@ import type { DeviceClockView } from '../contracts/clock.js';
 import type { DeviceModel, DeviceRuntime, DeviceRuntimeDeps, DeviceSpec, PortResolution } from '../contracts/device.js';
 import type { SimEventBody } from '../contracts/events.js';
 import type { DeviceId, PortId, ProcessName } from '../contracts/ids.js';
-import type { DropReason, FrameRxInfo, PortPhySettings, TxOutcome } from '../contracts/link.js';
+import type { DropReason, EgressSchedulerSpec, FrameRxInfo, PolicerSpec, PortPhySettings, TransmitOptions, TxOutcome } from '../contracts/link.js';
 import type { AirView, MediumEvent } from '../contracts/medium.js';
 import type { Pdu, PduFactory, RewrapOp } from '../contracts/pdu.js';
 import type { ErrDisableCause, Ipv6PortAddress, PortIpv4Address, PortL3, PortState, PortView, VirtualIpv4 } from '../contracts/port.js';
@@ -183,6 +211,7 @@ import type {
   Severity,
   StateView,
 } from '../contracts/process.js';
+import type { PortQosView } from '../contracts/snapshot.js';
 import type { FileSystemId, StoredFile, StoredFileInput, StoredFileMeta } from '../contracts/storage.js';
 import type { L2ChangedEvent, LogRecordEvent } from '../contracts/transport.js';
 import { CHANNELS, type BssSettings, type ChannelWidthMhz, type RadioSettings, type RfBand, type WifiSecurity } from '../contracts/rf.js';
@@ -202,13 +231,28 @@ import {
 import type { SimTime } from '../contracts/time.js';
 import type { TraceEvent, TraceSink } from '../contracts/trace.js';
 import { createConfigAst, defaultSlotsOf, parseConfigText } from '../cli/config-ast.js';
-import { DEFAULT_CONFIG_RULES } from '../cli/config-rules.js';
+import { DEFAULT_CONFIG_RULES, isSchedulerPhyLine, maskSecretTokens } from '../cli/config-rules.js';
 import { normalizeIpv6 } from '../core/addr6.js';
 import { configTextLinesOf } from '../cli/config-text.js';
 import { vlanPopOp, vlanPushOp } from '../pdu/vlan.js';
 import { carries, channelOperOf, isImplicitVlan, operOf, type L2PortView } from '../protocols/l2/membership.js';
 import { readSwitchport } from '../protocols/l2/switchport-config.js';
 import { MAX_TOPOLOGY_FILES_PER_DEVICE, MAX_TOPOLOGY_FILE_CHARS, MAX_TOPOLOGY_FILE_NAME_CHARS } from '../io/schema.js';
+import { isQosControlFrame } from '../link/control-frame.js';
+import { createQosPolicer, policeQosPacket, qosPoliceConformDropDetail, qosPolicedDetail, type QosPolicer } from '../link/qos/scheduler.js';
+import { classifyQos, qosPacketFacts } from '../qos/classify.js';
+import {
+  compileEgressScheduler,
+  compileQosPolicy,
+  isQosConfigDelta,
+  qosPolicerSpecOf,
+  qosPortReferenceRateBps,
+  readQosAttachments,
+  type QosAttachment,
+  type QosCompileOptions,
+  type QosPolicy,
+} from '../qos/config.js';
+import { planQosMarking, planQosPoliceMarkdown, qosFactsAfter, type QosMarkMutation } from '../qos/mark.js';
 import { CATALOG_STAGE } from './catalog/index.js';
 import { deriveProcesses, deriveTables, modulePortSpecs } from './catalog/define.js';
 import { parseSubinterfaceName, resolvePortName } from './catalog/names.js';
@@ -219,6 +263,8 @@ import {
   frameArrivalVerdict,
   ingressVerdict,
   loopIngressLayer,
+  poppedFrameView,
+  qosPolicyRole,
   subinterfaceVerdict,
   type DemuxIndex,
   type FrameVerdict,
@@ -675,6 +721,65 @@ interface PendingStep {
 /** What `applyOne` hands back: follow-up actions, or (P2) steps to run in order. */
 type ApplyResult = FollowUp | { steps: readonly (() => FollowUp | undefined)[] } | undefined;
 
+// ── P3 (D16; W3 device): the runtime's QoS state ─────────────────────────────
+
+/** @since P3 The two directions a `service-policy` attaches in. */
+type QosDirection = 'input' | 'output';
+
+/** @since P3 (M13) The display counters of one class (`PortQosView.classes`). */
+interface QosClassCount {
+  matched: number;
+  matchedBytes: number;
+  marked: number;
+}
+
+/** @since P3 [S21] A runtime policer and the key of the spec it was built from (`JSON` of its `PolicerSpec`). */
+interface QosPolicerEntry {
+  readonly key: string;
+  readonly policer: QosPolicer;
+}
+
+/**
+ * @since P3 (D16) One (port, direction): the attached policy-map name, the compiled policy tagged with the
+ * configuration generation and the port version it was compiled at, and the class counters and runtime policers by
+ * class name (kept across recompiles of the same policy-map, reset when the attached name changes). RAM.
+ */
+interface QosDirState {
+  readonly name: string;
+  gen: number;
+  version: number;
+  /** Undefined = the policy-map does not exist (nothing is classified). */
+  policy: QosPolicy | undefined;
+  readonly counts: Map<string, QosClassCount>;
+  readonly policers: Map<string, QosPolicerEntry>;
+}
+
+/**
+ * @since P3 [S20] The compiled egress scheduler of a physical port at (generation, port version, reference rate): the
+ * spec (undefined = the virtual FIFO; an output policy refused by the 75 % admission counts as none), whether it comes
+ * from the output policy (its class index is the frame's `qosClass`) or from interface `fair-queue`, and its JSON key
+ * (an unchanged recompile keeps the previous object, so the spec's identity changes only with its content).
+ */
+interface EgressSpecEntry {
+  readonly gen: number;
+  readonly version: number;
+  readonly refBps: number;
+  readonly spec: EgressSchedulerSpec | undefined;
+  readonly fromPolicy: boolean;
+  readonly key: string;
+}
+
+/** @since P3 What a QoS step decided for a frame: its class index, or a policer drop with its detail. */
+type QosStepResult = { readonly cls: number } | { readonly drop: string };
+
+/** @since P3 The directions in the order `PortQosView.classes` lists them. */
+const QOS_DIRECTIONS: readonly QosDirection[] = Object.freeze(['input', 'output']);
+
+/** @since P3 [S21] The identity of a policer spec (a changed `police` line replaces the runtime policer). */
+function policerKey(spec: PolicerSpec): string {
+  return JSON.stringify(spec);
+}
+
 /**
  * The pdu still in hand in an action, if any (for budget-exhaustion drops): the pdu of send/deliver/drop/consume/
  * ingress, the packet a send request carries (`arp.sendVia`, `ipv4.send`, `ipv6.send`, `nd.sendVia`) and the quoted
@@ -880,6 +985,27 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
   private readonly lineLogged = new Map<PortId, boolean>();
   /** @since P3 [S25] The source and instant of the last configuration log (RAM): one log per source and instant. */
   private lastConfigLog: { at: SimTime; source: string } | undefined;
+  /**
+   * @since P3 (D16) The QoS configuration generation: +1 for every configuration delta that can change a compiled
+   * policy or a scheduler spec (`isQosConfigDelta`: class-map, policy-map, access-list, ip access-list, the interface
+   * service-policy / bandwidth / fair-queue lines) and at power-off (the running configuration is replaced).
+   */
+  private qosGen = 0;
+  /** @since P3 (D16) The interface QoS attachments of the running configuration at (generation, port version). */
+  private qosIndex: { readonly gen: number; readonly version: number; readonly ports: ReadonlyMap<PortId, QosAttachment> } | undefined;
+  /** @since P3 (D16) The compiled policies, counters and runtime policers by `<port>|<direction>`. RAM. */
+  private readonly qosDirs = new Map<string, QosDirState>();
+  /** @since P3 [S20] The compiled egress scheduler of each physical port that has one or had one. RAM. */
+  private readonly egressSpecs = new Map<PortId, EgressSpecEntry>();
+  /** @since P3 [S20] The spec each port had when the link model last heard of it (`onPortPhyConfig`). RAM. */
+  private readonly egressKnown = new Map<PortId, EgressSchedulerSpec>();
+  /** @since P3 (D16) How `match input-interface` names resolve: the device's own port names. */
+  private readonly qosCompile: QosCompileOptions = {
+    resolvePort: (text: string): string | undefined => {
+      const r = this.resolvePortName(text);
+      return r.kind === 'existing' ? r.port : undefined;
+    },
+  };
 
   constructor(spec: DeviceSpec, deps: DeviceRuntimeDeps, now: SimTime) {
     const model = deps.catalog.get(spec.type);
@@ -1197,6 +1323,28 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
         this.emitDrop(pdu, 'link-down', undefined, sub.id);
         return;
       }
+      // P3 (D16) step 10c with the subinterface's input policy, BEFORE the pop (so `match cos` sees the PCP), and only
+      // when the subinterface will deliver the frame (its verdict previewed on the popped view): a flooded frame for
+      // another MAC is never classified or counted (review T9)
+      const subPolicy = this.qosDir(sub, 'input');
+      // ruling R33: control traffic (keepalives, PPP control, CDP, LLDP, BPDUs) is never classified or counted
+      if (subPolicy !== undefined && !isQosControlFrame(pdu)) {
+        const preview = subinterfaceVerdict({
+          port: sub,
+          frame: verdict.pop ? poppedFrameView(pdu) : pdu,
+          capabilities: this.effectiveCaps,
+          index: this.demuxIndex,
+          groupFilter: true,
+        });
+        if (preview.kind === 'deliver') {
+          const r = this.qosStep(sub, subPolicy, 'input', pdu, undefined);
+          if (r !== undefined && 'drop' in r) {
+            sub.counters.inDrops++;
+            this.emitDrop(pdu, 'policed', r.drop, sub.id);
+            return;
+          }
+        }
+      }
       if (verdict.pop) this.rewrap(pdu, vlanPopOp(), dot1qCause(sub.dot1q.vid));
       sub.counters.inPackets++;
       sub.counters.inBytes += pdu.size;
@@ -1205,6 +1353,18 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
       const next = this.applyVerdict(sub, pdu, onSub);
       if (next !== undefined) this.applyActions(next.process, next.actions, now);
       return;
+    }
+    // P3 (D16) step 10c on a `deliver` verdict with the port's own input policy: classify, count, mark, then [S21] police
+    if (verdict.kind === 'deliver') {
+      const policy = this.qosDir(port, 'input');
+      // ruling R33: control traffic (keepalives, PPP control, CDP, LLDP, BPDUs) is never classified or counted
+      const r = policy === undefined || isQosControlFrame(pdu) ? undefined : this.qosStep(port, policy, 'input', pdu, undefined);
+      if (r !== undefined && 'drop' in r) {
+        countIngress(port.counters, verdict.counters);
+        port.counters.inDrops++;
+        this.emitDrop(pdu, 'policed', r.drop, port.id);
+        return;
+      }
     }
     const next = this.applyVerdict(port, pdu, verdict);
     if (next !== undefined) this.applyActions(next.process, next.actions, now);
@@ -1687,8 +1847,25 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
         this.emitDrop(pdu, 'link-down', undefined, portId);
         return undefined;
       }
-      this.countOut(port, pdu.size, now);
+      const policy = this.qosDir(port, 'output');
+      if (policy === undefined) {
+        this.countOut(port, pdu.size, now);
+        if (!port.dot1q.native) this.rewrap(pdu, vlanPushOp(port.dot1q.vid), dot1qCause(port.dot1q.vid));
+        this.transmitOn(parent, pdu, now);
+        return undefined;
+      }
+      // P3 (D16, §3.0 (a) step 9): the subinterface's output policy runs right after the push, keyed by the
+      // subinterface (`transmitOn` only sees the parent), so `set cos` writes the pushed tag's PCP; [S21] a runtime
+      // policer drop counts on the subinterface and never reaches the parent
+      const bytes = pdu.size;
       if (!port.dot1q.native) this.rewrap(pdu, vlanPushOp(port.dot1q.vid), dot1qCause(port.dot1q.vid));
+      const r = isQosControlFrame(pdu) ? undefined : this.qosStep(port, policy, 'output', pdu, undefined);
+      if (r !== undefined && 'drop' in r) {
+        port.counters.outDrops++;
+        this.emitDrop(pdu, 'policed', r.drop, portId);
+        return undefined;
+      }
+      this.countOut(port, bytes, now);
       this.transmitOn(parent, pdu, now);
       return undefined;
     }
@@ -1696,13 +1873,34 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
     return undefined;
   }
 
-  /** The link egress (`ROLE_TRAITS[role].egress === 'link'`, and the parent of a subinterface): `deps.transmit` and the port's counters. */
+  /**
+   * The link egress (`ROLE_TRAITS[role].egress === 'link'`, and the parent of a subinterface): `deps.transmit` and the
+   * port's counters. P3 (D16, §3.0 (a) step 9): a routed physical port's output policy classifies, marks and [S21]
+   * polices first; [S20] a scheduler port (`egressPolicy`) gets the frame's class as `{qosClass}`. A port with neither
+   * calls `deps.transmit` exactly as before (three arguments).
+   */
   private transmitOn(port: PortState, pdu: Pdu, now: SimTime): void {
     const portId = port.id;
+    let opts: TransmitOptions | undefined;
+    const policy = this.qosDir(port, 'output');
+    // ruling R33: control traffic (keepalives, PPP control, CDP, LLDP, BPDUs) is never classified, counted or given a
+    // class; a scheduler port's link model sends it ahead of the class queues
+    if (policy !== undefined && !isQosControlFrame(pdu)) {
+      const scheduler = this.schedulerOf(port);
+      const r = this.qosStep(port, policy, 'output', pdu, scheduler);
+      if (r !== undefined && 'drop' in r) {
+        port.counters.outDrops++;
+        this.emitDrop(pdu, 'policed', r.drop, portId);
+        return;
+      }
+      // [S20] the class index is the position in the scheduler spec (one spec class per policy class)
+      if (scheduler !== undefined && r !== undefined) opts = { qosClass: r.cls };
+    }
     // Read the size before transmit: the air medium rewraps the pdu in place (Ethernet -> 802.11), and outBytes
     // counts the frame as the port handed it over, matching inBytes on the receive side.
     const bytes = pdu.size;
-    const res = this.deps.transmit({ device: this.id, port: portId }, pdu, now);
+    const ref = { device: this.id, port: portId };
+    const res = opts === undefined ? this.deps.transmit(ref, pdu, now) : this.deps.transmit(ref, pdu, now, opts);
     if (res.ok) {
       // Deferred (segment media): counters arrive later through onTxOutcome.
       if (res.deferred !== true) {
@@ -1753,6 +1951,219 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
     port.counters.outPackets++;
     port.counters.outBytes += bytes;
     port.lastOutput = now;
+  }
+
+  // ── P3 (D16, §3.0 (a) step 9 and (b) step 10c, §3.5, §3.11; W3 device): QoS ──────────────────────────────────
+
+  /**
+   * @since P3 A port's QoS view (M13, `PortSnapshot.qos`): undefined without a `service-policy` line on a port whose
+   * role applies it. `input` / `output` name the attached policy-maps; `classes` lists the input policy's classes in
+   * policy order (class-default last), then the output policy's (none for a policy-map that does not exist), each with
+   * its matched packets and bytes and the frames a `set` line applied to; [S21] (ruling R26) a class whose `police`
+   * the runtime runs carries its conform and exceed counts (`police`); an output policer the link scheduler enforces
+   * (a `transmit`/`drop` pair on a scheduler port) is counted there (`LinkModel.egressQueues`), not here.
+   */
+  qosCounters(portId: PortId): PortQosView | undefined {
+    const port = this.ports.get(portId);
+    if (port === undefined) return undefined;
+    const att = this.qosAttachments().get(portId);
+    if (att === undefined || (att.input === undefined && att.output === undefined)) return undefined;
+    if (!qosPolicyRole(effectivePortRole(port, this.effectiveCaps))) return undefined;
+    const classes: PortQosView['classes'][number][] = [];
+    for (const dir of QOS_DIRECTIONS) {
+      const st = this.qosDir(port, dir);
+      const policy = st?.policy;
+      if (st === undefined || policy === undefined) continue;
+      const scheduler = dir === 'output' ? this.schedulerOf(port) : undefined;
+      policy.classes.forEach((c, i) => {
+        const k = st.counts.get(c.name);
+        const row: PortQosView['classes'][number] = { name: c.name, matched: k?.matched ?? 0, matchedBytes: k?.matchedBytes ?? 0, marked: k?.marked ?? 0 };
+        if (c.police !== undefined && scheduler?.classes[i]?.police === undefined) {
+          const e = st.policers.get(c.name);
+          const p = e !== undefined && e.key === policerKey(qosPolicerSpecOf(c.police)) ? e.policer : undefined;
+          row.police = { conform: p?.conform ?? 0, conformBytes: p?.conformBytes ?? 0, exceed: p?.exceed ?? 0, exceedBytes: p?.exceedBytes ?? 0 };
+        }
+        classes.push(row);
+      });
+    }
+    return { ...(att.input !== undefined ? { input: att.input } : {}), ...(att.output !== undefined ? { output: att.output } : {}), classes };
+  }
+
+  /** @since P3 (D16) The interface attachments at the current generation and port version (rebuilt when either moved). */
+  private qosAttachments(): ReadonlyMap<PortId, QosAttachment> {
+    const idx = this.qosIndex;
+    if (idx !== undefined && idx.gen === this.qosGen && idx.version === this.version) return idx.ports;
+    const ports = readQosAttachments(this.runningAst);
+    this.qosIndex = { gen: this.qosGen, version: this.version, ports };
+    return ports;
+  }
+
+  /**
+   * @since P3 (D16) The policy `port` applies in `dir`: undefined without a `service-policy` line there or on a role
+   * that takes none (`QOS_POLICY_ROLES`). The compiled policy is kept per (port, direction) with the generation and
+   * port version it was compiled at; a stale one recompiles through the pure reader (`compileQosPolicy`), keeping the
+   * counters and policers of the same policy-map; a removed or renamed attachment starts from zero.
+   */
+  private qosDir(port: PortState, dir: QosDirection): QosDirState | undefined {
+    const att = this.qosAttachments().get(port.id);
+    const name = att === undefined ? undefined : att[dir];
+    if (name === undefined) {
+      if (this.qosDirs.size > 0) this.qosDirs.delete(`${port.id}|${dir}`);
+      return undefined;
+    }
+    if (!qosPolicyRole(effectivePortRole(port, this.effectiveCaps))) return undefined;
+    const key = `${port.id}|${dir}`;
+    let st = this.qosDirs.get(key);
+    if (st === undefined || st.name !== name) {
+      st = { name, gen: -1, version: -1, policy: undefined, counts: new Map(), policers: new Map() };
+      this.qosDirs.set(key, st);
+    }
+    if (st.gen !== this.qosGen || st.version !== this.version) {
+      st.policy = compileQosPolicy(this.runningAst, name, this.qosCompile);
+      st.gen = this.qosGen;
+      st.version = this.version;
+    }
+    return st;
+  }
+
+  /**
+   * @since P3 (D16, §3.5 step 3, §3.11 step 6) One QoS step for `pdu` at `port` with the policy of `st`: classify
+   * (`classifyQos`; on input the arrival port answers `match input-interface`), count it (matched, and marked when a
+   * `set` line applies), mark it (`Pdu.mutate(…, 'QosMark', 'policy-map P class C set …')`, each followed by the
+   * derived ChecksumRecompute and FcsRecompute records, mirrored as `mutation` events), then [S21] police the class
+   * after the marking unless `scheduler` enforces that class's policer: a `drop` action answers `{drop: detail}`, a
+   * `set-dscp-transmit` rewrites the DSCP (`QosMark` again). Undefined when the policy-map does not exist.
+   */
+  private qosStep(port: PortState, st: QosDirState, dir: QosDirection, pdu: Pdu, scheduler: EgressSchedulerSpec | undefined): QosStepResult | undefined {
+    const policy = st.policy;
+    if (policy === undefined) return undefined;
+    const facts = qosPacketFacts(pdu, dir === 'input' ? port.id : undefined);
+    const { index: cls, name } = classifyQos(policy, facts);
+    const bytes = pdu.size;
+    let count = st.counts.get(name);
+    if (count === undefined) {
+      count = { matched: 0, matchedBytes: 0, marked: 0 };
+      st.counts.set(name, count);
+    }
+    count.matched++;
+    count.matchedBytes += bytes;
+    const plan = planQosMarking(policy, cls, facts);
+    if (plan.marked) count.marked++;
+    this.qosMutate(pdu, plan.mutations);
+    const police = policy.classes[cls]?.police;
+    if (police === undefined || scheduler?.classes[cls]?.police !== undefined) return { cls };
+    const spec = qosPolicerSpecOf(police);
+    const key = policerKey(spec);
+    let entry = st.policers.get(name);
+    if (entry === undefined || entry.key !== key) {
+      entry = { key, policer: createQosPolicer(spec, this.clock) };
+      st.policers.set(name, entry);
+    }
+    const verdict = policeQosPacket(entry.policer, bytes, this.clock);
+    const markdown = planQosPoliceMarkdown(policy, cls, verdict, qosFactsAfter(facts, plan.mutations));
+    if (!markdown.transmit) {
+      return { drop: verdict === 'exceed' ? qosPolicedDetail(name, 'police', spec.rateBps) : qosPoliceConformDropDetail(name, spec.rateBps) };
+    }
+    this.qosMutate(pdu, markdown.mutations);
+    return { cls };
+  }
+
+  /** @since P3 (D16) Apply marking rewrites with this device's stamp (`QosMark`), mirroring every new provenance record. */
+  private qosMutate(pdu: Pdu, mutations: readonly QosMarkMutation[]): void {
+    for (const m of mutations) {
+      const from = pdu.provenance.length;
+      pdu.mutate({ now: this.clock, device: this.id }, m.field, m.value, 'QosMark', m.cause);
+      const prov = pdu.provenance;
+      for (let i = from; i < prov.length; i++) {
+        this.trace.emit({ t: this.clock, kind: 'mutation', pdu: pdu.id, mutation: prov[i] as NonNullable<(typeof prov)[number]> });
+      }
+    }
+  }
+
+  // ── [S20]/[S21] (§7 W3, the approved items): the delimited block of the device QoS item — the egress scheduler spec, ──
+  //    `{qosClass}` (in `transmitOn`), the scheduler PHY lines (in `applyLine`); input policing is in `qosStep` ──
+
+  /**
+   * @since P3 [S20] The compiled output scheduler of a physical port (read by the link model through
+   * `LinkModelDeps.egressPolicy`): its output policy when that policy queues (`priority`, `bandwidth`, `queue-limit`,
+   * [S21] `fair-queue`, `shape`) and passes the 75 % admission against the port's reference rate (its `bandwidth` line,
+   * else its routing bandwidth — the rate `service-policy output` admitted it against), else [S21] interface
+   * `fair-queue`; undefined otherwise (the virtual FIFO, D16), and on every virtual port. The object stays the same
+   * while its content does, so the link model can compare it by identity.
+   */
+  egressPolicy(portId: PortId): EgressSchedulerSpec | undefined {
+    const port = this.ports.get(portId);
+    return port === undefined ? undefined : this.egressEntry(port)?.spec;
+  }
+
+  /** @since P3 [S20] The scheduler spec compiled from `port`'s output policy (undefined for none, or a `fair-queue` one). */
+  private schedulerOf(port: PortState): EgressSchedulerSpec | undefined {
+    const e = this.egressEntry(port);
+    return e !== undefined && e.fromPolicy ? e.spec : undefined;
+  }
+
+  /**
+   * @since P3 [S20] The egress scheduler entry of a physical port with a `service-policy output` or [S21] `fair-queue`
+   * line (undefined for any other port), recompiled when the generation, the port version or the reference rate moved
+   * (`compileEgressScheduler`; the reference rate without a `bandwidth` line is the routing bandwidth, as the
+   * `service-policy output` admission check reads it). A policy the admission refuses gives no spec. An unchanged
+   * recompile keeps the previous spec object.
+   */
+  private egressEntry(port: PortState): EgressSpecEntry | undefined {
+    const att = this.qosAttachments().get(port.id);
+    if (att === undefined || (att.output === undefined && att.fairQueue !== true)) return undefined;
+    const role = effectivePortRole(port, this.effectiveCaps);
+    if (ROLE_TRAITS[role].virtual || !qosPolicyRole(role)) return undefined;
+    // ruling R34: the one QoS reference rate (the `bandwidth` line, else the routing bandwidth), as the CLI admits against
+    const refBps = qosPortReferenceRateBps(this.runningAst, port.id, role, port.speedBps ?? port.spec.speedBps);
+    const cached = this.egressSpecs.get(port.id);
+    if (cached !== undefined && cached.gen === this.qosGen && cached.version === this.version && cached.refBps === refBps) return cached;
+    const compiled = compileEgressScheduler(this.runningAst, port.id, refBps, this.qosCompile);
+    const admitted = compiled !== undefined && (compiled.source === 'fair-queue' || compiled.admission.ok) ? compiled : undefined;
+    const fresh = admitted?.spec;
+    const key = fresh === undefined ? '' : JSON.stringify(fresh);
+    const spec = fresh !== undefined && cached?.spec !== undefined && cached.key === key ? cached.spec : fresh;
+    const entry: EgressSpecEntry = { gen: this.qosGen, version: this.version, refBps, spec, fromPolicy: admitted?.source === 'policy', key };
+    this.egressSpecs.set(port.id, entry);
+    return entry;
+  }
+
+  /**
+   * @since P3 [S20] After a QoS delta: tell the link model (`onPortPhyConfig`, where it re-reads `egressPolicy`) about
+   * every physical port whose scheduler spec changed — a policy-map body or an interface `bandwidth` can change one —
+   * except `told`, the line's own port, already told as a scheduler PHY line. A world with no spec before or after
+   * (every P1/P2 world) tells nothing.
+   */
+  private syncEgressSpecs(now: SimTime, told: PortId | undefined): void {
+    let any = this.egressKnown.size > 0;
+    if (!any) {
+      for (const a of this.qosAttachments().values()) {
+        if (a.output !== undefined || a.fairQueue === true) {
+          any = true;
+          break;
+        }
+      }
+    }
+    if (!any) return;
+    for (const port of this.ports.values()) {
+      if (this.isVirtual(port)) continue;
+      const spec = this.egressEntry(port)?.spec;
+      if (spec === this.egressKnown.get(port.id)) continue;
+      if (spec === undefined) this.egressKnown.delete(port.id);
+      else this.egressKnown.set(port.id, spec);
+      if (port.id !== told) this.deps.onPortPhyConfig?.({ device: this.id, port: port.id }, now);
+    }
+  }
+
+  // ── end of the [S20]/[S21] block ──
+
+  /** @since P3 (D16) Forget the QoS state of the whole device (power-off: the running configuration is gone). */
+  private qosReset(): void {
+    this.qosGen++;
+    this.qosIndex = undefined;
+    this.qosDirs.clear();
+    this.egressSpecs.clear();
+    this.egressKnown.clear();
   }
 
   // ── config ──────────────────────────────────────────────────────────────
@@ -1842,14 +2253,28 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
     }
 
     if (delta === undefined) return { ok: true };
+    // P3 (D16): a delta a compiled policy or a scheduler spec reads moves the QoS configuration generation, so the next
+    // frame (or the next egressPolicy read) recompiles
+    const qosDelta = isQosConfigDelta(delta);
+    if (qosDelta) this.qosGen++;
+    // an attachment that changes (set or removed) starts its counters and policers from zero
+    if (qosDelta && ifacePort !== undefined && key === 'service-policy') {
+      for (const dir of QOS_DIRECTIONS) if (line[1] === undefined || line[1] === dir) this.qosDirs.delete(`${ifacePort.id}|${dir}`);
+    }
     this.fanOutConfig(delta, now);
-    this.emitConfigChange(line.join(' '), negate, context.map((c) => c.slice()), origin, now);
+    // P3 [C13] (ruling R36): the IPsec pre-shared key never reaches the trace: its `configChange` carries the masked line
+    // (the existing `maskSecretTokens`); every other line is traced as typed (P1/P2 bytes unchanged)
+    const traced = key === 'pre-shared-key' ? maskSecretTokens(context, line) : line;
+    this.emitConfigChange(traced.join(' '), negate, context.map((c) => c.slice()), origin, now);
     // P2 (§3.0 "Virtual oper state"): a recompute site after the lines that change what an SVI, a Port-channel or a
     // subinterface derives its state from (the daemons wrote their rows in the fan-out above)
     if (VIRTUAL_RECOMPUTE_KEYS.includes(key)) this.recomputeVirtual(now);
-    if (ifacePort !== undefined && PHY_CONFIG_KEYS.includes(key) && !this.isVirtual(ifacePort)) {
-      this.deps.onPortPhyConfig?.({ device: this.id, port: ifacePort.id }, now);
-    }
+    // [S20]/[S21] (D16): `service-policy output` and interface `fair-queue` are PHY lines of physical ports too
+    // (`isSchedulerPhyLine`), so the link model re-reads the port's scheduler spec
+    const phyPort =
+      ifacePort !== undefined && !this.isVirtual(ifacePort) && (PHY_CONFIG_KEYS.includes(key) || isSchedulerPhyLine(line)) ? ifacePort.id : undefined;
+    if (phyPort !== undefined) this.deps.onPortPhyConfig?.({ device: this.id, port: phyPort }, now);
+    if (qosDelta) this.syncEgressSpecs(now, phyPort);
     // P3 [S25]: the configuration log of the extended-logging default (P3 worlds only)
     if (user) this.logConfigured(origin, now);
     return { ok: true };
@@ -2098,6 +2523,7 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
     }
     if (rolesChanged) this.version++;
     this.runningAst = this.freshRunning();
+    this.qosReset(); // P3 (D16): compiled policies, QoS counters, policers and scheduler specs are RAM
     this.bootedAt = undefined;
     this.trace.emit({ t: now, kind: 'deviceState', device: this.id, power: false, booted: false });
     for (const port of [...this.ports.values()]) {
@@ -2220,6 +2646,10 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
     }
     removePorts(this.ports, this.model, [name]);
     this.lineLogged.delete(name); // P3 [S25]: a re-created interface starts unlogged
+    // P3 (D16): a re-created interface starts with fresh QoS counters
+    for (const dir of QOS_DIRECTIONS) this.qosDirs.delete(`${name}|${dir}`);
+    this.egressSpecs.delete(name);
+    this.egressKnown.delete(name);
     this.version++;
     this.trace.emit({ t: now, kind: 'portState', device: this.id, port: name, adminUp: port.adminUp, operUp: false, reason: 'virtual-removed' });
     return { ok: true };

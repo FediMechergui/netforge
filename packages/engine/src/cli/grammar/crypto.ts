@@ -15,9 +15,21 @@
  *     set ikev2-profile <p>
  *
  * Scope: the `routing` capability (the [C13] `ike` daemon row of §2.1). Help strings are original wording (spec §1.6).
+ *
+ * W3 cli (cli-b, §2.17, §5.8): `show crypto ikev2 sa`, `show crypto ipsec sa [interface <if>]` and the `crypto ikev2`
+ * debug category.
  */
 import type { CommandSpec } from '../../contracts/cli.js';
-import { ipv4Arg, maskArg, NFOS_ONLY, secretArg, wordArg } from './core-exec.js';
+import {
+  debugSpecs,
+  ifaceArg,
+  ipv4Arg,
+  maskArg,
+  NFOS_ONLY,
+  secretArg,
+  wordArg,
+  type GrammarDebugCategory,
+} from './core-exec.js';
 
 /** @since P3 [C13] Handler ids of the crypto fragment. Never rename. */
 export const CRYPTO_HANDLERS = {
@@ -31,7 +43,22 @@ export const CRYPTO_HANDLERS = {
   ikev2ProfileKeyring: 'ikev2-profile.keyring',
   configCryptoIpsecProfile: 'config.crypto-ipsec-profile',
   ipsecProfileSetIkev2Profile: 'ipsec-profile.set-ikev2-profile',
+  // W3 cli (cli-b): the shows of §2.17 / §5.8
+  showCryptoIkev2Sa: 'show.crypto-ikev2-sa',
+  showCryptoIpsecSa: 'show.crypto-ipsec-sa',
 } as const;
+
+/**
+ * @since P3 (W3 cli) [C13] The debug category of the ike daemon (§5.8): `crypto ikev2` (each message, the crossing rule,
+ * proofs accepted or refused, SA up and down). Scoped by capability literals like the rest of the P3 grammar:
+ * `routing`, the ike row of §2.1.
+ */
+export const CRYPTO_DEBUG_CATEGORIES: readonly GrammarDebugCategory[] = Object.freeze([
+  { category: 'crypto ikev2', help: 'Trace IKEv2 messages, proofs and security associations', requiresAny: ['routing'], since: 'P3' },
+]);
+
+/** @since P3 (W3 cli) Objectives of the crypto debug category. */
+export const CRYPTO_DEBUG_OBJECTIVES: Readonly<Record<string, readonly string[]>> = Object.freeze({ 'crypto ikev2': ['CCNA3.wan.7'] });
 
 /** @since P3 [C13] The four crypto modes (contracts/cli.ts MODES). */
 export const CRYPTO_MODES = Object.freeze({
@@ -50,6 +77,17 @@ export const CRYPTO_NAME_MAX = 64;
 const H = CRYPTO_HANDLERS;
 
 const NAME_ARG = (help: string) => wordArg(help, { maxLength: CRYPTO_NAME_MAX });
+
+/** Shared fields of the crypto shows (W3 cli). */
+const SHOW_LINE = {
+  mode: '@exec',
+  privilege: 1,
+  filterable: true,
+  grammars: NFOS_ONLY,
+  requiresAny: ['routing'],
+  since: 'P3',
+  objectives: ['CCNA3.wan.7'],
+} as const;
 
 const SECTION_LINE = {
   privilege: 15,
@@ -163,6 +201,27 @@ export const CRYPTO_GRAMMAR: readonly CommandSpec[] = Object.freeze<CommandSpec[
     handler: H.ipsecProfileSetIkev2Profile,
     noArgsOptional: true,
   },
+  // ── W3 cli (cli-b): the shows and the debug category (§2.17, §5.8) ──
+  {
+    ...SHOW_LINE,
+    path: ['show', 'crypto', 'ikev2', 'sa'],
+    help: 'IKEv2 security associations: tunnel, peers, role, state and the proposal chosen',
+    handler: H.showCryptoIkev2Sa,
+  },
+  {
+    ...SHOW_LINE,
+    path: ['show', 'crypto', 'ipsec', 'sa'],
+    help: 'IPsec security associations of every protected tunnel: SPIs and packet counts',
+    handler: H.showCryptoIpsecSa,
+  },
+  {
+    ...SHOW_LINE,
+    path: ['show', 'crypto', 'ipsec', 'sa', 'interface', '<iface>'],
+    help: 'IPsec security associations of one tunnel interface',
+    args: { iface: ifaceArg('Tunnel interface') },
+    handler: H.showCryptoIpsecSa,
+  },
+  ...debugSpecs(CRYPTO_DEBUG_CATEGORIES, CRYPTO_DEBUG_OBJECTIVES),
 ]);
 
 /** @since P3 [C13] Help of the intermediate crypto keywords (merged into `LITERAL_HELP` by the fold). */
@@ -176,4 +235,6 @@ export const CRYPTO_LITERAL_HELP: Readonly<Record<string, string>> = Object.free
   authentication: 'Authentication method',
   keyring: 'Keyring settings',
   set: 'Set a value',
+  // W3 cli
+  sa: 'Security associations',
 });

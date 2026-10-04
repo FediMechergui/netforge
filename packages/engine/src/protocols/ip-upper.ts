@@ -20,6 +20,9 @@
  * that own a socket on a device. On a device whose `udp` / `tcp` come only from the `managed-switch` capability row,
  * ipv4 treats IP protocols 17 / 6 as having no listener (P2's path, byte for byte) until one of these is stored
  * (`dormantTransportEligible`, `transportWakeLine`; ipv4 keeps the result as internal state, read in its `onConfig`).
+ * Rulings R17/R27 ([S13]): an outbound telnet/ssh client session opened from the switch's own CLI wakes the transport
+ * for as long as the session lasts, like a configured service — the vty-client sends ipv4 `ext.ipv4.transportHold
+ * {owner, key, hold}` (`transportHoldRequest`) when it connects and again (hold false) when the connection is gone.
  *
  * Pure data and lookups: no state, no rng, no time.
  */
@@ -28,6 +31,7 @@ import { CAPABILITY_PROCESSES, type Capability } from '../contracts/catalog.js';
 import type { ConfigNode } from '../contracts/config.js';
 import type { DeviceModel } from '../contracts/device.js';
 import type { ProcessName } from '../contracts/ids.js';
+import type { ProcessRequest } from '../contracts/process.js';
 import {
   IPPROTO_EIGRP,
   IPPROTO_ESP,
@@ -209,6 +213,21 @@ function lineMatches(entry: DormantTransportOwner, prefix: readonly string[], co
   const next = tokens[prefix.length];
   if (entry.address === true && (next === undefined || !isIpv4(next))) return false;
   return !(entry.except !== undefined && next !== undefined && entry.except.includes(next));
+}
+
+/**
+ * @since P3 [S13] Rulings R17/R27: the request kind with which an outbound client session holds a dormant switch
+ * transport awake (module header). An `ext.*` request: the contract's extension slot, so no ProcessRequest member is
+ * added. ipv4 keeps the holds as internal state (no debug line, not in its StateView).
+ */
+export const TRANSPORT_HOLD_REQUEST = 'ext.ipv4.transportHold' as const;
+
+/**
+ * @since P3 [S13] `ext.ipv4.transportHold {owner, key, hold}`: `hold` true keeps the transport awake while any hold is
+ * set; false releases the hold of (owner, key).
+ */
+export function transportHoldRequest(owner: ProcessName, key: string, hold: boolean): ProcessRequest {
+  return { kind: TRANSPORT_HOLD_REQUEST, owner, key, hold };
 }
 
 /**

@@ -14,9 +14,17 @@
  * given (§3.8 step 1). The job blocks the session before it asks (a failure can answer at once), then requests
  * `http.request {owner: 'cli', token, method, url, headers, body, session}`; http-client prints the answer and ends the
  * job (`cliDone`); Ctrl+C sends `job.abort`. Every string is original wording (spec §1.6).
+ *
+ * W3 (cli part 2, §5.8) `show restconf`: whether the API answers (protocols/restconf.ts `restconfConfig`, the daemon's
+ * own reader: `restconf` and `ip http secure-server` both stored), the login rule and the privilege-15 users
+ * (`restconfUsers`), the restconf StateView's `requests`, `refused` and `open` counts (display only), and the newest
+ * `restconf-log` rows (rule 20; at most `SHOW_RESTCONF_RECENT`, oldest first).
  */
-import { CLI_MESSAGES, type CommandHandler } from '../../contracts/cli.js';
+import { CLI_MESSAGES, type CommandCtx, type CommandHandler } from '../../contracts/cli.js';
 import type { HttpMethod } from '../../contracts/process.js';
+import type { RestconfLogRow } from '../../contracts/tables.js';
+import { restconfConfig, restconfUsers } from '../../protocols/restconf.js';
+import { fmtSince, table } from '../format.js';
 import { MSG_STRAY_QUOTE, MSG_UNCLOSED_QUOTE } from '../parser.js';
 import { API_HANDLERS, REST_METHODS } from '../grammar/api.js';
 import { globalContext, outcomeOf } from './common.js';
@@ -31,6 +39,8 @@ export const MSG_REST_HEADER = '% Write a header as "Name: value", in double quo
 export const MSG_REST_USER = '% Write the credentials as user:password.';
 /** `-d` with nothing after it. */
 export const MSG_REST_BODY = '% Give the body after -d.';
+/** @since P3 How many `restconf-log` rows `show restconf` prints (the newest ones). */
+export const SHOW_RESTCONF_RECENT = 10;
 
 /** The http-client process (owner of the job) and the job label. */
 const HTTP_CLIENT = 'http-client';
@@ -185,9 +195,50 @@ const restconf: CommandHandler = (ctx, _args, negate) => {
 };
 
 /** @since P3 Registry fragment: the device API lines and `rest` (`API_HANDLERS` ids). */
+/** The restconf StateView's counters (protocols/restconf.ts `stateSnapshot`; display only, zeros while it does not run). */
+function restconfCounters(ctx: CommandCtx): { requests: number; refused: number; open: number } {
+  const state = ctx.processState('restconf')?.state ?? {};
+  const n = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+  const open = state['open'];
+  return { requests: n(state['requests']), refused: n(state['refused']), open: Array.isArray(open) ? open.length : 0 };
+}
+
+/** `show restconf` (§5.8). */
+const showRestconf: CommandHandler = (ctx) => {
+  const cfg = restconfConfig(ctx.running.root);
+  const lines: string[] = [];
+  if (cfg.enabled) {
+    lines.push('RESTCONF API: on, answering on TCP port 443 (HTTPS, simulated TLS)');
+  } else {
+    const missing = [cfg.restconf ? '' : 'restconf', cfg.secureServer ? '' : 'ip http secure-server'].filter((m) => m !== '');
+    lines.push(`RESTCONF API: off (it needs "restconf" and "ip http secure-server"; missing: ${missing.join(', ')})`);
+  }
+  const users = restconfUsers(ctx.running.root).filter((u) => u.privilege === 15).map((u) => u.name);
+  lines.push(
+    cfg.authLocal
+      ? `  Logins: HTTP Basic, checked against the local users of privilege 15 (${users.length === 0 ? 'none configured' : users.join(', ')})`
+      : '  Logins: none accepted until "ip http authentication local" is configured',
+  );
+  const c = restconfCounters(ctx);
+  lines.push(`  Requests answered: ${c.requests}, refused: ${c.refused}; connections open: ${c.open}`);
+  const rows = ((ctx.tables.get('restconf-log')?.rows() ?? []) as unknown as RestconfLogRow[]).slice().sort((a, b) => a.seq - b.seq);
+  if (rows.length === 0) {
+    lines.push('  No request has been logged yet.');
+    return { output: lines.join('\n') };
+  }
+  const recent = rows.slice(-SHOW_RESTCONF_RECENT);
+  lines.push(`  Latest requests (oldest first, ${recent.length} of ${rows.length} kept):`);
+  const out: string[][] = [['Seq', 'Method', 'Path', 'Status', 'Client', 'User', 'Age']];
+  for (const r of recent) out.push([String(r.seq), r.method, r.path, String(r.status), r.client, r.user ?? '-', fmtSince(r.at, ctx.now)]);
+  lines.push(table(out, { gap: 2, indent: '    ' }));
+  return { output: lines.join('\n') };
+};
+
 export const apiHandlers: Readonly<Record<string, CommandHandler>> = {
   [API_HANDLERS.configIpHttpSecureServer]: httpSecureServer,
   [API_HANDLERS.configIpHttpAuthentication]: httpAuthentication,
   [API_HANDLERS.configRestconf]: restconf,
   [API_HANDLERS.hostRest]: rest,
+  // W3 cli part 2
+  [API_HANDLERS.showRestconf]: showRestconf,
 };

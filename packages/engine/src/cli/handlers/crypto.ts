@@ -14,13 +14,20 @@
  *   ikev2-profile.keyring          `keyring local <k>` / `no keyring local`
  *   config.crypto-ipsec-profile    `crypto ipsec profile <p>` → mode config-ipsec-profile
  *   ipsec-profile.set-ikev2-profile `set ikev2-profile <p>` / `no set ikev2-profile`
+ *   show.crypto-ikev2-sa           (W3 cli) `show crypto ikev2 sa`: one line per `ipsec-sa` row (the §5.8 example)
+ *   show.crypto-ipsec-sa           (W3 cli) `show crypto ipsec sa [interface <if>]`: SPIs from the row, packet counters
+ *                                  from the gre StateView (§2.17)
  *
  * The stored lines are the W1 rules' canonical forms (cli/config-rules.ts, the [C13] block); the ike daemon reads them.
  * Messages are original wording (spec §1.6).
  */
 import type { CommandCtx, CommandHandler } from '../../contracts/cli.js';
+import type { PortId } from '../../contracts/ids.js';
+import type { IpsecSaRow, IpsecTunnelCounters } from '../../contracts/tables.js';
+import { fmtSince, table } from '../format.js';
 import { AUTH_SIDE_ARG, CRYPTO_HANDLERS, CRYPTO_MODES } from '../grammar/crypto.js';
 import { enterMode, outcomeOf } from './common.js';
+import { TUNNEL_DOWN_REASON_TEXT } from './show.js';
 
 /** @since P3 [C13] A keyring line typed outside `crypto ikev2 keyring`. */
 export const MSG_NO_KEYRING = '% Enter "crypto ikev2 keyring <name>" first.';
@@ -114,6 +121,84 @@ const authentication: CommandHandler = (ctx, args, negate) => {
   return outcomeOf(ctx.config(['authentication', side, 'pre-share'], false));
 };
 
+// ── W3 cli (cli-b): the shows (§2.17, §3.13, §5.8) ───────────────────────────────────────────────────────────────
+
+/** @since P3 (W3 cli) [C13] `show crypto ikev2 sa` / `show crypto ipsec sa` with no security association. */
+export const MSG_NO_IKE_SA = 'No IKEv2 security association exists.';
+export const MSG_NO_IPSEC_SA = 'No IPsec security association exists.';
+
+/** @since P3 (W3 cli) [C13] The tunnel owner, whose StateView carries each ipsec tunnel's packet counters (§2.17). */
+export const GRE_PROCESS = 'gre';
+
+/** The `ipsec-sa` rows in the device's port order. */
+function ipsecRows(ctx: CommandCtx): IpsecSaRow[] {
+  const order = new Map<PortId, number>();
+  for (const id of ctx.ports.keys()) order.set(id, order.size);
+  const rows = ctx.tables.get<IpsecSaRow>('ipsec-sa')?.rows() ?? [];
+  return rows.sort((a, b) => (order.get(a.port) ?? Number.MAX_SAFE_INTEGER) - (order.get(b.port) ?? Number.MAX_SAFE_INTEGER));
+}
+
+/**
+ * `show crypto ikev2 sa` (§5.8): one line per protected tunnel — the tunnel, both ends, the role, the state and the
+ * proposal chosen — then, for a failed exchange, why (it is retried every 10 s, §3.13 step 10).
+ */
+const showCryptoIkev2Sa: CommandHandler = (ctx) => {
+  const rows = ipsecRows(ctx);
+  if (rows.length === 0) return { output: MSG_NO_IKE_SA };
+  const out: string[][] = [['Tunnel', 'Local', 'Remote', 'Role', 'State', 'Proposal']];
+  for (const r of rows) out.push([r.port, r.local, r.peer, r.role, r.state, r.proposal ?? '-']);
+  const notes = rows.filter((r) => r.state === 'failed' && r.reason !== undefined).map((r) => `${r.port}: ${TUNNEL_DOWN_REASON_TEXT[r.reason!]}; the exchange is retried every 10 s`);
+  return { output: [table(out, { minWidths: [8] }), ...notes].join('\n') };
+};
+
+/** An ESP SPI as 8 hex digits, or a note while none is chosen. */
+function spiText(spi: number | undefined): string {
+  return spi === undefined ? 'none yet' : `0x${(spi >>> 0).toString(16).padStart(8, '0')}`;
+}
+
+/** The gre StateView's counters of one ipsec tunnel (§2.17), read defensively: a StateView is display data. */
+export function ipsecTunnelCounters(ctx: Pick<CommandCtx, 'processState'>, port: PortId): Partial<IpsecTunnelCounters> {
+  const tunnels = ctx.processState(GRE_PROCESS)?.state['tunnels'];
+  if (!Array.isArray(tunnels)) return {};
+  const t = tunnels.find((x: unknown) => typeof x === 'object' && x !== null && (x as { port?: unknown }).port === port) as Record<string, unknown> | undefined;
+  const out: { -readonly [K in keyof IpsecTunnelCounters]?: number } = {};
+  for (const k of ['encaps', 'decaps', 'seqOut', 'lastSeqIn', 'noSa'] as const) {
+    const v = t?.[k];
+    if (typeof v === 'number') out[k] = v;
+  }
+  return out;
+}
+
+/** One `show crypto ipsec sa` block: ends, selectors, state, SPIs and the packet counters of the tunnel owner. */
+function ipsecBlock(ctx: CommandCtx, r: IpsecSaRow): string {
+  const c = ipsecTunnelCounters(ctx, r.port);
+  const n = (v: number | undefined): string => String(v ?? 0);
+  const state = r.state === 'failed' && r.reason !== undefined ? `failed (${TUNNEL_DOWN_REASON_TEXT[r.reason]})` : r.state;
+  return [
+    `Interface ${r.port}, profile ${r.profile}`,
+    `  Local ${r.local}, peer ${r.peer}, traffic selectors 0.0.0.0/0 both ways`,
+    `  State ${state}, ${r.role}, for ${fmtSince(r.since, ctx.now)}`,
+    `  Inbound ESP SA: SPI ${spiText(r.espSpiIn)}`,
+    `  Outbound ESP SA: SPI ${spiText(r.espSpiOut)}`,
+    `  Packets encapsulated ${n(c.encaps)}, decapsulated ${n(c.decaps)}`,
+    `  Outbound sequence ${n(c.seqOut)}, last inbound sequence ${n(c.lastSeqIn)}, dropped for no SA ${n(c.noSa)}`,
+  ].join('\n');
+}
+
+/** `show crypto ipsec sa [interface <if>]` (§2.17). */
+const showCryptoIpsecSa: CommandHandler = (ctx, args) => {
+  let rows = ipsecRows(ctx);
+  const name = args['iface'];
+  if (name !== undefined && name !== '') {
+    const id = ctx.ports.has(name) ? name : ctx.resolvePort(name);
+    if (id === undefined) return { error: `% No interface named "${name}" exists on this device.` };
+    rows = rows.filter((r) => r.port === id);
+    if (rows.length === 0) return { output: `No IPsec security association exists on ${id}.` };
+  }
+  if (rows.length === 0) return { output: MSG_NO_IPSEC_SA };
+  return { output: rows.map((r) => ipsecBlock(ctx, r)).join('\n\n') };
+};
+
 /** @since P3 [C13] Registry fragment: crypto handler id → handler. */
 export const cryptoHandlers: Readonly<Record<string, CommandHandler>> = {
   [CRYPTO_HANDLERS.configCryptoIkev2Keyring]: cryptoSection(['crypto', 'ikev2', 'keyring'], CRYPTO_MODES.keyring),
@@ -126,4 +211,6 @@ export const cryptoHandlers: Readonly<Record<string, CommandHandler>> = {
   [CRYPTO_HANDLERS.ikev2ProfileKeyring]: sectionValue(['crypto', 'ikev2', 'profile'], MSG_NO_IKEV2_PROFILE, ['keyring', 'local'], 'name'),
   [CRYPTO_HANDLERS.configCryptoIpsecProfile]: cryptoSection(['crypto', 'ipsec', 'profile'], CRYPTO_MODES.ipsecProfile),
   [CRYPTO_HANDLERS.ipsecProfileSetIkev2Profile]: sectionValue(['crypto', 'ipsec', 'profile'], MSG_NO_IPSEC_PROFILE, ['set', 'ikev2-profile'], 'name'),
+  [CRYPTO_HANDLERS.showCryptoIkev2Sa]: showCryptoIkev2Sa,
+  [CRYPTO_HANDLERS.showCryptoIpsecSa]: showCryptoIpsecSa,
 };

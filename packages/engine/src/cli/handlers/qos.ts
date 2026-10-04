@@ -14,8 +14,11 @@
  *     this handler is the one attach point — a policy with a queueing action (`priority`, `bandwidth`, `queue-limit`,
  *     `fair-queue`, `shape`) attaches only as output (`qosQueueingOutputOnly`), only on a physical port
  *     (`qosQueueingPhysicalOnly`) and only within 75 % of the port's rate (`qosAdmission`: the `bandwidth` line, else
- *     the routing bandwidth of the port, protocols/ospf/cost.ts).
- * The policies compile lazily in the runtime (D16): nothing here notifies anyone.
+ *     the routing bandwidth, through the W2 qos/config.ts reader; ruling R34).
+ * The policies compile lazily in the runtime (D16): nothing here notifies anyone. W3 cli (cli-b): the attach checks
+ * read the policy through the W2 `qos/config.ts` reader (`compileQosPolicy`, `qosPolicyAdmission` at the port's
+ * reference rate, `qosPortReferenceRateBps`, ruling R34), and `show policy-map interface` gains, per class, the
+ * [S20]/[S21] queueing parameters, the policer with ruling R26's conform/exceed counts (`qosCounters`) and the held queue (`egressQueues`).
  *
  * `flow start|voice` validates the flow (the caps of §2.4: ≤ 2 Mb/s, ≤ 1000 pps, 60-1500 bytes, and every flow ends
  * within `TRAFFIC_MAX_DURATION_MS`; a larger count or duration is refused with `trafficFlowCap` before any job starts),
@@ -28,10 +31,21 @@ import { CLI_MESSAGES, type CommandCtx, type CommandHandler, type CommandOutcome
 import { ROLE_TRAITS } from '../../contracts/catalog.js';
 import type { ConfigNode } from '../../contracts/config.js';
 import type { PortId } from '../../contracts/ids.js';
+import type { EgressQueueView } from '../../contracts/link.js';
 import type { PortView } from '../../contracts/port.js';
 import { TRAFFIC_MAX_DURATION_MS, type ProcessRequest, type TrafficFlowSpec } from '../../contracts/process.js';
-import { routingBandwidthKbps } from '../../protocols/ospf/cost.js';
-import { table } from '../format.js';
+import type { PortQosView } from '../../contracts/snapshot.js';
+import {
+  compileQosPolicy,
+  qosDscpText,
+  qosPolicyAdmission,
+  qosPortReferenceRateBps,
+  type QosPoliceAction,
+  type QosPolicy,
+  type QosPolicyClass,
+} from '../../qos/config.js';
+import { fmtBps, table } from '../format.js';
+import { effectiveRole } from '../scope.js';
 import {
   QOS_CLI_CLASS_DEFAULT,
   QOS_CLI_DSCP_NAMES,
@@ -40,6 +54,7 @@ import {
   QOS_HANDLERS,
 } from '../grammar/qos.js';
 import { enterMode, fillTemplate, globalContext, MSG_NO_INTERFACE_SELECTED, outcomeOf, roleOf, selectedPort } from './common.js';
+import { egressQueueOf, queueCountsText, queueingHeader } from './show.js';
 
 /** A `match` line typed outside a class-map. */
 export const MSG_NO_CLASS_MAP_SELECTED = '% Select a class-map first (class-map <name>).';
@@ -121,22 +136,14 @@ function innermost(ctx: CommandCtx, key: string): readonly string[] | undefined 
   return e !== undefined && e[0] === key ? e : undefined;
 }
 
-/** The queueing keys of a policy class ([S20]/[S21]): a policy holding one attaches only as output on a physical port. */
-const QUEUEING_KEYS: readonly string[] = ['priority', 'bandwidth', 'queue-limit', 'fair-queue', 'shape'];
-
-/** [S20] The kb/s a policy's priority and bandwidth classes ask for at a port rate (`percent` of `bwKbps`). */
-function askedKbps(policy: ConfigNode, bwKbps: number): number {
-  let asked = 0;
-  for (const cls of policy.children) {
-    if (cls.key !== 'class') continue;
-    for (const line of cls.children) {
-      if (line.key !== 'priority' && line.key !== 'bandwidth') continue;
-      const [a, b] = line.args;
-      if (a === 'percent' && b !== undefined && /^\d+$/.test(b)) asked += Math.floor((bwKbps * Number(b)) / 100);
-      else if (a !== undefined && /^\d+$/.test(a)) asked += Number(a);
-    }
-  }
-  return asked;
+/**
+ * @since P3 (W3 cli) [S20] The reference rate of a port for the 75 % admission (§3.11 step 1) and `show policy-map
+ * interface`: ruling R34's one helper (`qos/config.ts` `qosPortReferenceRateBps`): its `bandwidth` line, else its
+ * routing bandwidth (the `BW` of `show interfaces`: 1544 kb/s on serial) — the rate the runtime compiles the scheduler
+ * with and the `qos.admitted` fact reads.
+ */
+export function qosPortReferenceBps(ctx: Pick<CommandCtx, 'running'>, port: PortView): number {
+  return qosPortReferenceRateBps(ctx.running, port.id, effectiveRole(port), port.speedBps ?? port.spec.speedBps);
 }
 
 // ── class-maps and policy-maps ───────────────────────────────────────────────────────────────────────────────────
@@ -268,15 +275,12 @@ function servicePolicies(ctx: CommandCtx, port: PortId): { input?: string; outpu
   return out;
 }
 
-/** The port's rate in kb/s for the admission check: its `bandwidth` line, else its routing bandwidth. */
-function portRateKbps(ctx: CommandCtx, port: PortView): number {
-  const section = ctx.running.root.children.find((c) => c.key === 'interface' && c.args[0] === port.id);
-  const bw = section?.children.find((c) => c.key === 'bandwidth')?.args[0];
-  const configured = bw !== undefined && /^\d+$/.test(bw) ? Number(bw) : undefined;
-  return routingBandwidthKbps({ role: roleOf(ctx, port), speedBps: port.speedBps ?? port.spec.speedBps, ...(configured === undefined ? {} : { configuredKbps: configured }) });
-}
-
-/** `service-policy input|output <name>` / its `no` form (D16; the [S20] attach checks, module header). */
+/**
+ * `service-policy input|output <name>` / its `no` form (D16; the [S20] attach checks, module header). P3 (W3 cli): the
+ * policy is compiled by the W2 `qos/config.ts` reader (`compileQosPolicy`, its `queueing` flag) and the 75 % admission
+ * is the reader's `qosPolicyAdmission` at the port's reference rate (`qosPortReferenceBps`), so the refusal and the
+ * runtime's scheduler compile agree.
+ */
 const servicePolicy: CommandHandler = (ctx, args, negate) => {
   const port = selectedPort(ctx);
   if (port === undefined) return { error: MSG_NO_INTERFACE_SELECTED };
@@ -295,15 +299,13 @@ const servicePolicy: CommandHandler = (ctx, args, negate) => {
   }
   const name = args['name'] ?? '';
   if (dir !== 'input' && dir !== 'output') return { error: '% Expected service-policy input|output <name>.' };
-  const policy = policyMaps(ctx).find((p) => p.args[0] === name);
+  const policy = compileQosPolicy(ctx.running, name);
   if (policy === undefined) return { error: MSG_POLICY_MISSING(name) };
-  const queueing = policy.children.some((cls) => cls.key === 'class' && cls.children.some((l) => QUEUEING_KEYS.includes(l.key)));
-  if (queueing) {
+  if (policy.queueing) {
     if (dir !== 'output') return { error: CLI_MESSAGES.qosQueueingOutputOnly };
     if (role === 'subif' || ROLE_TRAITS[role].virtual) return { error: fillTemplate(CLI_MESSAGES.qosQueueingPhysicalOnly, { port: port.id }) };
-    const bw = portRateKbps(ctx, port);
-    const asked = askedKbps(policy, bw);
-    if (asked * 100 > bw * 75) return { error: fillTemplate(CLI_MESSAGES.qosAdmission, { asked, bw, port: port.id }) };
+    const admission = qosPolicyAdmission(policy, qosPortReferenceBps(ctx, port));
+    if (!admission.ok) return { error: fillTemplate(CLI_MESSAGES.qosAdmission, { asked: admission.askedKbps, bw: admission.refKbps, port: port.id }) };
   }
   return outcomeOf(ctx.config(['service-policy', dir, name], false));
 };
@@ -367,7 +369,8 @@ const showPolicyMapInterface: CommandHandler = (ctx, args) => {
   const want = args['direction'];
   const dirs = (['input', 'output'] as const).filter((d) => (want === undefined || want === d) && attached[d] !== undefined);
   if (dirs.length === 0) return { output: MSG_NO_SERVICE_POLICY(id) };
-  const counters = ctx.qosCounters?.(id);
+  const counters = countersByDirection(ctx, ctx.qosCounters?.(id));
+  const port = ctx.ports.get(id);
   const lines = [id];
   for (const d of dirs) {
     const pname = attached[d] as string;
@@ -377,16 +380,106 @@ const showPolicyMapInterface: CommandHandler = (ctx, args) => {
       lines.push('    (the policy-map does not exist: nothing is classified)');
       continue;
     }
+    // P3 [S20]/[S21] (W3 cli): the compiled policy (the W2 reader) and, on the output side, the port's held queues
+    const compiled = compileQosPolicy(ctx.running, pname);
+    const queue = d === 'output' ? egressQueueOf(ctx, id) : undefined;
+    if (d === 'output' && compiled?.queueing === true && port !== undefined) lines.push(...queueingSummary(ctx, port, compiled, queue));
     for (const c of policyClasses(policy)) {
-      const n = counters?.classes.find((x) => x.name === c.name);
-      const matched = n === undefined ? '0 packets (0 bytes)' : `${n.matched} packet${n.matched === 1 ? '' : 's'} (${n.matchedBytes} bytes)`;
+      const n = counters[d].find((x) => x.name === c.name);
+      const q = queue?.classes.find((x) => x.name === c.name);
+      const counted = q !== undefined ? { matched: q.matched, matchedBytes: q.matchedBytes } : n;
+      const matched = counted === undefined ? '0 packets (0 bytes)' : `${counted.matched} packet${counted.matched === 1 ? '' : 's'} (${counted.matchedBytes} bytes)`;
       const sets = c.lines.filter((l) => l.startsWith('set '));
       const marked = sets.length === 0 ? '' : `; ${n?.marked ?? 0} marked (${sets.join(', ')})`;
       lines.push(`    Class ${c.name}: ${matched} matched${marked}`);
+      const cc = compiled?.classes.find((x) => x.name === c.name);
+      if (cc !== undefined) lines.push(...classActionLines(cc, n, q));
     }
   }
   return { output: lines.join('\n') };
 };
+
+// ── P3 [S20]/[S21] (W3 cli): the queue and policer lines of `show policy-map interface` (§3.11 step 5, R26) ──────
+
+/**
+ * The queueing line of an output policy with a queueing action: the held queues' header when the port has them, else
+ * the refusal of the 75 % admission when the policy does not fit the port (the runtime then keeps the FIFO), else the
+ * reference rate the scheduler is compiled with.
+ */
+function queueingSummary(ctx: CommandCtx, port: PortView, policy: QosPolicy, queue: EgressQueueView | undefined): string[] {
+  if (queue !== undefined) return [`    ${queueingHeader(queue)}`];
+  const ref = qosPortReferenceBps(ctx, port);
+  const admission = qosPolicyAdmission(policy, ref);
+  if (!admission.ok) {
+    return [`    Not queueing: the priority and bandwidth classes ask for ${admission.askedKbps} kb/s, more than 75% of the ${admission.refKbps} kb/s on ${port.id}`];
+  }
+  return [`    Queueing: class-based, reference rate ${fmtBps(ref)}`];
+}
+
+/** A rate given in kb/s or as a percentage of the reference rate. */
+function rateText(r: { readonly kbps: number } | { readonly percent: number }): string {
+  return 'kbps' in r ? `${r.kbps} kb/s` : `${r.percent}% of the reference rate`;
+}
+
+/** @since P3 (W3 cli) [S21] A policer action as configured (`set-dscp-transmit af11`). */
+export function policeActionText(a: QosPoliceAction): string {
+  return a.kind === 'set-dscp-transmit' ? `set-dscp-transmit ${qosDscpText(a.dscp)}` : a.kind;
+}
+
+/**
+ * @since P3 (W3 cli) [S21] Ruling R26: the conform and exceed counts of a class's policer, when the runtime runs it (the
+ * `police` member of a `PortQosView` class, W3 device: an input policer at step 10c, an output policer the link
+ * scheduler does not enforce); undefined on a class without one.
+ */
+export function policerCounts(entry: PortQosView['classes'][number] | undefined): { conformed: number; exceeded: number } | undefined {
+  const p = entry?.police;
+  return p === undefined ? undefined : { conformed: p.conform, exceeded: p.exceed };
+}
+
+/**
+ * @since P3 (W3 cli) The runtime's class counters of a port split by direction: `PortQosView.classes` holds the input
+ * policy's classes in policy order (class-default last), then the output policy's (W3 device), so the input part is as
+ * long as the compiled input policy's class list (none when that policy-map does not exist).
+ */
+export function countersByDirection(
+  ctx: Pick<CommandCtx, 'running'>,
+  counters: PortQosView | undefined,
+): Record<'input' | 'output', PortQosView['classes']> {
+  if (counters === undefined) return { input: [], output: [] };
+  const inputClasses = counters.input === undefined ? 0 : (compileQosPolicy(ctx.running, counters.input)?.classes.length ?? 0);
+  return { input: counters.classes.slice(0, inputClasses), output: counters.classes.slice(inputClasses) };
+}
+
+/**
+ * The lines under one class of `show policy-map interface` (§3.11 step 5): its priority, bandwidth, fair-queue, shape
+ * and policer parameters, the policer's conform and exceed counts (R26), and the class queue (depth / limit, sent,
+ * dropped, policed, the 30-second offered rate). None for a class that only marks: those keep their W2 output.
+ */
+function classActionLines(
+  cc: QosPolicyClass,
+  counters: PortQosView['classes'][number] | undefined,
+  q: EgressQueueView['classes'][number] | undefined,
+): string[] {
+  const out: string[] = [];
+  if (cc.priority !== undefined) out.push(`      Priority: ${rateText(cc.priority)}, served first and held to that rate while the link is congested`);
+  if (cc.bandwidth !== undefined) {
+    const b = cc.bandwidth;
+    out.push(`      Bandwidth: ${'remainingPercent' in b ? `${b.remainingPercent}% of what the priority and bandwidth classes leave` : `${rateText(b)} guaranteed`}`);
+  }
+  if (cc.fairQueue === true) out.push("      Fair queueing among the class's flows");
+  if (cc.shape !== undefined) out.push(`      Shape: average ${cc.shape.rateBps} b/s, bucket ${cc.shape.bcBits} bits`);
+  if (cc.police !== undefined) {
+    const p = cc.police;
+    const counts = policerCounts(counters);
+    let tail = '';
+    if (counts !== undefined) tail = `; ${counts.conformed} conformed, ${counts.exceeded} exceeded`;
+    else if (q !== undefined) tail = `; ${q.policed} exceeded`;
+    out.push(`      Police: ${p.rateBps} b/s, burst ${p.burstBytes} bytes, conform ${policeActionText(p.conform)}, exceed ${policeActionText(p.exceed)}${tail}`);
+  }
+  if (q !== undefined) out.push(`      Queue: ${queueCountsText(q)}; offered ${fmtBps(q.offeredBps30s)} over the last 30 s`);
+  else if (cc.queueLimit !== undefined) out.push(`      Queue limit: ${cc.queueLimit} packets`);
+  return out;
+}
 
 // ── host shell: flows ────────────────────────────────────────────────────────────────────────────────────────────
 

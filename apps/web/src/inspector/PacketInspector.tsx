@@ -5,20 +5,33 @@
  * (CAPWAP control after the simulated DTLS step) gets the "Protected (DTLS, simulated)"
  * banner, and the layers inside its UDP payload are marked as simulated plaintext.
  *
+ * P3 (ARCHITECTURE-P3 §6, §9.2 W3 items 28 and 30b; §7 W3 web-inspector): the banner is generalised from DTLS to
+ * `PduMeta.protectedBy` — 'tls' (RESTCONF over 443, D21), [S13] 'ssh' (its payload decoded from the keystream both ends
+ * derive, D14, §3.14 step 6), [C13] 'esp' ("Encrypted (ESP, simulated)", the inner packet) and 'ike' (IKE_AUTH); a
+ * protected PDU without `protectedBy` keeps the P2 DTLS banner, word for word. The header gains the marking chips (each
+ * `QosMark` record of the PDU's provenance, D16, and [C13] its `Encrypt` / `Decrypt` records) and [S20] the wait chips
+ * ("waited 41 ms in VOICE (priority)", from each `frameQueued` of the PDU to its next `frameTx` from that port).
+ *
  * Also hosts the small shared helpers of the inspector module: the PduJson cache
  * (`fetchPdu`, `usePduJson`), the device index hook, value formatters and the
  * dock-reveal helper. They live here (not in a separate file) because the module
  * owns a fixed file list.
  */
 import { memo, useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { qosDscpText, vtySshCrypt, vtySshKey, vtyText } from '@netforge/engine';
 import type {
   DeviceId,
   DeviceSnapshot,
+  EgressClassSpec,
   FieldValue,
   LayerView,
+  Mutation,
   PduId,
   PduJson,
+  PduMeta,
+  PortId,
   PortRef,
+  SimTime,
   TraceEvent,
 } from '@netforge/engine';
 import { engine, fmtSimTime } from '../bridge/client';
@@ -199,7 +212,8 @@ const ETHERTYPE_NAMES: Record<number, string> = {
   0x8100: '802.1Q tag',
   0x86dd: 'IPv6',
 };
-const IP_PROTOCOL_NAMES: Record<number, string> = { 1: 'ICMP', 6: 'TCP', 17: 'UDP' };
+// P3: GRE [S18], ESP [C13], EIGRP [C1] and OSPF join the names (display only).
+const IP_PROTOCOL_NAMES: Record<number, string> = { 1: 'ICMP', 6: 'TCP', 17: 'UDP', 47: 'GRE', 50: 'ESP', 88: 'EIGRP', 89: 'OSPF' };
 const ICMP_TYPE_NAMES: Record<number, string> = {
   0: 'echo reply',
   3: 'destination unreachable',
@@ -241,6 +255,9 @@ export function fmtValue(proto: string, field: string, v: FieldValue | undefined
       return named(v, IP_PROTOCOL_NAMES[v]);
     case 'ipv4.id':
       return `${v} (${hex(v, 4)})`;
+    case 'ipv4.dscp':
+      // P3 (D16): the DSCP name a `set dscp` line uses (`46 (ef)`); an unnamed value stays a number
+      return qosDscpText(v) === String(v) ? String(v) : `${v} (${qosDscpText(v)})`;
     case 'icmpv4.type':
       return named(v, ICMP_TYPE_NAMES[v]);
     case 'raw.bytes':
@@ -269,15 +286,81 @@ export function fmtMutationValue(path: string, v: FieldValue | undefined): strin
  */
 export const PROTECTED_BANNER_TITLE = 'Protected (DTLS, simulated)';
 
-/** @since P2 Why the protected fields are readable here (original wording). */
-export function protectedBannerText(layers: readonly Pick<LayerView, 'proto'>[]): string {
-  const what = layers.some((l) => l.proto === 'capwap')
-    ? 'This CAPWAP control message travels between the access point and its controller inside an encrypted DTLS session'
-    : 'This message travels inside an encrypted session';
-  return (
-    `${what}: a capture on a real network would show the outer addresses and ports, not the protected fields. ` +
-    'NetForge only simulates that encryption, so the protected fields below are decoded for study and marked as simulated.'
-  );
+/**
+ * @since P3 The simulated channel that protects a PDU: 'dtls' is P2's meaning (`meta.protected` without `protectedBy`:
+ * CAPWAP control), the others are `PduMeta.protectedBy` (§9.2 W3 items 28 and 30b).
+ */
+export type ProtectionKind = 'dtls' | NonNullable<PduMeta['protectedBy']>;
+
+/** @since P3 The banner heading per channel; the DTLS one is `PROTECTED_BANNER_TITLE`, unchanged. */
+export const PROTECTED_BANNER_TITLES: Readonly<Record<ProtectionKind, string>> = Object.freeze({
+  dtls: PROTECTED_BANNER_TITLE,
+  tls: 'Protected (TLS, simulated)',
+  ssh: 'Protected (SSH, simulated)',
+  esp: 'Encrypted (ESP, simulated)',
+  ike: 'Protected (IKE, simulated)',
+});
+
+/** @since P3 The small header chip of a protected PDU (ESP says "encrypted", as its banner does). */
+export const PROTECTED_HEADER_CHIPS: Readonly<Record<ProtectionKind, string>> = Object.freeze({
+  dtls: 'protected (simulated)',
+  tls: 'protected (simulated)',
+  ssh: 'protected (simulated)',
+  esp: 'encrypted (simulated)',
+  ike: 'protected (simulated)',
+});
+
+/** The closing sentence every banner shares: the story says encrypted, the simulator decodes it anyway. */
+const SIMULATED_SENTENCE =
+  'NetForge only simulates that encryption, so the protected fields below are decoded for study and marked as simulated.';
+
+/**
+ * @since P2 Why the protected fields are readable here (original wording). P3: `by` names the channel (absent = DTLS,
+ * whose text is unchanged).
+ */
+export function protectedBannerText(layers: readonly Pick<LayerView, 'proto'>[], by: ProtectionKind = 'dtls'): string {
+  switch (by) {
+    case 'tls': {
+      const what = layers.some((l) => l.proto === 'http')
+        ? 'This web request travels inside an encrypted TLS session (HTTPS on TCP port 443)'
+        : 'This message travels inside an encrypted TLS session';
+      return (
+        `${what}: a capture on a real network would show the outer addresses and ports, not the request line, the ` +
+        `headers or the body. No handshake is simulated. ${SIMULATED_SENTENCE}`
+      );
+    }
+    case 'ssh':
+      return (
+        'This remote-terminal packet travels inside an encrypted SSH session: after the version strings, which are ' +
+        'sent in clear, a capture on a real network shows the addresses, the ports and the packet length, never the ' +
+        'user name, the password or the commands typed. NetForge only simulates that encryption with a keystream both ' +
+        'ends derive from the connection, so the payload is decoded below for study and marked as simulated.'
+      );
+    case 'esp':
+      return (
+        'This packet crosses the provider inside an IPsec tunnel. ESP encrypts the whole original packet, so a capture ' +
+        'between the two sites shows only the outer addresses, the SPI and the sequence number, never the private ' +
+        'addresses inside. NetForge only simulates that encryption, so the inner packet below is decoded for study and ' +
+        'marked as simulated.'
+      );
+    case 'ike':
+      return (
+        'This key-exchange message (IKE_AUTH) is encrypted with the keys the two routers agreed in their first ' +
+        'exchange: a capture shows the IKE header and the SPIs, not the identities, the proof of the pre-shared key or ' +
+        `the proposed security association. The key itself is never sent. ${SIMULATED_SENTENCE}`
+      );
+    case 'dtls': {
+      const what = layers.some((l) => l.proto === 'capwap')
+        ? 'This CAPWAP control message travels between the access point and its controller inside an encrypted DTLS session'
+        : 'This message travels inside an encrypted session';
+      return `${what}: a capture on a real network would show the outer addresses and ports, not the protected fields. ${SIMULATED_SENTENCE}`;
+    }
+  }
+}
+
+/** @since P3 The banner heading of a channel (the DTLS one when absent). */
+export function protectedBannerTitle(by: ProtectionKind = 'dtls'): string {
+  return PROTECTED_BANNER_TITLES[by];
 }
 
 /** @since P2 Whether a PDU carries a protected payload (`PduMeta.protected`). */
@@ -285,13 +368,24 @@ export function isProtectedPdu(pdu: Pick<PduJson, 'meta'>): boolean {
   return pdu.meta.protected === true;
 }
 
+/** @since P3 The channel protecting a PDU, or undefined when it is not protected (no `protectedBy` = DTLS, P2). */
+export function protectionOf(pdu: Pick<PduJson, 'meta'>): ProtectionKind | undefined {
+  if (!isProtectedPdu(pdu)) return undefined;
+  return pdu.meta.protectedBy ?? 'dtls';
+}
+
+/** The layer whose payload a channel protects: DTLS and IKE run over UDP, TLS and SSH over TCP, ESP carries the packet. */
+const PROTECTED_AFTER: Readonly<Record<ProtectionKind, string>> = Object.freeze({ dtls: 'udp', ike: 'udp', tls: 'tcp', ssh: 'tcp', esp: 'esp' });
+
 /**
  * @since P2 Indexes of the layers a protected PDU's encryption covers: every layer inside the outermost UDP layer (DTLS
- * runs over UDP), or only the innermost layer when there is no UDP layer.
+ * runs over UDP), or only the innermost layer when there is no UDP layer. P3: by channel — inside the outermost UDP
+ * layer for DTLS and IKE, the outermost TCP layer for TLS and SSH, the outermost ESP header for ESP (the inner packet);
+ * the innermost layer alone when that anchor is missing.
  */
-export function protectedLayerIndexes(layers: readonly Pick<LayerView, 'proto'>[]): ReadonlySet<number> {
-  const udp = layers.findIndex((l) => l.proto === 'udp');
-  const from = udp >= 0 ? udp + 1 : Math.max(0, layers.length - 1);
+export function protectedLayerIndexes(layers: readonly Pick<LayerView, 'proto'>[], by: ProtectionKind = 'dtls'): ReadonlySet<number> {
+  const anchor = layers.findIndex((l) => l.proto === PROTECTED_AFTER[by]);
+  const from = anchor >= 0 ? anchor + 1 : Math.max(0, layers.length - 1);
   const out = new Set<number>();
   for (let i = from; i < layers.length; i++) out.add(i);
   return out;
@@ -300,17 +394,207 @@ export function protectedLayerIndexes(layers: readonly Pick<LayerView, 'proto'>[
 /** Text of the per-layer mark on a protected layer. */
 export const PROTECTED_LAYER_MARK = 'protected · fields shown as simulated plaintext';
 
-function ProtectedBanner({ layers }: { layers: readonly LayerView[] }) {
+// ── [S13] the SSH payload, decoded for study ────────────────────────────────
+
+/** @since P3 [S13] Names of the SSH message numbers the simulated server and client exchange (RFC 4252/4253/4254). */
+export const SSH_MESSAGE_NAMES: Readonly<Record<number, string>> = Object.freeze({
+  1: 'DISCONNECT',
+  50: 'USERAUTH_REQUEST',
+  51: 'USERAUTH_FAILURE',
+  52: 'USERAUTH_SUCCESS',
+  94: 'CHANNEL_DATA',
+});
+
+/** @since P3 [S13] One protected SSH packet as the two ends read it. */
+export interface SshPlaintext {
+  readonly type: number;
+  /** The message name (`USERAUTH_REQUEST`), or `message <n>` for a number without one. */
+  readonly name: string;
+  /** The message body as text, with control characters made visible (`␀` for the zero byte, `↵` for a line end). */
+  readonly text: string;
+}
+
+/** Control characters made visible: the zero byte that separates user and password, line ends, telnet commands. */
+function visibleText(s: string): string {
+  return s.replace(/\r\n|\n/g, '↵').replace(/\r/g, '↵').replace(/\0/g, '␀').replace(/[\x01-\x1f\x7f]/g, '·');
+}
+
+/**
+ * @since P3 [S13] The plaintext of a protected SSH packet, decoded the way both ends decode it: XOR with the keystream
+ * of the segment's endpoints (`vtySshKey`, `vtySshCrypt`; D14). Undefined for anything else (a version line, a segment
+ * without addresses or ports, an empty payload).
+ */
+export function sshPlaintextOf(layers: readonly Pick<LayerView, 'proto' | 'fields'>[]): SshPlaintext | undefined {
+  const sshAt = layers.findIndex((l) => l.proto === 'ssh');
+  if (sshAt < 0) return undefined;
+  const ssh = layers[sshAt];
+  if (ssh === undefined || ssh.fields.phase !== 'protected') return undefined;
+  const payload = ssh.fields.payload;
+  if (!(payload instanceof Uint8Array) || payload.length === 0) return undefined;
+  let tcp: Pick<LayerView, 'fields'> | undefined;
+  let ip: Pick<LayerView, 'fields'> | undefined;
+  for (let i = sshAt - 1; i >= 0; i--) {
+    const l = layers[i];
+    if (l === undefined) continue;
+    if (tcp === undefined && l.proto === 'tcp') tcp = l;
+    else if (tcp !== undefined && l.proto === 'ipv4') {
+      ip = l;
+      break;
+    }
+  }
+  const src = ip?.fields.src;
+  const dst = ip?.fields.dst;
+  const sp = tcp?.fields.srcPort;
+  const dp = tcp?.fields.dstPort;
+  if (typeof src !== 'string' || typeof dst !== 'string' || typeof sp !== 'number' || typeof dp !== 'number') return undefined;
+  const plain = vtySshCrypt(vtySshKey(src, sp, dst, dp), payload);
+  const type = plain[0] ?? 0;
+  return { type, name: SSH_MESSAGE_NAMES[type] ?? `message ${type}`, text: visibleText(vtyText(plain.subarray(1))) };
+}
+
+function ProtectedBanner({ layers, by }: { layers: readonly LayerView[]; by: ProtectionKind }) {
+  const title = protectedBannerTitle(by);
+  const ssh = by === 'ssh' ? sshPlaintextOf(layers) : undefined;
   return (
-    <div className="reason-box pk-protected" role="note" aria-label={PROTECTED_BANNER_TITLE}>
+    <div className="reason-box pk-protected" role="note" aria-label={title}>
       <div>
         <span aria-hidden="true">⊘ </span>
-        <strong>{PROTECTED_BANNER_TITLE}</strong>
+        <strong>{title}</strong>
       </div>
-      <div>{protectedBannerText(layers)}</div>
+      <div>{protectedBannerText(layers, by)}</div>
+      {ssh !== undefined && (
+        <div className="mono">
+          Simulated plaintext: {ssh.name} ({ssh.type}){ssh.text !== '' ? ` · ${ssh.text}` : ''}
+        </div>
+      )}
     </div>
   );
 }
+
+// ── P3 marking chips (D16, [C13]) ───────────────────────────────────────────
+
+/** @since P3 The provenance records the header shows as chips: QoS marking, and [C13] the IPsec encryption steps. */
+export type MarkingReason = Extract<Mutation['reason'], 'QosMark' | 'Encrypt' | 'Decrypt'>;
+
+/** @since P3 One marking chip. */
+export interface MarkingChip {
+  readonly reason: MarkingReason;
+  readonly at: SimTime;
+  readonly device: DeviceId;
+  readonly field: string;
+  /** e.g. `DSCP 0 → 46 (ef)`, `CoS 0 → 5`, `encrypted`. */
+  readonly text: string;
+  /** The configuration line responsible (`policy-map MARK class VOIP set dscp ef`, `interface Tunnel0`). */
+  readonly cause?: string;
+}
+
+/** @since P3 Glyph of each marking chip (the letter is the non-colour channel; Q as in the provenance timeline). */
+export const MARKING_GLYPH: Readonly<Record<MarkingReason, string>> = Object.freeze({ QosMark: 'Q', Encrypt: 'E', Decrypt: 'D' });
+
+const MARK_FIELD_LABEL: Readonly<Record<string, string>> = Object.freeze({
+  'ipv4.dscp': 'DSCP',
+  'ipv6.trafficClass': 'traffic class',
+  'dot1q.pcp': 'CoS',
+});
+
+/** @since P3 A marking value in words: a DSCP with its name (`46 (ef)`), anything else as its number. */
+export function markingValueText(field: string, v: FieldValue | undefined): string {
+  if (typeof v !== 'number') return v === undefined || v === null ? '—' : String(v);
+  if (field === 'ipv4.dscp') return qosDscpText(v) === String(v) ? String(v) : `${v} (${qosDscpText(v)})`;
+  return String(v);
+}
+
+/** @since P3 The marking chips of a PDU's provenance, oldest first. */
+export function markingChipsOf(provenance: readonly Mutation[]): MarkingChip[] {
+  const out: MarkingChip[] = [];
+  for (const m of provenance) {
+    if (m.reason !== 'QosMark' && m.reason !== 'Encrypt' && m.reason !== 'Decrypt') continue;
+    const text =
+      m.reason === 'QosMark'
+        ? `${MARK_FIELD_LABEL[m.field] ?? m.field} ${markingValueText(m.field, m.before)} → ${markingValueText(m.field, m.after)}`
+        : m.reason === 'Encrypt'
+          ? 'encrypted'
+          : 'decrypted';
+    out.push({ reason: m.reason, at: m.at, device: m.device, field: m.field, text, ...(m.cause !== undefined ? { cause: m.cause } : {}) });
+  }
+  return out;
+}
+
+// ── [S20] queue waits ───────────────────────────────────────────────────────
+
+/** @since P3 [S20] One wait of a PDU in a class queue: from its `frameQueued` to the next `frameTx` from that port. */
+export interface QueueWait {
+  readonly device: DeviceId;
+  readonly port: PortId;
+  /** The class queue (`frameQueued.queue`: the class name). */
+  readonly queue: string;
+  /** The class's depth right after the enqueue. */
+  readonly depth: number;
+  readonly queuedAt: SimTime;
+  /** When serialisation started (`frameTx.txStart`); absent while the frame still waits. */
+  readonly sentAt?: SimTime;
+  /** `sentAt − queuedAt`; absent while the frame still waits. */
+  readonly waitNs?: number;
+}
+
+/**
+ * @since P3 [S20] The waits of PDU `id` in the trace: each `frameQueued` of it, closed by the next `frameTx` of it from
+ * the same device and port. A wait not yet closed has no `sentAt`.
+ */
+export function queueWaitsOf(events: readonly TraceEvent[], id: PduId): QueueWait[] {
+  const out: QueueWait[] = [];
+  const open = new Map<string, number>();
+  for (const ev of events) {
+    if (ev.kind === 'frameQueued') {
+      if (ev.pdu.id !== id) continue;
+      open.set(`${ev.device}|${ev.port}`, out.length);
+      out.push({ device: ev.device, port: ev.port, queue: ev.queue, depth: ev.depth, queuedAt: ev.t });
+    } else if (ev.kind === 'frameTx') {
+      if (ev.pdu.id !== id) continue;
+      const key = `${ev.from.device}|${ev.from.port}`;
+      const at = open.get(key);
+      if (at === undefined) continue;
+      open.delete(key);
+      const w = out[at];
+      if (w === undefined) continue;
+      const sentAt = ev.txStart;
+      out[at] = { ...w, sentAt, waitNs: Math.max(0, sentAt - w.queuedAt) };
+    }
+  }
+  return out;
+}
+
+/** @since P3 [S20] A wait as words: `41 ms`, `3.5 ms`, `0.2 ms`, `1.25 s`. */
+export function fmtWait(ns: number): string {
+  if (ns >= 1_000_000_000) return `${(ns / 1_000_000_000).toFixed(2)} s`;
+  if (ns >= 10_000_000) return `${Math.round(ns / 1_000_000)} ms`;
+  return `${(ns / 1_000_000).toFixed(1)} ms`;
+}
+
+/** @since P3 [S20] Words of a class kind after the queue name (class-default needs none). */
+export const QUEUE_KIND_WORDS: Readonly<Record<EgressClassSpec['kind'], string>> = Object.freeze({
+  priority: 'priority',
+  bandwidth: 'bandwidth',
+  default: '',
+});
+
+/**
+ * @since P3 [S20] The wait chip: `waited 41 ms in VOICE (priority)`; `kind` is the class kind on that port when known.
+ * A frame still in its queue reads `waiting in VOICE (priority)`.
+ */
+export function queueWaitText(w: Pick<QueueWait, 'queue' | 'waitNs'>, kind?: EgressClassSpec['kind']): string {
+  const words = kind === undefined ? '' : QUEUE_KIND_WORDS[kind];
+  const where = `${w.queue}${words === '' ? '' : ` (${words})`}`;
+  return w.waitNs === undefined ? `waiting in ${where}` : `waited ${fmtWait(w.waitNs)} in ${where}`;
+}
+
+/** The class kind of `queue` on a port, from its snapshot's queue view ([S20] `PortSnapshot.qos.queue`). */
+function queueKindOf(index: ReadonlyMap<DeviceId, DeviceSnapshot>, w: QueueWait): EgressClassSpec['kind'] | undefined {
+  const port = index.get(w.device)?.ports.find((p) => p.id === w.port);
+  return port?.qos?.queue?.classes.find((c) => c.name === w.queue)?.kind;
+}
+
+const NO_EVENTS: readonly TraceEvent[] = [];
 
 // ── component ───────────────────────────────────────────────────────────────
 
@@ -341,8 +625,15 @@ export function PacketInspector({ pdu }: { pdu: PduJson }) {
 
   const { meta } = pdu;
   const originName = deviceName(devices, meta.origin);
-  const isProtected = isProtectedPdu(pdu);
-  const protectedLayers = useMemo(() => (isProtected ? protectedLayerIndexes(pdu.layers) : new Set<number>()), [isProtected, pdu.layers]);
+  const protection = protectionOf(pdu);
+  const protectedLayers = useMemo(
+    () => (protection !== undefined ? protectedLayerIndexes(pdu.layers, protection) : new Set<number>()),
+    [protection, pdu.layers],
+  );
+  // P3: the marking chips (QosMark, [C13] Encrypt/Decrypt) and [S20] the waits of this PDU in class queues
+  const marks = useMemo(() => markingChipsOf(pdu.provenance), [pdu.provenance]);
+  const events = useStore((s) => s.events) ?? NO_EVENTS;
+  const waits = useMemo(() => queueWaitsOf(events, pdu.id), [events, pdu.id]);
 
   return (
     <div className="pk">
@@ -350,10 +641,28 @@ export function PacketInspector({ pdu }: { pdu: PduJson }) {
         <div className="insp-title-row">
           <span className={`proto-chip ${protoClass(pdu.topProto)}`}>{pdu.topProto}</span>
           <span className="insp-title mono">Packet #{pdu.id}</span>
-          {isProtected && <span className="chip tiny">protected (simulated)</span>}
+          {protection !== undefined && <span className="chip tiny">{PROTECTED_HEADER_CHIPS[protection]}</span>}
         </div>
         <div className="pk-summary">{pdu.summary}</div>
-        {isProtected && <ProtectedBanner layers={pdu.layers} />}
+        {protection !== undefined && <ProtectedBanner layers={pdu.layers} by={protection} />}
+        {(marks.length > 0 || waits.length > 0) && (
+          <div className="pk-meta" aria-label="Marking and queueing">
+            {marks.map((m, i) => (
+              <span
+                key={`m${i}`}
+                className={`chip tiny${m.reason === 'QosMark' ? ' accent' : ''}`}
+                title={m.cause !== undefined ? `${m.text} — ${m.cause}` : m.text}
+              >
+                <span aria-hidden="true">{MARKING_GLYPH[m.reason]}</span> {m.text} on {deviceName(devices, m.device)}
+              </span>
+            ))}
+            {waits.map((w, i) => (
+              <span key={`w${i}`} className="chip tiny" title={`queued at ${fmtSimTime(w.queuedAt)} behind ${w.depth - 1} other packet(s)`}>
+                <span aria-hidden="true">⧗</span> {queueWaitText(w, queueKindOf(devices, w))} at {portLabel(devices, { device: w.device, port: w.port })}
+              </span>
+            ))}
+          </div>
+        )}
         <div className="pk-meta">
           <span>{size} bytes on the wire</span>
           <span>born {fmtSimTime(meta.born)}</span>

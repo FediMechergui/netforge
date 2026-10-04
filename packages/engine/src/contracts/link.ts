@@ -333,8 +333,11 @@ export type DropReason =
 /** @since P2 Frames queued on one P2P egress port before 'queue-full' (D23; memory bound, not an event-rate bound). */
 export const P2P_QUEUE_LIMIT = 256;
 
-/** `ok:false` reasons of `transmit`. */
-export type TransmitRefusal = 'link-down' | 'out-of-band' | 'not-associated' | 'queue-full' | 'encapsulation-mismatch';
+/**
+ * `ok:false` reasons of `transmit`. @since P3 [S21] (ruling R35, additive) `policed`: an output frame the link
+ * scheduler's policer dropped on a scheduler port (drop `policed` with the class's detail).
+ */
+export type TransmitRefusal = 'link-down' | 'out-of-band' | 'not-associated' | 'queue-full' | 'encapsulation-mismatch' | 'policed';
 
 /**
  * Result of `LinkModel.transmit`. On `ok:false` the link model has ALREADY emitted the `drop`
@@ -377,12 +380,25 @@ export interface TransmitOptions {
 }
 
 /**
- * @since P3 [S21] A token-bucket policer (`police`): conform transmits, exceed drops 'policed'. (The WAN map names this
- * type without spelling it out; this is its W0 shape.)
+ * @since P3 [S21] What a policer does with a conforming or an exceeding packet (ruling R26): send it, drop it
+ * (`'policed'`), or rewrite its DSCP and send it (`set-dscp-transmit <v>`, the markdown; a DSCP 0-63).
+ */
+export type PolicerAction = { kind: 'transmit' } | { kind: 'drop' } | { kind: 'set-dscp-transmit'; dscp: number };
+
+/**
+ * @since P3 [S21] A token-bucket policer (`police`): by default conform transmits, exceed drops 'policed'. (The WAN map
+ * names this type without spelling it out; this is its W0 shape, with the actions of ruling R26.)
  */
 export interface PolicerSpec {
   rateBps: number;
   burstBytes: number;
+  /**
+   * @since P3 (optional by meaning) [S21] Ruling R26: the conform action. Absent = `transmit` (the W0 behaviour, so a
+   * spec without it keeps today's results).
+   */
+  conform?: PolicerAction;
+  /** @since P3 (optional by meaning) [S21] Ruling R26: the exceed action. Absent = `drop` (`'policed'`), as today. */
+  exceed?: PolicerAction;
 }
 
 /**

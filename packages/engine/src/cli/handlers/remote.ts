@@ -8,13 +8,17 @@
  * sent as `vty.input`, and the vty-client's `cliDone` ends the job. The vty-client prints the connection progress and
  * refusals. The runtime refuses a `telnet`/`ssh` typed inside a session already `REMOTE_DEPTH_CAP` deep (D14).
  *
- * A device without the vty-client daemon answers with a message instead of a job that never ends. Messages are
- * original wording (spec §1.6).
+ * A device without the vty-client daemon answers with a message instead of a job that never ends.
+ *
+ * W3 cli (cli-b): `show users` (the typing console line, then the inbound connections of the vty StateView) and `show
+ * ssh` (the SSH connections in, from vty, and out, from vty-client). Messages are original wording (spec §1.6).
  */
 import type { CommandCtx, CommandHandler, CommandOutcome } from '../../contracts/cli.js';
+import type { SessionId } from '../../contracts/ids.js';
 import type { ProcessRequest } from '../../contracts/process.js';
-import { isIpv4, isIpv4Broadcast, isIpv4Multicast } from '../../contracts/addr.js';
-import { REMOTE_HANDLERS, VTY_CLIENT_PROCESS } from '../grammar/remote.js';
+import { isIpv4, isIpv4Broadcast, isIpv4Multicast, type IpAddress } from '../../contracts/addr.js';
+import { table } from '../format.js';
+import { REMOTE_HANDLERS, VTY_CLIENT_PROCESS, VTY_PROCESS } from '../grammar/remote.js';
 
 /** @since P3 [S13] A device that runs no remote terminal client. */
 export const MSG_NO_VTY_CLIENT = '% This device has no remote terminal client.';
@@ -59,8 +63,123 @@ const ssh: CommandHandler = (ctx, args) => {
   return connect(ctx, { kind: 'vty.connect', session: ctx.session.id, target, proto: 'ssh', user });
 };
 
+// ── W3 cli (cli-b): `show users` and `show ssh` (§5.8; M10, D14 and [S13]) ────────────────────────────────────────
+
+/**
+ * @since P3 (W3 cli) [S13] One inbound connection as the cli reads it from the vty daemon's StateView: its
+ * `connections` member (protocols/vty.ts header: `{ id, proto, peer, phase, user? }`), oldest first. The brief fixes no
+ * shape for the vty StateView (§2.6 names the ospf, ntp, eigrp, gre and ike views only), so the reader is defensive:
+ * an entry without a protocol or a peer is skipped.
+ */
+export interface VtyConnectionView {
+  readonly id: string;
+  readonly proto: 'telnet' | 'ssh';
+  readonly peer: IpAddress;
+  /** 'open' once the CLI session runs; the login phases before ('check', 'version', 'auth', 'user', 'password'); 'closing'. */
+  readonly phase: string;
+  readonly user?: string;
+}
+
+/**
+ * @since P3 (W3 cli) [S13] One outbound session as the cli reads it from the vty-client's StateView: its `sessions`
+ * member (protocols/vty-client.ts header: `{ session, proto, target, port, phase, remote? }`), oldest first.
+ */
+export interface VtyClientSessionView {
+  readonly session: SessionId;
+  readonly proto: 'telnet' | 'ssh';
+  readonly target: IpAddress;
+  /** 'connecting', the login phases ('version', 'auth', 'password', 'retry'), 'open', 'closing'. */
+  readonly phase: string;
+}
+
+/** The array member `key` of a daemon's StateView, entries narrowed to objects. */
+function viewList(ctx: Pick<CommandCtx, 'processState'>, process: string, key: string): Record<string, unknown>[] {
+  const list = ctx.processState(process)?.state[key];
+  return Array.isArray(list) ? list.filter((x): x is Record<string, unknown> => typeof x === 'object' && x !== null) : [];
+}
+
+/** A remote protocol, or undefined. */
+function protoOf(v: unknown): 'telnet' | 'ssh' | undefined {
+  return v === 'telnet' || v === 'ssh' ? v : undefined;
+}
+
+/** @since P3 (W3 cli) [S13] The inbound connections of the vty StateView (`VtyConnectionView`), oldest first. */
+export function vtyConnections(ctx: Pick<CommandCtx, 'processState'>): VtyConnectionView[] {
+  const out: VtyConnectionView[] = [];
+  for (const e of viewList(ctx, VTY_PROCESS, 'connections')) {
+    const proto = protoOf(e['proto']);
+    const peer = e['peer'];
+    if (proto === undefined || typeof peer !== 'string') continue;
+    const id = typeof e['id'] === 'string' ? e['id'] : '';
+    const phase = typeof e['phase'] === 'string' ? e['phase'] : 'open';
+    out.push(typeof e['user'] === 'string' ? { id, proto, peer, phase, user: e['user'] } : { id, proto, peer, phase });
+  }
+  return out;
+}
+
+/** @since P3 (W3 cli) [S13] The outbound sessions of the vty-client StateView (`VtyClientSessionView`), oldest first. */
+export function vtyClientSessions(ctx: Pick<CommandCtx, 'processState'>): VtyClientSessionView[] {
+  const out: VtyClientSessionView[] = [];
+  for (const e of viewList(ctx, VTY_CLIENT_PROCESS, 'sessions')) {
+    const proto = protoOf(e['proto']);
+    const target = e['target'];
+    const session = e['session'];
+    if (proto === undefined || typeof target !== 'string' || typeof session !== 'string') continue;
+    out.push({ session, proto, target, phase: typeof e['phase'] === 'string' ? e['phase'] : 'open' });
+  }
+  return out;
+}
+
+/** @since P3 (W3 cli) [S13] How a connection's phase reads in `show users` and `show ssh`. */
+export function sessionPhaseText(phase: string): string {
+  if (phase === 'open') return 'session open';
+  if (phase === 'connecting') return 'connecting';
+  if (phase === 'closing') return 'closing';
+  return 'logging in';
+}
+
+/** @since P3 (W3 cli) `show users` with nothing to list beyond the typing session. */
+export const MSG_NO_REMOTE_SESSION = 'No remote session is open.';
+/** @since P3 (W3 cli) `show ssh` without an SSH connection. */
+export const MSG_NO_SSH_SESSION = 'No SSH connection is open.';
+
+/**
+ * `show users` (§5.8): the typing session's console line (`*`), then one `vty <n>` line per inbound connection ([S13],
+ * the vty StateView) with its user, protocol, peer and state. A typing remote session is starred when it is the only
+ * open connection (the typing session must be one of them; the StateView does not name CLI sessions).
+ */
+const showUsers: CommandHandler = (ctx) => {
+  const remote = vtyConnections(ctx);
+  const open = remote.filter((c) => c.phase === 'open');
+  const rows: string[][] = [['', 'Line', 'User', 'Protocol', 'From', 'State']];
+  if (ctx.session.via === 'console') rows.push(['*', 'con 0', '-', 'console', '-', 'session open']);
+  remote.forEach((c, i) => {
+    const own = ctx.session.via === 'vty' && open.length === 1 && open[0] === c;
+    rows.push([own ? '*' : '', `vty ${i}`, c.user ?? '-', c.proto, c.peer, sessionPhaseText(c.phase)]);
+  });
+  const out = table(rows);
+  return { output: remote.length === 0 ? `${out}\n${MSG_NO_REMOTE_SESSION}` : out };
+};
+
+/**
+ * `show ssh` (§5.8): every SSH connection into this device (the vty StateView, `in`) and out of it (the vty-client's,
+ * `out`), with the protocol version (2.0 only), the user (inbound), the peer and the state.
+ */
+const showSsh: CommandHandler = (ctx) => {
+  const rows: string[][] = [['Connection', 'Version', 'Direction', 'User', 'Peer', 'State']];
+  for (const c of vtyConnections(ctx)) {
+    if (c.proto === 'ssh') rows.push([String(rows.length - 1), '2.0', 'in', c.user ?? '-', c.peer, sessionPhaseText(c.phase)]);
+  }
+  for (const s of vtyClientSessions(ctx)) {
+    if (s.proto === 'ssh') rows.push([String(rows.length - 1), '2.0', 'out', '-', s.target, sessionPhaseText(s.phase)]);
+  }
+  return { output: rows.length === 1 ? MSG_NO_SSH_SESSION : table(rows) };
+};
+
 /** @since P3 [S13] Registry fragment: remote terminal client handler id → handler. */
 export const remoteHandlers: Readonly<Record<string, CommandHandler>> = {
   [REMOTE_HANDLERS.execTelnet]: telnet,
   [REMOTE_HANDLERS.execSsh]: ssh,
+  [REMOTE_HANDLERS.showUsers]: showUsers,
+  [REMOTE_HANDLERS.showSsh]: showSsh,
 };

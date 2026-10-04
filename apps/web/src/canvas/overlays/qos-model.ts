@@ -22,8 +22,30 @@
  *
  * Pure: no Pixi, no store, no wall clock. `deriveDeviceQos` depends on one device object only, so the W3 registry entry
  * memoises it per device object (registry.ts `memoPerDevice`).
+ *
+ * @since P3 [S20] (W3 web-canvas) **Per-class queue lanes** at a scheduler port (`PortSnapshot.qos.queue`, the
+ * `EgressQueueView` of a port whose output policy queues): one lane per class, the priority (LLQ) lanes nearest the
+ * cable with a `P` badge, then the other classes in policy order; each lane fills to `depth / limit` and reads
+ * `VOICE 1/64`. A lane whose class dropped frames since the base sample carries a **drop tag**: `queue full ·
+ * class-default` for tail drops, `policed` for frames its policer dropped ([S21], and the LLQ's conditional policer of
+ * [S20]). The drop counters ride in the same `LoadSample` as the sleeves' `outBytes` (`classDrops`), so a tag says
+ * "dropped within the last window" and disappears once the class stops dropping. `buildQosOverlay`'s output is
+ * unchanged; `buildQosLayerModel` adds the lanes (`queues`) for the layer and the outline.
  */
-import type { DeviceId, DeviceSnapshot, LinkId, LinkSnapshot, PduId, PortId, PortSnapshot, PortTxQueueView, ProtoName, SimSnapshot, SimTime } from '@netforge/engine';
+import type {
+  DeviceId,
+  DeviceSnapshot,
+  EgressQueueView,
+  LinkId,
+  LinkSnapshot,
+  PduId,
+  PortId,
+  PortSnapshot,
+  PortTxQueueView,
+  ProtoName,
+  SimSnapshot,
+  SimTime,
+} from '@netforge/engine';
 
 // ── DSCP letters ─────────────────────────────────────────────────────────────
 
@@ -171,6 +193,18 @@ export interface LoadSample {
   readonly at: SimTime;
   /** Keyed by `portKey(device, port)`. */
   readonly outBytes: ReadonlyMap<string, number>;
+  /**
+   * @since P3 [S20] The drop counters of every class of every scheduler port at the same instant, keyed by
+   * `classKey(device, port, class)` (the lanes' drop tags compare against them). Absent in a sample taken before any
+   * port queued.
+   */
+  readonly classDrops?: ReadonlyMap<string, ClassDropCounts>;
+}
+
+/** @since P3 [S20] The two drop counters of one class queue. */
+export interface ClassDropCounts {
+  readonly tailDrops: number;
+  readonly policed: number;
 }
 
 /** Key of one port in a `LoadSample`. */
@@ -222,24 +256,37 @@ export interface DeviceQos {
   readonly backlogs: readonly { readonly port: PortId; readonly backlog: PortTxQueueView }[];
   /** Every port's `outBytes` and speed. */
   readonly ports: ReadonlyMap<PortId, { readonly outBytes: number; readonly speedBps?: number }>;
+  /** @since P3 [S20] Scheduler ports (`PortSnapshot.qos.queue` present), in port order. */
+  readonly queues?: readonly { readonly port: PortId; readonly queue: EgressQueueView }[];
 }
 
 /** Derive a device's QoS data. Pure in the device object. */
 export function deriveDeviceQos(d: DeviceSnapshot): DeviceQos {
   const backlogs: { port: PortId; backlog: PortTxQueueView }[] = [];
   const ports = new Map<PortId, { outBytes: number; speedBps?: number }>();
+  const queues: { port: PortId; queue: EgressQueueView }[] = [];
   for (const p of d.ports as readonly PortSnapshot[]) {
     if (p.txBacklog !== undefined && p.txBacklog.depth > 0) backlogs.push({ port: p.id, backlog: p.txBacklog });
     ports.set(p.id, p.speedBps === undefined ? { outBytes: p.counters.outBytes } : { outBytes: p.counters.outBytes, speedBps: p.speedBps });
+    const queue = p.qos?.queue;
+    if (queue !== undefined && queue.classes.length > 0) queues.push({ port: p.id, queue });
   }
-  return { backlogs, ports };
+  return { backlogs, ports, queues };
 }
 
-/** The `outBytes` sample of a snapshot. */
+/** The `outBytes` sample of a snapshot (and, @since P3 [S20], the drop counters of every class queue). */
 export function loadSampleOf(snapshot: SimSnapshot, perDevice: (d: DeviceSnapshot) => DeviceQos = deriveDeviceQos): LoadSample {
   const outBytes = new Map<string, number>();
-  for (const d of snapshot.devices) for (const [port, v] of perDevice(d).ports) outBytes.set(portKey(d.id, port), v.outBytes);
-  return { at: snapshot.now, outBytes };
+  let classDrops: Map<string, ClassDropCounts> | undefined;
+  for (const d of snapshot.devices) {
+    const qos = perDevice(d);
+    for (const [port, v] of qos.ports) outBytes.set(portKey(d.id, port), v.outBytes);
+    for (const { port, queue } of qos.queues ?? []) {
+      classDrops ??= new Map();
+      for (const c of queue.classes) classDrops.set(classKey(d.id, port, c.name), { tailDrops: c.tailDrops, policed: c.policed });
+    }
+  }
+  return classDrops === undefined ? { at: snapshot.now, outBytes } : { at: snapshot.now, outBytes, classDrops };
 }
 
 /**
@@ -335,4 +382,156 @@ export function buildQosOverlay(
     }
   }
   return { stacks, sleeves };
+}
+
+// ── [S20] per-class queue lanes ──────────────────────────────────────────────
+
+/** Badge of a priority (LLQ) lane. */
+export const QOS_PRIORITY_BADGE = 'P';
+
+/** One class row of an `EgressQueueView`. */
+export type EgressClassView = EgressQueueView['classes'][number];
+
+/** Key of one class queue in `LoadSample.classDrops`. */
+export function classKey(device: DeviceId, port: PortId, cls: string): string {
+  return `${device}|${port}|${cls}`;
+}
+
+/** Why a lane dropped frames since the base sample. */
+export type QosDropKind = 'queue-full' | 'policed';
+
+/** A drop tag on a lane: its text (the non-colour channel) and how many frames it stands for. */
+export interface QosDropTag {
+  readonly kind: QosDropKind;
+  /** `queue full · class-default` or `policed`. */
+  readonly text: string;
+  /** Frames dropped this way since the base sample (every drop the counter holds when there is no base). */
+  readonly count: number;
+}
+
+/** The text of a drop tag. */
+export function dropTagText(kind: QosDropKind, cls: string): string {
+  return kind === 'queue-full' ? `queue full · ${cls}` : 'policed';
+}
+
+/** One class queue of a scheduler port, as a lane. */
+export interface QosLaneMark {
+  readonly name: string;
+  readonly kind: EgressClassView['kind'];
+  /** True for an LLQ class: its lane is nearest the cable and carries the `P` badge. */
+  readonly priority: boolean;
+  /** `P` or ''. */
+  readonly badge: string;
+  readonly depth: number;
+  readonly limit: number;
+  /** `depth / limit`, clamped to [0, 1] (0 when the limit is unknown). */
+  readonly fill: number;
+  /** `VOICE 1/64`. */
+  readonly label: string;
+  /** Totals since the policy was attached. */
+  readonly tailDrops: number;
+  readonly policed: number;
+  /** Fair-queue flows in the class ([S21] `fair-queue`), when the view carries them. */
+  readonly flows?: number;
+  /** Drop tags, tail drops first. */
+  readonly tags: readonly QosDropTag[];
+}
+
+/** The lanes of one scheduler port. */
+export interface QosQueueMark {
+  readonly device: DeviceId;
+  readonly port: PortId;
+  /** The cable the port sends on and which end the port is, when it is cabled. */
+  readonly link?: LinkId;
+  readonly end?: 'a' | 'b';
+  readonly policy?: string;
+  readonly strategy: EgressQueueView['strategy'];
+  /** Nearest the cable first: the priority lanes, then the other classes in policy order. */
+  readonly lanes: readonly QosLaneMark[];
+}
+
+/** Drops since the base: the difference, or the whole count when there is no base or the counter went back (a reload). */
+function recent(now: number, before: number | undefined): number {
+  if (before === undefined || now < before) return now;
+  return now - before;
+}
+
+/**
+ * The lanes of a scheduler port, nearest the cable first. `base` holds the drop counters of an earlier sample (null:
+ * no earlier sample, so every counted drop tags its lane).
+ */
+export function lanesOf(
+  view: EgressQueueView,
+  where: { readonly device: DeviceId; readonly port: PortId },
+  base: ReadonlyMap<string, ClassDropCounts> | null = null,
+): QosLaneMark[] {
+  const ordered = view.classes.map((c, i) => ({ c, i })).sort((x, y) => Number(y.c.kind === 'priority') - Number(x.c.kind === 'priority') || x.i - y.i);
+  return ordered.map(({ c }) => {
+    const before = base?.get(classKey(where.device, where.port, c.name));
+    const tags: QosDropTag[] = [];
+    const tail = recent(c.tailDrops, before?.tailDrops);
+    if (tail > 0) tags.push({ kind: 'queue-full', text: dropTagText('queue-full', c.name), count: tail });
+    const policed = recent(c.policed, before?.policed);
+    if (policed > 0) tags.push({ kind: 'policed', text: dropTagText('policed', c.name), count: policed });
+    const priority = c.kind === 'priority';
+    const fill = c.limit > 0 ? Math.min(1, Math.max(0, c.depth / c.limit)) : 0;
+    return {
+      name: c.name,
+      kind: c.kind,
+      priority,
+      badge: priority ? QOS_PRIORITY_BADGE : '',
+      depth: c.depth,
+      limit: c.limit,
+      fill,
+      label: `${c.name} ${c.depth}/${c.limit}`,
+      tailDrops: c.tailDrops,
+      policed: c.policed,
+      ...(c.flows === undefined ? {} : { flows: c.flows }),
+      tags,
+    };
+  });
+}
+
+/** Options of `buildQosQueues` / `buildQosLayerModel`. */
+export type QosLayerOptions = QosOverlayOptions;
+
+/** The lanes of every scheduler port: devices in snapshot order, ports in port order. */
+export function buildQosQueues(
+  snapshot: SimSnapshot,
+  opts: QosLayerOptions = {},
+  perDevice: (d: DeviceSnapshot) => DeviceQos = deriveDeviceQos,
+): QosQueueMark[] {
+  const base = opts.base ?? null;
+  const drops = base !== null && base.at < snapshot.now ? (base.classDrops ?? new Map<string, ClassDropCounts>()) : null;
+  let ends: Map<string, { link: LinkId; end: 'a' | 'b' }> | undefined;
+  const out: QosQueueMark[] = [];
+  for (const d of snapshot.devices) {
+    for (const { port, queue } of perDevice(d).queues ?? []) {
+      ends ??= linkEnds(snapshot.links);
+      const at = ends.get(portKey(d.id, port));
+      out.push({
+        device: d.id,
+        port,
+        ...(at === undefined ? {} : { link: at.link, end: at.end }),
+        ...(queue.policy === undefined ? {} : { policy: queue.policy }),
+        strategy: queue.strategy,
+        lanes: lanesOf(queue, { device: d.id, port }, drops),
+      });
+    }
+  }
+  return out;
+}
+
+/** What the QoS layer and the keyboard outline draw: the stacks and sleeves, and @since P3 [S20] the class lanes. */
+export interface QosLayerModel extends QosOverlayModel {
+  readonly queues: readonly QosQueueMark[];
+}
+
+/** The QoS layer's model: `buildQosOverlay` plus the class lanes. */
+export function buildQosLayerModel(
+  snapshot: SimSnapshot,
+  opts: QosLayerOptions = {},
+  perDevice: (d: DeviceSnapshot) => DeviceQos = deriveDeviceQos,
+): QosLayerModel {
+  return { ...buildQosOverlay(snapshot, opts, perDevice), queues: buildQosQueues(snapshot, opts, perDevice) };
 }

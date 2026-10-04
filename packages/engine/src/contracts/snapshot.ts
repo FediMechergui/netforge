@@ -133,7 +133,22 @@ export interface PortSnapshot {
 export interface PortQosView {
   input?: string;
   output?: string;
-  classes: readonly { name: string; matched: number; matchedBytes: number; marked: number }[];
+  /**
+   * The classes of the input policy in policy order (class-default last), then those of the output policy (W3 device:
+   * one list, so a consumer splits it by the policies' class lists; absent policy-map = no classes for it).
+   */
+  classes: readonly {
+    name: string;
+    matched: number;
+    matchedBytes: number;
+    marked: number;
+    /**
+     * @since P3 (optional by meaning) [S21] Ruling R26: the conform and exceed counts of the class's `police` action
+     * when the runtime runs it (an input policer at step 10c; an output policer the link scheduler does not enforce).
+     * Absent on a class without one (W3 device, the minimal additive member R26 needs to reach `qosCounters`).
+     */
+    police?: { conform: number; conformBytes: number; exceed: number; exceedBytes: number };
+  }[];
   /** @since P3 (optional by meaning) [S20] The held class queues of a scheduler port. */
   queue?: EgressQueueView;
 }

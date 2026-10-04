@@ -163,6 +163,13 @@ export interface RunStopResult {
   ended?: 'horizon' | 'maxEvents' | 'idle';
 }
 
+/**
+ * @since P3 (ruling R31) What `runToIdle` resolves to: the snapshot it posted, and `runStopped: 'maxEvents'` (optional
+ * by meaning: absent = the run reached idle) when the run ended at its event cap (`RunStats.stopped`). An idle world
+ * still keeps its periodic maintenance timers, so `pendingEvents > 0` alone never means the cap was hit.
+ */
+export type RunToIdleSnapshot = SimSnapshot & { readonly runStopped?: 'maxEvents' };
+
 /** @since P1 Where a breakpoint or a step stopped the clock. */
 export interface StopInfo {
   cursor: number;
@@ -321,8 +328,11 @@ export interface EngineApi {
   stepEvent(): Promise<SimSnapshot>;
   /** Advance by `dt` sim ns. Pauses first if playing. */
   stepTime(dt: SimTime): Promise<SimSnapshot>;
-  /** Run until the queue is idle or the cap is hit (used by "run to idle" and tests). Pauses first if playing. */
-  runToIdle(maxEvents?: number): Promise<SimSnapshot>;
+  /**
+   * Run until the queue is idle or the cap is hit (used by "run to idle" and tests). Pauses first if playing. @since P3
+   * (R31) the result says when the cap stopped the run (`RunToIdleSnapshot.runStopped`).
+   */
+  runToIdle(maxEvents?: number): Promise<RunToIdleSnapshot>;
   /** @since P1 Switching to 'simulation' pauses; switching to 'realtime' clears `breakOn` (§4.11 item 6). */
   setPlaybackMode(mode: PlaybackMode): Promise<void>;
   /** @since P1 */

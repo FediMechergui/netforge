@@ -16,10 +16,25 @@
  *
  * Scope: tunnels exist only on models with `routing` (TUNNEL_FAMILY), so the tunnel lines need no capability gate of
  * their own beyond the port role; the PPP lines need a serial WAN port (a serial access line stays HDLC-only, D17). Help strings are original wording.
+ *
+ * W3 cli (cli-b, §5.8): `show ppp interface [<if>]` [S19], `show interfaces tunnel [<n>]` [S18] (executable, hidden from
+ * `?` so the `show interfaces ?` port list stays), and the `tunnel`, `ppp negotiation`, `ppp authentication` debug
+ * categories.
  */
 import type { CommandSpec } from '../../contracts/cli.js';
 import { L3_ROLES, type PortRole } from '../../contracts/catalog.js';
-import { choiceArg, ifaceArg, intArg, ipv4Arg, NFOS_ONLY, secretArg, wordArg } from './core-exec.js';
+import {
+  choiceArg,
+  debugSpecs,
+  ifaceArg,
+  intArg,
+  ipv4Arg,
+  kindsPort,
+  NFOS_ONLY,
+  secretArg,
+  wordArg,
+  type GrammarDebugCategory,
+} from './core-exec.js';
 
 /** @since P3 [S18]/[S19]/[C13] Handler ids of the WAN fragment. Never rename. */
 export const WAN_HANDLERS = {
@@ -33,6 +48,9 @@ export const WAN_HANDLERS = {
   ifPppPapSentUsername: 'if.ppp-pap-sent-username',
   ifPeerNeighborRoute: 'if.peer-neighbor-route',
   configUsernamePassword: 'config.username-password',
+  // W3 cli (cli-b): the shows of §5.8
+  showInterfacesTunnel: 'show.interfaces-tunnel',
+  showPppInterface: 'show.ppp-interface',
 } as const;
 
 /** @since P3 [S18] The role of a tunnel interface. */
@@ -53,6 +71,30 @@ export const TUNNEL_IP_MTU_MAX = 1500;
 /** @since P3 [S18] Range of `ip tcp adjust-mss`. */
 export const ADJUST_MSS_MIN = 500;
 export const ADJUST_MSS_MAX = 1460;
+
+/** @since P3 (W3 cli) [S18] Highest tunnel number `show interfaces tunnel <n>` takes. */
+export const TUNNEL_NUMBER_MAX = 2_147_483_647;
+
+/** @since P3 (W3 cli) [S19] `show ppp interface <if>` naming an interface that is not serial. */
+export const MSG_PPP_SHOW_PORT = '% Only serial interfaces run PPP.';
+
+/**
+ * @since P3 (W3 cli) [S18]/[S19] The debug categories of the tunnel owner and of PPP (§5.8): `tunnel` (gre, both
+ * modes), `ppp negotiation` and `ppp authentication` (ppp). Scoped by capability literals like the rest of the P3
+ * grammar (cli/grammar/index.ts): `routing`, the row of gre and ppp in §2.1.
+ */
+export const WAN_DEBUG_CATEGORIES: readonly GrammarDebugCategory[] = Object.freeze([
+  { category: 'tunnel', help: 'Trace tunnel state changes, encapsulation and refused packets', requiresAny: ['routing'], since: 'P3' },
+  { category: 'ppp negotiation', help: 'Trace LCP, IPCP and IPV6CP negotiation and the link echo', requiresAny: ['routing'], since: 'P3' },
+  { category: 'ppp authentication', help: 'Trace PAP and CHAP exchanges and their results', requiresAny: ['routing'], since: 'P3' },
+]);
+
+/** @since P3 (W3 cli) Objectives of the WAN debug categories. */
+export const WAN_DEBUG_OBJECTIVES: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  tunnel: ['CCNA3.wan.6'],
+  'ppp negotiation': ['CCNA3.wan.3'],
+  'ppp authentication': ['CCNA3.wan.3', 'CCNA3.wan.4'],
+});
 
 /** @since P3 [S19] Authentication protocols `ppp authentication` offers, in help order. */
 export const PPP_AUTH_PROTOCOLS: readonly string[] = Object.freeze(['chap', 'pap']);
@@ -197,6 +239,38 @@ export const WAN_GRAMMAR: readonly CommandSpec[] = Object.freeze<CommandSpec[]>(
     since: 'P3',
     objectives: ['CCNA3.wan.3'],
   },
+  // ── W3 cli (cli-b): the shows and the debug categories of §5.8 ──
+  {
+    // [S18]/[C13] executable but not listed by `?`, so a router's `show interfaces ?` list stays its ports (no §9
+    // migration moves it): the tunnel blocks of `show interfaces`, for every tunnel or for Tunnel<n>
+    path: ['show', 'interfaces', 'tunnel', '<number>'],
+    mode: '@exec',
+    privilege: 1,
+    help: 'Tunnel interfaces: source, destination, mode, MTU and why a tunnel is down',
+    args: { number: intArg('Tunnel number (every tunnel when left out)', 0, TUNNEL_NUMBER_MAX, true) },
+    handler: H.showInterfacesTunnel,
+    filterable: true,
+    hidden: true,
+    grammars: NFOS_ONLY,
+    requiresAny: ['routing'],
+    since: 'P3',
+    objectives: ['CCNA3.wan.6', 'CCNA3.wan.7'],
+  },
+  {
+    // [S19]
+    path: ['show', 'ppp', 'interface', '<iface>'],
+    mode: '@exec',
+    privilege: 1,
+    help: 'PPP on serial interfaces: link phase, LCP, authentication and the network protocols',
+    args: { iface: ifaceArg('Limit the output to one serial interface', { optional: true, portFilter: kindsPort(['serial'], MSG_PPP_SHOW_PORT) }) },
+    handler: H.showPppInterface,
+    filterable: true,
+    grammars: NFOS_ONLY,
+    requiresAny: ['routing'],
+    since: 'P3',
+    objectives: ['CCNA3.wan.3'],
+  },
+  ...debugSpecs(WAN_DEBUG_CATEGORIES, WAN_DEBUG_OBJECTIVES),
 ]);
 
 /** @since P3 [S18]/[S19] Help of the intermediate WAN keywords (merged into `LITERAL_HELP` by the fold). */

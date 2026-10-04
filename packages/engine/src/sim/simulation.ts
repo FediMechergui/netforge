@@ -92,6 +92,9 @@
  * (sim/configure.ts `dispatchRemoteCli`); the CLI core's `remoteOutput` dep is the facade's `deliverVtyOutput`, so a
  * via-'vty' session's output reaches the device's vty daemon as `vty.output` and never the trace; and
  * `FacadeCounters.remote` is resumed and reported only when present (a P1/P2 world's counters keep their shape).
+ * P3 W3 sim [S25] (D20): the trace sink forwards every `log` event to the CLI's `onLogEvent` (the facade `cli` gains
+ * that member), exactly as it forwards `debug`; the CLI prints it on consoles (P3 worlds, or after a typed `logging
+ * console`) and `terminal monitor` sessions, so P1/P2 typed transcripts are unchanged.
  *
  * [S1] Time travel (D18, §2.13, §3.13; the `// [S1]` block below): the facade journals every OUTERMOST mutating call
  * through sim/journal.ts — `{at: position(), op, traceHead}`, the op deep-copied at record time — and nothing reached
@@ -400,6 +403,11 @@ export function createSimulation(opts: SimulationOptions): Simulation {
         for (const l of ls) l(ev);
       }
       if (ev.kind === 'debug' && cliRef !== undefined) cliRef.onDebugEvent(ev.event);
+      // [S25] (D20, §7 W3 sim): a log prints on the device's consoles and `terminal monitor` sessions, fed from the
+      // trace like debug. The CLI decides who prints (cli/runtime.ts `onLogEvent`): a console only in a P3 world or
+      // after a typed `logging console`, so no P1/P2 typed transcript gains a line.
+      else if (ev.kind === 'log' && cliRef !== undefined) cliRef.onLogEvent?.(ev);
+      // [S25] end
       renderCache.observe(ev);
     },
   };
@@ -422,6 +430,8 @@ export function createSimulation(opts: SimulationOptions): Simulation {
     now: () => world.scheduler.now,
     radioView: (ref) => world.media.links.radioPortView(ref),
     airView: (device) => world.media.links.airView(device),
+    // P3 [S20] (ruling R32): the held queues of a scheduler port for `show policy-map interface` / `show interfaces`
+    egressQueues: (ref) => world.media.links.egressQueues?.(ref),
     resume: resume.remote === undefined ? { sessions: resume.sessions, headless: resume.headless } : { sessions: resume.sessions, headless: resume.headless, remote: resume.remote },
     remoteOutput: (device, ev, now) => {
       const w = world;
@@ -463,6 +473,8 @@ export function createSimulation(opts: SimulationOptions): Simulation {
     onOutput: (session, text, now) => cliCore.onOutput(session, text, now),
     onDone: (session, now) => cliCore.onDone(session, now),
     onDebugEvent: (ev) => cliCore.onDebugEvent(ev),
+    // [S25] the trace sink's log branch (above) reaches the CLI core through this member
+    onLogEvent: (ev) => cliCore.onLogEvent(ev),
     open: (device, via) =>
       apply({ op: 'cliOpen', device, via }, () => cliCore.open(device, via)),
     close: (id) => apply({ op: 'cliClose', session: id }, () => cliCore.close(id)),

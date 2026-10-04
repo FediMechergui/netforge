@@ -29,6 +29,8 @@ import {
 import { readAcls, readStandardAcls } from '../src/core/acl.js';
 import { modeForContext, modesOfClass } from '../src/cli/modes.js';
 import { matchCommand, type MatchResult } from '../src/cli/parser.js';
+import { PING_COUNT } from '../src/cli/handlers/exec.js';
+import { createAcl } from '../src/protocols/acl.js';
 import { catalogModel, commandCtxFor, matchContextFor, type CommandCtxOptions, type RecordingCtx } from './cli.p05.fixture.js';
 import { createStagedSimulation } from './staged.world.js';
 
@@ -466,5 +468,53 @@ describe('a console session on a P3-stage switch (D14)', () => {
     expect(refused.error).toBeUndefined();
     sim.cli.exec(s, 'interface fa0/1');
     expect(sim.cli.exec(s, 'ip access-group 10 in').output).toContain(CLI_MESSAGES.accessGroupSwitchport.replace('{port}', 'FastEthernet0/1'));
+  });
+});
+
+// ── ARCHITECTURE-P3 §9.2 W3 item 27 (W3 cli part 2): the match counts on a real world ─────────────────────────────
+
+describe('show access-lists on a real P3 world (§9.2 W3 item 27)', () => {
+  const pcConfig = (name: string, address: string, gateway: string): string =>
+    [`hostname ${name}`, '!', 'interface GigabitEthernet0', ` ip address ${address} 255.255.255.0`, '!', `ip default-gateway ${gateway}`, '!', 'end', ''].join('\n');
+
+  it('an applied list gains " (N matches)" on the rows with N > 0; a row that matched nothing, the implicit deny and an unapplied list print no count', () => {
+    const sim = createStagedSimulation({ seed: 27, stage: 'P3', factories: { acl: createAcl } });
+    sim.addDevice({ id: 'pc1', type: 'pc.nfpc', name: 'PC1', startupConfig: pcConfig('PC1', '192.168.10.10', '192.168.10.1') });
+    sim.addDevice({ id: 'srv', type: 'pc.nfpc', name: 'SRV', startupConfig: pcConfig('SRV', '192.168.20.100', '192.168.20.1') });
+    sim.addDevice({
+      id: 'r1', type: 'router.nf2911', name: 'R1',
+      startupConfig: [
+        'hostname R1', '!',
+        `interface ${GI0}`, ' ip address 192.168.10.1 255.255.255.0', ' ip access-group 10 in', ' no shutdown', '!',
+        'interface GigabitEthernet0/1', ' ip address 192.168.20.1 255.255.255.0', ' no shutdown', '!',
+        'access-list 10 permit 192.168.10.0 0.0.0.255', 'access-list 10 deny any', 'access-list 20 permit any', '!',
+        'end', '',
+      ].join('\n'),
+    });
+    sim.addLink({ a: { device: 'pc1', port: 'GigabitEthernet0' }, b: { device: 'r1', port: GI0 } });
+    sim.addLink({ a: { device: 'r1', port: 'GigabitEthernet0/1' }, b: { device: 'srv', port: 'GigabitEthernet0' } });
+    sim.runFor(60 * SEC);
+    const r1 = sim.cli.open('r1', 'console');
+    sim.cli.exec(r1, 'enable');
+    // before any traffic: the rows exist (the list is applied) but count nothing, so no count is printed
+    expect(sim.cli.exec(r1, 'show access-lists').output!.split('\n')).toEqual([
+      'Standard access list 10',
+      '    10 permit 192.168.10.0 0.0.0.255',
+      '    20 deny any',
+      'Standard access list 20',
+      '    10 permit any',
+    ]);
+    const pc = sim.cli.open('pc1', 'console');
+    sim.cli.exec(pc, 'ping 192.168.20.100');
+    sim.runToIdle();
+    // every echo request entered Gi0/0 and matched entry 10; the replies entered Gi0/1, which has no list
+    expect(sim.cli.exec(r1, 'show access-lists').output!.split('\n')).toEqual([
+      'Standard access list 10',
+      `    10 permit 192.168.10.0 0.0.0.255 (${PING_COUNT} matches)`,
+      '    20 deny any',
+      'Standard access list 20',
+      '    10 permit any',
+    ]);
+    expect(sim.cli.exec(r1, 'show ip access-lists 10').output!.split('\n')[1]).toBe(`    10 permit 192.168.10.0 0.0.0.255 (${PING_COUNT} matches)`);
   });
 });

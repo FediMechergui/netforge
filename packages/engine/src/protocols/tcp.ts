@@ -37,6 +37,12 @@
  *    (nor `sock.closed` when it closes), left out of the StateView, so a P1/P2 router whose configuration holds
  *    `line vty` keeps its bytes. It binds and accepts like any listener; its accepted connections are ordinary ones.
  *
+ * P3 (ARCHITECTURE-P3 D14, §3.14; W3 svc [S13]): `ext.tcp.protect {socket, protectedBy: 'ssh'}` (`tcpProtectRequest`,
+ * sent by vty and vty-client right after their clear SSH identification line) marks every later segment of that
+ * connection that carries a byte queued after the request `meta.protected` + `protectedBy 'ssh'` (retransmissions
+ * included); the bytes queued before it (the version line) stay clear. No row, StateView or debug change; a connection
+ * that never receives the request is exactly the P1 one.
+ *
  * P3 (ARCHITECTURE-P3 §2.4, §2.6; W2 svc): `tcp.probe {session, dst, port, src?, timeoutNs}` (grader clones only) sends
  * one SYN (tag 'tcp-probe') from an ephemeral port that the probe holds, with no connection, row or socket event, and
  * records the outcome in the StateView `probes` (optional by meaning: present only after a probe, at most 16, newest
@@ -92,6 +98,17 @@ const SENDING: ReadonlySet<TcpState> = new Set(['ESTABLISHED', 'CLOSE_WAIT', 'FI
 /** States that still accept new data from the peer. */
 const RECEIVING: ReadonlySet<TcpState> = new Set(['ESTABLISHED', 'FIN_WAIT_1', 'FIN_WAIT_2']);
 
+/**
+ * @since P3 [S13] The request kind that turns on the simulated SSH protection of a connection's later bytes (file
+ * header). An `ext.*` request: the contract's extension slot, so no ProcessRequest member is added.
+ */
+export const TCP_PROTECT_REQUEST = 'ext.tcp.protect' as const;
+
+/** @since P3 [S13] `ext.tcp.protect {socket, protectedBy}`: protect every byte of `socket` queued from now on. */
+export function tcpProtectRequest(socket: SocketId, protectedBy: 'ssh'): ProcessRequest {
+  return { kind: TCP_PROTECT_REQUEST, socket, protectedBy };
+}
+
 /** a + n in sequence space. */
 const seqAdd = (a: number, n: number): number => (a + n) >>> 0;
 /** a − b in sequence space (signed 32-bit). */
@@ -123,6 +140,9 @@ interface Conn {
   readonly listener?: SocketId;
   /** @since P3 (D21) Data segments carry `meta.protected` + `protectedBy: 'tls'`. */
   readonly tls?: true;
+  /** @since P3 [S13] `ext.tcp.protect`: the sequence number of the first protected byte, and the channel. */
+  protectFrom?: number;
+  protectedBy?: 'ssh';
   state: TcpState;
   iss: number;
   sndUna: number;
@@ -333,6 +353,10 @@ export function createTcp(): Process {
     }
     // P3 (D21): the simulated TLS channel marks every segment that carries data
     if (c.tls === true && data !== undefined && data.length > 0) meta = { ...meta, protected: true, protectedBy: 'tls' };
+    // P3 [S13]: an SSH channel marks every segment carrying a byte queued after its `ext.tcp.protect` request
+    if (c.protectFrom !== undefined && c.protectedBy !== undefined && data !== undefined && data.length > 0 && seqDiff(seqAdd(seq, data.length), c.protectFrom) > 0) {
+      meta = { ...meta, protected: true, protectedBy: c.protectedBy };
+    }
     const fields: Record<string, FieldValue> = { seq, flags, ...extra };
     if (flags.includes('A')) fields.ack = c.rcvNxt;
     const out: Action[] = [emit(ctx, c.family, c.localAddr, c.remoteAddr, c.localPort, c.remotePort, fields, data, meta)];
@@ -639,6 +663,19 @@ export function createTcp(): Process {
     c.buf = concat(c.buf, req.data);
     c.drainWanted = true;
     return output(ctx, c);
+  }
+
+  /** [S13] `ext.tcp.protect`: every byte of the connection queued after now is protected (file header). */
+  function protect(req: ProcessRequest): Action[] {
+    const r = req as { socket?: unknown; protectedBy?: unknown };
+    if (typeof r.socket !== 'string' || r.protectedBy !== 'ssh') return [];
+    const c = conns.get(r.socket);
+    if (c === undefined) return [];
+    // the first data byte is ISS + 1 until the handshake completes; then the buffer starts at SND.UNA
+    const base = c.state === 'SYN_SENT' || c.state === 'SYN_RECEIVED' ? seqAdd(c.iss, 1) : c.sndUna;
+    c.protectFrom = seqAdd(base, c.buf.length);
+    c.protectedBy = r.protectedBy;
+    return [];
   }
 
   function closeListener(ctx: ProcessCtx, l: Listener): Action[] {
@@ -1146,6 +1183,8 @@ export function createTcp(): Process {
           return abort(ctx, req);
         case 'tcp.probe':
           return probe(ctx, req);
+        case TCP_PROTECT_REQUEST:
+          return protect(req);
         default:
           return [];
       }

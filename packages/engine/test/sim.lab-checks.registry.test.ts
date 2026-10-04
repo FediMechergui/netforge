@@ -154,31 +154,28 @@ describe('the registry is exhaustive', () => {
     for (const k of Object.keys(CHECKERS)) expect(typeof (CHECKERS as Record<string, unknown>)[k]).toBe('function');
   });
 
-  it('every neighbour protocol and every fact has an entry (all waiting for the W3 adapters)', () => {
+  // ARCHITECTURE-P3 §9.2 W3 item 30f: the W3 adapters fill every entry the W1 stubs left undefined
+  it('every neighbour protocol and every fact has an entry (filled by the W3 adapters)', () => {
     expect(Object.keys(NEIGHBOR_SOURCES).sort()).toEqual(Object.keys(NEIGHBOR_STUBS).sort());
     expect(Object.keys(NEIGHBOR_PROTOCOL_LABELS).sort()).toEqual(Object.keys(NEIGHBOR_STUBS).sort());
     expect(Object.keys(FACT_READERS).sort()).toEqual(Object.keys(FACTS).sort());
-    for (const p of Object.keys(NEIGHBOR_STUBS) as NeighborProtocol[]) expect(NEIGHBOR_SOURCES[p]).toBeUndefined();
-    for (const f of Object.keys(FACTS) as LabFactName[]) expect(FACT_READERS[f]).toBeUndefined();
+    for (const p of Object.keys(NEIGHBOR_STUBS) as NeighborProtocol[]) expect(NEIGHBOR_SOURCES[p]).toBeDefined();
+    for (const f of Object.keys(FACTS) as LabFactName[]) expect(FACT_READERS[f]).toBeDefined();
     expect(Object.keys(IDENTITY_SOURCES)).toEqual(['name', 'address', 'mac', 'ospf', 'eigrp']);
-    expect(IDENTITY_SOURCES.ospf).toBeUndefined();
-    expect(IDENTITY_SOURCES.eigrp).toBeUndefined();
+    expect(IDENTITY_SOURCES.ospf).toBeDefined();
+    expect(IDENTITY_SOURCES.eigrp).toBeDefined();
   });
 });
 
 describe('stub details', () => {
   it('the kinds a later item brings fail with their W0 detail', () => {
-    const probe = { proto: 'tcp', src: '10.0.0.1', dst: '10.0.1.1', dstPort: 80 } as const;
+    // ARCHITECTURE-P3 §9.2 W3 item 30f: the W3 acl adapter answers `acl` and `aclDecision`; three kinds stay stubbed
     const got = details(world, [
-      { kind: 'acl', device: 'R1', list: '101' },
-      { kind: 'aclDecision', device: 'R1', list: '101', packet: probe, expect: 'deny' },
       { kind: 'service', from: 'PC1', to: 'R1', service: 'ssh', expect: 'success' },
       { kind: 'path', from: 'PC1', to: 'PC2', via: ['R1'] },
       { kind: 'traffic', flows: [], runMs: 1000, expect: [] },
     ]);
     expect(got).toEqual([
-      'Access list checks are not available in this build.',
-      'Access list decision checks are not available in this build.',
       'Remote login checks are not available in this build.',
       'Path checks are not available in this build.',
       'Traffic flow checks are not available in this build.',
@@ -186,21 +183,19 @@ describe('stub details', () => {
     expect(Object.values(UNAVAILABLE_KIND_DETAILS)).toEqual(got);
   });
 
+  // ARCHITECTURE-P3 §9.2 W3 item 30f: the W3 adapters fill every entry, so each check runs with its own entry set to
+  // undefined (the stub it had before), same expected details
   it('every neighbour protocol fails with its own detail', () => {
     const protocols = Object.keys(NEIGHBOR_STUBS) as NeighborProtocol[];
-    const got = details(
-      world,
-      protocols.map((protocol): LabAssertion => ({ kind: 'neighbor', device: 'R1', protocol, state: 'full' })),
+    const got = protocols.map(
+      (protocol) => checkNeighbor(world, { kind: 'neighbor', device: 'R1', protocol, state: 'full' }, { ...NEIGHBOR_SOURCES, [protocol]: undefined }).detail,
     );
     expect(got).toEqual(protocols.map((p) => NEIGHBOR_STUBS[p]));
   });
 
   it('every fact fails with its own detail', () => {
     const facts = Object.keys(FACTS) as LabFactName[];
-    const got = details(
-      world,
-      facts.map((fact): LabAssertion => ({ kind: 'fact', device: 'R1', fact, equals: true })),
-    );
+    const got = facts.map((fact) => checkFact(world, { kind: 'fact', device: 'R1', fact, equals: true }, { ...FACT_READERS, [fact]: undefined }).detail);
     expect(got).toEqual(facts.map((f) => `The ${f} fact is not available in this build.`));
   });
 });
@@ -256,8 +251,9 @@ describe('the feedback envelope', () => {
   });
 
   it('applies to the stub details and to the static checks of connectivity.then', () => {
+    // ARCHITECTURE-P3 §9.2 W3 item 30f: the `acl` row is replaced by the still-stubbed `service` row
     const got = details(world, [
-      { kind: 'acl', device: 'R1', list: '1', feedback: 'Come back after the ACL lesson.' },
+      { kind: 'service', from: 'PC1', to: 'R1', service: 'ssh', expect: 'success', feedback: 'Come back after the ACL lesson.' },
       {
         kind: 'connectivity',
         from: 'PC1',
@@ -268,7 +264,7 @@ describe('the feedback envelope', () => {
       },
     ]);
     expect(got).toEqual([
-      'Access list checks are not available in this build. Come back after the ACL lesson.',
+      'Remote login checks are not available in this build. Come back after the ACL lesson.',
       'After the ping from PC1: R1 has no configuration line at no-such-line. Inner advice. Outer advice.',
     ]);
   });

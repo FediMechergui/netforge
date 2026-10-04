@@ -4,6 +4,12 @@
  * `debug ` subtrees, and the config-if help of one representative port per (kind, role) — including the routed role
  * multilayer switch ports can take. The JSON golden lives in test/goldens/cli-help.p05.json; a grammar change that
  * alters any list shows up as a golden diff.
+ *
+ * ARCHITECTURE-P3 §9.2 item 21 (W3, the final lists): the approved items' new modes — `config-router-eigrp` [C1] and the
+ * four crypto modes [C13] — are listed for every model whose grammar offers more there than the navigation words, and
+ * the Tunnel interface [S18]/[C13] (`config-if virtual/tunnel`) for every model the Tunnel family is derived for
+ * (`withTunnelFamily`: routing, not a home router; the catalog derives it at the W4 flip); they are new golden
+ * entries, appended after the P0-P2 keys of a model.
  */
 import { describe, expect, it } from 'vitest';
 import type { CliMode } from '../src/contracts/cli.js';
@@ -13,7 +19,15 @@ import { ROLE_TRAITS, type PortRole } from '../src/contracts/catalog.js';
 import { ALL_MODELS } from '../src/device/catalog/index.js';
 import { GRAMMAR } from '../src/cli/grammar/index.js';
 import { help } from '../src/cli/parser.js';
+import { virtualPortName } from '../src/device/catalog/names.js';
+import { withTunnelFamily } from '../src/device/catalog/define.js';
+import { testPortView } from './cli.parser.fixture.js';
 import { devicePortViews, matchContextFor, type MatchContextOptions } from './cli.p05.fixture.js';
+
+/** ARCHITECTURE-P3 §9.2 item 21 (W3): the approved items' modes recorded as new golden entries. */
+const P3_APPROVED_MODES: readonly CliMode[] = ['config-router-eigrp', 'config-ikev2-keyring', 'config-ikev2-keyring-peer', 'config-ikev2-profile', 'config-ipsec-profile'];
+/** The words every configuration mode offers (a mode offering only these is not one the model's grammar reaches). */
+const NAVIGATION_WORDS: ReadonlySet<string> = new Set(['do', 'end', 'exit', 'no']);
 
 function listing(model: DeviceModel, mode: CliMode, partial: string, opts: MatchContextOptions = {}): string[] {
   return help(GRAMMAR, matchContextFor(model, mode, opts), partial).items.map((i) => i.token);
@@ -44,6 +58,21 @@ function goldenFor(model: DeviceModel): Record<string, string[]> {
       const view: PortView = role === port.spec.role ? port : { ...port, role };
       out[key] = listing(model, 'config-if', '', { ports, ifaceView: view });
     }
+  }
+  // ARCHITECTURE-P3 §9.2 item 21 (W3): the approved items' modes and the Tunnel interface (file header)
+  for (const mode of P3_APPROVED_MODES) {
+    const list = listing(model, mode, '');
+    if (list.some((t) => !NAVIGATION_WORDS.has(t))) out[mode] = list;
+  }
+  // the Tunnel family is derived at build stage P3 only (`withTunnelFamily`, the W4 flip): the same derivation here
+  // records its list now, so the flip moves no golden list
+  for (const fam of withTunnelFamily(model.capabilities, model.virtualFamilies ?? [])) {
+    if (fam.role !== 'tunnel') continue;
+    const view: PortView = {
+      ...testPortView({ name: virtualPortName({ family: fam.family }, 0), short: `${fam.short}0`, kind: 'virtual', role: 'tunnel', allowedRoles: ['tunnel'], encap: fam.encap ?? 'tunnel', connector: 'none', speedBps: 100_000 }),
+      role: 'tunnel',
+    };
+    out['config-if virtual/tunnel'] = listing(model, 'config-if', '', { ports, ifaceView: view });
   }
   return out;
 }

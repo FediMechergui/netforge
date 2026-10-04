@@ -32,6 +32,12 @@
  * model, so what the canvas draws is what the tree says (every overlay fact has a text form). @since W6 While the
  * controller-tunnel overlay is on, an access point's row says each tunnel and how far its join has got ("CAPWAP Jn
  * 3/6"), and a controller's row how many of its access points have joined (`capwapDeviceFacts` of `capwap.ts`).
+ *
+ * @since P3 (W3 web-canvas, ARCHITECTURE-P3 §6) The P3 overlays are said the same way, from the same registry models
+ * the canvas draws: QoS (a port row says its waiting frames and DSCP letters, or its [S20] class lanes and drop tags;
+ * a cable row each direction's load), [S1] OSPF, [C1] EIGRP, [S18]/[S19] WAN and, while the link-state browser is the
+ * dock's tab, the [S3] SPF frame — each layer's `<name>PortFacts`, `<name>DeviceFacts` and `<name>LinkFacts`, folded
+ * in paint order after the P2 facts.
  */
 import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { FocusEvent as ReactFocusEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react';
@@ -42,9 +48,26 @@ import { store, useStore } from '../../store/store';
 import type { TopoOverlayState } from '../../store/types';
 import { isPickablePort } from '../../app/cable/cable-compat.js';
 import { capwapDeviceFacts, capwapTunnelViews } from '../capwap';
+import { eigrpDeviceFacts, eigrpLinkFacts, eigrpPortFacts } from '../eigrp';
 import { l2LinkFacts, l2PortFacts, type OverlayFact } from '../l2';
-import { CAPWAP_OVERLAY, STP_OVERLAY, TOPO_OVERLAY_DEFAULTS, VLAN_OVERLAY } from '../overlays/registry';
+import { ospfDeviceFacts, ospfLinkFacts, ospfPortFacts } from '../ospf';
+import {
+  CAPWAP_OVERLAY,
+  EIGRP_OVERLAY,
+  OSPF_OVERLAY,
+  QOS_OVERLAY,
+  SPF_OVERLAY,
+  STP_OVERLAY,
+  TOPO_OVERLAY_DEFAULTS,
+  VLAN_OVERLAY,
+  WAN_OVERLAY,
+  type OverlayRoutingInput,
+  type OverlaySyncInput,
+} from '../overlays/registry';
+import { qosDeviceFacts, qosLinkFacts, qosPortFacts } from '../qos';
+import { spfDeviceFacts, spfLinkFacts, spfPortFacts } from '../spf';
 import { stpDeviceFacts, stpLinkFacts, stpPortFacts } from '../stp';
+import { wanDeviceFacts, wanLinkFacts, wanPortFacts } from '../wan';
 import { announceWith, attachCanvasAnnouncer, subscribeFallbackAnnouncements } from './announcer';
 import {
   associationKey,
@@ -103,23 +126,55 @@ function merge<K>(into: Map<K, OverlayFact[]>, from: ReadonlyMap<K, OverlayFact>
   for (const [k, fact] of from) into.set(k, [...(into.get(k) ?? []), fact]);
 }
 
-/** Facts of the overlays the slice switches on, from the same registry models the canvas draws (pure). */
-export function outlineFacts(snapshot: SimSnapshot | null, topo: TopoOverlayState | undefined): OutlineFacts {
+/** True when some overlay whose facts the outline says is on. */
+function anyOverlayOn(state: TopoOverlayState, routing: OverlayRoutingInput | undefined): boolean {
+  return state.vlan || state.stp || state.capwap || state.qos || state.ospf || state.wan || state.eigrp || routing?.shown === true;
+}
+
+/**
+ * Facts of the overlays the slice switches on, from the same registry models the canvas draws (pure). `routing` is the
+ * link-state browser's selection and whether it is on screen (the [S3] SPF layer's facts); absent = no SPF facts.
+ */
+export function outlineFacts(snapshot: SimSnapshot | null, topo: TopoOverlayState | undefined, routing?: OverlayRoutingInput): OutlineFacts {
   const state = topo ?? TOPO_OVERLAY_DEFAULTS;
-  if (snapshot === null || (!state.vlan && !state.stp && !state.capwap)) return NO_FACTS;
+  if (snapshot === null || !anyOverlayOn(state, routing)) return NO_FACTS;
   const now = snapshot.now;
+  const input: OverlaySyncInput = routing === undefined ? { state, snapshot, now } : { state, snapshot, now, routing };
   const ports = new Map<string, OverlayFact[]>();
   const devices = new Map<DeviceId, OverlayFact[]>();
   const links = new Map<LinkId, OverlayFact[]>();
-  const l2 = VLAN_OVERLAY.sync({ state, snapshot, now });
+  const l2 = VLAN_OVERLAY.sync(input);
   merge(ports, l2PortFacts(l2));
   merge(links, l2LinkFacts(l2));
-  const stp = STP_OVERLAY.sync({ state, snapshot, now });
+  const stp = STP_OVERLAY.sync(input);
   merge(ports, stpPortFacts(stp));
   merge(devices, stpDeviceFacts(stp));
   merge(links, stpLinkFacts(stp));
   // W6: the controller tunnels, on the access point's row and the controller's (the layer draws the same views)
-  merge(devices, capwapDeviceFacts(capwapTunnelViews(CAPWAP_OVERLAY.sync({ state, snapshot, now }), snapshot), snapshot));
+  merge(devices, capwapDeviceFacts(capwapTunnelViews(CAPWAP_OVERLAY.sync(input), snapshot), snapshot));
+  // P3 (W3), in paint order: OSPF, EIGRP, SPF, WAN, QoS (a device is named by its name where a sentence names a peer)
+  const byId = new Map(snapshot.devices.map((d) => [d.id, d.name] as const));
+  const name = (id: DeviceId): string => byId.get(id) ?? id;
+  const ospf = OSPF_OVERLAY.sync(input);
+  merge(ports, ospfPortFacts(ospf));
+  merge(devices, ospfDeviceFacts(ospf));
+  merge(links, ospfLinkFacts(ospf));
+  const eigrp = EIGRP_OVERLAY.sync(input);
+  merge(ports, eigrpPortFacts(eigrp));
+  merge(devices, eigrpDeviceFacts(eigrp));
+  merge(links, eigrpLinkFacts(eigrp, name));
+  const spf = SPF_OVERLAY.sync(input);
+  merge(ports, spfPortFacts(spf));
+  merge(devices, spfDeviceFacts(spf));
+  merge(links, spfLinkFacts(spf));
+  const wan = WAN_OVERLAY.sync(input);
+  merge(ports, wanPortFacts(wan, name));
+  merge(devices, wanDeviceFacts(wan, name));
+  merge(links, wanLinkFacts(wan, name));
+  const qos = QOS_OVERLAY.sync(input);
+  merge(ports, qosPortFacts(qos));
+  merge(devices, qosDeviceFacts(qos));
+  merge(links, qosLinkFacts(qos));
   return { ports, devices, links };
 }
 
@@ -363,10 +418,13 @@ export function CanvasOutline() {
   const snapshot = useStore((s) => s.snapshot);
   const selection = useStore((s) => s.selection);
   const topo = useStore((s) => s.topoOverlays);
+  const routingUi = useStore((s) => s.routingUi);
+  const routingShown = useStore((s) => s.dockTab === 'routing');
   const selectedKey = selection === null ? null : selectionKey(selection);
 
   const bare = useMemo(() => buildOutline(snapshot), [snapshot]);
-  const facts = useMemo(() => outlineFacts(snapshot, topo), [snapshot, topo]);
+  const routing = useMemo<OverlayRoutingInput>(() => ({ ui: routingUi, shown: routingShown }), [routingUi, routingShown]);
+  const facts = useMemo(() => outlineFacts(snapshot, topo, routing), [snapshot, topo, routing]);
   const model = useMemo(() => decorateOutline(bare, facts), [bare, facts]);
   const [groups, setGroups] = useState<ReadonlySet<OutlineGroup>>(() => new Set<OutlineGroup>(['devices']));
   const [devices, setDevices] = useState<ReadonlySet<DeviceId>>(() => new Set<DeviceId>());

@@ -7,8 +7,9 @@
  * malformed selectors fall back), the "Routing, WAN and QoS overlays" menu model (one toggle per P3 boolean, one
  * selector per P3 selector key, stable ids, original labels, the choices the world's OSPF and EIGRP rows offer), the
  * `routingUi` slice (defaults, merge, no-op, reset by a new epoch, never persisted), and the concept registry keyed by
- * `ConceptToolId` (exhaustive; the P3 tools not built yet show the "not available" note; the View menu lists built
- * tools only).
+ * `ConceptToolId` (exhaustive; an id this build has no tool for shows the "not available" note; the View menu lists
+ * built tools only). W3 (ruling R9, knock-on): the three P3 tools are built, so the exact lists gain them and the
+ * "not available" case takes an id from outside the contract (an old saved link).
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import { createElement } from 'react';
@@ -288,26 +289,31 @@ describe('the [S2] routingUi slice', () => {
 describe('concept-view routing by ConceptToolId (D24)', () => {
   const ALL: readonly ConceptToolId[] = ['subnetting', 'ipv6', 'queueing', 'data-formats', 'wildcard'];
 
-  it('has one registry entry per ConceptToolId; the P3 tools are not built yet', () => {
+  it('has one registry entry per ConceptToolId; every tool is built (the P3 tools since W3)', () => {
     expect(Object.keys(CONCEPT_TOOL_VIEWS).sort()).toEqual([...ALL].sort());
-    expect(ALL.filter((t) => isConceptToolBuilt(t))).toEqual(['subnetting', 'ipv6']);
+    expect(ALL.filter((t) => isConceptToolBuilt(t))).toEqual(['subnetting', 'ipv6', 'queueing', 'data-formats', 'wildcard']);
     expect(CONCEPT_TOOLS.every((t) => CONCEPT_TOOL_VIEWS[t.id] !== null)).toBe(true);
   });
 
   it('routes a built id to its tool and an unbuilt one to the "not available" note', () => {
     const ipv6 = renderToStaticMarkup(createElement<ConceptViewProps>(ConceptView, { tool: 'ipv6' }));
     expect(ipv6).toContain('Shorten or write out');
+    // the P3 tools are lazy chunks (D24): a server render shows the Suspense line, never the note
     for (const t of ['queueing', 'data-formats', 'wildcard'] as const) {
       const html = renderToStaticMarkup(createElement<ConceptViewProps>(ConceptView, { tool: t }));
-      expect(html, t).toContain('This concept tool is not available in this build.');
+      expect(html, t).toContain('Loading the tool…');
+      expect(html, t).not.toContain('This concept tool is not available in this build.');
       expect(html, t).not.toContain('Bits and mask');
     }
+    const unknown = renderToStaticMarkup(createElement<ConceptViewProps>(ConceptView, { tool: 'old-tool' as ConceptToolId }));
+    expect(unknown).toContain('This concept tool is not available in this build.');
+    expect(unknown).not.toContain('Bits and mask');
   });
 
   it('the View menu lists the P1 entries, then only the other tools this build has', () => {
     const entries = conceptMenuEntries();
     expect(entries.slice(0, CONCEPT_MENU.length)).toEqual([...CONCEPT_MENU]);
     for (const e of entries) expect(isConceptToolBuilt(e.tool), e.tool).toBe(true);
-    expect(entries.map((e) => e.tool)).toEqual(['subnetting', 'ipv6']);
+    expect(entries.map((e) => e.tool)).toEqual(['subnetting', 'ipv6', 'queueing', 'data-formats', 'wildcard']);
   });
 });

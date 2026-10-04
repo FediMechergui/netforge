@@ -16,31 +16,40 @@
  * (`app/TopBar.tsx` `conceptMenuEntries`). The tool renders inside a Suspense boundary, so a lazy one shows a
  * loading line while its chunk arrives.
  */
-import { Suspense, useState, type ReactElement } from 'react';
+import { Suspense, lazy, useState, type ReactElement } from 'react';
 import { useStore } from '../store/store';
 import type { ConceptTool } from '../store/types';
 import { Ipv6Explorer } from './ipv6/Ipv6Explorer';
 import { SubnetWorkbench } from './subnetting/SubnetWorkbench';
 
+// P3 (D24; W3 web-concept): the new tools are lazy chunks, loaded the first time one is opened.
+const QueueingTool = lazy(() => import('./queueing/QueueingTool').then((m) => ({ default: m.QueueingTool })));
+const DataFormatsTool = lazy(() => import('./data-formats/DataFormatsTool').then((m) => ({ default: m.DataFormatsTool })));
+const WildcardTool = lazy(() => import('./wildcard/WildcardTool').then((m) => ({ default: m.WildcardTool })));
+
 /** The concept tools, in display order, with what each one is for. */
 export const CONCEPT_TOOLS: readonly { readonly id: ConceptTool; readonly label: string; readonly hint: string }[] = Object.freeze([
   { id: 'subnetting', label: 'Subnetting', hint: 'Split blocks, read masks and practise the arithmetic.' },
   { id: 'ipv6', label: 'IPv6', hint: 'Shorten addresses, build interface ids and name address types.' },
+  // P3 (W3 web-concept; R9: each tool joins this list with its item)
+  { id: 'queueing', label: 'Queueing', hint: 'Watch FIFO, WFQ, CBWFQ and LLQ share a busy link, packet by packet.' },
+  { id: 'data-formats', label: 'Data formats', hint: 'Read JSON, YAML and XML, find key paths and convert between them.' },
+  { id: 'wildcard', label: 'Wildcards', hint: 'See which address bits a wildcard checks, count the matches and build one.' },
 ]);
 
 /** @since P3 How a registered tool is drawn: called at render time; null = not built in this build. */
 export type ConceptToolView = (() => ReactElement) | null;
 
 /**
- * @since P3 (D24) The concept registry: one entry per `ConceptToolId`. The P3 tools land with their W3 web-concept
- * items ('queueing', 'data-formats', [S9] 'wildcard'); until then they are null.
+ * @since P3 (D24) The concept registry: one entry per `ConceptToolId`. The P3 tools ('queueing', 'data-formats', [S9]
+ * 'wildcard') landed with their W3 web-concept items, as lazy chunks.
  */
 export const CONCEPT_TOOL_VIEWS: Readonly<Record<ConceptTool, ConceptToolView>> = Object.freeze({
   subnetting: () => <SubnetWorkbench />,
   ipv6: () => <Ipv6Explorer />,
-  queueing: null,
-  'data-formats': null,
-  wildcard: null,
+  queueing: () => <QueueingTool />,
+  'data-formats': () => <DataFormatsTool />,
+  wildcard: () => <WildcardTool />,
 });
 
 /** @since P3 Whether this build has the tool (a registered view and a `CONCEPT_TOOLS` row to name it). */

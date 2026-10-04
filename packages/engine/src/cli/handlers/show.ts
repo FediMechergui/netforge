@@ -23,19 +23,31 @@
  *   show.controllers        serial cable end, clock, framing and line state
  *   show.wireless           radio settings, networks (a lightweight AP: the WLAN its controller pushed) and associations
  *   show.inventory          chassis, slots, modules and transceivers
+ *
+ * P3 (ARCHITECTURE-P3 §5.8; W3 cli, cli-b, the approved items): `show interfaces` gains the [S18]/[C13] tunnel lines of
+ * a tunnel (`tunnelLines`: source, destination, transport, IPsec protection, MTUs, MSS clamp; the status line names
+ * the `tunnels` row's down reason), the [S19] PPP lines of a PPP serial line (`pppLines`, from the `ppp` row; the two
+ * PPP line-protocol reasons) and the [S20]/[S21] queue lines of a port with an output scheduler (`interfaceQueueLines`,
+ * from `CommandCtx.egressQueues` or the QoS view's `queue`); `show ip interface brief` shows an administratively up
+ * tunnel as up with its line protocol in the Protocol column; `show ip route eigrp` [C1] says so when EIGRP learned no
+ * route. A port that is not a tunnel, not PPP-framed and has no scheduler — every P1/P2 port — renders byte for byte
+ * as before.
  */
 import type { CommandCtx, CommandHandler } from '../../contracts/cli.js';
 import type { ConfigAst } from '../../contracts/config.js';
 import type { PortId } from '../../contracts/ids.js';
+import type { EgressQueueView } from '../../contracts/link.js';
 import type { PortKind, PortView } from '../../contracts/port.js';
-import type { ArpRow, CamRow, Dot11AssocRow, RouteRow } from '../../contracts/tables.js';
-import { ipv4ToU32, macToDotted } from '../../contracts/addr.js';
+import type { ArpRow, CamRow, Dot11AssocRow, PppFsmState, PppRow, RouteRow, TunnelDownReason, TunnelRow } from '../../contracts/tables.js';
+import { ipv4ToU32, isIpv4, macToDotted } from '../../contracts/addr.js';
 import { KIND_CONNECTOR, ROLE_TRAITS, type SlotType } from '../../contracts/catalog.js';
 import { radioModeOf, type RadioMode, type RadioPortView } from '../../contracts/rf.js';
 import { MODULE_MODELS } from '../../device/catalog/modules.js';
+import { routingBandwidthKbps } from '../../protocols/ospf/cost.js';
 import { maskSecretTokens } from '../config-rules.js';
-import { walkConfigText } from '../config-text.js';
+import { configTextLinesOf, walkConfigText } from '../config-text.js';
 import { HANDLERS, MAC_COUNT_ARG, MAC_IFACE_ARG, MAC_KIND_ARG, MAC_VLAN_ARG, ROUTE_SOURCE_ARG, STATUS_FILTER_ARG } from '../grammar/index.js';
+import { TUNNEL_MODE_IPSEC } from '../grammar/wan.js';
 import { fmtBps, fmtSince, fmtUptime, minutesBetween, padRight, table } from '../format.js';
 import { stationState, type StationStateEntry } from './host.js';
 import { encapOf, interfaceLine, interfaceSection, isConfigurablePort, roleOf, sectionArgs, sectionHasNegation } from './common.js';
@@ -73,6 +85,21 @@ export const LINE_PROTOCOL_REASON_TEXT: Readonly<Record<string, string>> = Objec
   'encapsulation-mismatch': 'the two ends use different framing',
   'keepalive-missed': 'keepalives from the other end stopped arriving',
   'not-associated': 'not associated with a wireless network',
+  // P3 [S19] (W3 cli; §3.9 step 6): a PPP line that has not opened, or whose authentication failed
+  'ppp-negotiating': 'PPP is still negotiating',
+  'ppp-auth-failed': 'authentication failed',
+});
+
+/** @since P3 (W3 cli) [S18]/[C13] Readable text of `TunnelRow.reason` (why a tunnel's line protocol is down), original wording. */
+export const TUNNEL_DOWN_REASON_TEXT: Readonly<Record<TunnelDownReason, string>> = Object.freeze({
+  'no-source': 'the tunnel source has no usable address',
+  'no-destination': 'no tunnel destination is set',
+  'no-route': 'no route to the tunnel destination',
+  'recursive-routing': 'the destination would be reached through the tunnel itself',
+  'ike-negotiating': 'IKE is negotiating the security association',
+  'ike-failed': 'IKE authentication failed',
+  'ike-no-proposal': 'the peer accepted no IKE proposal',
+  'ike-no-response': 'the peer does not answer IKE',
 });
 
 /** Slot type labels for `show inventory` (original wording). */
@@ -101,10 +128,15 @@ function networkPorts(ctx: CommandCtx): PortView[] {
   return out;
 }
 
-/** Status column of `show ip interface brief`: admin down, err-disabled, else layer-1 carrier up/down. */
-function briefStatus(p: PortView): string {
+/**
+ * Status column of `show ip interface brief`: admin down, err-disabled, else layer-1 carrier up/down. P3 [S18] (W3
+ * cli): a tunnel has no carrier, so an administratively up tunnel is `up` and its Protocol column says whether it
+ * carries traffic (the tunnel owner's verdict, `virtualChanged`).
+ */
+function briefStatus(ctx: CommandCtx, p: PortView): string {
   if (!p.adminUp) return 'admin down';
   if (p.errDisabled) return 'err-disabled';
+  if (roleOf(ctx, p) === 'tunnel') return 'up';
   return p.operUp || p.phy?.carrier === true ? 'up' : 'down';
 }
 
@@ -113,9 +145,27 @@ function protocolStatus(p: PortView): string {
   return p.operUp ? 'up' : 'down';
 }
 
-/** Link text of the `show interfaces` status line: up, down, or carrier up with the line protocol down and why. */
-function linkStatus(p: PortView): string {
+/** @since P3 (W3 cli) [S18] The `tunnels` row of a tunnel port (absent table or row: undefined). */
+export function tunnelRowOf(ctx: Pick<CommandCtx, 'tables'>, port: PortId): TunnelRow | undefined {
+  return ctx.tables.get<TunnelRow>('tunnels')?.get(port);
+}
+
+/** @since P3 (W3 cli) [S19] The `ppp` row of a serial port (absent table or row: undefined). */
+export function pppRowOf(ctx: Pick<CommandCtx, 'tables'>, port: PortId): PppRow | undefined {
+  return ctx.tables.get<PppRow>('ppp')?.get(port);
+}
+
+/**
+ * Link text of the `show interfaces` status line: up, down, or carrier up with the line protocol down and why. P3
+ * [S18] (W3 cli): an administratively up tunnel is up with its line protocol down until the tunnel owner brings it
+ * up, with the `tunnels` row's reason.
+ */
+function linkStatus(ctx: CommandCtx, p: PortView): string {
   if (p.operUp) return 'up';
+  if (roleOf(ctx, p) === 'tunnel' && p.adminUp) {
+    const reason = tunnelRowOf(ctx, p.id)?.reason;
+    return reason === undefined ? 'up, line protocol down' : `up, line protocol down (${TUNNEL_DOWN_REASON_TEXT[reason] ?? reason})`;
+  }
   if (p.phy?.carrier === true && p.phy.lineProtocol === false) {
     const reason = p.phy.lineProtocolReason;
     return reason === undefined ? 'up, line protocol down' : `up, line protocol down (${LINE_PROTOCOL_REASON_TEXT[reason] ?? reason})`;
@@ -144,7 +194,7 @@ function moduleName(type: string): string {
 const showIpIntBrief: CommandHandler = (ctx) => {
   const rows: string[][] = [['Interface', 'IP address', 'Status', 'Protocol']];
   for (const p of networkPorts(ctx)) {
-    rows.push([p.id, p.l3.ipv4?.address ?? 'unassigned', briefStatus(p), protocolStatus(p)]);
+    rows.push([p.id, p.l3.ipv4?.address ?? 'unassigned', briefStatus(ctx, p), protocolStatus(p)]);
   }
   return { output: table(rows, { gap: 3 }) };
 };
@@ -164,9 +214,11 @@ function hardwareLine(ctx: CommandCtx, p: PortView): string {
 export function renderInterface(ctx: CommandCtx, p: PortView): string {
   const c = p.counters;
   const configuredKbps = Number(interfaceLine(ctx, p.id, ['bandwidth'])?.[0] ?? NaN);
-  const bandwidth = Number.isFinite(configuredKbps) && configuredKbps > 0 ? configuredKbps * 1000 : (p.speedBps ?? p.spec.speedBps);
+  // P3 [S18] (W3 cli): a tunnel has no line rate; without a bandwidth line it shows its routing bandwidth (100 kb/s)
+  const nominal = roleOf(ctx, p) === 'tunnel' ? routingBandwidthKbps({ role: 'tunnel' }) * 1000 : (p.speedBps ?? p.spec.speedBps);
+  const bandwidth = Number.isFinite(configuredKbps) && configuredKbps > 0 ? configuredKbps * 1000 : nominal;
   const lines: string[] = [];
-  lines.push(`${p.id}: admin ${p.adminUp ? 'up' : 'down'}, link ${linkStatus(p)}`);
+  lines.push(`${p.id}: admin ${p.adminUp ? 'up' : 'down'}, link ${linkStatus(ctx, p)}`);
   lines.push(hardwareLine(ctx, p));
   if (p.l3.ipv4) lines.push(`  IPv4 ${p.l3.ipv4.address}/${p.l3.ipv4.prefixLen}`);
   lines.push(`  MTU ${p.mtu} bytes, bandwidth ${fmtBps(bandwidth)}`);
@@ -176,6 +228,9 @@ export function renderInterface(ctx: CommandCtx, p: PortView): string {
     lines.push('  Duplex and speed not negotiated (no link)');
   }
   if (p.role !== undefined || p.spec.role !== undefined) lines.push(`  Role: ${ROLE_TRAITS[roleOf(ctx, p)].label}`);
+  // P3 (W3 cli): [S18]/[C13] the tunnel lines of a tunnel, [S19] the PPP lines of a PPP serial line (none elsewhere)
+  if (roleOf(ctx, p) === 'tunnel') lines.push(...tunnelLines(ctx, p));
+  if (p.spec.kind === 'serial' && encapOf(p) === 'ppp') lines.push(...pppLines(ctx, p));
   if (p.transceiver !== undefined) lines.push(`  Transceiver: ${moduleName(p.transceiver)}`);
   if (p.errDisabled) lines.push(`  Error-disabled: ${p.errDisabled}`);
   if (p.link) lines.push(`  Connected via link ${p.link}`);
@@ -190,7 +245,138 @@ export function renderInterface(ctx: CommandCtx, p: PortView): string {
   }
   if (c.txRetries !== undefined) lines.push(`    radio retries: ${c.txRetries}`);
   lines.push(`  Transmit queue: ${p.tx.queue} frame${p.tx.queue === 1 ? '' : 's'} waiting`);
+  // P3 [S20]/[S21] (W3 cli): the held queues of a port with an output scheduler (none on the virtual FIFO)
+  const queues = egressQueueOf(ctx, p.id);
+  if (queues !== undefined) lines.push(...interfaceQueueLines(queues));
   return lines.join('\n');
+}
+
+// ── P3 (W3 cli): the tunnel, PPP and queue lines of `show interfaces` ─────────────────────────────────────────────
+
+/**
+ * @since P3 (W3 cli) The tokens after `head` of the first stored (positive) line of interface `port`, grouped lines
+ * included (`ip …` lines are stored under an `ip` group node, which `sectionArgs` does not descend into).
+ */
+export function interfaceTokensAfter(ctx: Pick<CommandCtx, 'running'>, port: PortId, head: readonly string[]): string[] | undefined {
+  for (const l of configTextLinesOf(ctx.running.root)) {
+    const entry = l.context[0];
+    if (l.negate || l.context.length !== 1 || entry?.[0] !== 'interface' || entry[1] !== port) continue;
+    if (l.tokens.length >= head.length && head.every((t, i) => l.tokens[i] === t)) return l.tokens.slice(head.length);
+  }
+  return undefined;
+}
+
+/** @since P3 (W3 cli) [S18] A tunnel's transport protocol as `show interfaces` names it, by mode. */
+export const TUNNEL_MODE_TEXT: Readonly<Record<TunnelRow['mode'], string>> = Object.freeze({
+  gre: 'GRE/IP',
+  ipsec: 'IPsec/IP',
+});
+
+/**
+ * @since P3 (W3 cli) [S18]/[C13] The tunnel lines of `show interfaces <Tunnel>`: source and destination (the `tunnels`
+ * row's, else the configured lines), the transport, [C13] the protection profile, the transport and IP MTUs (row) and
+ * the TCP MSS clamp (§2.17: `Tunnel protection via IPsec (profile VPN)`, `Tunnel transport MTU 1500 bytes, IP MTU 1456`).
+ */
+export function tunnelLines(ctx: CommandCtx, p: PortView): string[] {
+  const row = tunnelRowOf(ctx, p.id);
+  const section = interfaceSection(ctx.running.root, p.id);
+  const configuredSource = sectionArgs(section, ['tunnel', 'source'])?.[0];
+  const configuredDestination = sectionArgs(section, ['tunnel', 'destination'])?.[0];
+  let source = 'not set';
+  if (row?.source !== undefined) source = row.sourceIface !== undefined ? `${row.source} (${row.sourceIface})` : row.source;
+  else if (configuredSource !== undefined && isIpv4(configuredSource)) source = configuredSource;
+  else if (configuredSource !== undefined) {
+    const address = ctx.ports.get(configuredSource)?.l3.ipv4?.address;
+    source = address !== undefined ? `${address} (${configuredSource})` : `${configuredSource} (no address)`;
+  }
+  const destination = row?.destination ?? configuredDestination ?? 'not set';
+  const mode: TunnelRow['mode'] = row?.mode ?? (sectionArgs(section, ['tunnel', 'mode'])?.[0] === TUNNEL_MODE_IPSEC ? 'ipsec' : 'gre');
+  const lines = [`  Tunnel source ${source}, destination ${destination}`, `  Tunnel protocol/transport ${TUNNEL_MODE_TEXT[mode]}`];
+  if (mode === 'ipsec') {
+    const profile = sectionArgs(section, ['tunnel', 'protection', 'ipsec', 'profile'])?.[0];
+    lines.push(profile === undefined ? '  Tunnel protection: none configured, so the tunnel stays down' : `  Tunnel protection via IPsec (profile ${profile})`);
+  }
+  if (row !== undefined) lines.push(`  Tunnel transport MTU ${row.transportMtu} bytes, IP MTU ${row.ipMtu}`);
+  const mss = interfaceTokensAfter(ctx, p.id, ['ip', 'tcp', 'adjust-mss'])?.[0];
+  if (mss !== undefined) lines.push(`  TCP segments clamped to ${mss} bytes (adjust-mss)`);
+  return lines;
+}
+
+/** @since P3 (W3 cli) [S19] RFC 1661 automaton states as the shows print them. */
+export const PPP_FSM_TEXT: Readonly<Record<PppFsmState, string>> = Object.freeze({
+  initial: 'initial',
+  starting: 'starting',
+  closed: 'closed',
+  stopped: 'stopped',
+  closing: 'closing',
+  stopping: 'stopping',
+  'req-sent': 'request sent',
+  'ack-rcvd': 'ack received',
+  'ack-sent': 'ack sent',
+  opened: 'open',
+});
+
+/** @since P3 (W3 cli) [S19] Authentication states as the shows print them. */
+const PPP_AUTH_STATE_TEXT: Readonly<Record<'pending' | 'success' | 'failed', string>> = Object.freeze({
+  pending: 'in progress',
+  success: 'succeeded',
+  failed: 'failed',
+});
+
+/** @since P3 (W3 cli) [S19] What each end of a PPP link requires of the other, in one sentence. */
+export function pppAuthText(r: Pick<PppRow, 'authLocal' | 'authLocalState' | 'authPeer' | 'authPeerState'>): string {
+  const state = (s: 'pending' | 'success' | 'failed' | undefined): string => (s === undefined ? 'not started' : PPP_AUTH_STATE_TEXT[s]);
+  const local = r.authLocal === 'none' ? 'nothing required of the peer' : `${r.authLocal.toUpperCase()} required of the peer (${state(r.authLocalState)})`;
+  const peer = r.authPeer === 'none' ? 'the peer requires nothing of this end' : `the peer requires ${r.authPeer.toUpperCase()} (${state(r.authPeerState)})`;
+  return `${local}; ${peer}`;
+}
+
+/**
+ * @since P3 (W3 cli) [S19] The PPP lines of `show interfaces <serial>` on a PPP line: the LCP and NCP states, the
+ * authentication, the peer and the failures, from the `ppp` row (none until the ppp daemon writes it).
+ */
+export function pppLines(ctx: CommandCtx, p: PortView): string[] {
+  const r = pppRowOf(ctx, p.id);
+  if (r === undefined) return [];
+  const ncps = `IPCP ${PPP_FSM_TEXT[r.ipcp] ?? r.ipcp}${r.ipv6cp !== undefined ? `, IPV6CP ${PPP_FSM_TEXT[r.ipv6cp] ?? r.ipv6cp}` : ''}`;
+  const lines = [`  PPP: LCP ${PPP_FSM_TEXT[r.lcp] ?? r.lcp}, ${ncps}`, `  PPP authentication: ${pppAuthText(r)}`];
+  if (r.peerName !== undefined || r.peerAddress !== undefined) {
+    lines.push(`  PPP peer: ${r.peerName ?? 'name not learned'}${r.peerAddress !== undefined ? `, address ${r.peerAddress}` : ''}`);
+  }
+  if (r.failures > 0) lines.push(`  PPP failures: ${r.failures}, the last: ${r.lastFailure ?? 'reason unknown'}`);
+  return lines;
+}
+
+/**
+ * @since P3 (W3 cli) [S20]/[S21] The held queues of a scheduler port: `CommandCtx.egressQueues`, else the [S20] `queue`
+ * member of the port's QoS view (`qosCounters`). Undefined on the virtual FIFO (every P1/P2 port).
+ */
+export function egressQueueOf(ctx: Pick<CommandCtx, 'egressQueues' | 'qosCounters'>, port: PortId): EgressQueueView | undefined {
+  return ctx.egressQueues?.(port) ?? ctx.qosCounters?.(port)?.queue;
+}
+
+/** @since P3 (W3 cli) [S20]/[S21] How a scheduler port's queueing strategy reads. */
+export const QUEUE_STRATEGY_TEXT: Readonly<Record<EgressQueueView['strategy'], string>> = Object.freeze({
+  fifo: 'first in, first out',
+  'class-based': 'class-based',
+  fair: 'weighted fair',
+});
+
+/** @since P3 (W3 cli) [S20]/[S21] One class queue: depth over limit, then what left, overflowed and was policed. */
+export function queueCountsText(c: EgressQueueView['classes'][number]): string {
+  const flows = c.flows !== undefined ? `, ${c.flows} flow${c.flows === 1 ? '' : 's'}` : '';
+  return `${c.depth}/${c.limit} packets waiting, ${c.sent} sent, ${c.tailDrops} dropped (queue full), ${c.policed} policed${flows}`;
+}
+
+/** @since P3 (W3 cli) [S20]/[S21] The queueing header of a scheduler port: strategy, policy and reference rate. */
+export function queueingHeader(v: EgressQueueView): string {
+  const policy = v.policy !== undefined && v.policy !== '' ? `, policy ${v.policy}` : '';
+  return `Queueing: ${QUEUE_STRATEGY_TEXT[v.strategy] ?? v.strategy}${policy}, reference rate ${fmtBps(v.refBps)}`;
+}
+
+/** @since P3 (W3 cli) [S20]/[S21] The queue lines of `show interfaces` for a scheduler port (one per class). */
+export function interfaceQueueLines(v: EgressQueueView): string[] {
+  return [`  ${queueingHeader(v)}`, ...v.classes.map((c) => `    ${c.name} (${c.kind}): ${queueCountsText(c)}`)];
 }
 
 const showInterfaces: CommandHandler = (ctx, args) => {
@@ -402,6 +588,16 @@ export function renderRoutePaths(r: RouteRow): string[] {
 }
 // [S6] ── end ──────────────────────────────────────────────────────────────────────────────────────────────────
 
+/**
+ * What `show ip route <source>` prints when the filter keeps no route, by machine source: `static` (P2), `ospf` (P3),
+ * [C1] `eigrp` (W3 cli, the machine source 'EIGRP' of D11).
+ */
+export const ROUTE_SOURCE_EMPTY_TEXT: Readonly<Record<string, string>> = Object.freeze({
+  S: 'The routing table holds no static route.',
+  O: 'The routing table holds no OSPF route.',
+  EIGRP: 'The routing table holds no EIGRP route.',
+});
+
 /** `show ip route [static]` (the `static` filter since P2, ARCHITECTURE-P2 §5.4, keeps the legend and default line). */
 const showIpRoute: CommandHandler = (ctx, args) => {
   const all = sortedRouteRows(ctx);
@@ -419,7 +615,7 @@ const showIpRoute: CommandHandler = (ctx, args) => {
   }
   lines.push('');
   if (rows.length === 0) {
-    lines.push(source === undefined ? 'The routing table is empty.' : source === 'O' ? 'The routing table holds no OSPF route.' : 'The routing table holds no static route.');
+    lines.push(source === undefined ? 'The routing table is empty.' : (ROUTE_SOURCE_EMPTY_TEXT[source] ?? 'The routing table holds no static route.'));
   } else {
     for (const r of rows) lines.push(renderRoute(r), ...renderRoutePaths(r));
   }
