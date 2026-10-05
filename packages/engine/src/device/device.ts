@@ -1078,6 +1078,14 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
     return this.spec.profile ?? 'P1';
   }
 
+  /**
+   * @since P3 [S19] Is `line` (in `context`) a global `username <n> [privilege <l>] password <pw>` line of a P3-profile
+   * world, whose `configChange` is traced masked (§10.1 `accept.p3.ppp-chap`)? Never in a P1/P2 world (bytes unchanged).
+   */
+  private masksUserPassword(context: readonly (readonly string[])[], line: readonly string[]): boolean {
+    return context.length === 0 && line[0] === 'username' && line.includes('password', 2) && profileIncludes(this.profile, 'P3');
+  }
+
   /** RF view for daemons: resolved once per power cycle, only for devices with a radio port. */
   get air(): AirView | undefined {
     if (!this.airResolved) {
@@ -2263,8 +2271,10 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
     }
     this.fanOutConfig(delta, now);
     // P3 [C13] (ruling R36): the IPsec pre-shared key never reaches the trace: its `configChange` carries the masked line
-    // (the existing `maskSecretTokens`); every other line is traced as typed (P1/P2 bytes unchanged)
-    const traced = key === 'pre-shared-key' ? maskSecretTokens(context, line) : line;
+    // (the existing `maskSecretTokens`); [S19] (§10.1 `accept.p3.ppp-chap`: the CHAP secret in no trace) in a P3-profile
+    // world the global `username <n> [privilege <l>] password <pw>` line (the password CHAP and PAP read) is masked the
+    // same way. Every other line, and that line in a P1/P2 world, is traced as typed (P1/P2 bytes unchanged).
+    const traced = key === 'pre-shared-key' || this.masksUserPassword(context, line) ? maskSecretTokens(context, line) : line;
     this.emitConfigChange(traced.join(' '), negate, context.map((c) => c.slice()), origin, now);
     // P2 (§3.0 "Virtual oper state"): a recompute site after the lines that change what an SVI, a Port-channel or a
     // subinterface derives its state from (the daemons wrote their rows in the fan-out above)

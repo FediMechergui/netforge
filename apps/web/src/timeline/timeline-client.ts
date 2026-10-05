@@ -22,8 +22,14 @@
  *
  * Times are integer nanoseconds everywhere (engine `SimTime`); pixels are floats and only ever leave through the
  * geometry helpers.
+ *
+ * @since P3 (ARCHITECTURE-P3 §2.12; W4 web-shell, the `mgmt` and `wan` lanes' timeline wiring) The rows of the two P3
+ * lanes come in the vocabulary's order like every other, and a mark of their tables reads as a sentence
+ * (`p3RowText`): a CDP or LLDP neighbour found, updated or removed, a time server's selection, the clock set or
+ * synchronised, a log a server received, a tunnel, a PPP link or an IPsec SA changing state — instead of the generic
+ * "<table> <key> written" with keys such as `GigabitEthernet0/1|R2`.
  */
-import { REPLAY_READ_ONLY_MESSAGE, TABLE_DESCRIPTORS, formatSimTime } from '@netforge/engine';
+import { REPLAY_READ_ONLY_MESSAGE, TABLE_DESCRIPTORS, formatSimTime, laneOfTable } from '@netforge/engine';
 import type { LaneBucket, LaneId, SeekTarget, SimTime, TimelineMarkQuery, TimelineQuery, TraceEvent } from '@netforge/engine';
 import type { ReviewInfo } from '../bridge/protocol';
 import { dropLabel } from '../vocab/drops';
@@ -343,6 +349,95 @@ export function markAction(mark: TimelineMark): ScrubAction {
   return { kind: 'seek', target: { cursor: mark.cursor } };
 }
 
+// ── P3: the mgmt and wan lanes' marks ──────────────────────────────────────
+
+/** A row event (write or expiry). */
+type RowEvent = Extract<TraceEvent, { kind: 'tableWrite' } | { kind: 'tableExpire' }>;
+
+const textOf = (v: unknown): string | undefined => (typeof v === 'string' && v !== '' ? v : undefined);
+const numberOf = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
+
+/** How a time server's selection reads in a mark. */
+const NTP_SELECTION_WORDS: Readonly<Record<string, string>> = Object.freeze({
+  'sys-peer': 'chosen as the time source',
+  candidate: 'a candidate',
+  reject: 'rejected',
+  unreached: 'not answering',
+});
+
+/**
+ * @since P3 The words of a row event of a `mgmt` or `wan` table (without the device prefix), or undefined for any other
+ * table. A first write is "found" / the new state, a rewrite "updated" / the new state, an expiry "removed (reason)".
+ */
+export function p3RowText(ev: RowEvent): string | undefined {
+  const lane = laneOfTable(ev.table);
+  if (lane !== 'mgmt' && lane !== 'wan') return undefined;
+  // a row event always carries its row; an event without one (a hand-made fixture) reads as an empty row
+  const r: Readonly<Record<string, unknown>> = (ev.row as Record<string, unknown> | undefined) ?? {};
+  const removed = ev.kind === 'tableExpire' ? ` removed (${ev.reason})` : undefined;
+  const rewrite = ev.kind === 'tableWrite' && ev.previous !== undefined;
+  const stratumOf = numberOf(r['stratum']);
+  const stratum = stratumOf === undefined ? '' : `, stratum ${String(stratumOf)}`;
+  switch (ev.table) {
+    case 'cdp-neighbours':
+    case 'lldp-neighbours': {
+      const proto = ev.table === 'cdp-neighbours' ? 'CDP' : 'LLDP';
+      const who = textOf(r['deviceId']) ?? textOf(r['systemName']) ?? textOf(r['chassisId']) ?? ev.key;
+      const port = textOf(r['localPort']);
+      return `${proto} neighbour ${who}${port === undefined ? '' : ` on ${port}`}${removed ?? (rewrite ? ' updated' : ' found')}`;
+    }
+    case 'ntp-peers': {
+      const server = `time server ${textOf(r['address']) ?? ev.key}`;
+      if (removed !== undefined) return `${server}${removed}`;
+      const selected = textOf(r['selected']);
+      return `${server} ${selected === undefined ? 'updated' : (NTP_SELECTION_WORDS[selected] ?? selected)}${stratum}`;
+    }
+    case 'clock': {
+      if (removed !== undefined) return `clock entry${removed}`;
+      const reference = textOf(r['reference']);
+      switch (textOf(r['source'])) {
+        case 'user':
+          return 'clock set by hand';
+        case 'ntp':
+          return `clock synchronised by NTP${reference === undefined ? '' : ` from ${reference}`}${stratum}`;
+        case 'master':
+          return `clock serving its own time (ntp master)${stratum}`;
+        default:
+          return 'clock updated';
+      }
+    }
+    case 'syslog-messages': {
+      if (removed !== undefined) return `log entry ${ev.key}${removed}`;
+      const from = textOf(r['hostname']) ?? textOf(r['from']) ?? 'a device';
+      return `log from ${from}: ${textOf(r['message']) ?? ''}`.trimEnd();
+    }
+    case 'tunnels': {
+      const tunnel = textOf(r['port']) ?? ev.key;
+      if (removed !== undefined) return `${tunnel}${removed}`;
+      const mode = textOf(r['mode']) === 'ipsec' ? 'IPsec' : 'GRE';
+      const reason = textOf(r['reason']);
+      return `${tunnel} (${mode}) ${textOf(r['state']) ?? 'updated'}${reason === undefined ? '' : ` (${reason})`}`;
+    }
+    case 'ppp': {
+      const port = textOf(r['port']) ?? ev.key;
+      if (removed !== undefined) return `PPP on ${port}${removed}`;
+      const failed = textOf(r['authLocalState']) === 'failed' || textOf(r['authPeerState']) === 'failed';
+      const phase = textOf(r['phase']);
+      return `PPP on ${port}: ${phase === undefined ? 'updated' : `${phase} phase`}${failed ? ', authentication failed' : ''}`;
+    }
+    case 'ipsec-sa': {
+      const port = textOf(r['port']) ?? ev.key;
+      const peer = textOf(r['peer']);
+      const sa = `IPsec SA on ${port}${peer === undefined ? '' : ` with ${peer}`}`;
+      if (removed !== undefined) return `${sa}${removed}`;
+      const reason = textOf(r['reason']);
+      return `${sa} ${textOf(r['state']) ?? 'updated'}${reason === undefined ? '' : ` (${reason})`}`;
+    }
+    default:
+      return undefined;
+  }
+}
+
 function tableTitle(name: string): string {
   const d = (TABLE_DESCRIPTORS as Readonly<Record<string, { title: string }>>)[name];
   return d?.title ?? name;
@@ -360,9 +455,13 @@ export function markText(mark: TimelineMark, deviceName?: (id: string) => string
       return `${fsmLabel(fsm.machine)} · ${fsm.subject}: ${fsm.from} → ${fsm.to}${cause}`;
     }
     case 'tableWrite':
-      return `${who(ev.device)}: ${tableTitle(ev.table)} ${ev.key} written`;
-    case 'tableExpire':
-      return `${who(ev.device)}: ${tableTitle(ev.table)} ${ev.key} removed (${ev.reason})`;
+    case 'tableExpire': {
+      const p3 = p3RowText(ev);
+      if (p3 !== undefined) return `${who(ev.device)}: ${p3}`;
+      return ev.kind === 'tableWrite'
+        ? `${who(ev.device)}: ${tableTitle(ev.table)} ${ev.key} written`
+        : `${who(ev.device)}: ${tableTitle(ev.table)} ${ev.key} removed (${ev.reason})`;
+    }
     case 'configChange':
       return `${who(ev.device)}: ${ev.negate ? 'no ' : ''}${ev.line}`;
     case 'linkState':

@@ -28,8 +28,9 @@
  *     has run), so `port.tx.queue ≤ P2P_QUEUE_LIMIT` at every instant. It bounds MEMORY in a loop that multiplies
  *     frames, not the event rate (line rate does). A refused frame draws nothing from `link:<id>`. @since P3 (ruling R33)
  *     a serial control frame (HDLC keepalive, PPP LCP/PAP/CHAP/IPCP/IPV6CP; `isSerialControlFrame`) is never refused
- *     `queue-full`: it is committed behind the queue like any frame (the ring grows past the limit for it), so
- *     congestion alone never takes a serial line protocol down. Ethernet frames keep the refusal byte for byte.
+ *     `queue-full`: it is committed behind the queue like any frame (the ring grows past the limit for it; in a
+ *     P3-profile world it is committed ahead of the queued data instead, ruling R43 below), so congestion alone never
+ *     takes a serial line protocol down. Ethernet frames keep the refusal byte for byte.
  *
  * In-flight legs are keyed `(pdu, link, to)` in the facade registry (link/inflight.ts). Capture tap: tx is recorded
  * when the frame starts (before corruption), rx in `admit` (after corruption).
@@ -79,6 +80,29 @@
  *     detail and device+port set, each reported `TxOutcome dropped`, and cancels a pending shaper gate.
  *   • `egressQueues(ref, now)`: the scheduler's display view (`EgressQueueView`); a port whose spec has no queue yet
  *     shows that spec's empty view; a FIFO port none.
+ *
+ * P3 ruling R43 (ARCHITECTURE-P3 §9.2; W4 media) — THE CONTROL PATH OF A SERIAL FIFO, in P3-profile worlds only
+ * (`CableP2POptions.controlPriority`, which the link model sets from its world profile; absent = false, so every P1/P2
+ * world and every harness without it keeps the commit order above byte for byte):
+ *   • A serial control frame (`isSerialControlFrame`: HDLC keepalive, PPP LCP/PAP/CHAP/IPCP/IPV6CP) entering a
+ *     backlogged virtual FIFO is committed AHEAD of the queued data, as a router's high-priority control path does: it
+ *     takes the slot of the first queued data frame (`txStart` = that frame's start, i.e. the end of the frame on the
+ *     wire, or of the control frames already committed ahead, which keep their FIFO order among themselves). Every frame
+ *     from that one on shifts by the control frame's serialization time `d`: its in-flight leg (`txStart`, `txEnd`,
+ *     `arrive`, so `queued`, `visible` and `PortSnapshot.txBacklog` follow), its pending `frameArrival` and its
+ *     `txComplete` are moved by exactly `d` (cancelled and scheduled again; a lost frame has no arrival to move), the
+ *     transmit ring's ends too, and `busyUntil` grows by `d`. The line's occupancy is conserved; only the order changes.
+ *   • "Backlogged" means at least one queued data frame (`txStart > now`) behind the frame on the wire. Otherwise the
+ *     control frame is committed exactly as above (`txStart = max(now, busyUntil)`), so an uncongested line, and a
+ *     congested line in a P1/P2 world, behave identically.
+ *   • What a moved frame announced earlier stays as announced: its `frameTx` event and its tx capture record keep the
+ *     times of its commit (a trace event is never rewritten); its leg, its arrival and its txComplete carry the moved
+ *     times, and the in-flight list a snapshot or delta sends replaces the earlier copy.
+ *   • Each committed frame of a serial port in such a world keeps a commit record (its pdu, its leg, whether its copy
+ *     was corrupted, its txComplete seq), beside its ring entry. A frame with no record (committed before records
+ *     existed, or one whose arrival a link abort cancelled: `abort` clears the records of both ends) is never moved: a
+ *     control frame that would have to pass one is committed the plain FIFO way. The five `link:<id>` draws of every
+ *     frame, the control frame included, are unchanged in number and order.
  */
 import type { CaptureLinkType } from '../../contracts/capture.js';
 import type { LinkId, PortRef } from '../../contracts/ids.js';
@@ -97,7 +121,7 @@ import { frameDscp } from '../inflight.js';
 import { createPortScheduler, qosFlowOf, type PortScheduler } from '../qos/scheduler.js';
 import { foldPerIntoLossPct } from '../rf/mcs.js';
 import { isQosControlFrame, isSerialControlFrame } from '../control-frame.js';
-import { serialControlExempt } from '../serial.js';
+import { isSerialMedia, serialControlExempt } from '../serial.js';
 import type { FrameArrivalBody, InflightLeg, MediumHost, MediumStrategy } from './types.js';
 
 /** @since P3 [S20]/[S21] Medium-id prefix of a scheduler port's shaper gate (`mediumTimer`, §4.2): `qos:<portKey>`. */
@@ -211,6 +235,11 @@ export interface CableP2POptions {
   kind?: Extract<MediumKind, 'cable' | 'radio'>;
   /** Radio links: per-frame RF adjustments. Absent (or undefined result) = plain cable behaviour. */
   tune?(state: LinkState, from: PortRef, to: PortRef, now: SimTime): P2PLegTuning | undefined;
+  /**
+   * @since P3 (ruling R43) A P3-profile world: a serial control frame entering a backlogged virtual FIFO is committed
+   * ahead of the queued data (file header). Absent or false = the P1/P2 commit order, byte for byte.
+   */
+  controlPriority?: boolean;
 }
 
 /** The other end of `state` seen from `ref`. */
@@ -219,28 +248,99 @@ function peerRef(state: LinkState, ref: PortRef): PortRef {
 }
 
 /**
+ * @since P3 (ruling R43) What a P3-profile serial port keeps of a frame its virtual FIFO committed, so a serial control
+ * frame can be committed ahead of it (file header): the frame, its in-flight leg (the registry's own object, moved in
+ * place), whether the receiver's copy was corrupted, and its pending `txComplete`.
+ */
+interface CommitRecord {
+  readonly pdu: Pdu;
+  readonly leg: InflightLeg;
+  readonly corrupted: boolean;
+  completeSeq: number;
+  /** A serial control frame: those already ahead keep their order, and a new one is committed behind them. */
+  readonly control: boolean;
+}
+
+/**
  * @since P2 (D23) The transmit queue of one port: txEnd times of its accepted frames, ascending (a port serializes in
  * order), kept in a ring of `cap` entries (`P2P_QUEUE_LIMIT`; P3 ruling R33: a serial control frame admitted past the
- * limit doubles the ring, keeping the order).
+ * limit doubles the ring, keeping the order). @since P3 (ruling R43) `recs`, aligned with `ends`, holds the commit
+ * records of a P3-profile serial port (absent everywhere else, so nothing below changes for any other port).
  */
 interface TxBacklog {
   ends: number[];
   head: number;
   size: number;
   cap: number;
+  recs?: (CommitRecord | undefined)[];
 }
 
-/** Append `end` to a backlog ring, growing it (in order) when it is full (only a serial control frame can, R33). */
-function pushBacklogEnd(q: TxBacklog, end: number): void {
+/**
+ * Append `end` to a backlog ring, growing it (in order) when it is full (only a serial control frame can, R33).
+ * Returns the physical index written (R43: where the commit record goes).
+ */
+function pushBacklogEnd(q: TxBacklog, end: number): number {
   if (q.size === q.cap) {
     const lin: number[] = [];
     for (let i = 0; i < q.size; i++) lin.push(q.ends[(q.head + i) % q.cap]!);
+    if (q.recs !== undefined) {
+      const recs: (CommitRecord | undefined)[] = [];
+      for (let i = 0; i < q.size; i++) recs.push(q.recs[(q.head + i) % q.cap]);
+      q.recs = recs;
+    }
     q.ends = lin;
     q.head = 0;
     q.cap *= 2;
   }
-  q.ends[(q.head + q.size) % q.cap] = end;
+  const at = (q.head + q.size) % q.cap;
+  q.ends[at] = end;
   q.size++;
+  return at;
+}
+
+/**
+ * @since P3 (ruling R43) Where a serial control frame is committed ahead in backlog `q` at `now`: the logical index
+ * (from the head) of the first queued data frame — past the frame on the wire and the control frames already ahead —
+ * or -1 when there is none, or when a frame from there on has no commit record (it cannot be moved, so the control
+ * frame takes the plain FIFO slot). A ring entry i ≥ 1 starts where entry i − 1 ends (a frame committed behind a busy
+ * transmitter starts at its `busyUntil`); entry 0 is on the wire.
+ */
+function aheadIndex(q: TxBacklog, now: SimTime): number {
+  const recs = q.recs;
+  if (recs === undefined) return -1;
+  for (let i = 0; i < q.size; i++) {
+    const rec = recs[(q.head + i) % q.cap];
+    const started = rec !== undefined ? rec.leg.txStart <= now : i === 0 || q.ends[(q.head + i - 1) % q.cap]! <= now;
+    if (started) continue;
+    if (rec === undefined) return -1;
+    if (rec.control) continue;
+    for (let j = i + 1; j < q.size; j++) if (recs[(q.head + j) % q.cap] === undefined) return -1;
+    return i;
+  }
+  return -1;
+}
+
+/**
+ * @since P3 (ruling R43) Insert `end` (with its record) at logical index `at` of backlog `q` and add `shift` to every
+ * end after it; the ring is rebuilt linear (head 0), its capacity doubled as often as needed.
+ */
+function insertBacklogEnd(q: TxBacklog, at: number, end: number, rec: CommitRecord, shift: number): void {
+  const ends: number[] = [];
+  const recs: (CommitRecord | undefined)[] = [];
+  for (let i = 0; i < q.size; i++) {
+    const k = (q.head + i) % q.cap;
+    ends.push(i < at ? q.ends[k]! : q.ends[k]! + shift);
+    recs.push(q.recs?.[k]);
+  }
+  ends.splice(at, 0, end);
+  recs.splice(at, 0, rec);
+  let cap = q.cap;
+  while (ends.length > cap) cap *= 2;
+  q.ends = ends;
+  q.recs = recs;
+  q.head = 0;
+  q.size = ends.length;
+  q.cap = cap;
 }
 
 /** @since P3 [S20]/[S21] A frame held by a scheduler port. */
@@ -287,24 +387,62 @@ export function samePlainValue(x: unknown, y: unknown): boolean {
 /** Create the point-to-point medium strategy (cables, and PtP radio links through `options.tune`). */
 export function createCableP2P(host: MediumHost, options: CableP2POptions): MediumStrategy {
   const kind = options.kind ?? 'cable';
+  /** P3 (ruling R43): a P3-profile world's cable strategy commits serial control frames ahead (file header). */
+  const priority = options.controlPriority === true && kind === 'cable';
   /** Per-port transmit queues, keyed by the port's `tx` object (a port rebuilt at power-on starts empty). */
   const backlogs = new WeakMap<PortState['tx'], TxBacklog>();
 
-  /** The queue of `port` at `now`: frames whose serialization ends at or after `now` (D23). */
-  const backlogOf = (port: PortState, now: SimTime): TxBacklog => {
+  /**
+   * The queue of `port` at `now`: frames whose serialization ends at or after `now` (D23). `records` (R43: a serial
+   * port of a P3-profile world) makes it keep commit records from now on.
+   */
+  const backlogOf = (port: PortState, now: SimTime, records = false): TxBacklog => {
     let q = backlogs.get(port.tx);
     if (q === undefined) {
       q = { ends: [], head: 0, size: 0, cap: P2P_QUEUE_LIMIT };
       backlogs.set(port.tx, q);
     }
+    if (records && q.recs === undefined) q.recs = [];
     const limit = q.cap;
     // A transmitter reset elsewhere (its busyUntil no longer ends our last frame) holds none of our frames.
     if (q.size > 0 && q.ends[(q.head + q.size - 1) % limit] !== port.tx.busyUntil) q.size = 0;
     while (q.size > 0 && q.ends[q.head]! < now) {
+      if (q.recs !== undefined) q.recs[q.head] = undefined;
       q.head = (q.head + 1) % limit;
       q.size--;
     }
     return q;
+  };
+
+  /**
+   * P3 (ruling R43): move the frames from logical index `from` of `q` on (the ones a control frame is committed ahead
+   * of) by `shift` ns: their legs, their pending arrivals and their txCompletes (file header). The ring ends are moved
+   * by `insertBacklogEnd`. Every one of them has a record (`aheadIndex` checked).
+   */
+  const shiftCommitted = (q: TxBacklog, from: number, shift: number, ref: PortRef): void => {
+    for (let i = from; i < q.size; i++) {
+      const rec = q.recs![(q.head + i) % q.cap]!;
+      const leg = rec.leg;
+      leg.txStart += shift;
+      leg.txEnd += shift;
+      leg.arrive += shift;
+      if (leg.arrivalSeq !== undefined && host.cancel(leg.arrivalSeq)) {
+        leg.arrivalSeq = host.schedule(
+          leg.arrive,
+          rec.corrupted
+            ? { kind: 'frameArrival', device: leg.to.device, port: leg.to.port, pdu: rec.pdu, corrupted: true }
+            : { kind: 'frameArrival', device: leg.to.device, port: leg.to.port, pdu: rec.pdu },
+        );
+      }
+      if (host.cancel(rec.completeSeq)) rec.completeSeq = host.schedule(leg.txEnd, { kind: 'txComplete', device: ref.device, port: ref.port });
+    }
+  };
+
+  /** P3 (ruling R43): forget the commit records of `ref`'s queue (its frames' arrivals were cancelled: never moved). */
+  const forgetRecords = (ref: PortRef): void => {
+    const port = host.port(ref);
+    const q = port === undefined ? undefined : backlogs.get(port.tx);
+    if (q?.recs !== undefined) q.recs = [];
   };
 
   const refuse = (pdu: Pdu, from: PortRef, now: SimTime, reason: 'link-down' | 'out-of-band' | 'queue-full' | 'policed', detail: string | undefined): TransmitResult => {
@@ -348,9 +486,14 @@ export function createCableP2P(host: MediumHost, options: CableP2POptions): Medi
     const { port, state, peer, bps } = egress;
     // D23: a full queue refuses before any draw, so the frames that follow keep their loss/jitter pattern. P3 (ruling
     // R33): a serial control frame (HDLC keepalive, PPP LCP/PAP/CHAP/IPCP/IPV6CP) is never refused for a full queue, so
-    // congestion alone never takes a serial line down; it still waits behind the frames committed before it.
-    const backlog = backlogOf(port, now);
-    if (backlog.size >= P2P_QUEUE_LIMIT && !isSerialControlFrame(pdu)) {
+    // congestion alone never takes a serial line down; it waits behind the frames committed before it, except in a
+    // P3-profile world (ruling R43): a serial port there keeps commit records, and a control frame goes ahead of the
+    // queued data (file header).
+    const records = priority && isSerialMedia(state.resolvedMedia);
+    const backlog = backlogOf(port, now, records);
+    const full = backlog.size >= P2P_QUEUE_LIMIT;
+    const control = (full || records) && isSerialControlFrame(pdu);
+    if (full && !control) {
       return refuse(pdu, from, now, 'queue-full', `${P2P_QUEUE_LIMIT} frames already queued`);
     }
 
@@ -359,7 +502,9 @@ export function createCableP2P(host: MediumHost, options: CableP2POptions): Medi
     const tune = options.tune?.(state, from, peer, now);
     const rng = host.stream(`link:${linkId}`);
 
-    const txStart = Math.max(now, port.tx.busyUntil);
+    // R43: the logical ring index a control frame is committed at, ahead of the queued data (-1: the plain FIFO slot)
+    const ahead = records && control ? aheadIndex(backlog, now) : -1;
+    const txStart = ahead >= 0 ? backlog.recs![(backlog.head + ahead) % backlog.cap]!.leg.txStart : Math.max(now, port.tx.busyUntil);
     const txEnd = txStart + serializationNs(pdu.size + phyOverheadBytes(state.resolvedMedia), bps);
     // P3 (D16, R15): a frame that waits behind the transmitter keeps its class for the FIFO view (before corruption)
     const dscp = txStart > now ? frameDscp(pdu) : undefined;
@@ -378,10 +523,21 @@ export function createCableP2P(host: MediumHost, options: CableP2POptions): Medi
     const vf = tune?.velocityFactor ?? MEDIA[state.resolvedMedia].velocityFactor;
     const arrive = txEnd + propagationNs(lengthM, vf) + imp.latencyNs + jitter;
 
-    port.tx.busyUntil = txEnd;
-    port.tx.queue++;
-    pushBacklogEnd(backlog, txEnd);
-    host.schedule(txEnd, { kind: 'txComplete', device: from.device, port: from.port });
+    let slot = -1;
+    let completeSeq: number;
+    if (ahead >= 0) {
+      // R43: the frames from the displaced one on move by this frame's serialization time; the line stays busy as long
+      const shift = txEnd - txStart;
+      shiftCommitted(backlog, ahead, shift, from);
+      port.tx.busyUntil += shift;
+      port.tx.queue++;
+      completeSeq = host.schedule(txEnd, { kind: 'txComplete', device: from.device, port: from.port });
+    } else {
+      port.tx.busyUntil = txEnd;
+      port.tx.queue++;
+      slot = pushBacklogEnd(backlog, txEnd);
+      completeSeq = host.schedule(txEnd, { kind: 'txComplete', device: from.device, port: from.port });
+    }
 
     const summary = summarizePdu(pdu);
     const fromRef: PortRef = { device: from.device, port: from.port };
@@ -420,6 +576,16 @@ export function createCableP2P(host: MediumHost, options: CableP2POptions): Medi
     if (arrivalSeq !== undefined) leg.arrivalSeq = arrivalSeq;
     if (dscp !== undefined) leg.dscp = dscp;
     host.inflight.add(leg);
+
+    // R43: the commit record of a P3-profile serial port, beside its ring entry (a ring that keeps records but whose
+    // frame is not recorded holds no stale record in that slot)
+    if (records) {
+      const rec: CommitRecord = { pdu, leg, corrupted: !lost && corrupted, completeSeq, control };
+      if (ahead >= 0) insertBacklogEnd(backlog, ahead, txEnd, rec, txEnd - txStart);
+      else backlog.recs![slot] = rec;
+    } else if (backlog.recs !== undefined) {
+      backlog.recs[slot] = undefined;
+    }
 
     const result: Extract<TransmitResult, { ok: true }> = { ok: true, link: linkId, txStart, txEnd, arrive };
     if (lost) result.lost = true;
@@ -615,6 +781,11 @@ export function createCableP2P(host: MediumHost, options: CableP2POptions): Medi
           t: now, kind: 'frameAbort', pdu: leg.pdu, link: scope, from: leg.from, to: leg.to, abortAt: now, arrive: leg.arrive, reason: 'link-down',
         });
         host.inflight.delete(leg.pdu.id, leg.link, leg.to);
+      }
+      // P3 (ruling R43): the frames committed at either end will never arrive, so no control frame may move them
+      if (priority) {
+        const st = host.link(scope);
+        if (st !== undefined) for (const end of [st.a, st.b]) forgetRecords(end);
       }
       // P3 [S20]: the frames held at either end will never leave on this link
       if (helds.size === 0) return;

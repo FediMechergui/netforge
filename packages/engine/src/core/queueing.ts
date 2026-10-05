@@ -194,8 +194,12 @@ export interface QueueingClassStats {
 
 /** @since P3 A scheduler instance (one per egress port or sandbox run). */
 export interface QueueScheduler<T> {
-  /** Offer a packet at `now`; `linkBusy` = the transmitter is still serialising a frame (congestion, with a waiting packet). */
-  enqueue(p: QueueingPacket<T>, now: SimTime, linkBusy: boolean): QueueingEnqueueResult;
+  /**
+   * Offer a packet at `now`; `linkBusy` = the transmitter is still serialising a frame (congestion, with a waiting packet).
+   * `held` (default 0): packets of the same class already taken out for service but not yet sent (a shaper's staged
+   * packet, `link/qos/scheduler.ts`); they count toward the class's tail-drop limit, so its depth never exceeds it.
+   */
+  enqueue(p: QueueingPacket<T>, now: SimTime, linkBusy: boolean, held?: number): QueueingEnqueueResult;
   /** The next packet to transmit (priority classes first, then DRR), removed; undefined when every queue is empty. */
   dequeue(now: SimTime): QueueingPacket<T> | undefined;
   /** Packets waiting in all classes. */
@@ -380,7 +384,7 @@ export function createQueueScheduler<T>(spec: QueueingSpec, now: SimTime = 0): Q
     get depth(): number {
       return depth;
     },
-    enqueue(p: QueueingPacket<T>, at: SimTime, linkBusy: boolean): QueueingEnqueueResult {
+    enqueue(p: QueueingPacket<T>, at: SimTime, linkBusy: boolean, held = 0): QueueingEnqueueResult {
       const c = classes[p.cls];
       if (c === undefined) throw new RangeError(`packet class ${p.cls} is not one of the ${classes.length} classes`);
       if (!Number.isInteger(p.bytes) || p.bytes <= 0) throw new RangeError(`packet size ${p.bytes} must be a positive integer`);
@@ -391,7 +395,7 @@ export function createQueueScheduler<T>(spec: QueueingSpec, now: SimTime = 0): Q
         return { ok: false, reason: 'policed' };
       }
       const size = classSize(c);
-      if (c.spec.queueLimit > 0 && size >= c.spec.queueLimit) {
+      if (c.spec.queueLimit > 0 && size + held >= c.spec.queueLimit) {
         c.tailDrops++;
         return { ok: false, reason: 'queue-full' };
       }

@@ -44,6 +44,7 @@ import type { FocusEvent as ReactFocusEvent, KeyboardEvent as ReactKeyboardEvent
 import type { DeviceId, LinkId, PortRef, Selection, SimSnapshot } from '@netforge/engine';
 import { selectionKey } from '@netforge/engine';
 import * as canvasModule from '../Canvas';
+import { dockPaneShown } from '../../dock/registry';
 import { store, useStore } from '../../store/store';
 import type { TopoOverlayState } from '../../store/types';
 import { isPickablePort } from '../../app/cable/cable-compat.js';
@@ -419,7 +420,7 @@ export function CanvasOutline() {
   const selection = useStore((s) => s.selection);
   const topo = useStore((s) => s.topoOverlays);
   const routingUi = useStore((s) => s.routingUi);
-  const routingShown = useStore((s) => s.dockTab === 'routing');
+  const routingShown = useStore((s) => dockPaneShown('routing', s));
   const selectedKey = selection === null ? null : selectionKey(selection);
 
   const bare = useMemo(() => buildOutline(snapshot), [snapshot]);

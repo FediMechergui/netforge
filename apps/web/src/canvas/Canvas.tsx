@@ -45,6 +45,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent, RefObject } from 'react';
 import type { DeviceId, PortRef, SimSnapshot } from '@netforge/engine';
 import { buildCableLookup, portCompatibility, serialDceHint, type CableLookup, type PortCompat } from '../app/cable/cable-compat';
+import { dockPaneShown } from '../dock/registry';
 import { openDeviceSurface, type DeviceSurface } from '../shared/openDeviceSurface';
 import { extrapolatedNow, selectDevice, useDevice } from '../store/selectors';
 import { store, useStore } from '../store/store';
@@ -405,7 +406,7 @@ function runCanvas(scene: Scene, tip: HTMLElement, openMenu: (m: ContextMenuRequ
   let lastOverlays: WirelessOverlayState | undefined = initial.overlays;
   let lastTopo: TopoOverlayState | undefined = initial.topoOverlays;
   let lastRoutingUi = initial.routingUi;
-  let lastRoutingShown = initial.dockTab === 'routing';
+  let lastRoutingShown = dockPaneShown('routing', initial);
   let lastReduced = scene.reducedMotion;
   let l2Model: L2OverlayModel | null = null;
   let stpModel: StpOverlayModel | null = null;
@@ -559,8 +560,9 @@ function runCanvas(scene: Scene, tip: HTMLElement, openMenu: (m: ContextMenuRequ
     const sampleWall = scene.reducedMotion ? Math.floor(wall / REDUCED_MOTION_SAMPLE_MS) * REDUCED_MOTION_SAMPLE_MS : wall;
     const now = extrapolatedNow(st, Math.max(st.nowWall, sampleWall));
     const cableGeometry = (id: Parameters<typeof cables.geometry>[0]) => cables.geometry(id);
-    // [S3] the SPF layer follows the stepper while the link-state browser is the dock's tab
-    const routingShown = st.dockTab === 'routing';
+    // [S3] the SPF layer follows the stepper while the link-state browser is on screen (W4 web-shell: the dock's tab,
+    // and the dock not collapsed)
+    const routingShown = dockPaneShown('routing', st);
     const routing: OverlayRoutingInput = { ui: st.routingUi, shown: routingShown };
     const reducedMotion = scene.reducedMotion;
     if (

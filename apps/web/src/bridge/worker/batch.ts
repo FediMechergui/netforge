@@ -13,11 +13,13 @@
  * P3 (ARCHITECTURE-P3 D16, §2.8; §7 W2 sim): a port's FIFO backlog (`PortSnapshot.txBacklog`) shrinks at each
  * `txComplete`, which writes no trace event, so the engine's `TxBacklogWatch` (sim/snapshot-cache.ts) sees every drained
  * event too and its `drain(now)` is merged into the dirty set on every post: a sender stays in the deltas while it has
- * a waiting frame, and once more after its last committed frame ended, so the store never keeps a stale backlog.
+ * a waiting frame, and once more after its last committed frame ended, so the store never keeps a stale backlog. Ruling
+ * R43 (P3 worlds) moves queued frames later without a trace event, so the drain is given the engine's `deviceTxBusy`
+ * probe: a sender stays due while one of its transmitters is still busy, whatever the announced end said.
  * A batch without events, snapshot or delta is skipped unless forced or due as a keep-alive while playing.
  * At most `maxEventsPerBatch` events are posted (the newest); the rest are counted in `eventsTruncated`.
  */
-import { createTxBacklogWatch, type DeviceId, type SimSnapshot, type Simulation } from '@netforge/engine';
+import { createTxBacklogWatch, deviceTxBusy, type DeviceId, type SimSnapshot, type Simulation } from '@netforge/engine';
 import {
   FULL_SNAPSHOT_EVERY_MS,
   MAX_EVENTS_PER_BATCH,
@@ -140,8 +142,10 @@ export function createBatcher(host: BatchHost): Batcher {
         dirty.observe(ev);
         backlog.observe(ev);
       }
-      // P3 (D16): a draining FIFO emits nothing, so its sender is re-marked until its backlog is gone, plus once more
-      dirty.markDevices(backlog.drain(s.now));
+      // P3 (D16): a draining FIFO emits nothing, so its sender is re-marked until its backlog is gone, plus once more;
+      // ruling R43: until its transmitters are really idle (a control frame may have moved the backlog's end)
+      const now0 = s.now;
+      dirty.markDevices(backlog.drain(now0, (id) => deviceTxBusy(typeof s.device === 'function' ? s.device(id) : undefined, now0)));
 
       let events = drained.events;
       let truncated = 0;

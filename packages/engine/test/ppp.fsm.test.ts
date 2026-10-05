@@ -226,7 +226,7 @@ describe('ppp fsm: counters and the Restart timer (RFC 1661 §4.6)', () => {
     expect(pppFsmApply({ state: 'closed', restart: 0, failures: 0 }, 'rcr+').timer).toBe('stop');
   });
 
-  it('naks sent count toward Max-Failure; an ack sent or irc resets the count', () => {
+  it('naks sent count toward Max-Failure; an ack sent or a fresh negotiation resets the count, a received Ack or Nak (irc) does not', () => {
     let m: PppAutomaton = { state: 'req-sent', restart: 9, failures: 0 };
     for (let i = 0; i < PPP_MAX_FAILURE; i++) {
       expect(pppNakBecomesReject(m)).toBe(false);
@@ -235,7 +235,16 @@ describe('ppp fsm: counters and the Restart timer (RFC 1661 §4.6)', () => {
     expect(m.failures).toBe(PPP_MAX_FAILURE);
     expect(pppNakBecomesReject(m)).toBe(true);
     expect(pppFsmApply(m, 'rcr+').automaton.failures).toBe(0);
-    expect(pppFsmApply(m, 'rcn').automaton.failures).toBe(0);
+    // RFC 1661 §4.6: Max-Failure counts naks sent without a Configure-Ack SENT; `irc` on a received Ack or Nak keeps it
+    expect(pppFsmApply(m, 'rcn').automaton.failures).toBe(PPP_MAX_FAILURE);
+    expect(pppFsmApply(m, 'rca').automaton).toMatchObject({ state: 'ack-rcvd', failures: PPP_MAX_FAILURE });
+    expect(pppFsmApply({ state: 'ack-sent', restart: 9, failures: 2 }, 'rcn').automaton.failures).toBe(2);
+    // a fresh negotiation (a Configure-Request from a state that was not negotiating) starts from zero
+    expect(pppFsmApply({ state: 'stopped', restart: 0, failures: 3 }, 'rcr-').automaton.failures).toBe(1);
+    expect(pppFsmApply({ state: 'stopped', restart: 0, failures: 3 }, 'rcr+').automaton.failures).toBe(0);
+    expect(pppFsmApply({ state: 'closed', restart: 0, failures: 3 }, 'open').automaton.failures).toBe(0);
+    expect(pppFsmApply({ state: 'starting', restart: 0, failures: 3 }, 'up').automaton.failures).toBe(0);
+    expect(pppFsmApply({ state: 'opened', restart: 0, failures: 3 }, 'rcr-').automaton.failures).toBe(1);
   });
 });
 

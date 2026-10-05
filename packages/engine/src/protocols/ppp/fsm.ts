@@ -15,8 +15,11 @@
  *   - The Restart timer (`lcp-restart:<p>` / `ipcp-restart:<p>`, 2 s, never periodic, §4.2) is (re)started by every
  *     `scr`, `str` and `zrc`, and stopped on entering a state in which it does not run (RFC 1661 §4.1: it runs only in
  *     Closing, Stopping, Req-Sent, Ack-Rcvd and Ack-Sent); `PppFsmResult.timer` says which.
- *   - The failure counter counts Configure-Naks sent (`scn`) since the last Configure-Ack sent (`sca`) or the last
- *     `irc`; at Max-Failure (5) the daemon rejects the options it would have naked (`pppNakBecomesReject`).
+ *   - The failure counter counts Configure-Naks sent (`scn`) without a Configure-Ack sent in between (RFC 1661 §4.6
+ *     Max-Failure): it is zeroed by `sca` and when a fresh negotiation starts (an `scr` sent from a state that was
+ *     not negotiating: Starting, Closed, Stopped or Opened), never by `irc` itself (a received Configure-Ack or Nak in
+ *     Req-Sent keeps it, as pppd's `nakloops`); at Max-Failure (5) the daemon rejects the options it would have naked
+ *     (`pppNakBecomesReject`).
  *
  * An event in a cell the RFC marks `-` cannot happen in that state (for example a packet before the lower layer is
  * up): `pppFsmApply` changes nothing, returns no action and sets `illegal`, and the daemon writes a debug line.
@@ -70,6 +73,9 @@ export const PPP_RESTART_NS: SimTime = 2 * SEC;
 
 /** States in which the Restart timer runs (RFC 1661 §4.1). */
 const TIMER_STATES: ReadonlySet<PppFsmState> = new Set<PppFsmState>(['closing', 'stopping', 'req-sent', 'ack-rcvd', 'ack-sent']);
+
+/** States in which a negotiation is under way: a Configure-Request sent from any other state starts a fresh one. */
+const NEGOTIATING_STATES: ReadonlySet<PppFsmState> = new Set<PppFsmState>(['req-sent', 'ack-rcvd', 'ack-sent']);
 
 /** One cell of the table: the actions in order, then the next state. */
 export interface PppFsmCell {
@@ -247,7 +253,7 @@ export interface PppAutomaton {
   readonly state: PppFsmState;
   /** The Restart counter (RFC 1661 §4.6). */
   readonly restart: number;
-  /** Configure-Naks sent since the last Configure-Ack sent or `irc` (Max-Failure). */
+  /** Configure-Naks sent since the last Configure-Ack sent or the start of the negotiation (Max-Failure). */
   readonly failures: number;
 }
 
@@ -278,13 +284,17 @@ export function pppFsmApply(a: PppAutomaton, event: PppFsmEvent): PppFsmResult {
     switch (act) {
       case 'irc':
         restart = cell.actions.slice(i + 1).includes('str') ? PPP_MAX_TERMINATE : PPP_MAX_CONFIGURE;
-        failures = 0;
         break;
       case 'zrc':
         restart = 0;
         startTimer = true;
         break;
       case 'scr':
+        // RFC 1661 §4.6: a Configure-Request from a state that was not negotiating starts a fresh negotiation
+        if (!NEGOTIATING_STATES.has(a.state)) failures = 0;
+        restart = restart > 0 ? restart - 1 : 0;
+        startTimer = true;
+        break;
       case 'str':
         restart = restart > 0 ? restart - 1 : 0;
         startTimer = true;

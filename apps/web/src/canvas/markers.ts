@@ -23,9 +23,12 @@
  * @since P3 (ARCHITECTURE-P3 §6, §3.3 step 6; W3 web-canvas) A drop that a POLICY made carries `rule` (D12, D13: an
  * access list, DHCP snooping, ARP inspection), and its marker's detail line names that rule in short form instead of
  * the engine's sentence: `ACL NO-WEB-PC1 #10`, `ACL 10 implicit deny`, `DHCP snooping on FastEthernet0/24`
- * (`dropRuleLabel`). The store's `DropMarker` does not copy the rule, so the layer keeps the rules of the drop events
- * it ingests, keyed by PDU and sim time (`dropRuleKey`), and a marker reads its own `rule` first should it ever carry
- * one (`ruleOfMarker`). A drop without a rule (every P1/P2 drop) keeps its detail exactly as before.
+ * (`dropRuleLabel`). A drop without a rule (every P1/P2 drop) keeps its detail exactly as before.
+ *
+ * @since P3 (ruling R42; W4 web-shell, a reviewed edit of this web-canvas file) The store's `DropMarker` carries the
+ * rule (`DropMarker.rule`, copied from the drop event), so the layer reads it from the marker and no longer keeps the
+ * rules of the event ring. `collectDropRules`, `dropRuleKey`, `ruleOfMarker` and `MAX_DROP_RULES` were that W3 lookup;
+ * they stay exported and tested (`canvas.markers.rule.test.ts`) but the layer no longer calls them.
  */
 import { Container, Graphics, type Text } from 'pixi.js';
 import type { DropRule, LinkId, PduId, PortRef, SimTime, TraceEvent } from '@netforge/engine';
@@ -66,7 +69,7 @@ export function dropReasonText(reason: string, detail?: string): { title: string
 
 // ── P3: the policy rule behind a drop ────────────────────────────────────────
 
-/** Drop rules the layer keeps at most (the store keeps at most 200 markers). */
+/** Drop rules `collectDropRules` keeps at most (the W3 lookup; since R42 the layer reads `DropMarker.rule` instead). */
 export const MAX_DROP_RULES = 256;
 
 /**
@@ -253,8 +256,6 @@ export class MarkerLayer {
   private readonly views = new Map<number, MarkerView>();
   private readonly burstViews = new Map<string, BurstView>();
   private bursts: CollisionBurst[] = [];
-  /** P3: the policy rules of the drop events ingested so far (`dropRuleKey` → rule). */
-  private readonly rules = new Map<string, DropRule>();
   private nextBurstId = 1;
   private lastEvents: readonly TraceEvent[] | null = null;
   private lastSeen: TraceEvent | null = null;
@@ -265,8 +266,7 @@ export class MarkerLayer {
 
   /**
    * Turn new `collision` events of the store's event ring into bursts. The first call only remembers where the
-   * ring ends, so history from before the canvas mounted does not flash (P3: it still keeps the ring's drop rules,
-   * since the store's markers for those drops may still be floating).
+   * ring ends, so history from before the canvas mounted does not flash.
    */
   ingest(events: readonly TraceEvent[], wallNow: number): void {
     if (events === this.lastEvents) return;
@@ -275,11 +275,9 @@ export class MarkerLayer {
     if (!this.primed) {
       this.primed = true;
       this.lastSeen = tail;
-      collectDropRules(this.rules, events);
       return;
     }
     const start = indexAfter(events, this.lastSeen);
-    collectDropRules(this.rules, events, start);
     for (let i = start; i < events.length; i++) {
       const ev = events[i];
       if (ev?.kind !== 'collision') continue;
@@ -289,10 +287,9 @@ export class MarkerLayer {
     this.lastSeen = tail;
   }
 
-  /** Forget bursts and the kept drop rules (new simulation generation). */
+  /** Forget bursts (new simulation generation). */
   clearBursts(): void {
     this.bursts = [];
-    this.rules.clear();
   }
 
   /** Place and fade every live marker and burst. Returns how many are visible. */
@@ -320,7 +317,7 @@ export class MarkerLayer {
       visible += 1;
 
       const selected = input.selectedPdu === m.pdu;
-      const text = dropMarkerText(m.reason, m.detail, ruleOfMarker(m, this.rules));
+      const text = dropMarkerText(m.reason, m.detail, m.rule);
       const sig = `${text.title}|${text.detail}|${selected}|${theme.stamp}|${input.textResolution}`;
       if (sig !== view.sig) {
         view.sig = sig;
@@ -457,6 +454,5 @@ export class MarkerLayer {
     this.views.clear();
     this.burstViews.clear();
     this.bursts = [];
-    this.rules.clear();
   }
 }

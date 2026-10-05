@@ -186,6 +186,13 @@ export interface DeviceClockSnapshot {
   stratum?: number;
   reference?: string;
   tzOffsetMin: number;
+  /**
+   * @since P3 (optional by meaning; ruling R42, W4 web-shell, a minimal additive fix) The zone name of the device's
+   * `clock timezone` line (`DeviceClockView.tz.name`, what `show clock` prints), so the device overview names the zone
+   * exactly as the CLI does. Absent while the zone is the default UTC with offset 0 (no line), which keeps every
+   * existing snapshot's bytes.
+   */
+  tzName?: string;
 }
 
 /** @since P0.5 A module slot of a chassis. */

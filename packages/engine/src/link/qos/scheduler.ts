@@ -428,6 +428,8 @@ export function createPortScheduler<T>(spec: EgressSchedulerSpec, now: SimTime):
           return { ok: false, cls, queue: c.name, reason: 'policed', detail };
         }
       }
+      // the frame staged for the shaper gate still counts toward its class's tail-drop limit (it is in `depth`)
+      const held = staged !== undefined && staged.cls === cls ? 1 : 0;
       const r = core.enqueue(
         {
           item: p.item,
@@ -438,8 +440,9 @@ export function createPortScheduler<T>(spec: EgressSchedulerSpec, now: SimTime):
         },
         at,
         linkBusy || staged !== undefined,
+        held,
       );
-      if (r.ok) return { ok: true, cls, queue: c.name, depth: r.depth + (staged !== undefined && staged.cls === cls ? 1 : 0) };
+      if (r.ok) return { ok: true, cls, queue: c.name, depth: r.depth + held };
       const detail = r.reason === 'policed' ? qosPolicedDetail(c.name, 'priority', c.rateBps ?? 0) : qosQueueFullDetail(c);
       return { ok: false, cls, queue: c.name, reason: r.reason, detail };
     },

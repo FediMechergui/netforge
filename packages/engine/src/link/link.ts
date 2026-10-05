@@ -69,11 +69,16 @@
  *     virtual FIFO. Without `LinkModelDeps.egressPolicy` (every P1/P2 harness) this reads nothing at all.
  *   • `egressQueues(ref)`: the held queues' display view at the scheduler's `now`, for a port that routes to the cable
  *     strategy; undefined for every other port.
+ *
+ * P3 ruling R43 (W4 media): `createLinkModel(deps, {profile})` — the world's defaults profile, the one input the
+ * contract's `LinkModelDeps` does not carry. From 'P3' on, the cable strategy commits a serial control frame ahead of the
+ * data queued in a virtual FIFO (link/media/p2p.ts, its file header); absent (every P1/P2 world and harness) = 'P1', and
+ * nothing changes.
  */
 import type { DeviceId, LinkId, PortId, PortRef } from '../contracts/ids.js';
 import { portKey } from '../contracts/ids.js';
-import type { PortRole } from '../contracts/catalog.js';
-import { defaultRoleFor } from '../contracts/catalog.js';
+import type { DefaultsProfile, PortRole } from '../contracts/catalog.js';
+import { defaultRoleFor, profileIncludes } from '../contracts/catalog.js';
 import type {
   ArrivalVerdict,
   CableValidation,
@@ -272,10 +277,23 @@ function roleOf(p: PortState): PortRole {
 }
 
 /**
- * Create the link model for one simulation. See the file header for routing, recompute order, emission order and the
- * notification rules; every method follows the `LinkModel` contract.
+ * @since P3 (ruling R43) Construction options of the link model beyond its `LinkModelDeps`. Every member is optional
+ * by meaning: absent, the model behaves exactly as before P3 (every P1/P2 harness and fixture passes none).
  */
-export function createLinkModel(deps: LinkModelDeps): LinkModelImpl {
+export interface LinkModelOptions {
+  /**
+   * The world's defaults profile (D2), as the Simulation's media wiring knows it. From 'P3' on, the cable strategy
+   * commits a serial control frame ahead of the data queued in a virtual FIFO (`link/media/p2p.ts`, ruling R43).
+   * Absent = 'P1'.
+   */
+  readonly profile?: DefaultsProfile;
+}
+
+/**
+ * Create the link model for one simulation. See the file header for routing, recompute order, emission order and the
+ * notification rules; every method follows the `LinkModel` contract. `options` @since P3 (ruling R43).
+ */
+export function createLinkModel(deps: LinkModelDeps, options: LinkModelOptions = {}): LinkModelImpl {
   const { scheduler, trace } = deps;
   /** Links in creation order (Map insertion order is deterministic). */
   const links = new Map<LinkId, LinkRecord>();
@@ -392,7 +410,8 @@ export function createLinkModel(deps: LinkModelDeps): LinkModelImpl {
     return out;
   };
 
-  const cable = createCableP2P(host, { linkOf });
+  // P3 (ruling R43): a P3-profile world's serial FIFOs have a control path (link/media/p2p.ts); P1/P2 worlds never
+  const cable = createCableP2P(host, profileIncludes(options.profile ?? 'P1', 'P3') ? { linkOf, controlPriority: true } : { linkOf });
   const segment = createSharedSegment(host, {
     links: () => [...links.keys()],
     deviceOrder,

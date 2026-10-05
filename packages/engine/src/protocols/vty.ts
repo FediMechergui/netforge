@@ -42,7 +42,9 @@
  * Determinism: no rng; the SSH keystream is FNV-1a over the segment's endpoints (§4.1).
  *
  * stateSnapshot(): `{ process: 'vty', state: { listening: ('telnet' | 'ssh')[], connections: [{ id, proto, peer, phase,
- *   user? }], logins, failures, refusals } }` (display only; the gradeable record is the table).
+ *   user?, since }], logins, failures, refusals } }` (display only; the gradeable record is the table). `since` (W4,
+ *   ruling R43, additive) is the sim time the connection was accepted, so `show users` prints how long it has been
+ *   connected.
  *
  * ponytail: IPv4 only; the number of vty lines is not a session limit; `ip ssh version 1` is not simulated (the server
  * always speaks 2.0); no idle timeout.
@@ -428,6 +430,8 @@ interface VtyConn {
   readonly peerPort: number;
   readonly local: IpAddress;
   readonly localPort: number;
+  /** When the connection was accepted (W4, R43: the `show users` "Connected for" column). */
+  readonly since: SimTime;
   /** The `line vty` section serving it (read at accept). */
   readonly line: VtyLineConfig;
   phase: 'check' | 'version' | 'auth' | 'user' | 'password' | 'open' | 'closing';
@@ -716,7 +720,7 @@ export function createVty(): Process {
     const line = cfg.lines.find((l) => l.transport.includes(proto));
     if (line === undefined) return [toTcp({ kind: 'tcp.abort', socket: ev.socket })];
     const c: VtyConn = {
-      id: ev.socket, proto, peer: ev.remoteAddr, peerPort: ev.remotePort, local: ev.localAddr, localPort: ev.localPort, line,
+      id: ev.socket, proto, peer: ev.remoteAddr, peerPort: ev.remotePort, local: ev.localAddr, localPort: ev.localPort, since: ctx.now, line,
       phase: proto === 'ssh' ? 'version' : 'check', failures: 0, checked: false, masked: false, cliOpen: false,
       reader: createVtyTermReader(), rx: NO_BYTES,
       rxKey: vtySshKey(ev.remoteAddr, ev.remotePort, ev.localAddr, ev.localPort),
@@ -841,6 +845,7 @@ export function createVty(): Process {
             peer: c.peer,
             phase: c.phase,
             ...(c.user !== undefined ? { user: c.user } : {}),
+            since: c.since,
           })),
           logins,
           failures,

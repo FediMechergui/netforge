@@ -18,11 +18,18 @@
  *  • Following the live capture is paced at NETSCOPE_FOLLOW_MS and only while this tab is the one on screen,
  *    because the worker reports a grown head on nearly every tick; it appends the tail rather than re-reading
  *    the window, and the frame count comes from that head instead of a fresh listing.
+ *
+ * @since P3 (ruling R42; W4 web-shell) The filter is shared with the store's `netscope.filterText` / `netscope.applied`:
+ * another view that writes them (the link-state browser's "show the packets that carried it", routing/LinkStatePanel)
+ * is adopted at once — the box takes the text, the filter applies and the Frames view opens — so that link is one
+ * click. NetScope writes its own typing and applying back to the slice, so the slice always holds what NetScope shows
+ * and a second click on the same link still finds a change to adopt whenever the learner filtered something else since
+ * (`filterAdoption` decides; it ignores NetScope's own writes).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CaptureId, CaptureInfo, CaptureRow, CaptureSpec, CaptureStatistics, FollowStreamResult, PcapFormat } from '@netforge/engine';
 import { engine } from '../bridge/client';
-import { useStore } from '../store/store';
+import { store, useStore } from '../store/store';
 import { CaptureControls, capturePointsOf } from './CaptureControls';
 import { DetailTree, rangeOf, type HotField } from './DetailTree';
 import { FilterBar } from './FilterBar';
@@ -83,6 +90,41 @@ export function saveBytes(bytes: Uint8Array, fileName: string): void {
   setTimeout(() => URL.revokeObjectURL(url), SAVE_URL_LIFETIME_MS);
 }
 
+/** @since P3 The filter half of the store's NetScope slice (ruling R42). */
+export interface NetScopeFilter {
+  readonly filterText: string;
+  readonly applied: string;
+}
+
+/** @since P3 What NetScope does when the store's filter moved: the text to take, the filter to apply, whether to show the frames. */
+export interface FilterAdoption {
+  readonly text?: string;
+  readonly applied?: string;
+  /** The applied filter changed: the Frames view opens on it. */
+  readonly showFrames: boolean;
+}
+
+/**
+ * @since P3 (ruling R42) Compare the store's filter with the one NetScope last saw there (its own writes included):
+ * null when neither moved; else the box's new text, and the new applied filter with the Frames view when that moved.
+ */
+export function filterAdoption(seen: NetScopeFilter, slice: NetScopeFilter): FilterAdoption | null {
+  const textMoved = slice.filterText !== seen.filterText;
+  const appliedMoved = slice.applied !== seen.applied;
+  if (!textMoved && !appliedMoved) return null;
+  return {
+    ...(textMoved ? { text: slice.filterText } : {}),
+    ...(appliedMoved ? { applied: slice.applied } : {}),
+    showFrames: appliedMoved,
+  };
+}
+
+/** @since P3 The store's filter now (empty before the slice exists). */
+function storeFilter(): NetScopeFilter {
+  const ns = store.getState().netscope;
+  return { filterText: ns?.filterText ?? '', applied: ns?.applied ?? '' };
+}
+
 /** Summary line under the filter box. */
 export function statusText(state: PagerState, info: CaptureInfo | undefined): string {
   if (!info) return 'no capture selected';
@@ -100,9 +142,12 @@ export function NetScope() {
 
   const [captures, setCaptures] = useState<CaptureInfo[]>([]);
   const [activeId, setActiveId] = useState<CaptureId | null>(null);
-  const [view, setView] = useState<NetScopeView>('captures');
-  const [text, setText] = useState('');
-  const [applied, setApplied] = useState('');
+  // P3 (ruling R42): the filter starts from the store's slice, and the frames are shown when one is already applied
+  const seenFilter = useRef<NetScopeFilter | null>(null);
+  seenFilter.current ??= storeFilter();
+  const [view, setView] = useState<NetScopeView>(() => (seenFilter.current?.applied ? 'packets' : 'captures'));
+  const [text, setText] = useState(() => seenFilter.current?.filterText ?? '');
+  const [applied, setApplied] = useState(() => seenFilter.current?.applied ?? '');
   const [state, setState] = useState<PagerState>(EMPTY_STATE);
   const [selected, setSelected] = useState<number | null>(null);
   const [detail, setDetail] = useState<Awaited<ReturnType<typeof details.get>>>(undefined);
@@ -121,6 +166,28 @@ export function NetScope() {
 
   const liveHead = useStore((s) => (activeId === null ? 0 : (s.netscope?.heads?.[activeId] ?? 0)));
   const shown = useStore((s) => s.dockTab === 'netscope');
+  const sliceText = useStore((s) => s.netscope?.filterText ?? '');
+  const sliceApplied = useStore((s) => s.netscope?.applied ?? '');
+
+  // P3 (ruling R42): adopt a filter another view put in the store ("show the packets that carried it")
+  useEffect(() => {
+    const seen = seenFilter.current ?? { filterText: '', applied: '' };
+    const slice: NetScopeFilter = { filterText: sliceText, applied: sliceApplied };
+    seenFilter.current = slice;
+    const step = filterAdoption(seen, slice);
+    if (step === null) return;
+    if (step.text !== undefined) setText(step.text);
+    if (step.applied !== undefined) setApplied(step.applied);
+    if (step.showFrames) setView('packets');
+  }, [sliceText, sliceApplied]);
+
+  /** Write NetScope's own filter to the store (remembered as seen, so it is never adopted back). */
+  const shareFilter = useCallback((patch: Partial<NetScopeFilter>): void => {
+    const next: NetScopeFilter = { ...storeFilter(), ...patch };
+    seenFilter.current = next;
+    store.getState().setNetscope(patch);
+  }, []);
+
   // The head the worker reports on each batch is newer than the listing; count with it rather than asking
   // the worker for the list again.
   const known = useMemo(
@@ -368,10 +435,14 @@ export function NetScope() {
     <div className="ns dock-panel">
       <FilterBar
         text={text}
-        onText={setText}
+        onText={(t) => {
+          setText(t);
+          shareFilter({ filterText: t });
+        }}
         onApply={(t) => {
           setApplied(t);
           setView('packets');
+          shareFilter({ filterText: t, applied: t });
         }}
         engineError={state.error}
         status={statusText(state, active)}

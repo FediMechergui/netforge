@@ -98,9 +98,12 @@ function portOrder(ctx: CommandCtx): Map<PortId, number> {
   return out;
 }
 
-/** Seconds left before a neighbour row ages out (its advertised hold time when the row has no expiry). */
+/**
+ * Seconds left before a neighbour row ages out, `ceil((expiresAt − now) / 1 s)` (§3.6 step 5: a row just written shows
+ * its full hold time); its advertised hold time when the row has no expiry.
+ */
 function holdLeft(expiresAt: SimTime | undefined, fallbackS: number, now: SimTime): number {
-  return expiresAt === undefined ? fallbackS : Math.max(0, Math.floor((expiresAt - now) / SEC));
+  return expiresAt === undefined ? fallbackS : Math.max(0, Math.ceil((expiresAt - now) / SEC));
 }
 
 /** Rows of a neighbour table (absent table = none), by local port in canonical order, then by `name`. */

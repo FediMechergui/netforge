@@ -16,6 +16,8 @@
  *     devices / devicePorts                 → device creation order / canonical port order
  *     capture (P1)                          → the Simulation's NetScope capture hub (capture/tap.ts)
  *     egressPolicy (P3 [S20], ruling R32)   → DeviceRuntime.egressPolicy (undefined on a port without a queueing policy)
+ *   link model options
+ *     profile (P3, ruling R43)              → the world's defaults profile (the serial control path from 'P3' on)
  *   device deps                             → link model
  *     transmit                              → LinkModel.transmit (the fourth argument, `{qosClass}`, only when given)
  *     onPortAdmin, onPortPhyConfig          → LinkModel.onPortChanged, then the OperChanges fan-out
@@ -40,6 +42,7 @@
  * the P0 `recompute`, and devices without radio ports never schedule `deviceMoved`, so P0 traces are unchanged.
  */
 import type { CaptureTap } from '../contracts/capture.js';
+import type { DefaultsProfile } from '../contracts/catalog.js';
 import type { DeviceCatalog, DeviceRuntime } from '../contracts/device.js';
 import type { SimEvent } from '../contracts/events.js';
 import type { DeviceId, PortId, PortRef } from '../contracts/ids.js';
@@ -76,6 +79,11 @@ export interface MediaWiringOptions {
   readonly metresPerUnit: number;
   /** @since P1 NetScope tap installed as `LinkModelDeps.capture` (the Simulation's capture hub). */
   readonly capture?: CaptureTap;
+  /**
+   * @since P3 (ruling R43) The world's defaults profile (D2), passed to `createLinkModel(deps, {profile})`: from 'P3' on,
+   * the serial FIFOs get the control path. Absent means 'P1' (optional by meaning); P1/P2 worlds keep the plain FIFO.
+   */
+  readonly profile?: DefaultsProfile;
 }
 
 /** The link-side services of one world. */
@@ -155,7 +163,7 @@ export function createMediaWiring(world: MediaWorld, opts: MediaWiringOptions): 
     capture: opts.capture,
     // P3 [S20] (ruling R32): the compiled output scheduler of a port; undefined for every P1/P2 port (no policy)
     egressPolicy: (ref) => devices.get(ref.device)?.egressPolicy(ref.port),
-  });
+  }, { profile: opts.profile });
 
   const fanOut = (changes: OperChanges | undefined, now: SimTime): void => {
     if (changes === undefined) return;

@@ -527,7 +527,7 @@ export function createSimulation(opts: SimulationOptions): Simulation {
     });
     const devices = new Map<DeviceId, DeviceRuntime>();
     const deviceOrder: DeviceId[] = [];
-    const media = createMediaWiring({ scheduler, rng, pdus, devices, deviceOrder }, { trace: sink, catalog, metresPerUnit, capture: hub });
+    const media = createMediaWiring({ scheduler, rng, pdus, devices, deviceOrder }, { trace: sink, catalog, metresPerUnit, capture: hub, profile });
     return {
       scheduler,
       rng,

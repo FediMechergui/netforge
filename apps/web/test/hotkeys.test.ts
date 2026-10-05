@@ -127,8 +127,8 @@ describe('dock tab hotkeys follow the registry', () => {
     const keys = hk.HOTKEYS.map((h) => h.keys);
     expect(keys).toEqual(expect.arrayContaining(['Space', '.', 'V', 'C', 'Esc', 'Del', 'Ctrl+S', 'Ctrl+O']));
     const dock = hk.HOTKEYS.find((h) => h.action.startsWith('dock tabs'));
-    // P1 W7: the dock ships eight tabs (NetScope, Sim events and Labs joined the five P0 ones).
-    expect(dock?.keys).toBe('1 – 8');
+    // P3 W4 (§9.2 item 36b): the dock ships nine tabs (Link state joined the eight P1 ones).
+    expect(dock?.keys).toBe('1 – 9');
     expect(dock?.action).toContain('Terminal');
     expect(new Set(keys).size).toBe(keys.length);
   });
@@ -137,12 +137,12 @@ describe('dock tab hotkeys follow the registry', () => {
 describe('dock registry', () => {
   it('ships the tabs of this build and hides later stages', async () => {
     const r = await import('../src/dock/registry');
-    // P1 W7: this build ships the P1 panels, so all eight tabs are available and numbered.
-    expect(r.DOCK_STAGE).toBe('P1');
-    expect(r.DOCK_TABS.map((t) => t.id)).toEqual(['terminal', 'packets', 'events', 'tables', 'provenance', 'netscope', 'sim-events', 'labs']);
-    expect(r.DOCK_TABS.map((t) => t.hotkey)).toEqual(['1', '2', '3', '4', '5', '6', '7', '8']);
+    // P3 W4 (§9.2 item 36b): this build ships the [S2] link-state browser, so all nine tabs are available and numbered.
+    expect(r.DOCK_STAGE).toBe('P3');
+    expect(r.DOCK_TABS.map((t) => t.id)).toEqual(['terminal', 'packets', 'events', 'tables', 'provenance', 'netscope', 'sim-events', 'labs', 'routing']);
+    expect(r.DOCK_TABS.map((t) => t.hotkey)).toEqual(['1', '2', '3', '4', '5', '6', '7', '8', '9']);
     expect(r.dockTabForHotkey('3')).toBe('events');
-    expect(r.dockTabForHotkey('9')).toBeUndefined();
+    expect(r.dockTabForHotkey('9')).toBe('routing');
     expect(r.buildDockTabs('P0.5').some((t) => t.id === 'netscope')).toBe(false);
     expect(r.isDockTabAvailable('netscope')).toBe(true);
     expect(r.isDockTabAvailable('tables')).toBe(true);
@@ -152,10 +152,10 @@ describe('dock registry', () => {
 
   it('numbers every tab of a later stage in registry order', async () => {
     const r = await import('../src/dock/registry');
-    const p1 = r.buildDockTabs('P1');
-    expect(p1.map((t) => t.id)).toEqual(['terminal', 'packets', 'events', 'tables', 'provenance', 'netscope', 'sim-events', 'labs']);
-    expect(p1.map((t) => t.hotkey)).toEqual(['1', '2', '3', '4', '5', '6', '7', '8']);
+    const p3 = r.buildDockTabs('P3');
+    expect(p3.map((t) => t.id)).toEqual(['terminal', 'packets', 'events', 'tables', 'provenance', 'netscope', 'sim-events', 'labs', 'routing']);
+    expect(p3.map((t) => t.hotkey)).toEqual(['1', '2', '3', '4', '5', '6', '7', '8', '9']);
     expect(r.buildDockTabs('P0')).toHaveLength(5);
-    expect(new Set(p1.map((t) => t.label)).size).toBe(p1.length);
+    expect(new Set(p3.map((t) => t.label)).size).toBe(p3.length);
   });
 });

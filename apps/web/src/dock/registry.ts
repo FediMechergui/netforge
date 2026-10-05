@@ -5,10 +5,15 @@
  *
  * `stage` says when a tab ships. Tabs of a later stage stay registered (the `DockTab` union already names them) but
  * are hidden until that stage's panels exist; `DOCK_STAGE` is the stage this build ships.
+ *
+ * @since P3 [S2] (ARCHITECTURE-P3 §2.14, §6, §9.2 item 36b; W4 web-shell) `DOCK_STAGE` is 'P3': the `routing` tab
+ * ("Link state", the LSDB browser and SPF stepper) is shown after `labs` and takes the digit hotkey 9. `dockPaneShown`
+ * says whether a tab's panel is actually on screen (the dock's tab, the dock not collapsed, the tab shipped): the canvas
+ * `spf` layer follows the stepper only while the link-state browser is visible (`OverlaySyncInput.routing.shown`).
  */
 import type { DockTab } from '../store/types';
 
-/** 'P3' @since P3 [S2] (ARCHITECTURE-P3 §2.14): the stage of the `routing` tab, shown from the W4 web-shell item. */
+/** 'P3' @since P3 [S2] (ARCHITECTURE-P3 §2.14): the stage of the `routing` tab, shown since the W4 web-shell item. */
 export type DockStage = 'P0' | 'P0.5' | 'P1' | 'P3';
 
 export interface DockTabDef {
@@ -23,8 +28,8 @@ export interface DockTabDef {
   readonly stage: DockStage;
 }
 
-/** The stage of this build. */
-export const DOCK_STAGE: DockStage = 'P1';
+/** The stage of this build ('P3' since the W4 web-shell item, §9.2 item 36b: the `routing` tab is shown). */
+export const DOCK_STAGE: DockStage = 'P3';
 
 /** Dock heights (CSS pixels): at or below `DOCK_MIN_HEIGHT` the dock shows only its tab strip. */
 export const DOCK_MIN_HEIGHT = 30;
@@ -55,8 +60,8 @@ const ALL_TABS: readonly DockTabInput[] = [
   { id: 'netscope', label: 'NetScope', description: 'Capture and analyse traffic.', keepMounted: true, stage: 'P1' },
   { id: 'sim-events', label: 'Sim events', description: 'Step through matching events with breakpoints.', keepMounted: false, stage: 'P1' },
   { id: 'labs', label: 'Labs', description: 'Lab instructions and task checks.', keepMounted: false, stage: 'P1' },
-  // P3 [S2] (ARCHITECTURE-P3 §2.14; the architect's W0 stub): hidden while DOCK_STAGE is 'P1', so buildDockTabs() and
-  // the hotkeys are unchanged until the W4 web-shell item shows it.
+  // P3 [S2] (ARCHITECTURE-P3 §2.14; registered by the architect in W0, shown by the W4 web-shell item): the ninth tab,
+  // so it takes the digit hotkey 9 (app/Dock.tsx maps it to the lazy routing/LinkStatePanel).
   { id: 'routing', label: 'Link state', description: 'Link-state databases and shortest-path trees of OSPF routers.', keepMounted: false, stage: 'P3' },
 ];
 
@@ -90,6 +95,16 @@ export function isDockTabAvailable(id: string): id is DockTab {
 /** The tab bound to a digit key, if any. */
 export function dockTabForHotkey(key: string): DockTab | undefined {
   return DOCK_TABS.find((t) => t.hotkey === key)?.id;
+}
+
+/**
+ * @since P3 [S2] Whether the panel of `tab` is on screen: it is the dock's tab, the dock is open (taller than its tab
+ * strip, `DOCK_MIN_HEIGHT`) and this build ships the tab. The canvas and its keyboard outline read it for the
+ * `routing` tab (`OverlaySyncInput.routing.shown`), so the `spf` layer follows the SPF stepper only while the
+ * link-state browser is visible.
+ */
+export function dockPaneShown(tab: DockTab, state: { readonly dockTab: DockTab; readonly dockHeight: number }): boolean {
+  return state.dockTab === tab && state.dockHeight > DOCK_MIN_HEIGHT && isDockTabAvailable(tab);
 }
 
 /** Range text for help lists, e.g. "1 – 5". */

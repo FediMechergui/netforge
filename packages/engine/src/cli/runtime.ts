@@ -147,6 +147,7 @@ import {
   help as parserHelp,
   matchCommand,
   secretSpansOf,
+  tokenize,
   MSG_INCOMPLETE,
   type MatchContext,
   type MatchResult,
@@ -1071,11 +1072,20 @@ export function createCliRuntime(deps: CliRuntimeDepsP3, handlers?: Record<strin
 
   // ── matching with the parent-mode fallback ─────────────────────────────────
 
+  /** Column of the line's first command word (after a leading `no`); undefined for a line with no such word. */
+  const firstWordColumn = (line: string): number | undefined => {
+    const toks = tokenize(line);
+    const at = toks[0] !== undefined && toks[0].text.toLowerCase() === 'no' ? 1 : 0;
+    return toks[at]?.column;
+  };
+
   /**
    * Match `line` in `mode` (P2: `config-subif` and `config-if-range` are matched as `config-if`, `matchModeOf`). An
    * `unrecognized` line in a configuration sub-mode (the session's own mode) is retried in each ancestor
    * configuration mode with the context truncated to that mode's depth; `fallback` carries the mode and context of
-   * the first ancestor that matched.
+   * the first ancestor that matched. P3 (W4 fix): so is a line refused at its first command word by an argument slot
+   * (the `<seq> <action>` entries of a list section take any first word as a sequence number), so a global line typed
+   * there runs globally as everywhere else; when no ancestor matches, the sub-mode's own error stands.
    */
   const matchLine = (
     s: SessionState,
@@ -1084,7 +1094,8 @@ export function createCliRuntime(deps: CliRuntimeDepsP3, handlers?: Record<strin
     mode: CliMode,
   ): { m: MatchResult; fallback?: { mode: CliMode; context: string[][] } } => {
     const m = matchCommand(grammar, matchContext(s, dev, matchModeOf(mode), matchContextIn(s, mode)), line);
-    if (m.ok || m.kind !== 'unrecognized' || mode !== s.mode || !isConfigClassMode(mode) || mode === 'config') return { m };
+    if (m.ok || mode !== s.mode || !isConfigClassMode(mode) || mode === 'config') return { m };
+    if (m.kind !== 'unrecognized' && !(m.kind === 'invalid-arg' && m.error.column === firstWordColumn(line))) return { m };
     const seen = new Set<CliMode>([mode]);
     let cur = parentMode(mode);
     while (cur !== undefined && isConfigClassMode(cur) && !seen.has(cur)) {

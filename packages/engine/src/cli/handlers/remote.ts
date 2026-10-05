@@ -12,12 +12,14 @@
  *
  * W3 cli (cli-b): `show users` (the typing console line, then the inbound connections of the vty StateView) and `show
  * ssh` (the SSH connections in, from vty, and out, from vty-client). Messages are original wording (spec §1.6).
+ * W4 (ruling R43): the vty StateView's connection entries carry `since`, so `show users` adds its "Connected for" column.
  */
 import type { CommandCtx, CommandHandler, CommandOutcome } from '../../contracts/cli.js';
 import type { SessionId } from '../../contracts/ids.js';
 import type { ProcessRequest } from '../../contracts/process.js';
+import type { SimTime } from '../../contracts/time.js';
 import { isIpv4, isIpv4Broadcast, isIpv4Multicast, type IpAddress } from '../../contracts/addr.js';
-import { table } from '../format.js';
+import { fmtDuration, table } from '../format.js';
 import { REMOTE_HANDLERS, VTY_CLIENT_PROCESS, VTY_PROCESS } from '../grammar/remote.js';
 
 /** @since P3 [S13] A device that runs no remote terminal client. */
@@ -78,6 +80,11 @@ export interface VtyConnectionView {
   /** 'open' once the CLI session runs; the login phases before ('check', 'version', 'auth', 'user', 'password'); 'closing'. */
   readonly phase: string;
   readonly user?: string;
+  /**
+   * @since P3 (W4, ruling R43; additive) When the connection was accepted (sim time), so `show users` prints how long
+   * it has been connected. Absent in a view that carries no start time (the column is then not shown).
+   */
+  readonly since?: SimTime;
 }
 
 /**
@@ -112,7 +119,11 @@ export function vtyConnections(ctx: Pick<CommandCtx, 'processState'>): VtyConnec
     if (proto === undefined || typeof peer !== 'string') continue;
     const id = typeof e['id'] === 'string' ? e['id'] : '';
     const phase = typeof e['phase'] === 'string' ? e['phase'] : 'open';
-    out.push(typeof e['user'] === 'string' ? { id, proto, peer, phase, user: e['user'] } : { id, proto, peer, phase });
+    const view: { -readonly [K in keyof VtyConnectionView]: VtyConnectionView[K] } = { id, proto, peer, phase };
+    if (typeof e['user'] === 'string') view.user = e['user'];
+    const since = e['since'];
+    if (typeof since === 'number' && Number.isSafeInteger(since) && since >= 0) view.since = since;
+    out.push(view);
   }
   return out;
 }
@@ -143,19 +154,26 @@ export const MSG_NO_REMOTE_SESSION = 'No remote session is open.';
 /** @since P3 (W3 cli) `show ssh` without an SSH connection. */
 export const MSG_NO_SSH_SESSION = 'No SSH connection is open.';
 
+/** @since P3 (W4, ruling R43) The `show users` column of how long each inbound connection has been up. */
+export const SHOW_USERS_CONNECTED_FOR = 'Connected for';
+
 /**
  * `show users` (§5.8): the typing session's console line (`*`), then one `vty <n>` line per inbound connection ([S13],
  * the vty StateView) with its user, protocol, peer and state. A typing remote session is starred when it is the only
- * open connection (the typing session must be one of them; the StateView does not name CLI sessions).
+ * open connection (the typing session must be one of them; the StateView does not name CLI sessions). W4 (ruling R43):
+ * when the listed connections carry their start time (`since`), a last column says how long each has been connected
+ * (`HH:MM:SS`; '-' for the console line and for an entry without a start time).
  */
 const showUsers: CommandHandler = (ctx) => {
   const remote = vtyConnections(ctx);
   const open = remote.filter((c) => c.phase === 'open');
-  const rows: string[][] = [['', 'Line', 'User', 'Protocol', 'From', 'State']];
-  if (ctx.session.via === 'console') rows.push(['*', 'con 0', '-', 'console', '-', 'session open']);
+  const timed = remote.some((c) => c.since !== undefined);
+  const rows: string[][] = [['', 'Line', 'User', 'Protocol', 'From', 'State', ...(timed ? [SHOW_USERS_CONNECTED_FOR] : [])]];
+  if (ctx.session.via === 'console') rows.push(['*', 'con 0', '-', 'console', '-', 'session open', ...(timed ? ['-'] : [])]);
   remote.forEach((c, i) => {
     const own = ctx.session.via === 'vty' && open.length === 1 && open[0] === c;
-    rows.push([own ? '*' : '', `vty ${i}`, c.user ?? '-', c.proto, c.peer, sessionPhaseText(c.phase)]);
+    const connected = timed ? [c.since === undefined ? '-' : fmtDuration(ctx.now - c.since)] : [];
+    rows.push([own ? '*' : '', `vty ${i}`, c.user ?? '-', c.proto, c.peer, sessionPhaseText(c.phase), ...connected]);
   });
   const out = table(rows);
   return { output: remote.length === 0 ? `${out}\n${MSG_NO_REMOTE_SESSION}` : out };

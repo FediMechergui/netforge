@@ -882,7 +882,9 @@ function recordMarkersAndFlashes(s: Draft<Store>, events: readonly TraceEvent[],
         wallCreated: wall,
       };
       if (ev.detail !== undefined) marker.detail = ev.detail;
-      s.dropMarkers.push(marker);
+      // P3 (ruling R42): the policy rule travels with the marker, so the layer never looks it up in the event ring
+      if (ev.rule !== undefined) marker.rule = ev.rule;
+      s.dropMarkers.push(castDraft(marker));
     } else if (ev.kind === 'tableWrite' || ev.kind === 'tableExpire') {
       const flash: TableFlash = {
         device: ev.device,

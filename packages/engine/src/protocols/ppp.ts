@@ -20,12 +20,18 @@
  *
  * LCP (§3.9 step 3): Configure-Request `{authProto, magic}` — `authProto` is the first protocol of `ppp authentication`
  * (chap → 'chap-md5'), absent without the line; the magic number is FNV-derived per negotiation (§4.1). A peer's
- * request is acceptable when its authentication protocol is absent, 'chap-md5' or 'pap' (this end can answer either),
- * else it is naked with 'chap-md5'. A Nak naming a protocol of our own list switches to it; a Nak naming another, or a
- * Reject of the option (the peer will not authenticate), fails the attempt as an authentication failure; a Reject of
- * the magic number drops it; more than Max-Failure Naks or Rejects in one attempt fail it as a negotiation failure.
- * Echo-Requests every `keepalive` seconds (default 10, 0 = none) while Opened, background with tag `lcp-echo`; three
- * unanswered → `keepalive-missed` and a renegotiation. Identifiers count per protocol from 1; replies must match the
+ * request is acceptable when its authentication protocol is absent or 'chap-md5' (this end always answers CHAP), or
+ * 'pap' while this port has `ppp pap sent-username` (the WAN map's PAP row, §10.1 `accept.p3.ppp-pap`); otherwise it
+ * is naked with 'chap-md5', and once Max-Failure Naks went out without a Configure-Ack in between (RFC 1661 §4.6,
+ * `pppNakBecomesReject`) the option is rejected instead and this end ends the attempt as an authentication failure
+ * (so a PAP-only authenticator facing a peer without `sent-username` stops after Max-Failure on both ends, and
+ * `runToIdle` returns). A Nak naming a protocol of our own list switches to it; a Nak naming another is answered by
+ * asking again for ours (the peer rejects it at its Max-Failure); a Reject of the option (the peer will not
+ * authenticate) fails the attempt as an authentication failure; a Reject of the magic number drops it; more than
+ * Max-Failure Naks or Rejects in one attempt fail it as a negotiation failure.
+ * Echo-Requests every `keepalive` seconds (default 10, 0 = none) while Opened, background with tag `lcp-echo`; four
+ * unanswered → `keepalive-missed` and a renegotiation on the next tick, five intervals after the last answered echo
+ * (§10.1 `accept.p3.ppp-keepalive`: "after 5 intervals"). Identifiers count per protocol from 1; replies must match the
  * outstanding request's identifier. A Protocol-Reject of IPCP or IPv6CP is that NCP's RXJ− (it stops); an NCP packet
  * this port does not run (IPCP without an IPv4 address, IPv6CP without IPv6) is answered with a Protocol-Reject in the
  * Network phase; control packets of a later phase are discarded (RFC 1661 §3).
@@ -43,9 +49,9 @@
  *     most 10 sends; a new challenge id starts the count again), so a lost Success never leaves the line in the
  *     Authenticate phase; after the last send it gives up as the PAP peer does (authentication failed, end of the
  *     attempt). Success, Failure, LCP down and the line going down stop the timer.
- *   - PAP peer: Authenticate-Request `{peerId, password}` from `ppp pap sent-username` (else the hostname and an empty
- *     password), resent every 2 s with a new identifier (`pap-retry:<p>`, at most 10 sends). The password travels in
- *     the clear, on purpose.
+ *   - PAP peer (only with `ppp pap sent-username`, which LCP requires before it acknowledges PAP): Authenticate-Request
+ *     `{peerId, password}` from that line, resent every 2 s with a new identifier (`pap-retry:<p>`, at most 10
+ *     sends). The password travels in the clear, on purpose.
  *   - PAP authenticator: compares the pair with `username <peerId> password <pw>` → Ack, or Nak `the user name or
  *     password does not match`, the log and the end of the attempt.
  *   A failed attempt (detected here) is LCP's RXJ− with the Terminate-Request reason `authentication failed` (Opened →
@@ -99,6 +105,7 @@ import {
   PPP_MAX_FAILURE,
   PPP_RESTART_NS,
   pppFsmApply,
+  pppNakBecomesReject,
   pppTimeoutEvent,
   type PppAutomaton,
   type PppFsmEvent,
@@ -127,8 +134,11 @@ export const PPP_RETRY_NS: SimTime = 10 * SEC;
 export const PPP_AUTH_RETRY_NS: SimTime = 2 * SEC;
 /** Challenges (or PAP requests) sent before the attempt is given up. */
 export const PPP_AUTH_MAX_SENDS = 10;
-/** Unanswered LCP Echo-Requests before the line is declared down (`keepalive-missed`). */
-export const PPP_ECHO_MISSES = 3;
+/**
+ * Unanswered LCP Echo-Requests before the line is declared down (`keepalive-missed`): the tick that finds four outstanding
+ * reports, five keepalive intervals after the last answered echo (§10.1 `accept.p3.ppp-keepalive`, "after 5 intervals").
+ */
+export const PPP_ECHO_MISSES = 4;
 /** Severity of the authentication-failure log (§3.9 step 6). */
 export const PPP_LOG_SEVERITY = 5;
 /** Facility of PPP logs. */
@@ -267,6 +277,11 @@ interface Line {
   reported: string;
   /** The reason text the next Terminate-Request carries. */
   termReason?: string;
+  /**
+   * Set while an LCP event is handled when this end rejected the peer's authentication protocol at Max-Failure (the
+   * failure text): the attempt is ended once the automaton has applied the event (never inside it).
+   */
+  authRejected?: string;
   echoArmed: boolean;
   echoOutstanding: number;
   retryArmed: boolean;
@@ -497,7 +512,18 @@ export function createPpp(): Process {
       debug(ctx, PPP_DEBUG_NEGOTIATION, `${line.port} ${CP_LABEL[cp]}: nothing to nak in request id ${rx.id}`, { port: line.port, id: rx.id });
       return;
     }
-    sendCp(ctx, line, cp, { code: PPP_CP_CODE.configureNak, id: rx.id, authProto: authProtoOf(line.cfg.auth[0] ?? 'chap') ?? 'chap-md5' }, out);
+    // RFC 1661 §4.6: once Max-Failure Naks went out without a Configure-Ack in between, the option is rejected instead
+    // (the automaton already counted this one, so the Naks sent before it are `failures - 1`); this end then gives up
+    // the attempt (`authRejected`, acted on after the event)
+    const asked = rx.fields.authProto;
+    if (pppNakBecomesReject({ ...line.lcp.a, failures: line.lcp.a.failures - 1 })) {
+      const text = asked === 'pap' ? 'the peer asks for PAP, and no ppp pap sent-username is configured here' : `the peer asks for authentication by ${String(asked)}`;
+      if (asked === 'pap' || asked === 'chap-md5') sendCp(ctx, line, cp, { code: PPP_CP_CODE.configureReject, id: rx.id, rejected: 'auth-proto', authProto: asked }, out);
+      line.authRejected = text;
+      return;
+    }
+    // this end always answers CHAP (§5.7 `username <peer> password`), so that is what it suggests
+    sendCp(ctx, line, cp, { code: PPP_CP_CODE.configureNak, id: rx.id, authProto: 'chap-md5' }, out);
   }
 
   function sendTermReq(ctx: ProcessCtx, line: Line, cp: CpName, out: Action[]): void {
@@ -862,8 +888,21 @@ export function createPpp(): Process {
         // the peer restarts a finished link: a fresh attempt here too
         if (c.a.state === 'stopped') beginAttempt(ctx, line);
         const proto = f.authProto;
-        const acceptable = proto === undefined || proto === null || proto === 'chap-md5' || proto === 'pap';
-        drive(ctx, line, 'lcp', acceptable ? 'rcr+' : 'rcr-', acceptable ? 'received an acceptable configure-request' : `the peer asked for authentication by ${String(proto)}`, out, rx);
+        // CHAP is always answered; PAP only with `ppp pap sent-username` on this port (the WAN map's PAP row)
+        const acceptable = proto === undefined || proto === null || proto === 'chap-md5' || (proto === 'pap' && line.cfg.papUser !== undefined);
+        const why = acceptable
+          ? 'received an acceptable configure-request'
+          : proto === 'pap'
+            ? 'the peer asked for PAP, and no ppp pap sent-username is configured'
+            : `the peer asked for authentication by ${String(proto)}`;
+        delete line.authRejected;
+        drive(ctx, line, 'lcp', acceptable ? 'rcr+' : 'rcr-', why, out, rx);
+        const rejected = line.authRejected;
+        if (rejected !== undefined) {
+          delete line.authRejected;
+          debug(ctx, PPP_DEBUG_NEGOTIATION, `${line.port} LCP: ${PPP_MAX_FAILURE} naks went unheeded; rejected the authentication option and stopped`, { port: line.port });
+          endAttempt(ctx, line, rejected, true, out);
+        }
         return;
       }
       case PPP_CP_CODE.configureAck:
@@ -885,11 +924,14 @@ export function createPpp(): Process {
         const rejected = nak ? [] : (str(f.rejected) ?? '').split(',').map((x) => x.trim());
         if (nak && f.authProto !== undefined && f.authProto !== null) {
           const asked = authOf(f.authProto);
-          if (asked === 'none' || !line.cfg.auth.includes(asked)) {
-            endAttempt(ctx, line, `the peer offers to authenticate only by ${String(f.authProto)}`, true, out);
-            return;
+          if (asked !== 'none' && line.cfg.auth.includes(asked)) line.wantAuth = asked;
+          else {
+            // a protocol this end does not accept: ask again for ours (the peer rejects it at its Max-Failure, and that
+            // Reject ends the attempt below)
+            debug(ctx, PPP_DEBUG_NEGOTIATION, `${line.port} LCP: the peer suggests ${String(f.authProto)}, which this end does not accept; asking again for ${authProtoOf(line.wantAuth) ?? 'no authentication'}`, {
+              port: line.port, id: rx.id,
+            });
           }
-          line.wantAuth = asked;
         }
         if (nak && num(f.magic) !== undefined) line.magic = pppMagicNumber(ctx.deviceId, line.port, seq++);
         if (rejected.includes('auth-proto') && line.wantAuth !== 'none') {

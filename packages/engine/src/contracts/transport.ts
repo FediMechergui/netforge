@@ -236,7 +236,8 @@ export interface HttpResultEvent {
  * @since P3 udp → traffic on the receiving host: a generated datagram (it carries the traffic header) that reaches a
  * port with no socket is consumed silently (no port-unreachable) and handed over (M13). The discard rule applies ONLY
  * when the traffic daemon runs on the device AND the payload starts with the traffic header (the marker `NFTG`, the
- * flow id, a u32 sequence number, the u64 send time in ns and a flags byte whose bit 0 marks a flow's final datagram).
+ * flow id, a u32 sequence number, the u64 send time in ns and a flags byte whose bit 0 marks a flow's final datagram
+ * and bit 1 a continuous flow's datagram, ARCHITECTURE-P3 R44).
  */
 export interface TrafficRxEvent {
   kind: 'traffic.rx';

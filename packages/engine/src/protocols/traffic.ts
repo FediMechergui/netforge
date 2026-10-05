@@ -19,22 +19,28 @@
  *  • Datagram 0 leaves when udp answers `sock.opened` (in the same dispatch), then the pacing timer `flow:<id>` —
  *    non-periodic for a bounded flow (count or duration: `runToIdle` waits for its end), periodic for a continuous one
  *    (its datagrams commit non-periodic link events, so such a flow is used under `runFor`, rule 19). The cap timer
- *    `flow-cap:<id>` (non-periodic, 5 min) is armed for every flow and cancelled when it ends; by construction the
- *    last datagram leaves before it fires.
+ *    `flow-cap:<id>` (5 min) is armed for every flow and cancelled when it ends; by construction the last datagram
+ *    leaves before it fires. W4 (§4.2's consequences, §10.1 `accept.p3.traffic-bounded`: "an uncongested or finished
+ *    flow does not hold `runToIdle`"): the cap timer is non-periodic for a bounded flow and periodic for a continuous
+ *    one, whose datagram count is the real cap — so a continuous flow over an uncongested path never holds
+ *    `runToIdle`, while one over a congested link still does through its committed link events, until the cap.
  *  • `traffic.stop {id}` ends a running flow at once (no final datagram). With a session, start and stop print one
  *    line (or the refusal) and end the job with `cliDone` (the dhcp-client renew precedent).
  *
  * Payload (the traffic header, original): the marker `NFTG`, the flow id (u8 length + ASCII, 1–14 characters), a u32
  * sequence number, the send time as a u64 of SimTime ns (two u32, high first) and a flags byte whose bit 0 marks the
- * flow's final datagram; zero padding to the datagram size. `decodeTrafficHeader` reads it; `isTrafficPayload` is
- * what udp's discard rule asks.
+ * flow's final datagram and (W4) bit 1 a datagram of a continuous flow; zero padding to the datagram size.
+ * `decodeTrafficHeader` reads it; `isTrafficPayload` is what udp's discard rule asks. A bounded flow's datagrams carry
+ * exactly the W2 bytes (bit 1 clear).
  *
  * Receiver. udp hands over, as `traffic.rx`, a generated datagram that reaches a port with no socket on a device that
  * runs this daemon (the discard rule, §2.5: no port-unreachable). Per (source, flow) the daemon keeps received, the
  * highest sequence, one-way delay (now − send time: min, max, integer average) and RFC 3550 integer jitter (scaled by
  * 16 as in its appendix A.8), and writes the `flows` row (key `${src}|${flow}`): at the first datagram of each received
- * sim-time second, plus one final write by `flow-flush:<key>` (non-periodic, re-armed at every datagram, 1 s after the
- * last one) when something changed since. `lost` = (highest + 1) − received, so datagrams lost after the highest one
+ * sim-time second, plus one final write by `flow-flush:<key>` (re-armed at every datagram, 1 s after the last one) when
+ * something changed since. The flush is non-periodic (`runToIdle` waits for the final write), except after a non-final
+ * datagram of a continuous flow (flags bit 1, W4): re-armed at every datagram while such a flow runs, a non-periodic
+ * flush would hold `runToIdle` until the cap. `lost` = (highest + 1) − received, so datagrams lost after the highest one
  * received count only once the final datagram arrives; `ended` = the final datagram arrived. A datagram with sequence 0
  * after the key's flow ended or fell silent for 1 s starts a new instance of that flow (the stats restart).
  *
@@ -75,6 +81,8 @@ export const TRAFFIC_MARKER = 'NFTG';
 const MARKER_BYTES = [0x4e, 0x46, 0x54, 0x47] as const;
 /** Flags bit 0: the flow's final datagram. */
 export const TRAFFIC_FLAG_FINAL = 0x01;
+/** @since P3 W4 Flags bit 1: a datagram of a continuous flow (the receiver's flush after it is periodic). */
+export const TRAFFIC_FLAG_CONTINUOUS = 0x02;
 /** Caps (§2.4): flows per device, bits and packets per second per flow. */
 export const TRAFFIC_MAX_FLOWS = 8;
 export const TRAFFIC_MAX_BPS = 2_000_000;
@@ -109,6 +117,8 @@ export interface TrafficHeader {
   /** SimTime ns at the sender when the datagram was built. */
   readonly sentAt: SimTime;
   readonly final: boolean;
+  /** @since P3 W4 A datagram of a continuous flow (flags bit 1); absent for a bounded flow's datagrams. */
+  readonly continuous?: true;
 }
 
 /** Header length for a flow id of `idLength` characters. */
@@ -141,7 +151,7 @@ export function encodeTrafficPayload(h: TrafficHeader, payloadBytes: number): Ui
   writeU32(out, at, hi);
   writeU32(out, at + 4, h.sentAt - hi * 4_294_967_296);
   at += 8;
-  out[at] = h.final ? TRAFFIC_FLAG_FINAL : 0;
+  out[at] = (h.final ? TRAFFIC_FLAG_FINAL : 0) | (h.continuous === true ? TRAFFIC_FLAG_CONTINUOUS : 0);
   return out;
 }
 
@@ -159,7 +169,9 @@ export function decodeTrafficHeader(bytes: Uint8Array, start = 0, end = bytes.le
   at += 4;
   const sentAt = readU32(bytes, at) * 4_294_967_296 + readU32(bytes, at + 4);
   at += 8;
-  return { flow, seq, sentAt, final: (bytes[at]! & TRAFFIC_FLAG_FINAL) !== 0 };
+  const flags = bytes[at]!;
+  const final = (flags & TRAFFIC_FLAG_FINAL) !== 0;
+  return (flags & TRAFFIC_FLAG_CONTINUOUS) !== 0 ? { flow, seq, sentAt, final, continuous: true } : { flow, seq, sentAt, final };
 }
 
 /** Does `bytes[start, end)` start with the traffic header (udp's discard rule, §2.5)? */
@@ -364,7 +376,8 @@ export function createTraffic(): Process {
       if (f.errors++ === 0) debug(ctx, `flow ${f.id}: no route to ${f.dst}; packet ${seq} not sent`, { flow: f.id, seq });
     } else {
       ipId = (ipId + 1) & 0xffff;
-      const payload = encodeTrafficPayload({ flow: f.id, seq, sentAt: ctx.now, final }, f.sizeBytes - TRAFFIC_IP_UDP_OVERHEAD);
+      const header: TrafficHeader = f.mode === 'continuous' ? { flow: f.id, seq, sentAt: ctx.now, final, continuous: true } : { flow: f.id, seq, sentAt: ctx.now, final };
+      const payload = encodeTrafficPayload(header, f.sizeBytes - TRAFFIC_IP_UDP_OVERHEAD);
       const layers: LayerSpec[] = [
         { proto: 'ipv4', fields: { src: sel.address, dst: f.dst, protocol: IPPROTO_UDP, ttl: ctx.model.ipDefaults.ttl, id: ipId, dscp: f.dscp } },
         { proto: 'udp', fields: { srcPort: f.srcPort, dstPort: f.dstPort } },
@@ -397,10 +410,15 @@ export function createTraffic(): Process {
       paceNs: f.paceNs,
       limit: f.limit,
     });
-    // datagram 0 leaves when udp answers sock.opened, inside this dispatch
+    // datagram 0 leaves when udp answers sock.opened, inside this dispatch. W4: so the cap timer is armed BEFORE the
+    // socket opens — a flow whose final datagram leaves at once (count 1) has already ended, and cancelled the cap, when
+    // a later timer action would arm it: a stray 5-minute timer that held runToIdle. The cap of a continuous flow is
+    // periodic (file header).
     return [
+      f.mode === 'continuous'
+        ? { type: 'timer', key: capTimer(f.id), delay: TRAFFIC_MAX_DURATION_NS, periodic: true }
+        : { type: 'timer', key: capTimer(f.id), delay: TRAFFIC_MAX_DURATION_NS },
       { type: 'request', to: 'udp', req: { kind: 'udp.open', owner: NAME, socket: f.socket, family: 4 } },
-      { type: 'timer', key: capTimer(f.id), delay: TRAFFIC_MAX_DURATION_NS },
       ...reply(req.session, trafficStartedText(p)),
     ];
   }
@@ -484,7 +502,10 @@ export function createTraffic(): Process {
     if (h.final) s.ended = true;
     s.dirty = true;
     if (Math.floor(ctx.now / SEC) !== s.lastWriteSec) write(ctx, s);
-    return [{ type: 'timer', key: flushTimer(key), delay: TRAFFIC_FLUSH_NS }];
+    // W4: after a non-final datagram of a continuous flow the flush is periodic (file header)
+    return h.continuous === true && !h.final
+      ? [{ type: 'timer', key: flushTimer(key), delay: TRAFFIC_FLUSH_NS, periodic: true }]
+      : [{ type: 'timer', key: flushTimer(key), delay: TRAFFIC_FLUSH_NS }];
   }
 
   // ── the process ──

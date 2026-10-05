@@ -24,6 +24,7 @@ import type {
   DeviceCategory,
   DeviceId,
   DeviceModel,
+  DropRule,
   GuiPanelId,
   InflightFrame,
   JournalPosition,
@@ -49,8 +50,8 @@ import type { EngineBatch, InitResult, PlaybackMode, ReviewInfo, StopInfo } from
 export type Tool = 'select' | 'cable' | 'add-device' | 'pan';
 /** Dock tabs; `netscope`, `sim-events` and `labs` @since P1 (one registry: apps/web/src/dock/registry.ts). */
 /**
- * 'routing' @since P3 [S2] (the LSDB browser, "Link state"): registered in W0 at dock stage P3, hidden until the W4
- * web-shell item sets DOCK_STAGE 'P3' and maps it to its panel (ARCHITECTURE-P3 §2.14).
+ * 'routing' @since P3 [S2] (the LSDB browser, "Link state"): registered in W0 at dock stage P3, shown since the W4
+ * web-shell item set DOCK_STAGE 'P3' and mapped it to the lazy routing/LinkStatePanel (ARCHITECTURE-P3 §2.14).
  */
 export type DockTab = 'terminal' | 'packets' | 'events' | 'tables' | 'provenance' | 'netscope' | 'sim-events' | 'labs' | 'routing';
 export type Theme = 'dark' | 'light';
@@ -103,6 +104,12 @@ export interface DropMarker {
   detail?: string;
   simTime: SimTime;
   wallCreated: number;
+  /**
+   * @since P3 (optional by meaning; ruling R42, W4 web-shell) The policy rule behind the drop (D12, D13: an access list
+   * entry, DHCP snooping, ARP inspection), copied from the drop event's `rule`; absent for every drop without one
+   * (every P1/P2 drop). The marker layer names it on the detail line (`canvas/markers.ts` `dropRuleLabel`).
+   */
+  rule?: DropRule;
 }
 
 /** A table row that should flash (write) or fade (expire). */

@@ -1579,6 +1579,7 @@ export function createOspf(): Process {
 
   function resync(ctx: ProcessCtx, out: Out): void {
     const c = readOspfConfig(ctx.config);
+    const prevMaximumPaths = cfg?.process?.maximumPaths;
     cfg = c;
     const p = c.process;
     if (p === undefined || ipRoutingSwitchedOff(ctx)) {
@@ -1606,6 +1607,9 @@ export function createOspf(): Process {
         return;
       }
       start(ctx, p, pick.routerId, pick.source);
+    } else if (lastSpfAt !== undefined && prevMaximumPaths !== undefined && p.maximumPaths !== prevMaximumPaths) {
+      // `maximum-paths` changes no LSA, only how many equal-cost paths each route keeps: recompute (the SPF throttle)
+      scheduleSpf(ctx, out, `maximum-paths changed to ${p.maximumPaths}`);
     }
     // interfaces
     const wanted = wants(ctx, c);

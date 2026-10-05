@@ -139,8 +139,9 @@ export function fmtUptime(ns: number): string {
 const NS_PER_MS = 1_000_000;
 
 /**
- * @since P3 The zone label of a clock offset: `UTC`, `UTC+2`, `UTC-3:30`. (`DeviceClockSnapshot` carries the offset
- * only, not the name typed in `clock timezone`.)
+ * @since P3 The zone label of a clock offset: `UTC`, `UTC+2`, `UTC-3:30` — the fallback for a snapshot clock without
+ * `tzName` (ruling R42, W4 web-shell: the snapshot names the `clock timezone` zone, so the overview prints what
+ * `show clock` prints; without that line the zone is UTC +0 and both say `UTC`).
  */
 export function clockZoneName(offsetMin: number): string {
   if (offsetMin === 0) return 'UTC';
@@ -166,7 +167,7 @@ export function deviceClockAt(clock: DeviceClockSnapshot, now: SimTime): DeviceC
     subMsNs: elapsed - ms * NS_PER_MS,
     ...(clock.stratum !== undefined ? { stratum: clock.stratum } : {}),
     ...(clock.reference !== undefined ? { reference: clock.reference } : {}),
-    tz: { name: clockZoneName(clock.tzOffsetMin), offsetMin: clock.tzOffsetMin },
+    tz: { name: clock.tzName ?? clockZoneName(clock.tzOffsetMin), offsetMin: clock.tzOffsetMin },
   };
 }
 

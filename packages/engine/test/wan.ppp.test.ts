@@ -473,15 +473,15 @@ describe('wan.ppp [S19] the per-end line protocol', () => {
     for (const d of ['r1', 'r2']) expect(row(sim, d)).toMatchObject({ phase: 'network', lcp: 'opened', ipcp: 'opened' });
   });
 
-  it('LCP echoes unanswered (a cable losing every frame): keepalive-missed after three; the next retry after the loss ends succeeds', () => {
+  it('LCP echoes unanswered (a cable losing every frame): keepalive-missed after four; the next retry after the loss ends succeeds', () => {
     const sim = pppWorld();
     const link = sim.device('r1')!.port(SE0)!.link!;
     sim.setImpairments(link, { lossPct: 100 });
-    sim.runFor(41 * SEC);
+    sim.runFor(51 * SEC);
     for (const d of ['r1', 'r2']) {
       expect(port(sim, d).operUp).toBe(false);
       expect(port(sim, d).phy?.lineProtocolReason).toBe('keepalive-missed');
-      expect(row(sim, d)).toMatchObject({ failures: 1, lastFailure: '3 LCP echo requests went unanswered' });
+      expect(row(sim, d)).toMatchObject({ failures: 1, lastFailure: '4 LCP echo requests went unanswered' });
     }
     sim.setImpairments(link, { lossPct: 0 });
     sim.runFor(40 * SEC);

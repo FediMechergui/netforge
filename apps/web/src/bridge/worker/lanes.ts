@@ -19,6 +19,15 @@
  * Background drops (`drop` with `background: true`: BPDUs a host discards, keepalives) are not indexed: §2.7 hides
  * background traffic by default, and one such drop every 2 s per host would bury the drops lane.
  *
+ * @since P3 (ARCHITECTURE-P3 §2.12, §3.6 step 4; W4 web-shell, the `mgmt` and `wan` lanes' timeline wiring) The two P3
+ * lanes take the engine's classification like every other (`mgmt` = lane 12: cdp-neighbours, lldp-neighbours,
+ * ntp-peers, clock, syslog-messages and the `ntp` machine; `wan` = lane 13: tunnels, ppp, ipsec-sa and the tunnel,
+ * ppp-lcp, ppp-auth, ppp-ncp and ike machines). In those two lanes a table write that only refreshes a row — the
+ * previous row and the new one differ in nothing but `VOLATILE_ROW_KEYS` (`updatedAt`, `expiresAt`) — is not indexed
+ * (`isRefreshOnly`): CDP rewrites each neighbour's `expiresAt` every 60 s and LLDP every 30 s (§3.6 step 4), which in a
+ * P3 world, where CDP runs by default, would bury the discoveries, ageings, clock changes and logs the lane is for.
+ * The P1/P2 lanes index exactly as before.
+ *
  * Trace events arrive in non-decreasing `t` (the scheduler dispatches in time order), so both tiers are time-ordered
  * and every query is a binary search plus a scan of the window. `revision` counts the entries indexed since the last
  * reset; it rides every batch as `timelineHead.lanesRevision` so the strip re-queries only when the index grew.
@@ -26,7 +35,7 @@
  * Pure bookkeeping: no clock, no randomness, no engine object kept. The `laneOf` tables are read at call time (§0 rule
  * 12), never at module scope.
  */
-import { LANE_IDS, LANE_INDEX, laneOf } from '@netforge/engine';
+import { LANE_IDS, LANE_INDEX, VOLATILE_ROW_KEYS, laneOf } from '@netforge/engine';
 import type { LaneBucket, LaneId, SimTime, TimelineMarkQuery, TimelineQuery, TraceEvent } from '@netforge/engine';
 
 /** Entries of the fine tier before the oldest half is folded into coarse cells (`TimeTravelBudget.laneEntries`). */
@@ -67,6 +76,24 @@ export interface LaneIndex {
   setCapacity(n: number): void;
   buckets(q: TimelineQuery): LaneBucket[];
   marks(q: TimelineMarkQuery): LaneMark[];
+}
+
+/** @since P3 The lanes whose row writes count only when the row changed beyond its volatile keys (file header). */
+export const REFRESH_FILTERED_LANES: readonly LaneId[] = Object.freeze(['mgmt', 'wan']);
+
+/**
+ * @since P3 True for a `tableWrite` that rewrote an existing row with nothing but its `VOLATILE_ROW_KEYS` moved (a
+ * periodic refresh, not a state change). A first write, an expiry and any other event are never refresh-only.
+ */
+export function isRefreshOnly(ev: TraceEvent): boolean {
+  if (ev.kind !== 'tableWrite' || ev.previous === undefined) return false;
+  const volatile: readonly string[] = VOLATILE_ROW_KEYS;
+  const before = ev.previous;
+  const after = ev.row;
+  const keysBefore = Object.keys(before).filter((k) => !volatile.includes(k));
+  const keysAfter = Object.keys(after).filter((k) => !volatile.includes(k));
+  if (keysBefore.length !== keysAfter.length) return false;
+  return keysAfter.every((k) => Object.prototype.hasOwnProperty.call(before, k) && Object.is(before[k], after[k]));
 }
 
 /** Number of lanes (`LANE_IDS.length`), read at call time. */
@@ -183,6 +210,7 @@ export function createLaneIndex(capacity: number = DEFAULT_LANE_ENTRIES): LaneIn
       if (ev.kind === 'drop' && ev.background === true) return;
       const lane = laneOf(ev);
       if (lane === undefined) return;
+      if (REFRESH_FILTERED_LANES.includes(lane) && isRefreshOnly(ev)) return;
       if (size >= cap) fold(Math.max(1, cap >>> 1));
       times[size] = ev.t;
       cursors[size] = cursor;

@@ -60,13 +60,17 @@
  *                          ns) at which the clock reads a whole millisecond and `baseUnixMs` that millisecond, so
  *                          `baseUnixMs + (t − baseAt) / 10⁶` is the clock at any t exactly and the member changes only
  *                          when the clock is set or synchronised (never per tick; the web extrapolates from `now`).
+ *                          Its `tzName` (ruling R42, W4 web-shell) is the `clock timezone` line's zone name, written only
+ *                          when the zone is not the default UTC +0 (`CLOCK_DEFAULT_ZONE`), so it changes with that line.
  *   DeviceSnapshot.storage [S32] the host's `files:` store as `[{fs: 'files', files}]` (path order), present only when
  *                          it holds at least one file (a host with user files).
  * Dirtying (D16): the worker refreshes a device from the drained trace; a backlog shrinks at each `txComplete`, which
  * emits no trace event. `createTxBacklogWatch` turns the drained `frameTx` events into the devices to refresh: a frame
  * committed behind a busy transmitter (`txStart > t`, an enqueue that leaves a backlog) keeps its sender due at every
  * drain until its port's last committed frame has ended (each `txComplete` of a port that has a backlog), and once more
- * after, so the member's disappearance reaches the web too.
+ * after, so the member's disappearance reaches the web too. Ruling R43 (P3 worlds) moves queued frames later without a
+ * trace event, so the announced `txEnd` can pass while a frame still waits: `drain(now, busy)` keeps a sender due while
+ * the caller's probe (`deviceTxBusy`: a port whose transmitter is still busy) says so, whatever the announced end.
  *
  * Determinism: ports in canonical Map order, devices in creation order, tables in declared order.
  */
@@ -267,9 +271,11 @@ export interface TxBacklogWatch {
   observe(ev: TraceEvent): void;
   /**
    * The devices that had a waiting frame at any time since the last drain, in the order they were first seen; those
-   * whose last committed frame has ended by `now` are reported this once more and then forgotten.
+   * whose last committed frame has ended by `now` are reported this once more and then forgotten. With `busy` (ruling
+   * R43: the control path moves queued frames without a trace event), a device whose announced end has passed is kept
+   * while `busy(device)` is true, and forgotten at the first drain that finds it idle (reported that once more).
    */
-  drain(now: SimTime): DeviceId[];
+  drain(now: SimTime, busy?: (device: DeviceId) => boolean): DeviceId[];
   /** Forget everything (a new world). */
   clear(): void;
 }
@@ -292,11 +298,11 @@ export function createTxBacklogWatch(): TxBacklogWatch {
       const prev = until.get(device);
       if (prev === undefined || ev.txEnd > prev) until.set(device, ev.txEnd);
     },
-    drain(now) {
+    drain(now, busy) {
       const out: DeviceId[] = [];
       for (const [device, end] of [...until]) {
         out.push(device);
-        if (end <= now) until.delete(device);
+        if (end <= now && busy?.(device) !== true) until.delete(device);
       }
       return out;
     },
@@ -304,6 +310,17 @@ export function createTxBacklogWatch(): TxBacklogWatch {
       until.clear();
     },
   };
+}
+
+/**
+ * @since P3 (ruling R43) Whether a port of `dev` still has its transmitter busy at `now` (`tx.busyUntil > now`: a frame
+ * on the wire or committed behind it, at its real, possibly moved, times). The probe of `TxBacklogWatch.drain`; false for
+ * an absent device.
+ */
+export function deviceTxBusy(dev: Pick<DeviceRuntime, 'ports'> | undefined, now: SimTime): boolean {
+  if (dev === undefined) return false;
+  for (const p of dev.ports.values()) if (p.tx.busyUntil > now) return true;
+  return false;
 }
 
 /** @since P3 (M13) A structured-clone-safe copy of a port's QoS view (`DeviceRuntime.qosCounters`). */
@@ -498,6 +515,12 @@ export const CLOCK_SNAPSHOT_SOURCES: readonly ClockSource[] = Object.freeze(['us
 const NS_PER_MS = 1_000_000;
 
 /**
+ * @since P3 (ruling R42) The zone of a device without a `clock timezone` line (device/process-ctx.ts `DEVICE_CLOCK_UTC`,
+ * restated here so this module imports nothing new): a clock in it carries no `tzName`.
+ */
+const CLOCK_DEFAULT_ZONE: Readonly<{ name: string; offsetMin: number }> = Object.freeze({ name: 'UTC', offsetMin: 0 });
+
+/**
  * @since P3 (D19, §2.8) `DeviceSnapshot.clock` of `dev` at `now` (file header), or undefined: a device that is off or
  * still booting shows none, and outside a P3 world only a clock set by a user or a synchronisation is shown. The line
  * is written from its first whole-millisecond instant, so it is the same object value at every `now` until the clock
@@ -514,6 +537,8 @@ export function deviceClockSnapshot(dev: Pick<DeviceRuntime, 'bootedAt' | 'profi
   const out: DeviceClockSnapshot = { source: view.source, baseUnixMs, baseAt, tzOffsetMin: view.tz.offsetMin };
   if (view.stratum !== undefined) out.stratum = view.stratum;
   if (view.reference !== undefined) out.reference = view.reference;
+  // ruling R42: the zone name `show clock` prints, only when a `clock timezone` line set another zone than UTC +0
+  if (view.tz.name !== CLOCK_DEFAULT_ZONE.name || view.tz.offsetMin !== CLOCK_DEFAULT_ZONE.offsetMin) out.tzName = view.tz.name;
   return out;
 }
 

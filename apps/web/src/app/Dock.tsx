@@ -4,8 +4,12 @@
  * survive tab switches) stay mounted while hidden; the others mount on demand.
  *
  * Keyboard: the strip is a tablist with roving focus (Left/Right/Home/End move and activate).
+ *
+ * @since P3 [S2] (ARCHITECTURE-P3 §2.14, §6; W4 web-shell) The `routing` tab ("Link state") maps to the W3
+ * routing/LinkStatePanel as a lazy chunk (`loadLinkStatePanel`, its default export), loaded the first time the tab is
+ * opened; every pane renders inside a Suspense boundary, so the lazy one shows a short loading line meanwhile.
  */
-import { useEffect, useRef, type ComponentType, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { Suspense, lazy, useEffect, useRef, type ComponentType, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { DOCK_COLLAPSED_HEIGHT, DOCK_MIN_HEIGHT, DOCK_OPEN_HEIGHT, DOCK_TABS } from '../dock/registry';
 import { EventsPanel, PacketsPanel, ProvenancePanel, TablesPanel } from '../inspector/DockPanels';
 // The Labs tab mounts the store-connected panel; `LabBrowser` is the catalogue it shows inside itself.
@@ -19,16 +23,15 @@ import { ResizeHandle } from './ResizeHandle';
 
 export { DOCK_COLLAPSED_HEIGHT, DOCK_MIN_HEIGHT } from '../dock/registry';
 
-/**
- * P3 [S2] placeholder (ARCHITECTURE-P3 §2.14; the architect's W0 stub): the `routing` tab is registered at dock stage P3
- * and hidden in this build; the W4 web-shell item maps it to the lazy routing/LinkStatePanel.
- */
-function RoutingPlaceholder() {
-  return <p className="dim">The link-state browser is not available in this build.</p>;
-}
+/** @since P3 [S2] The link-state browser's chunk (D24: a P3 panel is a dynamic import). */
+export const loadLinkStatePanel = () => import('../routing/LinkStatePanel');
+const LinkStatePanel = lazy(loadLinkStatePanel);
+
+/** @since P3 What a pane shows while its lazy chunk loads. */
+export const DOCK_PANE_LOADING = 'Loading the panel…';
 
 /** Panels of the tabs this build ships (tabs of later stages are not in DOCK_TABS). */
-const DOCK_PANELS: Partial<Record<DockTab, ComponentType>> = {
+export const DOCK_PANELS: Partial<Record<DockTab, ComponentType>> = {
   terminal: TerminalPanel,
   packets: PacketsPanel,
   events: EventsPanel,
@@ -37,7 +40,7 @@ const DOCK_PANELS: Partial<Record<DockTab, ComponentType>> = {
   netscope: NetScope,
   'sim-events': SimEventsPanel,
   labs: LabPanel,
-  routing: RoutingPlaceholder,
+  routing: LinkStatePanel,
 };
 
 const tabDomId = (id: DockTab): string => `dock-tab-${id}`;
@@ -165,7 +168,9 @@ export function Dock() {
           if (Panel === undefined || (!active && !t.keepMounted)) return null;
           return (
             <div key={t.id} id={paneDomId(t.id)} className="dock-pane" role="tabpanel" aria-labelledby={tabDomId(t.id)} hidden={!active}>
-              <Panel />
+              <Suspense fallback={<p className="dim">{DOCK_PANE_LOADING}</p>}>
+                <Panel />
+              </Suspense>
             </div>
           );
         })}

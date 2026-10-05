@@ -314,6 +314,27 @@ describe('link/qos/scheduler: [S21] shaping (accept.p3.qos-police-shape)', () =>
     expect(s.view(125_000_000).classes[0]).toMatchObject({ depth: 0, sent: 2, matched: 3 });
     expect(s.dequeue(SEC)).toEqual({ kind: 'empty' });
   });
+
+  it('the frame staged for the shaper gate counts toward its class\'s tail-drop limit: the depth never exceeds it (W4a fix)', () => {
+    const spec: EgressSchedulerSpec = { policy: 'SHAPE', refBps: 1_000_000, classes: [cls('class-default', 'default', 1000)], shapeBps: 64_000, shapeBcBits: 8000 };
+    const s = createPortScheduler<number>(spec, 0);
+    // one frame sent at once (the bucket's burst), the next one staged behind the empty bucket
+    s.enqueue({ item: 0, bytes: 1000 }, 0, false);
+    expect(s.dequeue(0)).toMatchObject({ kind: 'packet', item: 0 });
+    s.enqueue({ item: 1, bytes: 1000 }, 0, true);
+    expect(s.dequeue(1)).toMatchObject({ kind: 'wait' });
+    // the staged frame plus QOS_DEFAULT_QUEUE_LIMIT - 1 queued fill the class; the next one is tail-dropped
+    const depths: number[] = [];
+    for (let i = 2; i <= QOS_DEFAULT_QUEUE_LIMIT; i++) {
+      const r = s.enqueue({ item: i, bytes: 1000 }, 1, true);
+      expect(r.ok, `frame ${i}`).toBe(true);
+      if (r.ok) depths.push(r.depth);
+    }
+    expect(depths.at(-1)).toBe(QOS_DEFAULT_QUEUE_LIMIT);
+    expect(s.enqueue({ item: 99, bytes: 1000 }, 1, true)).toMatchObject({ ok: false, reason: 'queue-full' });
+    expect(s.depth).toBe(QOS_DEFAULT_QUEUE_LIMIT);
+    expect(s.view(1).classes[0]).toMatchObject({ depth: QOS_DEFAULT_QUEUE_LIMIT, limit: QOS_DEFAULT_QUEUE_LIMIT, tailDrops: 1 });
+  });
 });
 
 describe('link/qos/scheduler: the queue view, WFQ flows and admission', () => {
