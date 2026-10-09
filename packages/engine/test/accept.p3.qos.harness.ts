@@ -14,11 +14,10 @@
  * routes join the two LANs. The bracketed parts are optional: the test injector on SW1 (a frame the switch floods to R1
  * for another MAC) and a router-on-a-stick leg (output marking on a subinterface).
  *
- * The daemon registry is `PROCESS_FACTORIES` plus every approved P3 daemon's factory (`P3_ACCEPT_FACTORIES`: the seven
- * MUST daemons and the eight of the approved items, exactly the names the W4 flip registers), so the world is the one
- * the flipped catalog builds: CDP runs on the router and the switch (P3 profile), every other P3 daemon is silent
- * without its lines. After the flip the overlay is a no-op (the same factories), so these files run unchanged against
- * the real catalog (rule 14).
+ * The daemon registry is `PROCESS_FACTORIES`, which since the W4 catalog flip holds every approved P3 daemon (the
+ * seven MUST daemons and the eight of the approved items), so the world is the one the flipped catalog builds: CDP runs
+ * on the router and the switch (P3 profile), every other P3 daemon is silent without its lines (ruling R47 removed the
+ * pre-flip overlay, `P3_ACCEPT_FACTORIES`; only the test injector is laid over the registry).
  *
  * Flows start from the host shell (`flow start …`, a journaled `cliExec`, §3.5 step 2). Pings warm every ARP cache
  * first, so no datagram of a flow waits for a resolution.
@@ -28,42 +27,8 @@ import type { Mutation } from '../src/contracts/pdu.js';
 import type { Simulation } from '../src/contracts/simulation.js';
 import { SEC } from '../src/contracts/time.js';
 import type { TraceEvent } from '../src/contracts/trace.js';
-import { createAcl } from '../src/protocols/acl.js';
-import { createCdp } from '../src/protocols/cdp.js';
-import { createEigrp } from '../src/protocols/eigrp.js';
-import { createGre } from '../src/protocols/gre.js';
-import { createIke } from '../src/protocols/ike.js';
-import { createLldp } from '../src/protocols/lldp.js';
-import { createLogger } from '../src/protocols/logger.js';
-import { createNtp } from '../src/protocols/ntp.js';
-import { createOspf } from '../src/protocols/ospf.js';
-import { createPpp } from '../src/protocols/ppp.js';
-import { createRestconf } from '../src/protocols/restconf.js';
-import { createSyslogServer } from '../src/protocols/syslog-server.js';
-import { createTraffic } from '../src/protocols/traffic.js';
-import { createVtyClient } from '../src/protocols/vty-client.js';
-import { createVty } from '../src/protocols/vty.js';
 import { INJECTOR_HOST_TYPE, withInjector } from './inject.js';
 import { createStagedSimulation, type StagedFactoryOverlay } from './staged.world.js';
-
-/** Every approved P3 daemon the W4 flip registers (§7 W4 catalog: the MUST seven and the approved eight). */
-export const P3_ACCEPT_FACTORIES: StagedFactoryOverlay = Object.freeze({
-  ospf: createOspf,
-  acl: createAcl,
-  cdp: createCdp,
-  lldp: createLldp,
-  ntp: createNtp,
-  restconf: createRestconf,
-  traffic: createTraffic,
-  ppp: createPpp,
-  gre: createGre,
-  vty: createVty,
-  'vty-client': createVtyClient,
-  logger: createLogger,
-  'syslog-server': createSyslogServer,
-  eigrp: createEigrp,
-  ike: createIke,
-});
 
 // ── names ────────────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -136,7 +101,7 @@ const pcConfig = (name: string, ip: string, gw: string): string =>
  * `pcs` (and `inj`, `pct`).
  */
 export function qosWorld(o: QosWorldOptions = {}): Simulation {
-  const factories = o.injector === true ? withInjector(P3_ACCEPT_FACTORIES) : P3_ACCEPT_FACTORIES;
+  const factories: StagedFactoryOverlay = o.injector === true ? withInjector() : {};
   const sim = createStagedSimulation({ seed: o.seed ?? 27, stage: 'P3', factories });
   const sub = o.subinterface;
   sim.addDevice({ id: 'pcv', type: 'pc.nfpc', name: 'PC-V', startupConfig: pcConfig('PC-V', PCV_IP, '192.168.1.1') });

@@ -19,7 +19,7 @@ import type { BuildStage } from '../../contracts/catalog.js';
 import { defineModel, type ModelInput, type PortInput } from './define.js';
 
 /** Build stage the exported `DATACENTRE_MODELS` are defined for (device/catalog/index.ts re-defines DATACENTRE_INPUTS for its own stage when it differs). */
-export const DATACENTRE_DATA_STAGE: BuildStage = 'P2';
+export const DATACENTRE_DATA_STAGE: BuildStage = 'P3'; // ARCHITECTURE-P3 §7 W4 catalog flip (with CATALOG_STAGE)
 
 /** `count` ports `${family}1/${first + i}` built by `make`. */
 function range(make: (name: string) => PortInput, family: string, first: number, count: number): PortInput[] {

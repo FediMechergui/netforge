@@ -11,11 +11,10 @@
  * `encapsulation ppp` and `ppp authentication chap` unless the case replaces the PPP lines (`EndOptions.ppp`). The
  * routers boot for 45 s (P0.5), so the serial line becomes ready at boot; every case reads its times from the trace.
  *
- * The daemon registry is `PROCESS_FACTORIES` plus every approved P3 daemon's factory (`PPP_ACCEPT_FACTORIES`: the seven
- * MUST daemons and the eight of the approved items, exactly the names the W4 flip registers), so the world is the one
- * the flipped catalog builds (a P3-profile world: CDP and the extended logging run, silent on these serial-only
- * worlds). After the flip the overlay is a no-op (the same factories), so these files run unchanged against the real
- * catalog (rule 14).
+ * The daemon registry is `PROCESS_FACTORIES`, which since the W4 catalog flip holds every approved P3 daemon (the
+ * seven MUST daemons and the eight of the approved items), so the world is the one the flipped catalog builds (a
+ * P3-profile world: CDP and the extended logging run, silent on these serial-only worlds; ruling R47 removed the
+ * pre-flip overlay, `PPP_ACCEPT_FACTORIES`).
  *
  * `wireFrames` reads every frame put on the serial cable (the `frameTx` events) with its decoded PPP layers, so a row
  * can pin the exact message order, sizes and times on the wire.
@@ -26,42 +25,8 @@ import type { PppRow } from '../src/contracts/tables.js';
 import { serializationNs, type SimTime } from '../src/contracts/time.js';
 import type { TraceEvent } from '../src/contracts/trace.js';
 import { pppCpCodeText } from '../src/pdu/codecs/ppp.js';
-import { createAcl } from '../src/protocols/acl.js';
-import { createCdp } from '../src/protocols/cdp.js';
-import { createEigrp } from '../src/protocols/eigrp.js';
-import { createGre } from '../src/protocols/gre.js';
-import { createIke } from '../src/protocols/ike.js';
-import { createLldp } from '../src/protocols/lldp.js';
-import { createLogger } from '../src/protocols/logger.js';
-import { createNtp } from '../src/protocols/ntp.js';
-import { createOspf } from '../src/protocols/ospf.js';
-import { createPpp } from '../src/protocols/ppp.js';
-import { createRestconf } from '../src/protocols/restconf.js';
-import { createSyslogServer } from '../src/protocols/syslog-server.js';
-import { createTraffic } from '../src/protocols/traffic.js';
-import { createVtyClient } from '../src/protocols/vty-client.js';
-import { createVty } from '../src/protocols/vty.js';
 import { ofKind } from './sim.harness.js';
-import { createStagedSimulation, type StagedFactoryOverlay } from './staged.world.js';
-
-/** Every approved P3 daemon the W4 flip registers (§7 W4 catalog: the MUST seven and the approved eight). */
-export const PPP_ACCEPT_FACTORIES: StagedFactoryOverlay = Object.freeze({
-  ospf: createOspf,
-  acl: createAcl,
-  cdp: createCdp,
-  lldp: createLldp,
-  ntp: createNtp,
-  restconf: createRestconf,
-  traffic: createTraffic,
-  ppp: createPpp,
-  gre: createGre,
-  vty: createVty,
-  'vty-client': createVtyClient,
-  logger: createLogger,
-  'syslog-server': createSyslogServer,
-  eigrp: createEigrp,
-  ike: createIke,
-});
+import { createStagedSimulation } from './staged.world.js';
 
 /** The serial interface of both routers. */
 export const SE0 = 'Serial0/0/0';
@@ -110,7 +75,7 @@ export function pppStartup(name: string, peer: string, address: string, dce: boo
 
 /** The §3.9 world on `staged.world` at stage P3 (run to idle unless `settle` is false). */
 export function pppWorld(o: WorldOptions = {}): Simulation {
-  const sim = createStagedSimulation({ seed: o.seed ?? 19, stage: 'P3', factories: PPP_ACCEPT_FACTORIES });
+  const sim = createStagedSimulation({ seed: o.seed ?? 19, stage: 'P3' });
   sim.addDevice({ id: 'r1', type: 'router.nf2911', name: 'R1', startupConfig: pppStartup('R1', 'R2', '10.1.1.1', true, o.r1) });
   sim.addDevice({ id: 'r2', type: 'router.nf2911', name: 'R2', startupConfig: pppStartup('R2', 'R1', '10.1.1.2', false, o.r2) });
   sim.addLink({ a: { device: 'r1', port: SE0 }, b: { device: 'r2', port: SE0 }, media: 'serial-dce' });

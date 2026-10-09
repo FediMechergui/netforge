@@ -27,7 +27,7 @@ import { SEC } from '../../contracts/time.js';
 import { defineModel, type ModelInput, type PortInput } from './define.js';
 
 /** Build stage the `*_MODELS` arrays of this file are defined for (the catalog index re-derives from the inputs). */
-const DATA_STAGE: BuildStage = 'P2';
+const DATA_STAGE: BuildStage = 'P3'; // ARCHITECTURE-P3 §7 W4 catalog flip (with CATALOG_STAGE)
 
 /** Speeds of a copper gigabit uplink, fastest first. */
 const GIGABIT_SPEEDS: readonly number[] = [SPEED_1G, SPEED_100M, SPEED_10M];

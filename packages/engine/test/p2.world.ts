@@ -15,9 +15,12 @@
  *      `portOwners` re-derived from the filtered list (define.ts rules). P0/P1 daemons are never filtered: removing one
  *      is the caller's choice and the device logs it at boot.
  *
- * With the default registry nothing is filtered and the helper's catalog equals the real one, model for model
- * (device.catalog.p2.test.ts checks it). The catalog is never validated: a filtered model is not the model its
- * capabilities derive, which `validateCatalog` would refuse by design.
+ * With the default registry nothing is filtered and the helper's catalog equals the real model inputs defined at
+ * stage P2 (`defineModel(input, 'P2')`), model for model (device.catalog.p2.test.ts checks it). Since the
+ * ARCHITECTURE-P3 W4 catalog flip that is not the shipped catalog: the shipped one is derived at stage P3 and equals
+ * `createStagedCatalog({ stage: 'P3' })` apart from the test-only NF-DEVHOST (staged.world.p3-parity.test.ts), so a
+ * test that must exercise the shipped models uses `createSimulation`. The catalog is never validated: a filtered model
+ * is not the model its capabilities derive, which `validateCatalog` would refuse by design.
  *
  * Until the P2 W4 and W6 catalog flips this file held the flips' model deltas, the §2.1 `CAPABILITY_PROCESSES` rows and
  * the final `PROCESS_ORDER` as test-only data; since the flips they are the real data, and nothing here duplicates

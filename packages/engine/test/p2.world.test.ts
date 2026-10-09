@@ -154,7 +154,9 @@ describe('p2.world models', () => {
     const types = catalog.list().map((m) => m.type);
     const real = ALL_MODELS.map((m) => m.type);
     expect(types.filter((t) => real.includes(t))).toEqual(real);
-    for (const model of ALL_MODELS) {
+    // ARCHITECTURE-P3 §9.2 W4 (by the rule of item 32): the real models' P1 daemons are read from the real inputs
+    // computed at stage P2, since the P3 catalog flip derives the real catalog for stage P3
+    for (const model of ALL_MODEL_INPUTS.map((input) => defineModel(input, 'P2'))) {
       const p1 = model.processes.filter((p) => !P2_DAEMONS.includes(p));
       expect(catalog.get(model.type)!.processes.filter((p) => p1.includes(p))).toEqual(p1);
     }

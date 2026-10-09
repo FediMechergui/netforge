@@ -64,6 +64,11 @@ const CATALOG_TABLE: Record<string, [string, string[], string[]]> = {
 /** Daemons the `host` capability contributes at P1, in PROCESS_ORDER. */
 /** The host daemon list (P1 stack; ARCHITECTURE-P2 §9.2 W4 item 13: dhcpv6-client after dhcp-client since the W4 flip). */
 const HOST_STACK = ['arp', 'ipv4', 'icmpv4', 'host', 'ipv6', 'nd', 'icmpv6', 'udp', 'tcp', 'dhcp-client', 'dhcpv6-client', 'dns-client', 'http-client', 'traceroute'];
+/**
+ * ARCHITECTURE-P3 §9.2 W4 item 34: the host daemon list since the P3 catalog flip — HOST_STACK with the `host` rows of
+ * §2.1 at their PROCESS_ORDER positions: [S13] `vty-client` after tcp, `traffic` after traceroute.
+ */
+const HOST_STACK_P3 = ['arp', 'ipv4', 'icmpv4', 'host', 'ipv6', 'nd', 'icmpv6', 'udp', 'tcp', 'vty-client', 'dhcp-client', 'dhcpv6-client', 'dns-client', 'http-client', 'traceroute', 'traffic'];
 
 const byType = (type: string): DeviceModel => {
   const m = ALL.find((x) => x.type === type);
@@ -73,7 +78,8 @@ const byType = (type: string): DeviceModel => {
 
 describe('end-device catalog data', () => {
   it('validates with zero issues at the end-device stage (with a host-expansion card in the module list)', () => {
-    expect(END_DEVICE_STAGE).toBe('P2');
+    // ARCHITECTURE-P3 §9.2 W4 item 34: the end-device data stage follows CATALOG_STAGE to 'P3' at the P3 flip
+    expect(END_DEVICE_STAGE).toBe('P3');
     expect(validateCatalog(ALL, [WLAN_CARD], { stage: END_DEVICE_STAGE })).toEqual([]);
   });
 
@@ -122,28 +128,31 @@ describe('end-device catalog data', () => {
       expect(m.portsDefaultUp, m.type).toBe(true);
       expect((m.hostPorts ?? []).length, m.type).toBeGreaterThan(0);
       // §8.2 W5: the catalog is derived at 'P1', so every end device runs the whole host stack in PROCESS_ORDER
+      // (ARCHITECTURE-P3 §9.2 W4 item 34: the P3 host stack since the P3 flip, of which HOST_STACK is a subsequence)
+      expect(m.processes.filter((x) => HOST_STACK_P3.includes(x)), m.type).toEqual(HOST_STACK_P3);
       expect(m.processes.filter((x) => HOST_STACK.includes(x)), m.type).toEqual(HOST_STACK);
     }
   });
 
   it('Wi-Fi and cellular clients get their daemons, roles and desktop panels', () => {
     const phone = byType('phone.nfsmartphone');
-    expect(phone.processes).toEqual(['wlan-client', 'cell-client', ...HOST_STACK]);
+    // ARCHITECTURE-P3 §9.2 W4 item 34: hosts gain [S13] vty-client and traffic (and the `desktop.traffic` panel)
+    expect(phone.processes).toEqual(['wlan-client', 'cell-client', ...HOST_STACK_P3]);
     expect(phone.ports.map((p) => [p.name, p.role, p.encap, p.group])).toEqual([
       ['Wlan0', 'wireless-client', 'dot11', 'radio'],
       ['Cellular0', 'cellular', 'ethernet', 'radio'],
     ]);
     expect(phone.hostPorts).toEqual(['Wlan0', 'Cellular0']);
-    expect(phone.gui).toEqual(['physical', 'desktop.ip-config', 'desktop.wifi', 'desktop.cellular', 'desktop.command-prompt', 'desktop.web-browser']);
+    expect(phone.gui).toEqual(['physical', 'desktop.ip-config', 'desktop.wifi', 'desktop.cellular', 'desktop.command-prompt', 'desktop.web-browser', 'desktop.traffic']);
     const laptop = byType('laptop.nflaptop');
-    expect(laptop.processes).toEqual(['wlan-client', ...HOST_STACK]);
+    expect(laptop.processes).toEqual(['wlan-client', ...HOST_STACK_P3]);
     expect(laptop.hostPorts).toEqual(['GigabitEthernet0', 'Wlan0']);
-    expect(laptop.gui).toEqual(['physical', 'desktop.ip-config', 'desktop.wifi', 'desktop.command-prompt', 'desktop.web-browser']);
+    expect(laptop.gui).toEqual(['physical', 'desktop.ip-config', 'desktop.wifi', 'desktop.command-prompt', 'desktop.web-browser', 'desktop.traffic']);
   });
 
   it('the IP phone bridges its two ports and addresses its auto Vlan1', () => {
     const ph = byType('ipphone.nfphone');
-    expect(ph.processes).toEqual(['eth-switch', ...HOST_STACK]);
+    expect(ph.processes).toEqual(['eth-switch', ...HOST_STACK_P3]);
     expect(ph.ports.map((p) => [p.name, p.role, p.wiring, p.autoMdix])).toEqual([
       ['FastEthernet0', 'switched', 'MDI', false],
       ['FastEthernet1', 'switched', 'MDI-X', false],
@@ -161,7 +170,10 @@ describe('end-device catalog data', () => {
     const rack = byType('server.nfrack');
     expect(rack.hostPorts).toEqual(['GigabitEthernet0', 'GigabitEthernet1', 'GigabitEthernet2', 'GigabitEthernet3', 'TenGigabitEthernet0', 'TenGigabitEthernet1']);
     expect(rack.ports[4]).toMatchObject({ speedBps: SPEED_10G, speeds: [SPEED_10G, SPEED_1G, SPEED_100M], group: 'uplink' });
-    expect(rack.processes).toEqual(['arp', 'ipv4', 'icmpv4', 'host', 'ipv6', 'nd', 'icmpv6', 'udp', 'tcp', 'dhcp-client', 'dhcp-server', 'dhcpv6-client', 'dns-client', 'dns-server', 'http-client', 'http-server', 'traceroute']);
+    // ARCHITECTURE-P3 §9.2 W4 item 34: a server also gains `ntp` and [S25] `syslog-server` (its tables ntp-peers, clock
+    // and syslog-messages), at their PROCESS_ORDER positions
+    expect(rack.processes).toEqual(['arp', 'ipv4', 'icmpv4', 'host', 'ipv6', 'nd', 'icmpv6', 'udp', 'tcp', 'vty-client', 'ntp', 'syslog-server', 'dhcp-client', 'dhcp-server', 'dhcpv6-client', 'dns-client', 'dns-server', 'http-client', 'http-server', 'traceroute', 'traffic']);
+    expect(rack.tables).toEqual(['cam', 'arp', 'rib', 'rib6', 'nd', 'sockets', 'ntp-peers', 'clock', 'syslog-messages', 'dhcp-bindings', 'dns-cache', 'flows']);
   });
 
   it('derives nominal radio rates from the rate tables', () => {

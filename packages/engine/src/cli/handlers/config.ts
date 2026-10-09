@@ -34,7 +34,7 @@ import {
   parseIpv4,
   u32ToIpv4,
 } from '../../contracts/addr.js';
-import { VIRTUAL_PORT_MESSAGES } from '../../device/ports.js';
+import { parseVirtualPortName, VIRTUAL_PORT_MESSAGES } from '../../device/ports.js';
 import { BANNER_TYPE_ARG, HANDLERS, MSG_INTERFACE_NOT_CONFIGURABLE, ROUTE_TAIL_ARG } from '../grammar/index.js';
 import { isSubinterfaceName } from '../modes.js';
 import { secretTokens } from '../secrets.js';
@@ -123,8 +123,19 @@ function removeInterface(ctx: CommandCtx, name: PortId, existing: PortView | und
 }
 
 /**
+ * @since P3 [S18] Whether a canonical name (the parser resolves `Tu0` / `tunnel0` to `Tunnel0`) is an instance of one
+ * of the model's own `tunnel`-role virtual families (ARCHITECTURE-P3 §3.10 step 1, §3.13, §5.7 `interface Tunnel<n>`).
+ * The Tunnel family is not a PORT_FAMILIES entry, so `isVirtualInterfaceName` does not know it; limiting this to the
+ * tunnel role keeps every P2 virtual family (Port-channel) answered exactly as before. The range is checked by
+ * `ensureVirtualPort`.
+ */
+function isTunnelFamilyName(ctx: CommandCtx, name: string): boolean {
+  return parseVirtualPortName(ctx.model, name)?.family.role === 'tunnel';
+}
+
+/**
  * `interface <name>`: select an interface and enter interface configuration. A virtual interface that does not exist
- * yet (`interface Loopback1`) is created first; `no interface <virtual>` removes one.
+ * yet (`interface Loopback1`, P3 [S18] `interface Tunnel0`) is created first; `no interface <virtual>` removes one.
  */
 const iface: CommandHandler = (ctx, args, negate) => {
   const raw = args['iface'] ?? '';
@@ -133,7 +144,8 @@ const iface: CommandHandler = (ctx, args, negate) => {
   if (negate) return removeInterface(ctx, existing?.id ?? port ?? raw, existing);
   if (existing === undefined) {
     // P2 (D11): a subinterface name (`g0/0.10`) is creatable too; the device resolves and refuses it itself.
-    if (!isVirtualInterfaceName(raw) && !isSubinterfaceName(raw)) return { error: MSG_UNKNOWN_INTERFACE };
+    // P3 [S18]: so is an instance of the model's Tunnel family (W4b fix: the shipped catalog carries it since the flip).
+    if (!isVirtualInterfaceName(raw) && !isSubinterfaceName(raw) && !isTunnelFamilyName(ctx, raw)) return { error: MSG_UNKNOWN_INTERFACE };
     const created = ctx.device.ensureVirtualPort(raw);
     if (!created.ok) return { error: cliError(created.error) };
     port = created.port;

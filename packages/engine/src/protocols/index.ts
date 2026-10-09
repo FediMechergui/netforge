@@ -12,7 +12,11 @@
  *  - P2 daemons (ARCHITECTURE-P2 §2.1, §7 W4 catalog — the flip registers them): the L2 control plane `vlan`, `dtp`,
  *    `etherchannel`, `stp`, the address translator `nat`, the first-hop redundancy daemon `hsrp` [S2] and
  *    `dhcpv6-client`, `dhcpv6-server`; and (§7 W6 catalog, with the wireless models) the lightweight access point's
- *    `capwap-wtp` and the wireless controller's `capwap-ac`.
+ *    `capwap-wtp` and the wireless controller's `capwap-ac`;
+ *  - P3 daemons (ARCHITECTURE-P3 §2.1, §7 W4 step 2 — the catalog flip registers them): the seven MUST daemons
+ *    `ospf`, `acl`, `cdp`, `lldp`, `ntp`, `restconf`, `traffic`, and the approved items' daemons `ppp` [S19], `gre`
+ *    [S18], `vty` and `vty-client` [S13], `logger` [S24], `syslog-server` [S25], `eigrp` [C1] and `ike` [C13].
+ *    ([S32] `script-host` joins at the W6 flip; the unapproved ospfv3, tftp, snmp-agent and snmp-manager never do.)
  * Keys follow the canonical daemon order (`PROCESS_ORDER` in contracts/catalog.ts), so this object lists every
  * name that order does. Every factory is re-exported for direct use. Each daemon is silent without configuration
  * or a request (ARCHITECTURE-P1 §5.3), so registering them never changes P0 scenario traffic.
@@ -50,6 +54,21 @@ import { createHttpClient } from './http-client.js';
 import { createHttpServer } from './http-server.js';
 import { createTraceroute } from './traceroute.js';
 import { createCapwapAc } from './capwap-ac.js';
+import { createPpp } from './ppp.js';
+import { createCdp } from './cdp.js';
+import { createLldp } from './lldp.js';
+import { createAcl } from './acl.js';
+import { createGre } from './gre.js';
+import { createVty } from './vty.js';
+import { createVtyClient } from './vty-client.js';
+import { createLogger } from './logger.js';
+import { createNtp } from './ntp.js';
+import { createSyslogServer } from './syslog-server.js';
+import { createOspf } from './ospf.js';
+import { createEigrp } from './eigrp.js';
+import { createIke } from './ike.js';
+import { createRestconf } from './restconf.js';
+import { createTraffic } from './traffic.js';
 
 export { createWlanAp } from './wlan-ap.js';
 export { createWlanClient } from './wlan-client.js';
@@ -82,6 +101,21 @@ export { createHttpClient } from './http-client.js';
 export { createHttpServer } from './http-server.js';
 export { createTraceroute } from './traceroute.js';
 export { createCapwapAc } from './capwap-ac.js';
+export { createPpp } from './ppp.js';
+export { createCdp } from './cdp.js';
+export { createLldp } from './lldp.js';
+export { createAcl } from './acl.js';
+export { createGre } from './gre.js';
+export { createVty } from './vty.js';
+export { createVtyClient } from './vty-client.js';
+export { createLogger } from './logger.js';
+export { createNtp } from './ntp.js';
+export { createSyslogServer } from './syslog-server.js';
+export { createOspf } from './ospf.js';
+export { createEigrp } from './eigrp.js';
+export { createIke } from './ike.js';
+export { createRestconf } from './restconf.js';
+export { createTraffic } from './traffic.js';
 
 /** Daemon name → factory, in canonical daemon order (`PROCESS_ORDER`). Frozen: the registry is static data. */
 export const PROCESS_FACTORIES: Readonly<Record<ProcessName, ProcessFactory>> = Object.freeze({
@@ -90,14 +124,19 @@ export const PROCESS_FACTORIES: Readonly<Record<ProcessName, ProcessFactory>> = 
   'capwap-wtp': createCapwapWtp,
   'cell-client': createCellClient,
   hdlc: createHdlc,
+  ppp: createPpp, // P3 [S19]
   'eth-switch': createEthSwitch,
   vlan: createVlan,
   dtp: createDtp,
   etherchannel: createEtherchannel,
   stp: createStp,
+  cdp: createCdp, // P3
+  lldp: createLldp, // P3
   arp: createArp,
   ipv4: createIpv4,
   nat: createNat,
+  acl: createAcl, // P3
+  gre: createGre, // P3 [S18]
   icmpv4: createIcmpv4,
   host: createHost,
   ipv6: createIpv6,
@@ -105,7 +144,15 @@ export const PROCESS_FACTORIES: Readonly<Record<ProcessName, ProcessFactory>> = 
   icmpv6: createIcmpv6,
   udp: createUdp,
   tcp: createTcp,
+  vty: createVty, // P3 [S13]
+  'vty-client': createVtyClient, // P3 [S13]
+  logger: createLogger, // P3 [S24]
+  ntp: createNtp, // P3
+  'syslog-server': createSyslogServer, // P3 [S25]
   hsrp: createHsrp,
+  ospf: createOspf, // P3
+  eigrp: createEigrp, // P3 [C1]
+  ike: createIke, // P3 [C13]
   'dhcp-client': createDhcpClient,
   'dhcp-server': createDhcpServer,
   'dhcpv6-client': createDhcpv6Client,
@@ -114,7 +161,9 @@ export const PROCESS_FACTORIES: Readonly<Record<ProcessName, ProcessFactory>> = 
   'dns-server': createDnsServer,
   'http-client': createHttpClient,
   'http-server': createHttpServer,
+  restconf: createRestconf, // P3
   traceroute: createTraceroute,
+  traffic: createTraffic, // P3
   'capwap-ac': createCapwapAc,
 });
 

@@ -8,7 +8,8 @@
  *   kind            = type-id prefix ('router.nf2911' → 'router')
  *   capabilities    = expandCapabilities (CAPABILITY_IMPLIES closure, CAPABILITIES order)
  *   processes       = union of CAPABILITY_PROCESSES for the build stage, in PROCESS_ORDER
- *   tables          = cam, arp, rib, then PROCESS_TABLES extras in process order
+ *   tables          = cam, arp, rib, then PROCESS_TABLES extras in process order (P3: with the STAGED_PROCESS_TABLES
+ *                     rows of the stage and the model's capabilities, `deriveTables`)
  *   ipDefaults      = ipDefaultsFor(capabilities)
  *   ipForwarding    = has routing
  *   portsDefaultUp  = not (routing without switching)   (routers and firewalls down; hosts and switches up)
@@ -43,11 +44,17 @@
  *                     model with `routing` that is not a home router (`withTunnelFamily`);
  *   portOwners      : [S18] the `tunnel` role's owner is the tunnel owner `gre` (`P3_ROLE_EGRESS_OWNER`, read by
  *                     `roleEgressOwner`), so a model derives it only when it runs `gre`.
+ * And from the W4 catalog flip (§7 W4 step 2, §2.6, D2 [S24]), also at stage P3 only:
+ *   tables          : the STAGED_PROCESS_TABLES rows (the snooping tables `dhcp-snooping`, `arp-inspection` after
+ *                     `vlan`'s own tables, on `managed-switch` models only, never the controller);
+ *   profileConfig   : [S24] key 'P3' = `TIMESTAMPS_PROFILE_LINES` (the two `service timestamps ... datetime msec`
+ *                     lines) on the models that take the P3 network defaults, the `cdpDefault` set of D2: routers and
+ *                     managed switches with the NF-OS CLI, and the controller (`deriveProfileConfig`).
  */
 import type { DeviceKind, DeviceModel } from '../../contracts/device.js';
 import type { PortId, ProcessName } from '../../contracts/ids.js';
 import type { PortKind, PortSpec } from '../../contracts/port.js';
-import { PROCESS_TABLES, type TableName } from '../../contracts/tables.js';
+import { PROCESS_TABLES, STAGED_PROCESS_TABLES, type TableName } from '../../contracts/tables.js';
 import { SEC, type SimTime } from '../../contracts/time.js';
 import {
   CAPABILITY_PROCESSES,
@@ -399,11 +406,24 @@ export function deriveProcesses(caps: readonly Capability[], stage: BuildStage):
   return PROCESS_ORDER.filter((p) => wanted.has(p));
 }
 
-/** Tables a device owns: cam, arp, rib, then the PROCESS_TABLES extras of `processes` in process order. */
-export function deriveTables(processes: readonly ProcessName[]): readonly TableName[] {
+/**
+ * Tables a device owns: cam, arp, rib, then for each daemon of `processes`, in process order, its PROCESS_TABLES
+ * extras followed by the tables of every STAGED_PROCESS_TABLES row of that daemon whose `since` is included in `stage`
+ * and whose `requires` is in `capabilities` (EXPANDED); each table once. Without a stage no staged row applies, which
+ * is exactly the P1/P2 derivation (ARCHITECTURE-P3 §2.6: the snooping tables reach managed switches from stage P3 on,
+ * never the controller, which runs `vlan` too).
+ */
+export function deriveTables(processes: readonly ProcessName[], capabilities: readonly Capability[] = [], stage?: BuildStage): readonly TableName[] {
   const out: TableName[] = ['cam', 'arp', 'rib'];
+  const add = (t: TableName): void => {
+    if (!out.includes(t)) out.push(t);
+  };
   for (const p of processes) {
-    for (const t of PROCESS_TABLES[p] ?? []) if (!out.includes(t)) out.push(t);
+    for (const t of PROCESS_TABLES[p] ?? []) add(t);
+    if (stage === undefined) continue;
+    for (const row of STAGED_PROCESS_TABLES) {
+      if (row.process === p && stageIncluded(row.since, stage) && capabilities.includes(row.requires)) for (const t of row.tables) add(t);
+    }
   }
   return out;
 }
@@ -525,16 +545,31 @@ export function deriveStpDefaultMode(caps: readonly Capability[], input?: 'pvst'
 }
 
 /**
- * @since P2 Visible defaults replayed at boot in a P2 world (D2, §4.4), as config text lines (indented lines belong to
- * the section above them, like `defaultConfig`). Key 'P2':
+ * @since P3 [S24] The two visible P3 defaults (ARCHITECTURE-P3 D2, §4.3, §4.4): the `service timestamps` lines a P3
+ * world replays on routers, managed switches and the controller (the `cdpDefault` set). Their config rule has identity
+ * 3 (`service timestamps <kind>`), so the two lines coexist.
+ */
+export const TIMESTAMPS_PROFILE_LINES: readonly string[] = Object.freeze([
+  'service timestamps debug datetime msec',
+  'service timestamps log datetime msec',
+]);
+
+/**
+ * @since P2 Visible defaults replayed at boot in a world of a profile (D2, §4.4), as config text lines (indented lines
+ * belong to the section above them, like `defaultConfig`). Key 'P2':
  *  - `managed-switch`: `spanning-tree mode <mode>`, `spanning-tree extend system-id`, plus `no ip routing` with
  *    `layer3-switch` (routing is off on a multilayer switch until `ip routing`, §3.5);
  *  - `lightweight-ap`: `capwap enable`, then `interface Vlan1` / ` ip address dhcp` / ` no shutdown`.
+ * Key 'P3' (@since P3, ARCHITECTURE-P3 D2 [S24]; only when `stage` is P3 or later): `TIMESTAMPS_PROFILE_LINES` on a
+ * model that takes the P3 network defaults (`deriveCdpDefault(caps, cli)`: routers and managed switches with the
+ * NF-OS CLI, and the controller). Without a stage (or a CLI spec) no P3 key is derived, exactly as at stage P2.
  * Undefined when a model has none.
  */
 export function deriveProfileConfig(
   caps: readonly Capability[],
   stpDefaultMode: 'pvst' | 'rapid-pvst' | undefined,
+  stage?: BuildStage,
+  cli?: Pick<CliSpec, 'shell'>,
 ): Readonly<Partial<Record<DefaultsProfile, readonly string[]>>> | undefined {
   const p2: string[] = [];
   if (caps.includes('managed-switch')) {
@@ -542,7 +577,12 @@ export function deriveProfileConfig(
     if (caps.includes('layer3-switch')) p2.push('no ip routing');
   }
   if (caps.includes('lightweight-ap')) p2.push('capwap enable', 'interface Vlan1', ' ip address dhcp', ' no shutdown');
-  return p2.length === 0 ? undefined : { P2: p2 };
+  const p3: string[] = stage !== undefined && cli !== undefined && stageIncluded('P3', stage) && deriveCdpDefault(caps, cli) ? [...TIMESTAMPS_PROFILE_LINES] : [];
+  if (p2.length === 0 && p3.length === 0) return undefined;
+  const out: Partial<Record<DefaultsProfile, readonly string[]>> = {};
+  if (p2.length > 0) out.P2 = p2;
+  if (p3.length > 0) out.P3 = p3;
+  return out;
 }
 
 // ── P3 derivations (stage P3 only; ARCHITECTURE-P3 D2, D17) ─────────────────
@@ -758,7 +798,7 @@ export function defineModel(input: ModelInput, stage: BuildStage, modules: reado
     virtualFamilies: virtualFamilies.map((f) => ({ ...f, ...(f.auto ? { auto: [...f.auto] } : {}) })),
     hostPorts: [...(input.hostPorts ?? deriveHostPorts(capabilities, ports, virtualFamilies))],
     portOwners: derivePortOwners(ports, virtualFamilies, processes, moduleProcesses),
-    tables: deriveTables(processes),
+    tables: deriveTables(processes, capabilities, stage),
     ipDefaults: { ...ipDefaultsFor(capabilities) },
   };
   if (input.defaultConfig !== undefined) model.defaultConfig = [...input.defaultConfig];
@@ -769,7 +809,7 @@ export function defineModel(input: ModelInput, stage: BuildStage, modules: reado
     if (subinterfaces !== undefined) model.subinterfaces = { roles: [...subinterfaces.roles], max: subinterfaces.max };
     const stpDefaultMode = deriveStpDefaultMode(capabilities, input.stpDefaultMode);
     if (stpDefaultMode !== undefined) model.stpDefaultMode = stpDefaultMode;
-    const profileConfig = input.profileConfig ?? deriveProfileConfig(capabilities, stpDefaultMode);
+    const profileConfig = input.profileConfig ?? deriveProfileConfig(capabilities, stpDefaultMode, stage, cli);
     if (profileConfig !== undefined) {
       const copy: Partial<Record<DefaultsProfile, readonly string[]>> = {};
       for (const k of DEFAULTS_PROFILES) {

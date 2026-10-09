@@ -12,6 +12,13 @@
  * with the same strength: PROCESS_ORDER is the §2.1 final order (capwap-wtp after wlan-client, capwap-ac last), the
  * lightweight-ap and wireless-controller rows are the §2.1 rows, the controller is the one VLAN-aware model that is
  * not a managed switch (D17: it bridges through `vlan`), and the helper equals the real catalog model for model.
+ *
+ * ARCHITECTURE-P3 §9.2 W4 item 32 (the P3 catalog flip): this file keeps pinning the P2 layer exactly, filtered to
+ * `since` P2 or computed at stage P2 — `CATALOG_STAGE` and every data stage are 'P3' and the built-in catalog
+ * validates at P3; `PROCESS_ORDER` without the fifteen P3 daemons is the P2 order exactly (the full order is pinned in
+ * `device.catalog.p3.test.ts`); each capability's rows up to stage P2 are the same exact P2 arrays; and the derived
+ * summaries and the p2.world helper are compared with `defineModel(…, 'P2')` of the real inputs (`staged.world` at
+ * stage P2), same exact arrays.
  */
 import { describe, expect, it } from 'vitest';
 import {
@@ -20,14 +27,16 @@ import {
   L2_PROCESSES,
   PROCESS_ORDER,
   isVlanAware,
+  stageIncluded,
   type Capability,
+  type CapabilityProcess,
 } from '../src/contracts/catalog.js';
 import type { DeviceModel } from '../src/contracts/device.js';
 import type { ProcessName } from '../src/contracts/ids.js';
 import { SEC } from '../src/contracts/time.js';
-import { ALL_MODEL_INPUTS, NF_2911, NF_C2960, NF_PC } from '../src/device/catalog.js';
+import { ALL_MODEL_INPUTS } from '../src/device/catalog.js';
 import { ALL_MODELS, ALL_MODULES, CATALOG_STAGE, createCatalog } from '../src/device/catalog/index.js';
-import { LOOPBACK_FAMILY, MANAGED_SWITCH_VLAN_FAMILY, PORT_CHANNEL_FAMILY, SUBINTERFACE_MAX } from '../src/device/catalog/define.js';
+import { LOOPBACK_FAMILY, MANAGED_SWITCH_VLAN_FAMILY, PORT_CHANNEL_FAMILY, SUBINTERFACE_MAX, defineModel } from '../src/device/catalog/define.js';
 import { validateCatalog } from '../src/device/catalog/validate.js';
 import { ROUTER_DATA_STAGE } from '../src/device/catalog/routers.js';
 import { SWITCH_DATA_STAGE } from '../src/device/catalog/switches.js';
@@ -73,6 +82,10 @@ const P2_ORDER_AFTER_W6: readonly ProcessName[] = [
 const W4_DAEMONS: readonly ProcessName[] = ['vlan', 'dtp', 'etherchannel', 'stp', 'nat', 'hsrp', 'dhcpv6-client', 'dhcpv6-server'];
 /** The daemons the W6 catalog item registered. */
 const W6_DAEMONS: readonly ProcessName[] = ['capwap-wtp', 'capwap-ac'];
+/** ARCHITECTURE-P3 §9.2 W4 item 32: the fifteen daemons the P3 catalog flip registered (seven MUST, eight approved). */
+const P3_DAEMONS: readonly ProcessName[] = [
+  'ppp', 'cdp', 'lldp', 'acl', 'gre', 'vty', 'vty-client', 'logger', 'ntp', 'syslog-server', 'ospf', 'eigrp', 'ike', 'restconf', 'traffic',
+];
 /** Every host runs this list since the flip (dhcpv6-client after dhcp-client). */
 const HOST_STACK: readonly ProcessName[] = ['arp', 'ipv4', 'icmpv4', 'host', 'ipv6', 'nd', 'icmpv6', 'udp', 'tcp', 'dhcp-client', 'dhcpv6-client', 'dns-client', 'http-client', 'traceroute'];
 /** Every routing device runs this list since the flip (§9.2 W4 item 13, with S2). */
@@ -80,28 +93,43 @@ const ROUTER_STACK: readonly ProcessName[] = ['hdlc', 'arp', 'ipv4', 'nat', 'icm
 /** The tables the L2 control daemons bring to a managed switch, in PROCESS_TABLES order of their daemons. */
 const L2_TABLES = ['vlans', 'port-security', 'dtp', 'etherchannel', 'stp', 'stp-bridge'];
 
+/**
+ * ARCHITECTURE-P3 §9.2 W4 item 32: the P2 layer, computed at stage P2 — every real input through `defineModel(…, 'P2')`
+ * (the real catalog is derived for stage P3 since the P3 flip; the contract constants are not stage-derived).
+ */
+const P2_MODELS: readonly DeviceModel[] = ALL_MODEL_INPUTS.map((input) => defineModel(input, 'P2'));
 const byType = (type: string): DeviceModel => {
-  const m = ALL_MODELS.find((x) => x.type === type);
+  const m = P2_MODELS.find((x) => x.type === type);
   if (m === undefined) throw new Error(`missing ${type}`);
   return m;
 };
+const NF_C2960 = byType('switch.nfc2960');
+const NF_2911 = byType('router.nf2911');
+const NF_PC = byType('pc.nfpc');
 const NF_C3650 = byType('mlswitch.nfc3650-24');
+/** A capability's rows up to stage P2 (§9.2 W4 item 32: the P3 rows of the flip filtered out). */
+const upToP2 = (rows: readonly CapabilityProcess[]): readonly CapabilityProcess[] => rows.filter((r) => stageIncluded(r.since, 'P2'));
 
 describe('the W4 catalog flip: stage, order and registry', () => {
-  it('CATALOG_STAGE is P2, every data file is authored for it, and the built-in catalog validates against the registry', () => {
-    expect(CATALOG_STAGE).toBe('P2');
+  it('CATALOG_STAGE is P3 (the P3 flip), every data file is authored for it, and the built-in catalog validates against the registry', () => {
+    // ARCHITECTURE-P3 §9.2 W4 item 32: 'P2' → 'P3' for CATALOG_STAGE, every data stage and the validation stage
+    expect(CATALOG_STAGE).toBe('P3');
     for (const stage of [ROUTER_DATA_STAGE, SWITCH_DATA_STAGE, MULTILAYER_DATA_STAGE, DATACENTRE_DATA_STAGE, LEGACY_DATA_STAGE, SECURITY_DATA_STAGE, END_DEVICE_STAGE]) {
-      expect(stage).toBe('P2');
+      expect(stage).toBe('P3');
     }
-    expect(validateCatalog(ALL_MODELS, ALL_MODULES, { stage: 'P2', processNames: REGISTERED_PROCESSES })).toEqual([]);
+    expect(validateCatalog(ALL_MODELS, ALL_MODULES, { stage: 'P3', processNames: REGISTERED_PROCESSES })).toEqual([]);
+    // the P2 layer, computed at stage P2, still validates against the registry
+    expect(validateCatalog(P2_MODELS, ALL_MODULES, { stage: 'P2', processNames: REGISTERED_PROCESSES })).toEqual([]);
     expect(() => createCatalog(PROCESS_FACTORIES)).not.toThrow();
   });
 
   it('PROCESS_ORDER holds the eight W4 daemons and the two W6 daemons at their §2.1 positions and nothing unapproved', () => {
     // §9.2 W6 (§0 rule 3): the W6 catalog item inserted capwap-wtp and capwap-ac with their factories; the W4 order
     // is kept exactly around them
-    expect(PROCESS_ORDER).toEqual(P2_ORDER_AFTER_W6);
-    expect(PROCESS_ORDER.filter((n) => !W6_DAEMONS.includes(n))).toEqual(P2_ORDER_AFTER_W4);
+    // ARCHITECTURE-P3 §9.2 W4 item 32: the P3 flip inserted its fifteen daemons; without them the P2 order is kept
+    // exactly (PROCESS_ORDER itself is pinned in device.catalog.p3.test.ts)
+    expect(PROCESS_ORDER.filter((n) => !P3_DAEMONS.includes(n))).toEqual(P2_ORDER_AFTER_W6);
+    expect(PROCESS_ORDER.filter((n) => !P3_DAEMONS.includes(n) && !W6_DAEMONS.includes(n))).toEqual(P2_ORDER_AFTER_W4);
     for (const name of ['vtp', 'radius-server']) expect(PROCESS_ORDER).not.toContain(name);
     // constraints §2.1 relies upon: eth-switch before every L2 control daemon, ipv4 before nat, udp before hsrp,
     // dhcpv6 and capwap-ac, wlan-ap before capwap-wtp (an EAPOL frame that ties at score 2 goes to wlan-ap)
@@ -127,13 +155,15 @@ describe('the W4 catalog flip: stage, order and registry', () => {
 
   it('the CAPABILITY_PROCESSES rows of the flip are exactly the §2.1 rows, every one since P2', () => {
     const p2 = (process: ProcessName) => ({ process, since: 'P2' });
-    expect(CAPABILITY_PROCESSES['managed-switch']).toEqual([p2('vlan'), p2('dtp'), p2('etherchannel'), p2('stp')]);
-    expect(CAPABILITY_PROCESSES.routing.slice(-4)).toEqual([p2('nat'), p2('dhcpv6-client'), p2('dhcpv6-server'), p2('hsrp')]);
-    expect(CAPABILITY_PROCESSES.host.slice(-1)).toEqual([p2('dhcpv6-client')]);
+    // ARCHITECTURE-P3 §9.2 W4 item 32: each capability's rows up to stage P2 (the P3 flip's rows filtered out; routing
+    // and host filtered before the slice); the lightweight AP gains no P3 row and stays exact
+    expect(upToP2(CAPABILITY_PROCESSES['managed-switch'])).toEqual([p2('vlan'), p2('dtp'), p2('etherchannel'), p2('stp')]);
+    expect(upToP2(CAPABILITY_PROCESSES.routing).slice(-4)).toEqual([p2('nat'), p2('dhcpv6-client'), p2('dhcpv6-server'), p2('hsrp')]);
+    expect(upToP2(CAPABILITY_PROCESSES.host).slice(-1)).toEqual([p2('dhcpv6-client')]);
     expect(CAPABILITY_PROCESSES['nat-gateway']).toEqual([p2('nat')]);
     // §9.2 W6: the W6 catalog item added the wireless rows with their daemons (they were empty before)
     expect(CAPABILITY_PROCESSES['lightweight-ap']).toEqual([p2('capwap-wtp'), p2('udp'), p2('dhcp-client')]);
-    expect(CAPABILITY_PROCESSES['wireless-controller']).toEqual([p2('vlan'), p2('udp'), p2('capwap-ac')]);
+    expect(upToP2(CAPABILITY_PROCESSES['wireless-controller'])).toEqual([p2('vlan'), p2('udp'), p2('capwap-ac')]);
     // no W4 or W6 daemon is derived before stage P2 anywhere (the P1-profile digest guard relies on this)
     for (const cap of CAPABILITIES) {
       for (const row of CAPABILITY_PROCESSES[cap]) {
@@ -143,6 +173,8 @@ describe('the W4 catalog flip: stage, order and registry', () => {
   });
 });
 
+// ARCHITECTURE-P3 §9.2 W4 item 32: every model below is computed at stage P2 (`byType`, `P2_MODELS`); the P3 summaries
+// of NF-C2960, NF-C3650-24, NF-2911 and NF-WLC-9800 are pinned in device.catalog.p3.test.ts.
 describe('the W4 catalog flip: derived summaries', () => {
   it('NF-C2960 is a managed switch: the L2 control daemons, their tables, the 1–4094 Vlan and Port-channel families, pvst', () => {
     expect(NF_C2960.capabilities).toEqual(['switching', 'managed-switch']);
@@ -232,21 +264,24 @@ describe('the W4 catalog flip: derived summaries', () => {
     for (const type of ['bridge.nfbr2', 'ipphone.nfphone', 'ap.nfap-auto']) expect([type, byType(type).processes.includes('vlan')]).toEqual([type, false]);
   });
 
-  it('the p2.world helper equals the real catalog for EVERY model with the default registry (its W1 header claim, complete since the W6 catalog item)', () => {
+  it('the p2.world helper equals the real catalog at stage P2 for EVERY model with the default registry (its W1 header claim, complete since the W6 catalog item)', () => {
     // §7 W1 qa: "after the W4 and W6 flips the helper equals the real catalog". After W4 it held for every wired model;
     // the W6 catalog item made the helper's TEST-ONLY wireless data (NF-AP-1832 with `lightweight-ap`, NF-WLC-9800) the
-    // real data, so it now holds model for model, in palette order.
+    // real data, so it now holds model for model, in palette order. ARCHITECTURE-P3 §9.2 W4 item 32: since the P3 flip
+    // the real catalog is derived for stage P3, so the helper is compared with the real inputs at stage P2.
     expect(p2Registry()).toEqual(PROCESS_FACTORIES);
     const helper = createP2Catalog();
     const wireless = new Set<string>([...Object.keys(P2_WIRELESS_MODEL_DELTAS), NF_WLC_9800_INPUT.type]);
     expect([...wireless].sort()).toEqual(['ap.nfap-lw', 'wlc.nfwlc9800']);
-    for (const m of ALL_MODELS) expect(helper.get(m.type), m.type).toEqual(m);
-    expect(helper.list()).toEqual(ALL_MODELS);
+    for (const m of P2_MODELS) expect(helper.get(m.type), m.type).toEqual(m);
+    expect(helper.list()).toEqual(P2_MODELS);
+    expect(P2_MODELS.map((m) => m.type)).toEqual(ALL_MODELS.map((m) => m.type));
     // the real catalog carries the controller and the lightweight capability; the helper's copies are the same data
     const live = createCatalog(PROCESS_FACTORIES);
     // P3 §9.2 W0 item 4: the helper's controller input is the real one (its test-only alias was deleted)
     expect(ALL_MODEL_INPUTS.find((i) => i.type === NF_WLC_9800_INPUT.type)).toBe(NF_WLC_9800_INPUT);
-    expect(live.get(NF_WLC_9800_INPUT.type)).toEqual(helper.get(NF_WLC_9800_INPUT.type));
+    expect(live.get(NF_WLC_9800_INPUT.type)).toEqual(defineModel(NF_WLC_9800_INPUT, CATALOG_STAGE));
+    expect(defineModel(NF_WLC_9800_INPUT, 'P2')).toEqual(helper.get(NF_WLC_9800_INPUT.type));
     expect(live.get('ap.nfap-lw')?.capabilities).toContain('lightweight-ap');
     expect(helper.get('ap.nfap-lw')?.capabilities).toContain('lightweight-ap');
     for (const name of PROCESS_ORDER) expect(helper.process(name)).toBe(PROCESS_FACTORIES[name]);

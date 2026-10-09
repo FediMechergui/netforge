@@ -14,6 +14,7 @@ import {
   TUNNEL_FAMILY,
   defineModel,
   derivePortOwners,
+  deriveTables,
   roleEgressOwner,
   withTunnelFamily,
   type ModelInput,
@@ -96,9 +97,14 @@ describe("the tunnel role's egress owner ([S18])", () => {
 
   it('a model derives the owner only when it runs gre', () => {
     const m = defineModel(input('router.nf2911'), 'P3');
-    // before the W4 flip no capability row brings gre, so the real derivation has no tunnel owner
-    expect(m.processes).not.toContain('gre');
-    expect(m.portOwners.tunnel).toBeUndefined();
+    // ARCHITECTURE-P3 §9.2 W4 (the catalog flip; before it no capability row brought gre and the real derivation had
+    // no tunnel owner): the routing row brings gre since the flip, so the derivation has the owner; a daemon list
+    // without gre still derives none
+    expect(m.processes).toContain('gre');
+    expect(m.portOwners.tunnel).toBe('gre');
+    const withoutGre = m.processes.filter((p) => p !== 'gre');
+    expect(derivePortOwners(m.ports, m.virtualFamilies, withoutGre).tunnel).toBeUndefined();
+    expect(derivePortOwners(m.ports, m.virtualFamilies, withoutGre, ['gre']).tunnel).toBe('gre');
     expect(derivePortOwners(m.ports, m.virtualFamilies, [...m.processes, 'gre']).tunnel).toBe('gre');
     expect(derivePortOwners(m.ports, m.virtualFamilies, m.processes, ['gre']).tunnel).toBe('gre');
     // the P2-stage model has no tunnel role, so no owner either way
@@ -106,9 +112,14 @@ describe("the tunnel role's egress owner ([S18])", () => {
     expect(derivePortOwners(p2.ports, p2.virtualFamilies, [...p2.processes, 'gre'])).not.toHaveProperty('tunnel');
   });
 
-  it('validation accepts the Tunnel family (only the missing gre owner remains until the flip)', () => {
+  it('validation accepts the Tunnel family (without gre only the missing gre owner remains; since the flip the model derives it)', () => {
     const m = defineModel(input('router.nf2911'), 'P3');
-    const issues = validateCatalog([m], ALL_MODULES, { stage: 'P3' });
+    // ARCHITECTURE-P3 §9.2 W4 (the catalog flip): the real P3 model derives gre and its owner, so it validates
+    expect(validateCatalog([m], ALL_MODULES, { stage: 'P3' })).toEqual([]);
+    // the pre-flip daemon list (no gre; its tables and owners derived from it): only the missing gre owner remains
+    const processes = m.processes.filter((p) => p !== 'gre');
+    const noGre = { ...m, processes, tables: deriveTables(processes, m.capabilities, 'P3'), portOwners: derivePortOwners(m.ports, m.virtualFamilies, processes) };
+    const issues = validateCatalog([noGre], ALL_MODULES);
     expect(issues.filter((i) => i.code === 'bad-virtual-family')).toEqual([]);
     expect(issues.map((i) => [i.code, i.path])).toEqual([['bad-port-owner', 'portOwners.tunnel']]);
     // with gre on the model (as the W4 flip will derive it), the model validates

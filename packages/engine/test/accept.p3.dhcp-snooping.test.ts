@@ -43,7 +43,7 @@ import { CAM_SWEEP_INTERVAL_NS } from '../src/protocols/eth-switch.js';
 import { DHCP_SNOOPING_DEBUG_CATEGORY } from '../src/protocols/l2/dhcp-snooping.js';
 import { ERRDISABLE_RECOVERY_DEFAULT_NS } from '../src/protocols/l2/port-security.js';
 import { evaluateLab } from '../src/sim/lab-checks.js';
-import { configText, configured, gradingClone, p3Factories } from './hardening.world.js';
+import { configText, configured, gradingClone } from './hardening.world.js';
 import { INJECTED_TAG, INJECTOR_HOST_TYPE, dhcpServerFrame, injectFrames, withInjector } from './inject.js';
 import { ofKind, ping } from './sim.harness.js';
 import { createStagedSimulation } from './staged.world.js';
@@ -129,7 +129,7 @@ const ROGUE_CONFIG = configText([
 
 /** The §3.4 world (file header), booted and settled; PC1 not yet asking for an address. */
 function world(o: WorldOptions = {}): Simulation {
-  const sim = createStagedSimulation({ seed: o.seed ?? 5, stage: 'P3', factories: withInjector(p3Factories()) });
+  const sim = createStagedSimulation({ seed: o.seed ?? 5, stage: 'P3', factories: withInjector() });
   sim.addDevice({ id: 'sw1', type: 'switch.nfc2960', name: 'SW1', startupConfig: sw1Config(o) });
   sim.addDevice({ id: 'r1', type: 'router.nf2911', name: 'R1', startupConfig: R1_CONFIG });
   sim.addDevice({ id: 'pc1', type: 'pc.nfpc', name: 'PC1', startupConfig: configText([['hostname PC1']]) });

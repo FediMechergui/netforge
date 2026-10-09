@@ -14,7 +14,6 @@ import type { TraceEvent } from '../src/contracts/trace.js';
 import { TUNNEL_FAMILY } from '../src/device/catalog/define.js';
 import { TUNNEL_NO_ROW_REASON, evaluateVirtualOper, virtualPortSpec } from '../src/device/ports.js';
 import { pduSummary } from '../src/device/process-ctx.js';
-import { boot, harness } from './device.harness.js';
 import { bootP3, p3Harness, stubDaemon, type P3Harness, type StubDaemon } from './device.p3.harness.js';
 import { createStagedCatalog } from './staged.world.js';
 
@@ -134,8 +133,10 @@ describe('the tunnel port and virtualChanged ([S18], D17)', () => {
   });
 
   it('a stage-P2 router has no tunnel family: interface Tunnel0 is refused as before', () => {
-    const h = harness({ type: 'router.nf2911', name: 'R1' });
-    boot(h);
+    // ARCHITECTURE-P3 §9.2 W4: the real catalog was at stage P2 until the P3 catalog flip; since the flip the stage-P2
+    // router is `staged.world`'s (the real input defined at stage P2)
+    const h = p3Harness({ catalog: createStagedCatalog({ stage: 'P2' }), type: 'router.nf2911', name: 'R1' });
+    bootP3(h);
     expect(h.device.model.virtualFamilies.map((f) => f.family)).not.toContain('Tunnel');
     expect(h.device.applyConfigLine([], ['interface', TUNNEL], false)).toEqual({ ok: false, error: 'Unknown interface Tunnel0' });
     expect(h.device.port(TUNNEL)).toBeUndefined();

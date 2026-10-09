@@ -165,3 +165,12 @@ export function modelWith(type: string, ...processes: ProcessName[]): DeviceMode
   const m = catalogModel(type);
   return { ...m, processes: [...m.processes, ...processes] };
 }
+
+/**
+ * A catalog model without some daemons (ARCHITECTURE-P3 §9.2 W4: since the catalog flip the catalog models run the
+ * approved P3 daemons, so a case about a device that does not run one removes it here).
+ */
+export function modelWithout(type: string, ...processes: ProcessName[]): DeviceModel {
+  const m = catalogModel(type);
+  return { ...m, processes: m.processes.filter((p) => !processes.includes(p)) };
+}

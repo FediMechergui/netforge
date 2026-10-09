@@ -391,7 +391,9 @@ describe('ospf.adjacency: hello checks, silence and the process', () => {
   });
 
   it('a P3 world without the ospf factory never runs the daemon (staged.world filters the name)', () => {
-    const sim = createStagedSimulation({ seed: 1, stage: 'P3' });
+    // ARCHITECTURE-P3 §9.2 W4 (the catalog flip registered ospf): a world without the factory removes it through the
+    // overlay (staged.world's documented way to model a daemon without a factory)
+    const sim = createStagedSimulation({ seed: 1, stage: 'P3', factories: { ospf: undefined } });
     expect(sim.catalog.get('router.nf2911')!.processes).not.toContain('ospf');
     const withOspf = createStagedSimulation({ seed: 1, stage: 'P3', factories: { ospf: createOspf } });
     expect(withOspf.catalog.get('router.nf2911')!.processes).toContain('ospf');

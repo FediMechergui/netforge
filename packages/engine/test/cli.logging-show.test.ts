@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 import type { LoggerStateView } from '../src/contracts/process.js';
 import { LOGGING_DEBUG_CATEGORIES, LOGGING_GRAMMAR, LOGGING_HANDLERS as L } from '../src/cli/grammar/logging.js';
 import { facilityText, levelText, LOGGING_CLEAR_REQUEST, MSG_NO_LOGGER } from '../src/cli/handlers/logging.js';
-import { approvedCtx, handlerOf, modelWith, parse, runOn, showCtx, showLines } from './cli.p3-approved.fixture.js';
+import { approvedCtx, handlerOf, modelWith, modelWithout, parse, runOn, showCtx, showLines } from './cli.p3-approved.fixture.js';
 import { SEC } from '../src/contracts/time.js';
 import { createLogger } from '../src/protocols/logger.js';
 import { commandCtxFor } from './cli.p05.fixture.js';
@@ -106,8 +106,9 @@ describe('clear logging', () => {
     expect(LOGGING_CLEAR_REQUEST).toBe('ext.logging.clear');
   });
 
-  it('refuses where no logger runs (every model before the W4 flip)', () => {
-    const rec = approvedCtx(R, { mode: 'priv-exec' });
+  it('refuses where no logger runs (every model before the W4 flip; a model without the logger since)', () => {
+    // ARCHITECTURE-P3 §9.2 W4 (the catalog flip derives the logger on routers): the case keeps a model without it
+    const rec = commandCtxFor(modelWithout(R, 'logger'), { mode: 'priv-exec' });
     expect(runOn(rec.ctx, L.execClearLogging)).toEqual({ error: MSG_NO_LOGGER });
     expect(rec.requests).toEqual([]);
   });
@@ -116,7 +117,12 @@ describe('clear logging', () => {
 describe('on a real P3 world (the W2 logger)', () => {
   it('show logging reads the logger: the boot log and the link logs, as the logger rendered them', () => {
     const sim = createStagedSimulation({ seed: 7, stage: 'P3', factories: { logger: createLogger } });
-    sim.addDevice({ id: 'r1', type: R, name: 'R1', startupConfig: 'hostname R1\n!\nend\n' });
+    // ARCHITECTURE-P3 §9.2 W4 (the catalog flip): a P3 world replays the two [S24] timestamps lines (profileConfig.P3);
+    // R1 removes them, so the case keeps reading a logger without a timestamps form
+    sim.addDevice({
+      id: 'r1', type: R, name: 'R1',
+      startupConfig: 'hostname R1\n!\nno service timestamps debug datetime msec\n!\nno service timestamps log datetime msec\n!\nend\n',
+    });
     sim.runFor(60 * SEC);
     const s = sim.cli.open('r1', 'console');
     sim.cli.exec(s, 'enable');

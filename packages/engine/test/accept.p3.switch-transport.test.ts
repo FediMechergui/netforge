@@ -2,8 +2,8 @@
  * P3 acceptance — the dormant switch transport, D22 on the P3 catalog (ARCHITECTURE-P3 D22, D19, D21, §3.7, §3.8,
  * §4.3, §7 W4 step 1, §10.1 row `accept.p3.switch-transport`).
  *
- * Worlds are built by `test/p3-flip.world.ts`: on `staged.world` at stage P3 with every approved P3 daemon registered
- * until the W4 catalog flip, on the real (flipped) catalog after it. Every line is typed through `Simulation.configure`
+ * Worlds are built by `test/p3-flip.world.ts` on the real (flipped) catalog (the W4 flip deleted its pre-flip
+ * `staged.world` branch, ruling R47). Every line is typed through `Simulation.configure`
  * (the CLI validator, W2/W3 grammar), as a learner's GUI or console would.
  *
  *  1. The D22 guard world of the P2 golden (`guard-switch-svi`: an NF-C2960 whose Vlan1 192.168.1.2/24 is up, an
@@ -33,7 +33,7 @@ import type { TraceEvent } from '../src/contracts/trace.js';
 import { NTP_MASTER_DEFAULT_STRATUM } from '../src/protocols/ntp.js';
 import { createSimulation } from '../src/sim/simulation.js';
 import { GUARD_SVI, GUARD_WORLDS, guardProblems, p2Worlds, type TypedResult, type WorldRun } from './p2-digests.harness.js';
-import { createP3Simulation, p3WorldSource, startupText } from './p3-flip.world.js';
+import { createP3Simulation, startupText } from './p3-flip.world.js';
 
 // ── the guard world (a copy of test/p2-digests.harness.ts `guardDocument`, proved equal below) ─────────────────────
 
@@ -223,7 +223,7 @@ describe('accept P3 switch-transport (D22) on the P3 catalog', () => {
     expect(ours.profile).toBe('P2');
   });
 
-  it(`the guard world built in P3 answers exactly as the P2 golden, then wakes on ntp server and restconf and sleeps again (source: ${p3WorldSource()})`, () => {
+  it(`the guard world built in P3 answers exactly as the P2 golden, then wakes on ntp server and restconf and sleeps again (the real catalog)`, () => {
     // 1. dormant, exactly the P2 golden's answers
     const { sim, run, typed, events } = guardRunP3();
     expect(sim.profile).toBe('P3');

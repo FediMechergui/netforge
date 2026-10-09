@@ -19,7 +19,7 @@ import type { BuildStage } from '../../contracts/catalog.js';
 import { defineModel, type ModelInput, type PortInput, type SlotInput } from './define.js';
 
 /** Build stage the exported `ROUTER_MODELS` are defined for (device/catalog/index.ts re-defines ROUTER_INPUTS for its own stage when it differs). */
-export const ROUTER_DATA_STAGE: BuildStage = 'P2';
+export const ROUTER_DATA_STAGE: BuildStage = 'P3'; // ARCHITECTURE-P3 §7 W4 catalog flip (with CATALOG_STAGE)
 
 /** Serial WAN port speed (2 Mbit/s, as on the P0 NF-2911). */
 const SERIAL_BPS = 2_000_000;

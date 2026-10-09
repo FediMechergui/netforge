@@ -15,7 +15,7 @@ import type { BuildStage } from '../../contracts/catalog.js';
 import { defineModel, type ModelInput, type PortInput, type SlotInput } from './define.js';
 
 /** Build stage the exported `SECURITY_MODELS` are defined for (device/catalog/index.ts re-defines SECURITY_INPUTS for its own stage when it differs). */
-export const SECURITY_DATA_STAGE: BuildStage = 'P2';
+export const SECURITY_DATA_STAGE: BuildStage = 'P3'; // ARCHITECTURE-P3 §7 W4 catalog flip (with CATALOG_STAGE)
 
 /** Console line (9600 baud). */
 const CONSOLE: PortInput = { name: 'Console', kind: 'console', speedBps: 9_600 };

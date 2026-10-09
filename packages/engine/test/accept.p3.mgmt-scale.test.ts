@@ -2,8 +2,8 @@
  * P3 acceptance — management traffic at scale (ARCHITECTURE-P3 D2, D18, D19, D22, §3.6, §3.7, §4.2, §7 W4 step 1,
  * §12.2 R3, §10.1 row `accept.p3.mgmt-scale`).
  *
- * 25 routers and switches in a P3 world (`test/p3-flip.world.ts`: `staged.world` at stage P3 with the approved P3
- * daemons until the W4 flip, the real catalog after it), all in 10.0.0.0/24:
+ * 25 routers and switches in a P3 world (`test/p3-flip.world.ts`: the real catalog since the W4 flip, ruling R47),
+ * all in 10.0.0.0/24:
  *   - 15 NF-C2960 in a two-level tree: SW2–SW15 each uplink Gi0/1 to SW1 Fa0/1–Fa0/14; Vlan1 10.0.0.<n>/24;
  *   - 10 NF-2911: R1–R10 on SW2–SW11 Fa0/1 through Gi0/0, 10.0.0.<100 + n>/24;
  *   - one time server, SRV1 (NF-SERVER, 10.0.0.250, `ntp master 1` — what `service ntp on` stores) on SW1 Gi0/1;

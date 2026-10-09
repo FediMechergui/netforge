@@ -134,8 +134,10 @@ describe('DesktopTab', () => {
 
   it('lists the desktop apps a device offers, in panel order', () => {
     // P1: hosts gain the browser app (contracts/catalog.ts GUI_PANELS: 'desktop.web-browser' and 'services' arrive in P1).
-    expect(desktopAppsFor(device(snap, 'laptop1'))).toEqual(['desktop.ip-config', 'desktop.wifi', 'desktop.command-prompt', 'desktop.web-browser']);
-    expect(desktopAppsFor(device(snap, 'pc1'))).toEqual(['desktop.ip-config', 'desktop.command-prompt', 'desktop.web-browser']);
+    // ARCHITECTURE-P3 §9.2 W4 (the catalog flip, by the rule of items 33–35): hosts gain the Traffic generator app
+    // (`desktop.traffic`, GUI_PANEL_SINCE P3) in every world.
+    expect(desktopAppsFor(device(snap, 'laptop1'))).toEqual(['desktop.ip-config', 'desktop.wifi', 'desktop.command-prompt', 'desktop.web-browser', 'desktop.traffic']);
+    expect(desktopAppsFor(device(snap, 'pc1'))).toEqual(['desktop.ip-config', 'desktop.command-prompt', 'desktop.web-browser', 'desktop.traffic']);
     expect(desktopAppsFor(device(snap, 'home1'))).toEqual([]);
     expect(desktopAppsFor({ gui: ['desktop.wifi', 'physical', 'desktop.ip-config', 'desktop.wifi'] })).toEqual(['desktop.ip-config', 'desktop.wifi']);
     expect(desktopAppsFor(handBuilt({}))).toEqual([]);
@@ -175,7 +177,7 @@ describe('DesktopTab', () => {
     expect(windowsOfDevice(wins, 'laptop1').map((w) => w.id)).toEqual([3, 1]);
     useSnapshot(snap, { desktopWindows: wins });
     const html = renderToStaticMarkup(createElement(DesktopTab, { device: device(snap, 'laptop1') }));
-    expect((html.match(/data-app="/g) ?? []).length).toBe(4); // P1: + the browser launcher
+    expect((html.match(/data-app="/g) ?? []).length).toBe(5); // P1: + the browser launcher; P3 (the W4 flip): + traffic
     expect((html.match(/tabindex="0"/g) ?? []).length).toBe(1);
     expect(html).toMatch(/data-app="desktop.wifi"[^>]*class="desk-launcher is-open"/);
     const t = text(html);

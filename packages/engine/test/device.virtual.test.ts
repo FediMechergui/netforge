@@ -62,7 +62,10 @@ describe('virtual interfaces: create (§3.10)', () => {
     expect(d.ensureVirtualPort?.('Loopback0', t)).toEqual({ ok: true, port: 'Loopback0', created: true });
     expect(d.ensureVirtualPort?.('Loopback0', t)).toEqual({ ok: true, port: 'Loopback0', created: false });
     expect(d.ensureVirtualPort?.('Vlan5', t)).toEqual({ ok: false, error: 'This device cannot create an interface called Vlan5.' });
-    expect(d.applyConfigLine([['interface', 'Tunnel0']], ['shutdown'], false)).toEqual({ ok: false, error: 'Unknown interface Tunnel0' });
+    // ARCHITECTURE-P3 §9.2 W4 (the catalog flip derives the [S18] Tunnel family on routers): Tunnel0 is a creatable
+    // interface of the router since the flip; a name outside its families is still refused the same way
+    expect(d.applyConfigLine([['interface', 'Tunnel0']], ['shutdown'], false)).toEqual({ ok: true });
+    expect(d.applyConfigLine([['interface', 'Port-channel1']], ['shutdown'], false)).toEqual({ ok: false, error: 'Unknown interface Port-channel1' });
     expect(d.applyConfigLine([], ['interface', 'Loopback9'], false)).toEqual({ ok: true });
     expect(d.port('Loopback9')).toBeDefined();
     const s = harness({ type: 'mlswitch.nfc3650-24', name: 'SW1', power: false });

@@ -4,6 +4,10 @@
  * twelve P1 ones, the eight P2 ones the W4 flip registered and the two CAPWAP daemons of the W6 catalog item — is
  * registered in canonical daemon order, each factory builds a fresh process whose name matches its key, and every
  * daemon a catalog model lists at CATALOG_STAGE resolves to a factory.
+ *
+ * ARCHITECTURE-P3 §9.2 W4 item 31 (the P3 catalog flip): the registry also maps the seven P3 MUST daemons (ospf, acl,
+ * cdp, lldp, ntp, restconf, traffic) and the eight approved ones (ppp, gre, vty, vty-client, logger, syslog-server,
+ * eigrp, ike), each at its PROCESS_ORDER position; the "unregistered" pins name daemons that stay unregistered in P3a.
  */
 import { describe, expect, it } from 'vitest';
 import {
@@ -40,6 +44,21 @@ import {
   createVlan,
   createWlanAp,
   createWlanClient,
+  createPpp,
+  createCdp,
+  createLldp,
+  createAcl,
+  createGre,
+  createVty,
+  createVtyClient,
+  createLogger,
+  createNtp,
+  createSyslogServer,
+  createOspf,
+  createEigrp,
+  createIke,
+  createRestconf,
+  createTraffic,
   processFactory,
 } from '../src/protocols/index.js';
 import { ALL_MODELS, ALL_MODULES, CATALOG_STAGE, createCatalog } from '../src/device/catalog/index.js';
@@ -70,15 +89,21 @@ describe('protocols registry', () => {
       'capwap-wtp': createCapwapWtp,
       'cell-client': createCellClient,
       hdlc: createHdlc,
+      // ARCHITECTURE-P3 §9.2 W4 item 31: the seven P3 daemons and the eight approved ones at their §2.1 positions
+      ppp: createPpp,
       'eth-switch': createEthSwitch,
       // ARCHITECTURE-P2 §9.2 W4 item 14: the eight P2 daemons at their §2.1 positions
       vlan: createVlan,
       dtp: createDtp,
       etherchannel: createEtherchannel,
       stp: createStp,
+      cdp: createCdp,
+      lldp: createLldp,
       arp: createArp,
       ipv4: createIpv4,
       nat: createNat,
+      acl: createAcl,
+      gre: createGre,
       icmpv4: createIcmpv4,
       host: createHost,
       ipv6: createIpv6,
@@ -86,7 +111,15 @@ describe('protocols registry', () => {
       icmpv6: createIcmpv6,
       udp: createUdp,
       tcp: createTcp,
+      vty: createVty,
+      'vty-client': createVtyClient,
+      logger: createLogger,
+      ntp: createNtp,
+      'syslog-server': createSyslogServer,
       hsrp: createHsrp,
+      ospf: createOspf,
+      eigrp: createEigrp,
+      ike: createIke,
       'dhcp-client': createDhcpClient,
       'dhcp-server': createDhcpServer,
       'dhcpv6-client': createDhcpv6Client,
@@ -95,7 +128,9 @@ describe('protocols registry', () => {
       'dns-server': createDnsServer,
       'http-client': createHttpClient,
       'http-server': createHttpServer,
+      restconf: createRestconf,
       traceroute: createTraceroute,
+      traffic: createTraffic,
       'capwap-ac': createCapwapAc,
     });
     expect([HDLC_PROCESS, WLAN_AP_PROCESS, WLAN_CLIENT_PROCESS, CELL_CLIENT].every((n) => REGISTERED_PROCESSES.includes(n))).toBe(true);
@@ -117,8 +152,10 @@ describe('protocols registry', () => {
   });
 
   it('processFactory returns undefined for unknown and inherited names', () => {
-    expect(processFactory('ppp')).toBeUndefined();
-    expect(processFactory('ospf')).toBeUndefined();
+    // ARCHITECTURE-P3 §9.2 W4 item 31: 'ppp' [S19] and 'ospf' are registered now; the pins name daemons that stay
+    // unregistered in P3a: [S29] 'tftp' and [S6] 'ospfv3' (not approved; 'script-host' would move again at W6)
+    expect(processFactory('tftp')).toBeUndefined();
+    expect(processFactory('ospfv3')).toBeUndefined();
     expect(processFactory('toString')).toBeUndefined();
     expect(processFactory('__proto__')).toBeUndefined();
   });

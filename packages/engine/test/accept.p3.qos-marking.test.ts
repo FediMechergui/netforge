@@ -44,7 +44,6 @@ import {
   mutationsAt,
   mutationsByPdu,
   ofKind,
-  P3_ACCEPT_FACTORIES,
   PCD_IP,
   PCS_IP,
   PCT_IP,
@@ -278,7 +277,7 @@ describe('output marking on a subinterface', () => {
 
 describe('where a service policy may attach', () => {
   it('an SVI and a switchport refuse it with qosPortUnsupported; a routed port of the same switch takes it', () => {
-    const sim = createStagedSimulation({ seed: 30, stage: 'P3', factories: P3_ACCEPT_FACTORIES });
+    const sim = createStagedSimulation({ seed: 30, stage: 'P3' });
     sim.addDevice({ id: 'dsw', type: 'mlswitch.nfc3650-24', name: 'DSW1' });
     sim.runFor(60 * SEC);
     const typed = routerExec(sim, 'dsw', [

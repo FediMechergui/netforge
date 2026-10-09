@@ -162,17 +162,35 @@ describe('sim: snapshots v2', () => {
     expect(sim.device('home')!.running.render()).toContain('passphrase labpass-secret-1');
     // the home router derives the whole P1 daemon list at CATALOG_STAGE (§8.2 W5), so it owns their tables too;
     // ARCHITECTURE-P2 §9.2 W4 items 13 and 20: since the W4 flip it also runs nat, hsrp [S2] and dhcpv6-server
-    // (`nat-gateway` implies `routing`), whose tables join the list at their daemons' positions
+    // (`nat-gateway` implies `routing`), whose tables join the list at their daemons' positions.
+    // ARCHITECTURE-P3 §9.2 W4 item 35: since the P3 flip it also derives, through `routing`, the empty tables of ospf,
+    // acl, cdp, lldp, ntp and restconf and of the approved [S19] ppp, [S18] gre, [S13] vty, [C1] eigrp and [C13] ike, at
+    // their daemons' PROCESS_ORDER positions (`deriveTables`; silent: no CLI, no configured line)
     expect(home.tables.extra?.map((t) => [t.name, t.title])).toEqual([
       ['dot11-assoc', 'Wireless associations'],
+      ['ppp', 'PPP links'],
+      ['cdp-neighbours', 'CDP neighbours'],
+      ['lldp-neighbours', 'LLDP neighbours'],
       ['nat', 'NAT translations'],
+      ['acl', 'Access list hits'],
+      ['tunnels', 'Tunnels'],
       ['rib6', 'IPv6 routes'],
       ['nd', 'IPv6 neighbours'],
       ['sockets', 'Sockets'],
+      ['vty-logins', 'Remote logins'],
+      ['ntp-peers', 'Time servers'],
+      ['clock', 'Device clock'],
       ['hsrp', 'Standby groups'],
+      ['ospf-interfaces', 'OSPF interfaces'],
+      ['ospf-neighbors', 'OSPF neighbours'],
+      ['ospf-lsdb', 'Link-state database'],
+      ['eigrp-neighbors', 'EIGRP neighbours'],
+      ['eigrp-topology', 'EIGRP topology'],
+      ['ipsec-sa', 'IPsec SAs'],
       ['dhcp-bindings', 'DHCP leases'],
       ['dhcpv6-bindings', 'DHCPv6 leases'],
       ['dns-cache', 'DNS cache'],
+      ['restconf-log', 'API requests'],
     ]);
     expect(home.ports.find((p) => p.id === 'Wlan0')!.radio).toMatchObject({ mode: 'ap', ssid: 'LAB' });
   });

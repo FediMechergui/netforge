@@ -23,7 +23,7 @@ import type { BuildStage, PoeSpec, VirtualFamilySpec } from '../../contracts/cat
 import { defineModel, MANAGEMENT_VLAN_FAMILY, type ModelInput, type PortInput, type SlotInput } from './define.js';
 
 /** Build stage the exported `SWITCH_MODELS` are defined for (device/catalog/index.ts re-defines SWITCH_INPUTS for its own stage when it differs). */
-export const SWITCH_DATA_STAGE: BuildStage = 'P2';
+export const SWITCH_DATA_STAGE: BuildStage = 'P3'; // ARCHITECTURE-P3 §7 W4 catalog flip (with CATALOG_STAGE)
 
 /**
  * Management SVI family of an L2 access switch (P1 W5): the auto `Vlan1` carries the switch's management address

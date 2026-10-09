@@ -2,10 +2,10 @@
  * P3 acceptance — LLDP on request (ARCHITECTURE-P3 §10.1 row `accept.p3.lldp`; §3.6 step 7; D2, D18; §4.2, §4.3;
  * §5.5; §7 W4 qa).
  *
- * The row, clause by clause, on `staged.world` at stage P3 (rule 13; rule 14: the qa step runs before the catalog flip,
- * so the daemons the W4 flip registers are laid over the registry — `FLIP_FACTORIES`; after the flip the overlay names
- * the registry's own factories). LLDP is off by default in every profile (D2); `lldp run` and the per-port lines are
- * typed on consoles (the real grammar) or stored at boot through `startupConfig`.
+ * The row, clause by clause, on `staged.world` at stage P3 (rule 13), whose registry is the real one since the W4
+ * catalog flip (ruling R47 removed the pre-flip overlay, `FLIP_FACTORIES`). LLDP is off by default in every profile
+ * (D2); `lldp run` and the per-port lines are typed on consoles (the real grammar) or stored at boot through
+ * `startupConfig`.
  *
  *   • the IEEE byte golden: R1's frame on the wire is, byte for byte, the IEEE 802.1AB image written out below from
  *     the standard (not from the codec): destination 01:80:c2:00:00:0e, ethertype 0x88cc, chassis id subtype 4 (the
@@ -24,29 +24,8 @@ import type { Simulation } from '../src/contracts/simulation.js';
 import type { LldpNeighbourRow } from '../src/contracts/tables.js';
 import { SEC } from '../src/contracts/time.js';
 import type { TraceEvent } from '../src/contracts/trace.js';
-import { createAcl } from '../src/protocols/acl.js';
-import { createCdp } from '../src/protocols/cdp.js';
-import { createEigrp } from '../src/protocols/eigrp.js';
-import { createGre } from '../src/protocols/gre.js';
-import { createIke } from '../src/protocols/ike.js';
-import { createLldp, LLDP_DETAIL_OFF, lldpReceiveOffDetail } from '../src/protocols/lldp.js';
-import { createLogger } from '../src/protocols/logger.js';
-import { createNtp } from '../src/protocols/ntp.js';
-import { createOspf } from '../src/protocols/ospf.js';
-import { createPpp } from '../src/protocols/ppp.js';
-import { createRestconf } from '../src/protocols/restconf.js';
-import { createSyslogServer } from '../src/protocols/syslog-server.js';
-import { createTraffic } from '../src/protocols/traffic.js';
-import { createVty } from '../src/protocols/vty.js';
-import { createVtyClient } from '../src/protocols/vty-client.js';
-import { createStagedSimulation, type StagedFactoryOverlay } from './staged.world.js';
-
-/** The daemons the W4 catalog flip registers (§7 W4 step 2), laid over the registry until it lands. */
-const FLIP_FACTORIES: StagedFactoryOverlay = {
-  ppp: createPpp, cdp: createCdp, lldp: createLldp, acl: createAcl, gre: createGre, vty: createVty, 'vty-client': createVtyClient,
-  logger: createLogger, ntp: createNtp, 'syslog-server': createSyslogServer, ospf: createOspf, eigrp: createEigrp, ike: createIke,
-  restconf: createRestconf, traffic: createTraffic,
-};
+import { LLDP_DETAIL_OFF, lldpReceiveOffDetail } from '../src/protocols/lldp.js';
+import { createStagedSimulation } from './staged.world.js';
 
 const SEED = 3_007;
 const INTERVAL_S = 30;
@@ -104,7 +83,7 @@ function crc32(bytes: readonly number[]): number {
 
 describe('the IEEE byte golden', () => {
   it("R1's frame on the wire is the 802.1AB image: chassis subtype 4, port subtype 5, TTL 120, …, end TLV, FCS", () => {
-    const sim = createStagedSimulation({ seed: SEED, stage: 'P3', factories: FLIP_FACTORIES });
+    const sim = createStagedSimulation({ seed: SEED, stage: 'P3' });
     sim.addDevice({ id: 'r1', type: 'router.nf2911', name: 'R1', startupConfig: startup([['hostname R1'], ['lldp run'], ['interface GigabitEthernet0/0', ' ip address 10.0.12.1 255.255.255.0', ' no shutdown']]) });
     sim.addDevice({ id: 'r2', type: 'router.nf2911', name: 'R2', startupConfig: startup([['hostname R2'], ['lldp run'], ['interface GigabitEthernet0/0', ' ip address 10.0.12.2 255.255.255.0', ' no shutdown']]) });
     sim.addLink({ a: { device: 'r1', port: 'GigabitEthernet0/0' }, b: { device: 'r2', port: 'GigabitEthernet0/0' } });
@@ -152,7 +131,7 @@ describe('the IEEE byte golden', () => {
 describe('§3.6 step 7: interval and asymmetry', () => {
   /** R1 Gi0/0 ↔ SW1 Gi0/1; SW1 Gi0/2 ↔ SW2 Gi0/1 (trunk); `lldp run` on all three at boot. */
   function chain(): Simulation {
-    const sim = createStagedSimulation({ seed: SEED, stage: 'P3', factories: FLIP_FACTORIES });
+    const sim = createStagedSimulation({ seed: SEED, stage: 'P3' });
     sim.addDevice({ id: 'r1', type: 'router.nf2911', name: 'R1', startupConfig: startup([['hostname R1'], ['lldp run'], ['interface GigabitEthernet0/0', ' ip address 10.0.12.1 255.255.255.0', ' no shutdown']]) });
     sim.addDevice({ id: 'sw1', type: 'switch.nfc2960', name: 'SW1', startupConfig: startup([['hostname SW1'], ['lldp run'], ['interface GigabitEthernet0/2', ' switchport mode trunk']]) });
     sim.addDevice({ id: 'sw2', type: 'switch.nfc2960', name: 'SW2', startupConfig: startup([['hostname SW2'], ['lldp run'], ['interface GigabitEthernet0/1', ' switchport mode trunk']]) });
@@ -206,7 +185,7 @@ describe('§3.6 step 7: interval and asymmetry', () => {
 
 describe('who bridges LLDP (D18)', () => {
   it('never a VLAN-aware switch: with LLDP off it consumes the frames as off; with it on it learns and forwards nothing', () => {
-    const sim = createStagedSimulation({ seed: SEED, stage: 'P3', factories: FLIP_FACTORIES });
+    const sim = createStagedSimulation({ seed: SEED, stage: 'P3' });
     sim.addDevice({ id: 'r1', type: 'router.nf2911', name: 'R1', startupConfig: startup([['hostname R1'], ['lldp run'], ['interface GigabitEthernet0/0', ' ip address 10.0.12.1 255.255.255.0', ' no shutdown']]) });
     sim.addDevice({ id: 'sw1', type: 'switch.nfc2960', name: 'SW1', startupConfig: startup([['hostname SW1']]) });
     sim.addDevice({ id: 'sw2', type: 'switch.nfc2960', name: 'SW2', startupConfig: startup([['hostname SW2'], ['lldp run']]) });
@@ -236,7 +215,7 @@ describe('who bridges LLDP (D18)', () => {
   });
 
   it('dropped with "lldp is not running on this device" at the controller', () => {
-    const sim = createStagedSimulation({ seed: SEED, stage: 'P3', factories: FLIP_FACTORIES });
+    const sim = createStagedSimulation({ seed: SEED, stage: 'P3' });
     sim.addDevice({ id: 'sw1', type: 'switch.nfc2960', name: 'SW1', startupConfig: startup([['hostname SW1'], ['lldp run'], ['interface GigabitEthernet0/1', ' switchport mode trunk']]) });
     sim.addDevice({ id: 'wlc1', type: 'wlc.nfwlc9800', name: 'WLC1' });
     sim.addLink({ a: { device: 'sw1', port: 'GigabitEthernet0/1' }, b: { device: 'wlc1', port: 'GigabitEthernet0/1' } });
@@ -256,7 +235,7 @@ describe('who bridges LLDP (D18)', () => {
   });
 
   it('bridged by a transparent one: two routers learn each other through a learning bridge', () => {
-    const sim = createStagedSimulation({ seed: SEED, stage: 'P3', factories: FLIP_FACTORIES });
+    const sim = createStagedSimulation({ seed: SEED, stage: 'P3' });
     sim.addDevice({ id: 'r1', type: 'router.nf2911', name: 'R1', startupConfig: startup([['hostname R1'], ['lldp run'], ['interface GigabitEthernet0/0', ' ip address 10.0.12.1 255.255.255.0', ' no shutdown']]) });
     sim.addDevice({ id: 'br1', type: 'bridge.nfbr4', name: 'BR1' });
     sim.addDevice({ id: 'r2', type: 'router.nf2911', name: 'R2', startupConfig: startup([['hostname R2'], ['lldp run'], ['interface GigabitEthernet0/0', ' ip address 10.0.12.2 255.255.255.0', ' no shutdown']]) });
@@ -277,7 +256,7 @@ describe('who bridges LLDP (D18)', () => {
 describe('determinism', () => {
   it('three runs with one seed give byte-identical trace and snapshot JSON', () => {
     const run = (): string => {
-      const sim = createStagedSimulation({ seed: SEED, stage: 'P3', factories: FLIP_FACTORIES });
+      const sim = createStagedSimulation({ seed: SEED, stage: 'P3' });
       sim.addDevice({ id: 'r1', type: 'router.nf2911', name: 'R1', startupConfig: startup([['hostname R1'], ['lldp run'], ['interface GigabitEthernet0/0', ' no shutdown']]) });
       sim.addDevice({ id: 'sw1', type: 'switch.nfc2960', name: 'SW1', startupConfig: startup([['hostname SW1'], ['lldp run']]) });
       sim.addLink({ a: { device: 'r1', port: 'GigabitEthernet0/0' }, b: { device: 'sw1', port: 'GigabitEthernet0/1' } });

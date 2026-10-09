@@ -154,15 +154,17 @@ describe('log.record reaches the logger only when the model runs it ([S24])', ()
 
   it('a model without logger delivers nothing, even with a logger factory registered', () => {
     const logger = stubDaemon('logger');
-    // stage P2 (real catalog): the router runs no logger
-    const h = harness({ type: 'router.nf2911', name: 'R1', processes: { logger: logger.factory } });
-    boot(h);
+    // stage P2: the router runs no logger (the real catalog until the P3 catalog flip; since the flip, ARCHITECTURE-P3
+    // §9.2 W4, the stage-P2 catalog of `staged.world`, the real P2-stage models, with the logger factory registered)
+    const h = p3Harness({ catalog: createStagedCatalog({ stage: 'P2', factories: { logger: logger.factory } }), type: 'router.nf2911', name: 'R1' });
+    bootP3(h);
     h.device.emitLog(3, 'LINK', 'x', 60 * SEC, 'UPDOWN');
     h.device.applyActions('ipv4', [{ type: 'log', severity: 6, facility: 'IP', message: 'y' }], 60 * SEC);
     expect(logger.received).toEqual([]);
     expect(logger.ctx).toBeUndefined();
-    // stage P3 with no logger factory: the staged model leaves logger out
-    const p3 = p3Harness({ catalog: createStagedCatalog({ stage: 'P3', factories: {} }), type: 'router.nf2911', profile: 'P3' });
+    // stage P3 with no logger factory: the staged model leaves logger out (since the flip registered the logger, the
+    // overlay removes it: staged.world's documented way to model a daemon without a factory)
+    const p3 = p3Harness({ catalog: createStagedCatalog({ stage: 'P3', factories: { logger: undefined } }), type: 'router.nf2911', profile: 'P3' });
     bootP3(p3);
     expect(p3.device.model.processes).not.toContain('logger');
     p3.device.emitLog(3, 'LINK', 'z', 60 * SEC);

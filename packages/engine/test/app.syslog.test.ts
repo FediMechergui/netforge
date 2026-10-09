@@ -201,6 +201,9 @@ describe('app.syslog: the sender and the receiver (§3.7 step 8)', () => {
   it('defaults (informational, local7), `logging facility`, the alias, two hosts, `logging source-interface`; no timestamps line', () => {
     const { sim } = world(3, {
       r1Sections: [['interface Loopback0', ' ip address 1.1.1.1 255.255.255.255']],
+      // ARCHITECTURE-P3 §9.2 W4 (the catalog flip): a P3 world replays the two [S24] timestamps lines
+      // (profileConfig.P3, D2); R1 removes them, so the case keeps its "no timestamps line" stamps
+      r1Lines: ['no service timestamps debug datetime msec', 'no service timestamps log datetime msec'],
       srvLines: ['syslog-server enable'],
     });
     const r1 = sim.device('r1')!;

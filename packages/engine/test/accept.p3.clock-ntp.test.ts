@@ -2,10 +2,10 @@
  * P3 acceptance — device clocks and an NTP chain (ARCHITECTURE-P3 §10.1 row `accept.p3.clock-ntp`; §3.7 steps 1–6;
  * D19; §2.6 `ntp-peers` / `clock`; §4.2 the ntp timers; §4.5 time integers; §5.5, §5.8; rule 19, rule 20; §7 W4 qa).
  *
- * The row, clause by clause, on `staged.world` at stage P3 (rule 13; rule 14: the qa step runs before the catalog flip,
- * so the daemons the W4 flip registers are laid over the registry — `FLIP_FACTORIES`; after the flip the overlay names
- * the registry's own factories). Lines a learner types go through the real CLI: `service ntp on` in the server's host
- * shell, `clock set`, `ntp master`, `ntp server` on consoles; the §3.7 boot configuration through `startupConfig`.
+ * The row, clause by clause, on `staged.world` at stage P3 (rule 13), whose registry is the real one since the W4
+ * catalog flip (ruling R47 removed the pre-flip overlay, `FLIP_FACTORIES`). Lines a learner types go through the real
+ * CLI: `service ntp on` in the server's host shell, `clock set`, `ntp master`, `ntp server` on consoles; the §3.7 boot
+ * configuration through `startupConfig`.
  *
  *   §3.7 chain: SRV1 (NF-SERVER) 10.0.0.10 ↔ SW1 Fa0/1; SW1 (NF-C2960) Vlan1 10.0.0.2; R1 (NF-2911) Gi0/1 10.0.0.1 ↔
  *   SW1 Gi0/1. SRV1 `service ntp on` (= `ntp master 1`), R1 `ntp server 10.0.0.10`, SW1 `ntp server 10.0.0.1` (the line
@@ -35,29 +35,8 @@ import type { ClockRow, NtpPeerRow, NtpStateView } from '../src/contracts/tables
 import { SEC, type SimTime } from '../src/contracts/time.js';
 import type { TraceEvent } from '../src/contracts/trace.js';
 import { FACT_READERS, checkFact } from '../src/sim/lab-checks/facts.js';
-import { createAcl } from '../src/protocols/acl.js';
-import { createCdp } from '../src/protocols/cdp.js';
-import { createEigrp } from '../src/protocols/eigrp.js';
-import { createGre } from '../src/protocols/gre.js';
-import { createIke } from '../src/protocols/ike.js';
-import { createLldp } from '../src/protocols/lldp.js';
-import { createLogger } from '../src/protocols/logger.js';
-import { createNtp, NTP_POLL_NS, NTP_RETRY_SCHEDULE_NS } from '../src/protocols/ntp.js';
-import { createOspf } from '../src/protocols/ospf.js';
-import { createPpp } from '../src/protocols/ppp.js';
-import { createRestconf } from '../src/protocols/restconf.js';
-import { createSyslogServer } from '../src/protocols/syslog-server.js';
-import { createTraffic } from '../src/protocols/traffic.js';
-import { createVty } from '../src/protocols/vty.js';
-import { createVtyClient } from '../src/protocols/vty-client.js';
-import { createStagedSimulation, type StagedFactoryOverlay } from './staged.world.js';
-
-/** The daemons the W4 catalog flip registers (§7 W4 step 2), laid over the registry until it lands. */
-const FLIP_FACTORIES: StagedFactoryOverlay = {
-  ppp: createPpp, cdp: createCdp, lldp: createLldp, acl: createAcl, gre: createGre, vty: createVty, 'vty-client': createVtyClient,
-  logger: createLogger, ntp: createNtp, 'syslog-server': createSyslogServer, ospf: createOspf, eigrp: createEigrp, ike: createIke,
-  restconf: createRestconf, traffic: createTraffic,
-};
+import { NTP_POLL_NS, NTP_RETRY_SCHEDULE_NS } from '../src/protocols/ntp.js';
+import { createStagedSimulation } from './staged.world.js';
 
 const SEED = 3_007_007;
 const NS_PER_MS = 1_000_000n;
@@ -111,7 +90,7 @@ function hostShell(sim: Simulation, dev: DeviceId, line: string): string {
 
 /** The §3.7 chain; SRV1's host shell gets `service ntp on` once it has booted (at 10 s). */
 function chain(seed = SEED): Simulation {
-  const sim = createStagedSimulation({ seed, stage: 'P3', factories: FLIP_FACTORIES });
+  const sim = createStagedSimulation({ seed, stage: 'P3' });
   sim.addDevice({ id: 'srv1', type: 'server.nfserver', name: 'SRV1', startupConfig: startup([['hostname SRV1'], ['interface GigabitEthernet0', ' ip address 10.0.0.10 255.255.255.0'], ['ip default-gateway 10.0.0.1']]) });
   sim.addDevice({ id: 'sw1', type: 'switch.nfc2960', name: 'SW1', startupConfig: startup([['hostname SW1'], ['interface Vlan1', ' ip address 10.0.0.2 255.255.255.0', ' no shutdown'], ['ip default-gateway 10.0.0.1'], ['ntp server 10.0.0.1']]) });
   sim.addDevice({ id: 'r1', type: 'router.nf2911', name: 'R1', startupConfig: startup([['hostname R1'], ['interface GigabitEthernet0/1', ' ip address 10.0.0.1 255.255.255.0', ' no shutdown'], ['ntp server 10.0.0.10']]) });
@@ -127,7 +106,7 @@ function chain(seed = SEED): Simulation {
  * nothing about time configured. Run until `until` (default 100 s: everything booted and forwarding).
  */
 function pair(seed = SEED, until: SimTime = 100 * SEC): Simulation {
-  const sim = createStagedSimulation({ seed, stage: 'P3', factories: FLIP_FACTORIES });
+  const sim = createStagedSimulation({ seed, stage: 'P3' });
   sim.addDevice({ id: 'r1', type: 'router.nf2911', name: 'R1', startupConfig: startup([['hostname R1'], ['interface GigabitEthernet0/1', ' ip address 10.0.0.1 255.255.255.0', ' no shutdown']]) });
   sim.addDevice({
     id: 'sw1', type: 'switch.nfc2960', name: 'SW1',

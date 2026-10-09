@@ -14,11 +14,20 @@
  * StateView, the `vlans` and `port-security` tables, and any capability, GUI panel or port role the transparent
  * device lacks) is removed. The P0 golden itself (`goldens/accept.p05.p0-sequences.json`) is then contained in the
  * VLAN-aware run exactly as accept.p05.determinism checks it.
+ *
+ * Since the ARCHITECTURE-P3 W4 catalog flip the shipped catalog is derived at stage P3, and the VLAN-aware path stays
+ * on it (ruling R51: the event parity holds there, so the P0 parity keeps exercising the shipped models). The models
+ * then also carry the silent P3 vocabulary, which the strip removes by the rule of `normaliseSnapshot`
+ * (p2-digests.harness.ts, §4.6 item 2): the StateViews of the P3 daemons and of every process the device derives only
+ * through `since: 'P3'` capability rows (the managed switch's dormant `udp` and `tcp`, D22), the tables whose
+ * descriptor is of stage P3 or that only those processes own, and the members of the model-derived lists the
+ * transparent device lacks. The events stay exact.
  */
 import { describe, expect, it } from 'vitest';
+import { CAPABILITY_PROCESSES, type Capability } from '../src/contracts/catalog.js';
 import type { Simulation } from '../src/contracts/simulation.js';
 import type { SimSnapshot } from '../src/contracts/snapshot.js';
-import { TABLE_DESCRIPTORS } from '../src/contracts/tables.js';
+import { PROCESS_TABLES, TABLE_DESCRIPTORS } from '../src/contracts/tables.js';
 import { SEC } from '../src/contracts/time.js';
 import type { Topology } from '../src/contracts/topology.js';
 import { createVlan } from '../src/protocols/vlan.js';
@@ -26,6 +35,7 @@ import { pcRouterPc, twoPcsAndSwitch } from '../src/sim/scenarios.js';
 import { createSimulation } from '../src/sim/simulation.js';
 import { canonicalJson, containmentProblems, macOwners, p0EventLine, readP0Reference, replaceMacs } from './accept.p05.harness.js';
 import { P2_DAEMONS, createP2Simulation } from './p2.world.js';
+import { P3_SILENCE_DAEMONS } from './p3-flip.world.js';
 
 interface Scenario {
   readonly name: string;
@@ -56,31 +66,50 @@ function run(sim: Simulation, s: Scenario): { lines: string[]; snapshot: SimSnap
 const isP2Process = (name: string): boolean => P2_DAEMONS.includes(name);
 /** P2 tables: descriptors `since: 'P2'`. */
 const P2_TABLE_NAMES = new Set(Object.values(TABLE_DESCRIPTORS).filter((d) => d.since === 'P2').map((d) => d.name));
+/** P3 tables: descriptors `since: 'P3'` (read at call time, rule 12). */
+const p3TableNames = (): Set<string> => new Set(Object.values(TABLE_DESCRIPTORS).filter((d) => d.since === 'P3').map((d) => d.name as string));
 
 /**
- * The VLAN-aware snapshot with the P2 vocabulary removed, and the list of what was removed (so the test can assert that
- * nothing but the expected P2 additions was there): the P2 StateViews and P2 extra tables the transparent device does
- * not have (since the flip both run the silent dtp, etherchannel and stp daemons, so only `vlan` and its tables
- * differ), and the members of the model-derived lists (`capabilities`, `gui`, port `allowedRoles`) it lacks.
+ * Processes a device derives only through `since: 'P3'` capability rows (a P3 daemon, or D22's dormant `udp` and
+ * `tcp` of a managed switch): the `laterOnly` rule of `normaliseSnapshot` with P3 as the only later stage.
  */
-function stripP2(snapshot: SimSnapshot, reference: SimSnapshot): { stripped: unknown; removed: string[] } {
+function p3OnlyProcess(capabilities: readonly string[], process: string): boolean {
+  const rows = capabilities.flatMap((c) => (CAPABILITY_PROCESSES[c as Capability] ?? []).filter((r) => r.process === process));
+  return rows.length > 0 && rows.every((r) => r.since === 'P3');
+}
+
+/**
+ * The VLAN-aware snapshot with the later vocabulary removed, and the list of what was removed (so the test can assert
+ * that nothing but the expected P2 and P3 additions was there): the P2 StateViews and P2 extra tables the transparent
+ * device does not have (since the P2 flip both run the silent dtp, etherchannel and stp daemons, so only `vlan` and
+ * its tables differ); since the P3 flip (R51) the StateViews of the processes the device derives only through
+ * `since: 'P3'` rows and the extra tables of stage P3 or owned only by those processes; and the members of the
+ * model-derived lists (`capabilities`, `gui`, port `allowedRoles`) it lacks.
+ */
+function stripLater(snapshot: SimSnapshot, reference: SimSnapshot): { stripped: unknown; removed: string[] } {
   const removed: string[] = [];
+  const p3Tables = p3TableNames();
   const copy = JSON.parse(JSON.stringify(snapshot)) as SimSnapshot;
   for (const d of copy.devices) {
     const ref = reference.devices.find((r) => r.id === d.id);
     if (ref === undefined) continue;
     const refProcesses = new Set<string>(ref.processes.map((p) => p.process));
+    const dropped = new Set<string>();
     d.processes = d.processes.filter((p) => {
-      if (isP2Process(p.process) && !refProcesses.has(p.process)) {
+      if (refProcesses.has(p.process)) return true;
+      if (isP2Process(p.process) || p3OnlyProcess(d.capabilities, p.process)) {
+        dropped.add(p.process);
         removed.push(`${d.id}: process ${p.process}`);
         return false;
       }
       return true;
     });
+    const keptTables = new Set<string>(d.processes.flatMap((p) => PROCESS_TABLES[p.process as keyof typeof PROCESS_TABLES] ?? []));
+    const droppedTables = new Set<string>([...dropped].flatMap((p) => PROCESS_TABLES[p as keyof typeof PROCESS_TABLES] ?? []).filter((t) => !keptTables.has(t)));
     if (d.tables.extra !== undefined) {
       const refTables = new Set<string>((ref.tables.extra ?? []).map((t) => t.name));
       d.tables.extra = d.tables.extra.filter((t) => {
-        if (P2_TABLE_NAMES.has(t.name) && !refTables.has(t.name)) {
+        if (!refTables.has(t.name) && (P2_TABLE_NAMES.has(t.name) || p3Tables.has(t.name) || droppedTables.has(t.name))) {
           removed.push(`${d.id}: table ${t.name}`);
           return false;
         }
@@ -141,11 +170,19 @@ describe('eth-switch P0 parity on p2.world (VLAN-aware path, P1 profile)', () =>
       expect(firstDiff, `first diverging event at index ${firstDiff}: classic ${classic.lines[firstDiff]} vs p2 ${p2.lines[firstDiff]}`).toBe(-1);
       expect(p2.lines).toEqual(classic.lines);
 
-      // snapshot: equal once the P2 vocabulary is removed, and only P2 vocabulary was removed
-      const { stripped, removed } = stripP2(p2.snapshot, classic.snapshot);
+      // snapshot: equal once the P2 and P3 vocabulary is removed, and only that vocabulary was removed: the P2 names as
+      // before, the fifteen P3 daemons, the dormant udp/tcp of the managed switch (D22) and their sockets table, and
+      // the stage-P3 tables (R51)
+      const { stripped, removed } = stripLater(p2.snapshot, classic.snapshot);
       expect(canonicalJson(stripped)).toBe(canonicalJson(classic.snapshot));
+      const p3Processes = `${P3_SILENCE_DAEMONS.join('|')}`;
+      const p3Tables = [...p3TableNames()].join('|');
+      // the shipped models really carry the P3 vocabulary (every host runs traffic and vty-client since the flip)
+      expect(removed).toEqual(expect.arrayContaining(['pc1: process traffic', 'pc1: process vty-client']));
+      const managedSwitch = (r: string): boolean => p2.snapshot.devices.find((d) => r.startsWith(`${d.id}: `))?.capabilities.includes('managed-switch') === true;
       for (const r of removed) {
-        expect(r, r).toMatch(/: (process vlan|table vlans|table port-security|capability managed-switch|panel |role )/);
+        if (managedSwitch(r) && /: (process (udp|tcp)|table sockets)$/.test(r)) continue;
+        expect(r, r).toMatch(new RegExp(`: (process (vlan|${p3Processes})|table (vlans|port-security|${p3Tables})|capability managed-switch|panel .+|role .+)$`));
       }
 
       // and the P0 golden is contained in the p2.world run exactly as accept.p05.determinism checks it

@@ -34,7 +34,7 @@ import {
   ARP_INSPECTION_LOG_FACILITY,
   ARP_INSPECTION_LOG_SEVERITY,
 } from '../src/protocols/l2/arp-inspection.js';
-import { configText, configured, p3Factories } from './hardening.world.js';
+import { configText, configured } from './hardening.world.js';
 import { INJECTED_TAG, INJECTOR_HOST_TYPE, arpFrame, injectFrames, withInjector } from './inject.js';
 import { ofKind, ping } from './sim.harness.js';
 import { createStagedSimulation } from './staged.world.js';
@@ -89,7 +89,7 @@ const R1_CONFIG = configText([
 
 /** The world of the file header: booted, R1 serving the pool, PC1 then ATTACKER leased. */
 function world(o: WorldOptions = {}): Simulation {
-  const sim = createStagedSimulation({ seed: o.seed ?? 5, stage: 'P3', factories: withInjector(p3Factories()) });
+  const sim = createStagedSimulation({ seed: o.seed ?? 5, stage: 'P3', factories: withInjector() });
   sim.addDevice({ id: 'sw1', type: 'switch.nfc2960', name: 'SW1', startupConfig: sw1Config(o.dai ?? true) });
   sim.addDevice({ id: 'r1', type: 'router.nf2911', name: 'R1', startupConfig: R1_CONFIG });
   sim.addDevice({ id: 'pc1', type: 'pc.nfpc', name: 'PC1', startupConfig: configText([['hostname PC1']]) });

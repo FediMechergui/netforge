@@ -700,11 +700,14 @@ export function ipDefaultsFor(caps: readonly Capability[]): IpDefaults {
  * The W6 catalog item inserted `capwap-wtp` (after wlan-ap, so an EAPOL frame that ties at score 2 goes to wlan-ap)
  * and `capwap-ac` (last: after udp, whose sockets it uses). The relative order of every earlier name is unchanged.
  *
- * P3 (ARCHITECTURE-P3 §2.1, §0 rule 3): wave 0 inserts none of the P3 names. Each enters at its final position in the
- * change that registers its factory (the W4 catalog flip: ppp after hdlc; cdp, lldp after stp; acl, gre after nat;
- * vty, vty-client, logger, ntp after tcp; syslog-server after them; ospf, eigrp, ike after hsrp; restconf after
- * http-server; traffic after traceroute; the W6 flip: script-host last). Until then `test/staged.world.ts` holds that
- * final order, restricted to the approved names, as test-only data (§0 rule 13).
+ * P3 (ARCHITECTURE-P3 §2.1, §0 rule 3): wave 0 inserted none of the P3 names; each entered at its final position in
+ * the change that registered its factory. The W4 catalog flip inserted the seven MUST daemons and the approved items'
+ * daemons: `ppp` [S19] after hdlc (the encapsulation switch disarms HDLC keepalives first); `cdp`, `lldp` after stp
+ * (eth-switch flushes the CAM first on a link change); `acl`, `gre` [S18] after nat; `vty`, `vty-client` [S13],
+ * `logger` [S24], `ntp` and `syslog-server` [S25] after tcp; `ospf`, `eigrp` [C1] and `ike` [C13] after hsrp;
+ * `restconf` after http-server; `traffic` after traceroute. The W6 flip inserts `script-host` [S32] last. The names of
+ * unapproved items (ospfv3, tftp, snmp-agent, snmp-manager) are never inserted in P3a. The relative order of every
+ * earlier name is unchanged, so every P1/P2 model list stays an order-preserving subsequence.
  */
 export const PROCESS_ORDER: readonly ProcessName[] = Object.freeze([
   'wlan-ap',
@@ -712,14 +715,19 @@ export const PROCESS_ORDER: readonly ProcessName[] = Object.freeze([
   'capwap-wtp',
   'cell-client',
   'hdlc',
+  'ppp', // P3 [S19]
   'eth-switch',
   'vlan',
   'dtp',
   'etherchannel',
   'stp',
+  'cdp', // P3
+  'lldp', // P3
   'arp',
   'ipv4',
   'nat',
+  'acl', // P3
+  'gre', // P3 [S18]
   'icmpv4',
   'host',
   'ipv6',
@@ -727,7 +735,15 @@ export const PROCESS_ORDER: readonly ProcessName[] = Object.freeze([
   'icmpv6',
   'udp',
   'tcp',
+  'vty', // P3 [S13]
+  'vty-client', // P3 [S13]
+  'logger', // P3 [S24]
+  'ntp', // P3
+  'syslog-server', // P3 [S25]
   'hsrp',
+  'ospf', // P3
+  'eigrp', // P3 [C1]
+  'ike', // P3 [C13]
   'dhcp-client',
   'dhcp-server',
   'dhcpv6-client',
@@ -736,7 +752,9 @@ export const PROCESS_ORDER: readonly ProcessName[] = Object.freeze([
   'dns-server',
   'http-client',
   'http-server',
+  'restconf', // P3
   'traceroute',
+  'traffic', // P3
   'capwap-ac',
 ]);
 
@@ -760,8 +778,14 @@ export const CAPABILITY_PROCESSES: Readonly<Record<Capability, readonly Capabili
     cp('ipv6', 'P1'), cp('nd', 'P1'), cp('icmpv6', 'P1'), cp('udp', 'P1'), cp('tcp', 'P1'),
     cp('dhcp-client', 'P1'), cp('dns-client', 'P1'), cp('http-client', 'P1'), cp('traceroute', 'P1'),
     cp('dhcpv6-client', 'P2'),
+    // P3 (W4 catalog flip): [S13] the telnet/ssh client, the traffic generator (M13)
+    cp('vty-client', 'P3'), cp('traffic', 'P3'),
   ],
-  server: [cp('dhcp-server', 'P1'), cp('dns-server', 'P1'), cp('http-server', 'P1')],
+  server: [
+    cp('dhcp-server', 'P1'), cp('dns-server', 'P1'), cp('http-server', 'P1'),
+    // P3 (W4 catalog flip): the NTP server role, [S25] the syslog server
+    cp('ntp', 'P3'), cp('syslog-server', 'P3'),
+  ],
   switching: [cp('eth-switch', 'P0'), cp('arp', 'P1'), cp('ipv4', 'P1'), cp('icmpv4', 'P1'), cp('host', 'P1')],
   routing: [
     cp('hdlc', 'P0.5'), cp('arp', 'P0'), cp('ipv4', 'P0'), cp('icmpv4', 'P0'),
@@ -769,6 +793,11 @@ export const CAPABILITY_PROCESSES: Readonly<Record<Capability, readonly Capabili
     cp('dhcp-client', 'P1'), cp('dhcp-server', 'P1'), cp('dns-client', 'P1'), cp('dns-server', 'P1'),
     cp('http-server', 'P1'), cp('traceroute', 'P1'),
     cp('nat', 'P2'), cp('dhcpv6-client', 'P2'), cp('dhcpv6-server', 'P2'), cp('hsrp', 'P2'),
+    // P3 (W4 catalog flip): ospf, acl, cdp, lldp, ntp, restconf; [S19] ppp, [S18] gre, [S13] vty and vty-client,
+    // [S24] logger, [C1] eigrp, [C13] ike — in PROCESS_ORDER order
+    cp('ppp', 'P3'), cp('cdp', 'P3'), cp('lldp', 'P3'), cp('acl', 'P3'), cp('gre', 'P3'), cp('vty', 'P3'),
+    cp('vty-client', 'P3'), cp('logger', 'P3'), cp('ntp', 'P3'), cp('ospf', 'P3'), cp('eigrp', 'P3'), cp('ike', 'P3'),
+    cp('restconf', 'P3'),
   ],
   'layer3-switch': [],
   repeater: [],
@@ -792,12 +821,23 @@ export const CAPABILITY_PROCESSES: Readonly<Record<Capability, readonly Capabili
   // nat-gateway, above). The W6 catalog item added capwap-wtp, udp, dhcp-client to lightweight-ap (the AP's DHCP on
   // Vlan1 and its CAPWAP sockets) and vlan, udp, capwap-ac to wireless-controller (VLAN-aware bridging, D5, and the
   // controller's sockets); every P2 row is `since: 'P2'`, so a P0.5/P1-stage model never derives them.
-  'managed-switch': [cp('vlan', 'P2'), cp('dtp', 'P2'), cp('etherchannel', 'P2'), cp('stp', 'P2')],
+  'managed-switch': [
+    cp('vlan', 'P2'), cp('dtp', 'P2'), cp('etherchannel', 'P2'), cp('stp', 'P2'),
+    // P3 (W4 catalog flip): cdp, lldp, acl, ntp, restconf, [S13] vty and vty-client, [S24] logger, and udp and tcp,
+    // which stay dormant until a P3 service line is configured on the switch (D22)
+    cp('cdp', 'P3'), cp('lldp', 'P3'), cp('acl', 'P3'), cp('udp', 'P3'), cp('tcp', 'P3'), cp('vty', 'P3'),
+    cp('vty-client', 'P3'), cp('logger', 'P3'), cp('ntp', 'P3'), cp('restconf', 'P3'),
+  ],
   'lightweight-ap': [cp('capwap-wtp', 'P2'), cp('udp', 'P2'), cp('dhcp-client', 'P2')],
-  'wireless-controller': [cp('vlan', 'P2'), cp('udp', 'P2'), cp('capwap-ac', 'P2')],
-  // ── P3 ── (ARCHITECTURE-P3 §2.1, §0 rule 3) Wave 0 adds no row: every P3 row (`since: 'P3'`) is added by the change
-  // that registers its daemon (the W4 catalog flip; the W6 flip for `script-host`). [S32] `programmable` gets
-  // `script-host` only, in the W6 flip; until then it contributes nothing beyond what `host` brings.
+  'wireless-controller': [
+    cp('vlan', 'P2'), cp('udp', 'P2'), cp('capwap-ac', 'P2'),
+    // P3 (W4 catalog flip): cdp and ntp, [S24] logger (the lightweight AP gets no P3 row: no receive path, D2, D18)
+    cp('cdp', 'P3'), cp('logger', 'P3'), cp('ntp', 'P3'),
+  ],
+  // ── P3 ── (ARCHITECTURE-P3 §2.1, §0 rule 3) Wave 0 added no row: every P3 row (`since: 'P3'`) is added by the change
+  // that registers its daemon. The W4 catalog flip added the rows above (host, server, routing, managed-switch,
+  // wireless-controller); the W6 flip adds [S32] `programmable`'s `script-host` only; until then it contributes
+  // nothing beyond what `host` brings. Unapproved items (ospfv3, tftp, snmp-agent, snmp-manager) get no row.
   programmable: [],
 });
 

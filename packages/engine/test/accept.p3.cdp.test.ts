@@ -2,10 +2,9 @@
  * P3 acceptance — CDP discovers neighbours (ARCHITECTURE-P3 §10.1 row `accept.p3.cdp`; §3.6 steps 1–6; D2, D18; §4.2,
  * §4.3; §5.5, §5.8; §7 W4 qa).
  *
- * The row, clause by clause, on `staged.world` at stage P3 (rule 13, rule 14: the qa step runs before the catalog flip,
- * so the daemons the W4 flip registers are laid over the registry here — `FLIP_FACTORIES`; after the flip the overlay
- * names the registry's own factories and changes nothing). Configuration a learner types goes through the real CLI
- * (consoles on the devices); the boot configuration through `startupConfig`.
+ * The row, clause by clause, on `staged.world` at stage P3 (rule 13), whose registry is the real one since the W4
+ * catalog flip (ruling R47 removed the pre-flip overlay, `FLIP_FACTORIES`). Configuration a learner types goes through
+ * the real CLI (consoles on the devices); the boot configuration through `startupConfig`.
  *
  *   §3.6 world: R1 (NF-2911) Gi0/0 10.0.12.1/24 ↔ SW1 (NF-C2960) Gi0/1; SW1 Gi0/2 ↔ SW2 Gi0/1, a trunk; PC1 on SW1
  *   Fa0/1; SW1 Vlan1 10.0.12.2/24.
@@ -31,29 +30,8 @@ import type { CdpNeighbourRow } from '../src/contracts/tables.js';
 import { MS, SEC } from '../src/contracts/time.js';
 import type { TraceEvent } from '../src/contracts/trace.js';
 import { CDP_CAPABILITY_LEGEND, MSG_CDP_OFF } from '../src/cli/handlers/discovery.js';
-import { CDP_DETAIL_OFF, cdpPortOffDetail, createCdp, discoverySoftwareText } from '../src/protocols/cdp.js';
-import { createAcl } from '../src/protocols/acl.js';
-import { createEigrp } from '../src/protocols/eigrp.js';
-import { createGre } from '../src/protocols/gre.js';
-import { createIke } from '../src/protocols/ike.js';
-import { createLldp } from '../src/protocols/lldp.js';
-import { createLogger } from '../src/protocols/logger.js';
-import { createNtp } from '../src/protocols/ntp.js';
-import { createOspf } from '../src/protocols/ospf.js';
-import { createPpp } from '../src/protocols/ppp.js';
-import { createRestconf } from '../src/protocols/restconf.js';
-import { createSyslogServer } from '../src/protocols/syslog-server.js';
-import { createTraffic } from '../src/protocols/traffic.js';
-import { createVty } from '../src/protocols/vty.js';
-import { createVtyClient } from '../src/protocols/vty-client.js';
-import { createStagedSimulation, type StagedFactoryOverlay } from './staged.world.js';
-
-/** The daemons the W4 catalog flip registers (§7 W4 step 2), laid over the registry until it lands. */
-const FLIP_FACTORIES: StagedFactoryOverlay = {
-  ppp: createPpp, cdp: createCdp, lldp: createLldp, acl: createAcl, gre: createGre, vty: createVty, 'vty-client': createVtyClient,
-  logger: createLogger, ntp: createNtp, 'syslog-server': createSyslogServer, ospf: createOspf, eigrp: createEigrp, ike: createIke,
-  restconf: createRestconf, traffic: createTraffic,
-};
+import { CDP_DETAIL_OFF, cdpPortOffDetail, discoverySoftwareText } from '../src/protocols/cdp.js';
+import { createStagedSimulation } from './staged.world.js';
 
 const SEED = 3_006;
 const HOLD_S = 180;
@@ -82,7 +60,7 @@ interface World {
 
 /** The §3.6 world. `nativeSub`: R1's address lives on Gi0/0.1, the native-VLAN subinterface, and SW1 Gi0/1 is a trunk. */
 function world(opts: { seed?: number; nativeSub?: boolean } = {}): World {
-  const sim = createStagedSimulation({ seed: opts.seed ?? SEED, stage: 'P3', factories: FLIP_FACTORIES });
+  const sim = createStagedSimulation({ seed: opts.seed ?? SEED, stage: 'P3' });
   const r1Port = opts.nativeSub === true
     ? [[`interface ${R1_ROUTED}`, ' no shutdown'], [`interface ${R1_ROUTED}.1`, ' encapsulation dot1Q 1 native', ' ip address 10.0.12.1 255.255.255.0']]
     : [[`interface ${R1_ROUTED}`, ' ip address 10.0.12.1 255.255.255.0', ' no shutdown']];
@@ -258,7 +236,7 @@ describe('§3.6 step 5: the hold time counts down', () => {
 
 describe('§3.6 step 6: ageing and link-down', () => {
   it('behind an unmanaged switch the row of a silent neighbour expires at last update + 180 s ± 1 ms (aged)', () => {
-    const sim = createStagedSimulation({ seed: SEED, stage: 'P3', factories: FLIP_FACTORIES });
+    const sim = createStagedSimulation({ seed: SEED, stage: 'P3' });
     sim.addDevice({ id: 'r1', type: 'router.nf2911', name: 'R1', startupConfig: startup([['hostname R1'], [`interface ${R1_ROUTED}`, ' ip address 10.0.12.1 255.255.255.0', ' no shutdown']]) });
     sim.addDevice({ id: 'br1', type: 'bridge.nfbr4', name: 'BR1' });
     sim.addDevice({ id: 'sw1', type: 'switch.nfc2960', name: 'SW1', startupConfig: startup([['hostname SW1']]) });
@@ -356,7 +334,7 @@ describe('§3.6 step 6: no cdp enable and no cdp run, typed', () => {
 
 describe('NF-AP-1832 bridges CDP and has no row (D2)', () => {
   it("a switch's frame reaches a wireless station through the AP; the AP keeps no table and sends nothing of its own", () => {
-    const sim = createStagedSimulation({ seed: SEED, stage: 'P3', factories: FLIP_FACTORIES });
+    const sim = createStagedSimulation({ seed: SEED, stage: 'P3' });
     sim.addDevice({ id: 'sw1', type: 'switch.nfc2960', name: 'SW1', position: { x: 0, y: 0 }, startupConfig: startup([['hostname SW1']]) });
     sim.addDevice({
       id: 'ap1', type: 'ap.nfap-lw', name: 'AP1', position: { x: 100, y: 0 },

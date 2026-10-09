@@ -75,13 +75,16 @@ describe('the P2 derivations are made at stage P2 only', () => {
     }
   });
 
-  it('the live catalog (stage P2 since the W4 flip) carries the P2 members exactly where the derivations put them', () => {
+  it('the live catalog inputs, computed at stage P2, carry the P2 members exactly where the derivations put them', () => {
     // W4 catalog: the flip made the stage 'P2'; a model gains a P2 member only through `routing` (subinterfaces),
     // `managed-switch` (stpDefaultMode, profileConfig) or — since the W6 catalog item, §9.2 item 23 — `lightweight-ap`
     // (profileConfig: the NF-AP-1832), and no other model gets one.
-    expect(CATALOG_STAGE).toBe('P2');
+    // ARCHITECTURE-P3 §9.2 W4 item 34: the P3 flip made the stage 'P3'; this case pins the P2 layer on purpose, so it is
+    // computed at stage P2 (the P3 members are pinned in device.catalog.p3.test.ts and device.catalog.define.p3.test.ts).
+    expect(CATALOG_STAGE).toBe('P3');
+    const stage = 'P2';
     for (const input of ALL_MODEL_INPUTS) {
-      const model = defineModel(input, CATALOG_STAGE);
+      const model = defineModel(input, stage);
       const caps = model.capabilities ?? [];
       const routing = caps.includes('routing');
       const managed = caps.includes('managed-switch');
@@ -100,7 +103,7 @@ describe('the P2 derivations are made at stage P2 only', () => {
       if (!routing && !managed && !lightweight) for (const k of ['subinterfaces', 'profileConfig', 'stpDefaultMode']) expect(Object.keys(model), model.type).not.toContain(k);
     }
     // exactly one model of the live catalog is a lightweight access point
-    expect(ALL_MODEL_INPUTS.filter((i) => defineModel(i, CATALOG_STAGE).capabilities?.includes('lightweight-ap')).map((i) => i.type)).toEqual(['ap.nfap-lw']);
+    expect(ALL_MODEL_INPUTS.filter((i) => defineModel(i, stage).capabilities?.includes('lightweight-ap')).map((i) => i.type)).toEqual(['ap.nfap-lw']);
   });
 });
 

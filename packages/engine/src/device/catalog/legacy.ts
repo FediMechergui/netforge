@@ -17,7 +17,7 @@ import { defineModel, type ModelInput, type PortInput } from './define.js';
 import { L2_SWITCH_VLAN_FAMILY } from './switches.js';
 
 /** Build stage the exported `LEGACY_MODELS` are defined for (device/catalog/index.ts re-defines LEGACY_INPUTS for its own stage when it differs). */
-export const LEGACY_DATA_STAGE: BuildStage = 'P2';
+export const LEGACY_DATA_STAGE: BuildStage = 'P3'; // ARCHITECTURE-P3 §7 W4 catalog flip (with CATALOG_STAGE)
 
 /** `count` 10 Mb twisted-pair ports `Ethernet0..`. */
 function tenBaseT(count: number): PortInput[] {

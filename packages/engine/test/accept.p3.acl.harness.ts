@@ -3,12 +3,10 @@
  * `accept.p3.acl-standard`, `accept.p3.acl-extended`, `accept.p3.acl-order`, `accept.p3.acl-edit`, `accept.p3.ospf-acl`;
  * D12, §3.0 (a), §3.3, §5.2, §5.8; §7 W4 qa). Not a test file.
  *
- * Worlds are built on `staged.world` at stage P3 (rule 13; the catalog flip is a later, separate step, rule 14). The
- * daemon registry is `PROCESS_FACTORIES` plus every approved P3 daemon's real factory (`ACL_ACCEPT_FACTORIES`: the
- * seven MUST daemons and the eight of the approved items, exactly the names the W4 flip registers), so each world is
- * the one the flipped catalog builds: CDP runs on routers and managed switches (P3 profile), every other P3 daemon is
- * silent without its lines. After the flip the overlay is a no-op (the same factories), so the files run unchanged
- * against the real catalog.
+ * Worlds are built on `staged.world` at stage P3 (rule 13). The daemon registry is `PROCESS_FACTORIES`, which since
+ * the W4 catalog flip holds every approved P3 daemon (the seven MUST daemons and the eight of the approved items), so
+ * each world is the one the flipped catalog builds: CDP runs on routers and managed switches (P3 profile), every other
+ * P3 daemon is silent without its lines (ruling R47 removed the pre-flip overlay, `ACL_ACCEPT_FACTORIES`).
  *
  * Devices are configured through `startupConfig` or the headless `configure` (the console grammar and handlers at
  * privilege 15), and read through tables, the trace and the CLI — never a daemon's private state, except where a row
@@ -19,43 +17,9 @@ import type { PduView } from '../src/contracts/pdu.js';
 import type { Simulation } from '../src/contracts/simulation.js';
 import type { AclRow } from '../src/contracts/tables.js';
 import type { TraceEvent } from '../src/contracts/trace.js';
-import { createAcl } from '../src/protocols/acl.js';
-import { createCdp } from '../src/protocols/cdp.js';
-import { createEigrp } from '../src/protocols/eigrp.js';
-import { createGre } from '../src/protocols/gre.js';
-import { createIke } from '../src/protocols/ike.js';
-import { createLldp } from '../src/protocols/lldp.js';
-import { createLogger } from '../src/protocols/logger.js';
-import { createNtp } from '../src/protocols/ntp.js';
-import { createOspf } from '../src/protocols/ospf.js';
-import { createPpp } from '../src/protocols/ppp.js';
-import { createRestconf } from '../src/protocols/restconf.js';
-import { createSyslogServer } from '../src/protocols/syslog-server.js';
-import { createTraffic } from '../src/protocols/traffic.js';
-import { createVtyClient } from '../src/protocols/vty-client.js';
-import { createVty } from '../src/protocols/vty.js';
 import { configText, section } from '../src/sim/scenarios/kit.js';
-import { createStagedSimulation, type StagedFactoryOverlay } from './staged.world.js';
+import { createStagedSimulation } from './staged.world.js';
 import { ofKind, output } from './sim.harness.js';
-
-/** Every approved P3 daemon the W4 flip registers (§7 W4 catalog: the MUST seven and the approved eight). */
-export const ACL_ACCEPT_FACTORIES: StagedFactoryOverlay = Object.freeze({
-  ospf: createOspf,
-  acl: createAcl,
-  cdp: createCdp,
-  lldp: createLldp,
-  ntp: createNtp,
-  restconf: createRestconf,
-  traffic: createTraffic,
-  ppp: createPpp,
-  gre: createGre,
-  vty: createVty,
-  'vty-client': createVtyClient,
-  logger: createLogger,
-  'syslog-server': createSyslogServer,
-  eigrp: createEigrp,
-  ike: createIke,
-});
 
 // ── names ────────────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -70,7 +34,7 @@ export const MASK30 = '255.255.255.252';
 
 /** An empty P3 world on `staged.world` (stage P3, profile P3) with every approved P3 daemon registered. */
 export function aclWorld(seed: number): Simulation {
-  return createStagedSimulation({ seed, stage: 'P3', factories: ACL_ACCEPT_FACTORIES });
+  return createStagedSimulation({ seed, stage: 'P3' });
 }
 
 /** Startup configuration of a host: hostname, the NIC address, an optional gateway, then `extra` global lines. */

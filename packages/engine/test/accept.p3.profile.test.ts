@@ -2,8 +2,8 @@
  * P3 acceptance — the 'P3' defaults profile (ARCHITECTURE-P3 D2, §2.9, §4.3, §4.4, §5 (`cdp run` / `cdp enable` are
  * `bothForms`), §7 W4 step 1, §9.2 item 16, §10.1 row `accept.p3.profile`).
  *
- * Worlds are built by `test/p3-flip.world.ts` (`staged.world` at stage P3 with the approved P3 daemons until the W4
- * flip, the real catalog after it).
+ * Worlds are built by `test/p3-flip.world.ts` on the real catalog (the W4 flip deleted its pre-flip `staged.world`
+ * branch, ruling R47).
  *
  *  • `createSimulation({seed, profile: 'P3'})` has profile P3. A P3 world exports `profile: 'P3'` and schema 1.3 and
  *    reloads to an identical snapshot (and the same export); every CCNA 2 lab loaded on the P3 catalog still exports
@@ -36,7 +36,7 @@ import { CCNA2_LABS } from '../src/sim/scenarios.js';
 import { configText, device, link, section, topology } from '../src/sim/scenarios/kit.js';
 import { pcConfig } from '../src/sim/scenarios/templates.js';
 import { createSimulation } from '../src/sim/simulation.js';
-import { createP3Simulation, loadScenarioP3, p3WorldSource } from './p3-flip.world.js';
+import { createP3Simulation, loadScenarioP3 } from './p3-flip.world.js';
 import { ofKind, ping } from './sim.harness.js';
 
 const ROUTER = 'router.nf2911';
@@ -109,7 +109,7 @@ describe('accept P3 profile: the profile and the P3 document', () => {
     expect(LATEST_DEFAULTS_PROFILE).toBe('P2');
   });
 
-  it(`a P3 world exports profile P3 and schema 1.3, and reloads to an identical snapshot (source: ${p3WorldSource()})`, () => {
+  it(`a P3 world exports profile P3 and schema 1.3, and reloads to an identical snapshot (the real catalog)`, () => {
     const a = fresh();
     a.loadTopology(modelsDoc('P3'));
     expect(a.profile).toBe('P3');

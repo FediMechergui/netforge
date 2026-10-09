@@ -11,11 +11,11 @@
  * (192.168.3.1/24) supplies the one packet no host shell sends: an oversize datagram with DF set (the host `ping` has no
  * size or DF option), sourced from PC1's address so PC1 receives the ICMP 3/4.
  *
- * The worlds are built with `staged.world` at stage P3 (rule 13, rule 14 step 1), with the daemon registry of the W4
- * catalog flip laid over `PROCESS_FACTORIES` (`w4FlipFactories`): the world is the same before and after the flip, so
- * these files run unchanged against the real catalog when the lead re-runs them inside the flip (rule 14).
+ * The worlds are built with `staged.world` at stage P3 (rule 13), whose registry is the real one: since the W4 catalog
+ * flip `protocols/index.ts` registers every approved P3 daemon, so the world is the flipped catalog's (ruling R47
+ * removed the pre-flip factory overlay; only the test injector is laid over the registry).
  *
- * Nothing here is module-level mutable state; the factory overlay is built at call time (rule 12).
+ * Nothing here is module-level mutable state (rule 12).
  */
 import { expect } from 'vitest';
 import type { Ipv4Address } from '../src/contracts/addr.js';
@@ -23,23 +23,8 @@ import { ETHERTYPE_IPV4, IPPROTO_ICMP, type LayerSpec } from '../src/contracts/p
 import type { Simulation } from '../src/contracts/simulation.js';
 import type { IpsecSaRow, TunnelRow } from '../src/contracts/tables.js';
 import type { TraceEvent } from '../src/contracts/trace.js';
-import { createAcl } from '../src/protocols/acl.js';
-import { createCdp } from '../src/protocols/cdp.js';
-import { createEigrp } from '../src/protocols/eigrp.js';
-import { createGre } from '../src/protocols/gre.js';
-import { createIke } from '../src/protocols/ike.js';
-import { createLldp } from '../src/protocols/lldp.js';
-import { createLogger } from '../src/protocols/logger.js';
-import { createNtp } from '../src/protocols/ntp.js';
-import { createOspf } from '../src/protocols/ospf.js';
-import { createPpp } from '../src/protocols/ppp.js';
-import { createRestconf } from '../src/protocols/restconf.js';
-import { createSyslogServer } from '../src/protocols/syslog-server.js';
-import { createTraffic } from '../src/protocols/traffic.js';
-import { createVty } from '../src/protocols/vty.js';
-import { createVtyClient } from '../src/protocols/vty-client.js';
 import { INJECTOR_HOST_TYPE, withInjector } from './inject.js';
-import { createStagedSimulation, type StagedFactoryOverlay } from './staged.world.js';
+import { createStagedSimulation } from './staged.world.js';
 
 // ── names and addresses (§3.10, §3.13) ───────────────────────────────────────────────────────────────────────────
 
@@ -65,31 +50,6 @@ export const LAB_KEY = 'Nf-Site-Key-25';
 export const WRONG_KEY = 'Nf-Other-Key-99';
 /** The context of R2's keyring peer (where its `pre-shared-key` line lives). */
 export const KEYRING_PEER_CTX = (peer: string): string[][] => [['crypto', 'ikev2', 'keyring', 'KR'], ['peer', peer]];
-
-/**
- * The daemon registry of the W4 catalog flip (§7 W4 catalog: `protocols/index.ts` gains ospf, acl, cdp, lldp, ntp,
- * restconf, traffic and the approved ppp, gre, vty, vty-client, logger, syslog-server, eigrp and ike), built at call
- * time. Laid over `PROCESS_FACTORIES` it gives, before the flip, the world the flipped catalog gives after it.
- */
-export function w4FlipFactories(): StagedFactoryOverlay {
-  return {
-    ppp: createPpp,
-    cdp: createCdp,
-    lldp: createLldp,
-    acl: createAcl,
-    gre: createGre,
-    vty: createVty,
-    'vty-client': createVtyClient,
-    logger: createLogger,
-    ntp: createNtp,
-    'syslog-server': createSyslogServer,
-    ospf: createOspf,
-    eigrp: createEigrp,
-    ike: createIke,
-    restconf: createRestconf,
-    traffic: createTraffic,
-  };
-}
 
 /** A startup configuration from sections (each closed by `!`), ended by `end`. */
 export function startup(sections: readonly (readonly string[])[]): string {
@@ -146,7 +106,7 @@ export interface TunnelWorldOptions {
 
 /** The §3.10 / §3.13 world with the injector on R1 Gi0/1, run to idle (which must return). */
 export function tunnelWorld(opts: TunnelWorldOptions): Simulation {
-  const sim = createStagedSimulation({ seed: opts.seed ?? (opts.mode === 'gre' ? 18 : 25), stage: 'P3', factories: withInjector(w4FlipFactories()) });
+  const sim = createStagedSimulation({ seed: opts.seed ?? (opts.mode === 'gre' ? 18 : 25), stage: 'P3', factories: withInjector() });
   const ipsec = opts.mode === 'ipsec';
   const ospf = opts.ospf === true;
   const r1Routes = ipsec

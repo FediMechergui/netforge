@@ -1003,7 +1003,9 @@
       "restconf",
       "spanning-tree",
       "sw-vlan",
-      "telnet"
+      "tcp",
+      "telnet",
+      "udp"
     ],
     "config": [
       "access-list",
@@ -1131,7 +1133,9 @@
       "restconf",
       "spanning-tree",
       "sw-vlan",
-      "telnet"
+      "tcp",
+      "telnet",
+      "udp"
     ],
     "config": [
       "access-list",
@@ -1259,7 +1263,9 @@
       "restconf",
       "spanning-tree",
       "sw-vlan",
-      "telnet"
+      "tcp",
+      "telnet",
+      "udp"
     ],
     "config": [
       "access-list",
@@ -1387,7 +1393,9 @@
       "restconf",
       "spanning-tree",
       "sw-vlan",
-      "telnet"
+      "tcp",
+      "telnet",
+      "udp"
     ],
     "config": [
       "access-list",
@@ -1515,7 +1523,9 @@
       "restconf",
       "spanning-tree",
       "sw-vlan",
-      "telnet"
+      "tcp",
+      "telnet",
+      "udp"
     ],
     "config": [
       "access-list",

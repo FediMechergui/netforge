@@ -27,7 +27,7 @@ import type { Simulation } from '../src/contracts/simulation.js';
 import { SEC, type SimTime } from '../src/contracts/time.js';
 import type { TraceEvent } from '../src/contracts/trace.js';
 import { createOspf } from '../src/protocols/ospf.js';
-import { linkUpAt, p3FlipFactories, showLines, traceSince } from './ospf.accept.harness.js';
+import { linkUpAt, showLines, traceSince } from './ospf.accept.harness.js';
 import { addRouter, cursor, debugLines, fsmOf, GI0, iface, ifRow, lsdbRows, MS_NS, nbrRows, ospfCreated, ospfView, startup } from './ospf.harness.js';
 import { createStagedSimulation } from './staged.world.js';
 
@@ -86,7 +86,7 @@ interface Lan {
 
 /** §3.1's world with `routers` routers (priorities by router, default 1); every router's cable still unplugged. */
 function lan(seed: number, order: Order, priorities: readonly number[] = [1, 1, 1], routers = 3): Lan {
-  const factories = { ...p3FlipFactories(), ...(order === 'hello-first' ? { ospf: helloFirstOspf() } : {}) };
+  const factories = order === 'hello-first' ? { ospf: helloFirstOspf() } : {};
   const sim = createStagedSimulation({ seed, stage: 'P3', factories });
   sim.addDevice({
     id: 'sw1',

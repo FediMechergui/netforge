@@ -37,12 +37,17 @@ import { IOT_MODEL_INPUTS } from './iot.js';
 import { MODULE_MODELS } from './modules.js';
 
 /**
- * Build stage the catalog derives daemons, tables, GUI panels and the P2 members for (D1). Flipped to 'P1' in P1 W5
- * (§8.2) and to 'P2' by the ARCHITECTURE-P2 §7 W4 catalog item (the wired flip: the L2 control daemons on managed
- * switches, nat/hsrp/DHCPv6 on routing devices, dhcpv6-client on hosts; §9.2 W4 item 13). The W6 catalog item adds
- * the wireless models' data, not another stage. Every P1-profile world keeps byte-identical traffic (§9.3).
+ * Build stage the catalog derives daemons, tables, GUI panels and the P2/P3 members for (D1). Flipped to 'P1' in P1 W5
+ * (§8.2), to 'P2' by the ARCHITECTURE-P2 §7 W4 catalog item (the wired flip: the L2 control daemons on managed
+ * switches, nat/hsrp/DHCPv6 on routing devices, dhcpv6-client on hosts; §9.2 W4 item 13), and to 'P3' by the
+ * ARCHITECTURE-P3 §7 W4 catalog flip (step 2, alone, rule 14): the seven MUST daemons and the approved items' daemons
+ * on the models whose capabilities derive them (§2.1), the stage-filtered snooping tables on managed switches (§2.6),
+ * the CDP default (D2), the Tunnel family [S18] and the two [S24] `service timestamps` lines in `profileConfig.P3`.
+ * Every daemon added is silent without configuration (§4.3) and the managed switches' new transport is dormant (D22),
+ * so every P1- and P2-profile world keeps byte-identical traffic (§9.3 (a), §9.4 (a): no change).
+ * `LATEST_DEFAULTS_PROFILE` stays 'P2' until the W7 course flip.
  */
-export const CATALOG_STAGE: BuildStage = 'P2';
+export const CATALOG_STAGE: BuildStage = 'P3';
 
 /** Palette index of a category (DEVICE_CATEGORIES order); unknown categories sort last. */
 function categoryIndex(category: DeviceCategory): number {

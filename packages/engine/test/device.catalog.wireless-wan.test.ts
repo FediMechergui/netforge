@@ -41,14 +41,16 @@ function assess(band: RfBand, cls: 'wifi' | 'ptp' | 'cell', widthMhz: ChannelWid
 }
 
 describe('wireless and WAN catalog data', () => {
-  it('validates with zero issues at P0.5, P1 and P2', () => {
+  it('validates with zero issues at P0.5, P1, P2 and P3', () => {
     // §8.2 W5: the exported arrays were derived at 'P1'; since the ARCHITECTURE-P2 §7 W4 flip they are derived at 'P2'
-    // (§9.2 W4 fixture pins). The same inputs must also validate at P0.5 and at P1.
+    // (§9.2 W4 fixture pins), and since the ARCHITECTURE-P3 §7 W4 flip at 'P3' (§9.2 W4, by the rule of item 34). The
+    // same inputs must also validate at P0.5, at P1 and (the P2 layer, computed at stage P2) at P2.
     const inputs = [...WIRELESS_INPUTS, ...HOME_INPUTS, ...RADIO_INPUTS, ...WAN_INPUTS];
     const p05 = validateCatalog(inputs.map((i) => defineModel(i, 'P0.5')), [], { stage: 'P0.5' });
     expect(formatCatalogIssues(p05)).toBe('');
     expect(formatCatalogIssues(validateCatalog(inputs.map((i) => defineModel(i, 'P1')), [], { stage: 'P1' }))).toBe('');
-    expect(formatCatalogIssues(validateCatalog(ALL, [], { stage: 'P2' }))).toBe('');
+    expect(formatCatalogIssues(validateCatalog(inputs.map((i) => defineModel(i, 'P2')), [], { stage: 'P2' }))).toBe('');
+    expect(formatCatalogIssues(validateCatalog(ALL, [], { stage: 'P3' }))).toBe('');
   });
 
   it('lists every CATALOG.md model of the four categories in table order', () => {
@@ -136,9 +138,11 @@ describe('derived summaries', () => {
     expect(summary(wlc)).toMatchObject({
       capabilities: ['host'],
       // §9.2 W4 item 13: a host model gains the (silent) dhcpv6-client; the controller keeps its P1 behaviour (D17)
-      processes: ['arp', 'ipv4', 'icmpv4', 'host', 'ipv6', 'nd', 'icmpv6', 'udp', 'tcp', 'dhcp-client', 'dhcpv6-client', 'dns-client', 'http-client', 'traceroute'],
+      // ARCHITECTURE-P3 §9.2 W4 item 34: and, at the P3 flip, the host rows [S13] vty-client and traffic, and the
+      // `desktop.traffic` panel
+      processes: ['arp', 'ipv4', 'icmpv4', 'host', 'ipv6', 'nd', 'icmpv6', 'udp', 'tcp', 'vty-client', 'dhcp-client', 'dhcpv6-client', 'dns-client', 'http-client', 'traceroute', 'traffic'],
       shell: 'host',
-      gui: ['physical', 'desktop.ip-config', 'desktop.command-prompt', 'desktop.web-browser'],
+      gui: ['physical', 'desktop.ip-config', 'desktop.command-prompt', 'desktop.web-browser', 'desktop.traffic'],
       hostPorts: ['GigabitEthernet0/1', 'GigabitEthernet0/2', 'GigabitEthernet0/3', 'GigabitEthernet0/4'],
     });
     expect(wlc.ipDefaults).toEqual(HOST_IP_DEFAULTS);
@@ -151,7 +155,9 @@ describe('derived summaries', () => {
       expect(summary(m)).toMatchObject({
         capabilities: ['switching', 'routing', 'wifi-ap', 'nat-gateway', 'dhcp-server'],
         // §9.2 W4 item 13: a routing model (and nat-gateway) gains nat, hsrp [S2], dhcpv6-client and dhcpv6-server
-        processes: ['wlan-ap', 'hdlc', 'eth-switch', 'arp', 'ipv4', 'nat', 'icmpv4', 'host', 'ipv6', 'nd', 'icmpv6', 'udp', 'tcp', 'hsrp', 'dhcp-client', 'dhcp-server', 'dhcpv6-client', 'dhcpv6-server', 'dns-client', 'dns-server', 'http-server', 'traceroute'],
+        // ARCHITECTURE-P3 §2.1, §9.2 W4 item 35: and, at the P3 flip, the routing rows through the `routing`
+        // implication (silent: no CLI, no configured line, `cdpDefault` false), but no Tunnel family (D17)
+        processes: ['wlan-ap', 'hdlc', 'ppp', 'eth-switch', 'cdp', 'lldp', 'arp', 'ipv4', 'nat', 'acl', 'gre', 'icmpv4', 'host', 'ipv6', 'nd', 'icmpv6', 'udp', 'tcp', 'vty', 'vty-client', 'logger', 'ntp', 'hsrp', 'ospf', 'eigrp', 'ike', 'dhcp-client', 'dhcp-server', 'dhcpv6-client', 'dhcpv6-server', 'dns-client', 'dns-server', 'http-server', 'restconf', 'traceroute'],
         shell: 'none',
         grammar: 'nfos',
         gui: ['physical', 'home-router.setup'],

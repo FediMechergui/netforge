@@ -2,10 +2,9 @@
  * P3 acceptance — the silence rule (ARCHITECTURE-P3 §0 rules 5 and 14, D2, D14, D22, §4.3, §4.6, §7 W4 step 1,
  * §10.1 row `accept.p3.silence`).
  *
- * Worlds are built by `test/p3-flip.world.ts`: on `staged.world` at stage P3 with every approved P3 daemon's real
- * factory registered (`P3_DAEMON_FACTORIES`) until the W4 catalog flip, and on the real (flipped) catalog after it
- * (`p3WorldSource`), so this file is the flip's silence proof (rule 14: `accept.p2.silence` builds on the P2-stage
- * catalog and proves nothing about the flip).
+ * Worlds are built by `test/p3-flip.world.ts` on the real (flipped) catalog (the W4 flip deleted its pre-flip
+ * `staged.world` branch, ruling R47), so this file is the flip's silence proof (rule 14: `accept.p2.silence` builds on
+ * the P2-stage catalog and proves nothing about the flip).
  *
  *  (a) Every template and CCNA 1 lab (P1 profile) and every CCNA 2 lab (P2 profile), loaded as the worker's
  *      `loadScenario` loads them, booted 60 s, the reference solution applied, then 600 s: no `pduCreated`,
@@ -22,6 +21,10 @@
  *      hidden listeners stay out of it). No shipped world puts `line vty` on a router, so two synthetic guard worlds
  *      (profile P1 and P2: a router and a managed switch holding `line vty`, TCP aimed at both) are added to (a); without
  *      them that clause would measure nothing.
+ *      The same worlds and script are also compared at the scheduler (the W4b fix step, finding 5): the step()-level
+ *      SimEvent stream (every dispatched event: time, kind, device, port, process, timer key; `seq` left out) on the
+ *      real catalog equals the P2 engine's event for event, so no P1/P2 world gains a timer the trace cannot show (an
+ *      idle eigrp `resync` armed by the P2 profile's `no ip routing` replay on a multilayer switch was the case).
  *  (b) A blank P3 world (NF-2911, NF-C2960, two PCs), 600 s: the only P3-daemon PDUs are CDP frames, all background;
  *      each one that reached a PC was dropped `not-for-me` with `background: true`; no other new PDU — every PDU that
  *      is not a CDP frame is the same (device, process, tag, summary) as in the same world in the P2 profile. Two
@@ -32,6 +35,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import type { DefaultsProfile } from '../src/contracts/catalog.js';
+import type { SimEvent } from '../src/contracts/events.js';
 import type { DeviceId, ProcessName } from '../src/contracts/ids.js';
 import type { ScenarioInfo } from '../src/contracts/scenario.js';
 import type { Simulation } from '../src/contracts/simulation.js';
@@ -43,7 +47,7 @@ import { dormantTransportEligible } from '../src/protocols/ip-upper.js';
 import { CCNA1_LABS, CCNA2_LABS, SCENARIO_SEED, TEMPLATES } from '../src/sim/scenarios.js';
 import { configText, device, link, section, topology } from '../src/sim/scenarios/kit.js';
 import { pcConfig } from '../src/sim/scenarios/templates.js';
-import { createP3Simulation, loadScenarioP3, P3_SILENCE_DAEMONS, p3WorldSource } from './p3-flip.world.js';
+import { createP3Simulation, loadScenarioP3, P3_SILENCE_DAEMONS } from './p3-flip.world.js';
 import { ofKind } from './sim.harness.js';
 import { createStagedSimulation } from './staged.world.js';
 
@@ -289,6 +293,38 @@ function runScript(sim: Simulation, w: SilenceWorld): WorldRun {
   return { sim, events, refused };
 }
 
+/** One dispatched scheduler event without its `seq`: time, kind, device, port, process and timer key. */
+function stepKey(e: SimEvent): string {
+  const x = e as unknown as Record<string, unknown>;
+  const field = (k: string): string => (x[k] === undefined ? '-' : String(x[k]));
+  return `${e.at} ${e.kind} ${field('device')} ${field('port')} ${field('process')} ${field('key')}`;
+}
+
+/** `runUntil(t)` one `step()` at a time (the same dispatches as `runFor`), each dispatched event appended to `out`. */
+function stepUntil(sim: Simulation, t: number, out: string[]): void {
+  for (let next = sim.nextEventTime(); next !== undefined && next <= t; next = sim.nextEventTime()) {
+    const e = sim.step();
+    if (e === undefined) break;
+    out.push(stepKey(e));
+  }
+  sim.runUntil(t);
+}
+
+/** `runScript` at the scheduler: the same boot, setup lines, fetches and window, returning every dispatched event. */
+function stepScript(sim: Simulation, w: SilenceWorld): string[] {
+  const out: string[] = [];
+  stepUntil(sim, sim.now + BOOT_NS, out);
+  for (const [name, lines] of Object.entries(w.setup)) sim.configure(idOf(sim, name), lines);
+  if (w.browse.length === 0) {
+    stepUntil(sim, sim.now + WINDOW_NS, out);
+  } else {
+    stepUntil(sim, sim.now + PROBE_AT_NS, out);
+    for (const [name, url] of w.browse) sim.hostRequest(idOf(sim, name), { app: 'http.get', url });
+    stepUntil(sim, sim.now + WINDOW_NS - PROBE_AT_NS, out);
+  }
+  return out;
+}
+
 /** Devices whose udp and tcp come only from the `managed-switch` row (D22's dormant transport). */
 function dormantSwitches(sim: Simulation): Set<string> {
   return new Set(sim.devices().filter((d) => dormantTransportEligible(d.model, 'udp') || dormantTransportEligible(d.model, 'tcp')).map((d) => d.id));
@@ -318,7 +354,7 @@ describe('accept P3 silence (a): every template, CCNA 1 lab and CCNA 2 lab stays
   const worlds: SilenceWorld[] = [...TEMPLATES, ...CCNA1_LABS, ...CCNA2_LABS].map(scenarioWorld);
   worlds.push(vtyGuardWorld('P1'), vtyGuardWorld('P2'));
 
-  it(`covers every template and CCNA 1 lab (P1), every CCNA 2 lab (P2) and the two line-vty guards; the source is ${p3WorldSource()}`, () => {
+  it(`covers every template and CCNA 1 lab (P1), every CCNA 2 lab (P2) and the two line-vty guards; on the real catalog`, () => {
     expect(TEMPLATES.length).toBeGreaterThanOrEqual(9);
     expect(CCNA1_LABS.length).toBeGreaterThanOrEqual(15);
     expect(CCNA2_LABS.length).toBeGreaterThanOrEqual(20);
@@ -367,6 +403,17 @@ describe('accept P3 silence (a): every template, CCNA 1 lab and CCNA 2 lab stays
         expect(ofKind(events, 'pduCreated').filter((e) => e.device === 'r1' && e.process === 'tcp').length).toBeGreaterThan(0);
         expect(ofKind(events, 'drop').filter((e) => e.device === 'sw1' && e.reason === 'unsupported-protocol' && e.pdu.proto === 'tcp').length).toBeGreaterThan(0);
       }
+    }, WORLD_TIMEOUT_MS);
+  }
+
+  for (const w of worlds) {
+    it(`${w.name}: the scheduler dispatches exactly the P2 engine's events (no timer the trace cannot show)`, () => {
+      const real = stepScript(w.build(), w);
+      const p2Engine = stepScript(w.buildP2Engine(), w);
+      expect(real.length, 'the world really ran').toBeGreaterThan(0);
+      const firstDiff = real.findIndex((k, i) => k !== p2Engine[i]);
+      expect(firstDiff === -1 ? undefined : `${real[firstDiff]} | P2 engine: ${p2Engine[firstDiff] ?? 'none'}`).toBeUndefined();
+      expect(real).toEqual(p2Engine);
     }, WORLD_TIMEOUT_MS);
   }
 

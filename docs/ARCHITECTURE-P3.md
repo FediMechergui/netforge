@@ -4810,6 +4810,133 @@ assertions, stage made explicit" alone cannot hold):
     - the numeric keys of `compareLsdbRows` may be cached (about 28 % of the OSPF-scale CPU).
 37. The D22 rows of §9.3/§9.4: none (dormant transport); the flip moves no P1/P2 digest.
 
+**W4b rulings (architect, 2026-10-09, before the W4b fix step; binding on it)**
+
+- **R48. The flip's help and CLI additions on managed switches are accepted.** A managed switch now runs the
+  dormant `udp`/`tcp` daemons (D22), so its `priv-exec debug` list gains `tcp` and `udp`, and its `show ip` list gains
+  `sockets` in every profile. Real access switches have both, so §9.2 item 30j's "the flip moves no list" yields to
+  this. The help golden gains them as additions only; `cli.help-superset` holds. The commands answer from the dormant
+  transport (no socket, no packet), so no digest moves. Recorded as a §9 W4 entry by the fix step.
+- **R49. The flip builder's decisions are accepted.**
+  - `PROCESS_TABLES` gains the 13 P3 rows in the change that registers their daemons (§2.6).
+  - `validateCatalog` without a stage accepts the tables of any stage's derivation.
+  - The two [S24] `service timestamps` lines go to the `cdpDefault` set: routers, managed switches, the two
+    firewalls (they run the router OS) and the controller.
+  - Data stages that the model-equality test requires also flip (`wireless`, `home`, `radios`, `wan`).
+  - Each of §9 W4 items 31–34 was applied by its rule where its line numbers had gone stale.
+  - Every pin the flip moved outside items 31–37 (the builder's list and the reviewers' list) is recorded by the fix
+    step as §9 W4 entries 37b, 37c, … with old and new values.
+- **R50. Silence is checked at the scheduler, not only in the trace.** An unconfigured daemon arms no timer in a
+  P1/P2 world. The eigrp `resync` armed by `ip routing` / `no ip routing` (the P2 default replay on multilayer
+  switches) is a defect. `accept.p3.silence` compares the dispatched SimEvent stream of the real catalog with the
+  P2-stage engine's, event for event, for its P1/P2 worlds.
+- **R51.** `l2.eth-switch.p0-parity` keeps running the shipped catalog wherever event parity holds there (the
+  verifier showed it does). The flip may not move it to a P2-stage helper.
+- **R52. W4 gate note (architect, 2026-10-09).** Gate G W4 passed in the built bundle on a P2 world loaded from a
+  file. Checked: CDP neighbours; OSPF convergence with the overlay, the LSDB browser and the SPF stepper; EIGRP 100
+  with `[90/3072]` routes and the EIGRP overlay's feasibility text; RESTCONF GET 200 in `restconf-log`; SSH with the
+  remote chip and a `vty-logins` row; PPP with CHAP and the WAN rail open. One display defect goes to the W5 web
+  item: the Tables tab prints the routing-table source `EIGRP` where `show ip route` prints `D` (D11). The tab must
+  render the CLI's code.
+
+**W4b fix-step entries (2026-10-09, under R48–R51; line numbers are HEAD 90b10ef's)**
+
+37b. [R48] Help golden: `goldens/cli-help.p05.json` `priv-exec debug` of `switch.nfc2960-8`, `switch.nfc2960`,
+    `switch.nfc2960-48`, `switch.nfc2960-24pg` and `switch.nfc9200-48` (golden :1003, :1131, :1259, :1387, :1515):
+    old `[…, 'sw-vlan', 'telnet']`, new `[…, 'sw-vlan', 'tcp', 'telnet', 'udp']` (additions only; the multilayer and
+    data-centre switches listed both before). Cause: `cli/grammar/transport.ts` derives `TRANSPORT_CAPABILITIES` and the
+    `udp`/`tcp` debug categories from every `CAPABILITY_PROCESSES` row, D22's dormant `managed-switch` rows included.
+    Visible in P1/P2 worlds: a managed switch accepts `show ip sockets` ("No socket is open on this device." while
+    dormant), `debug udp` and `debug tcp`, and `show ip ?` lists `sockets`; no digest moves. Item 30j's "the flip moves
+    no list" holds for the Tunnel family only (`cli.grammar.help-goldens.test.ts:67-68` comment updated).
+37c. Catalog-derived pins outside the line numbers of items 32–34, each by its item's rule (P3 values: the §2.1 names at
+    their `PROCESS_ORDER` positions, the host `desktop.traffic` panel, the [S18] Tunnel family last with its `gre`
+    owner on routing models other than home routers; P2-layer pins computed at stage P2):
+    - `device.runtime.test.ts:118-137` (pc.nfpc boot logs, empty registry): gains `'Process vty-client is not available
+      on this platform'` after the `tcp` line and `'Process traffic is not available on this platform'` last.
+    - `device.modules.test.ts:140` (PC with a wireless module): old `['cam', 'arp', 'rib', 'rib6', 'nd', 'sockets',
+      'dns-cache', 'dot11-assoc']`, new `['cam', 'arp', 'rib', 'rib6', 'nd', 'sockets', 'dns-cache', 'flows',
+      'dot11-assoc']`.
+    - `device.catalog.end-devices.test.ts:137, :141` (phone and laptop `gui`): `'desktop.traffic'` appended; `:124`
+      gains (additive) each host's daemons filtered to `HOST_STACK_P3` equal `HOST_STACK_P3` (`HOST_STACK` with
+      `vty-client` after `tcp` and `traffic` last); `:164` gains the server's exact tables `['cam', 'arp', 'rib', 'rib6',
+      'nd', 'sockets', 'ntp-peers', 'clock', 'syslog-messages', 'dhcp-bindings', 'dns-cache', 'flows']`.
+    - `device.catalog.wireless-wan.test.ts:44-51`: validates at P0.5, P1, P2 (inputs computed at stage P2, was `ALL`)
+      and P3 (`ALL`, new); `:139-141` (wlc.nfwlc3504): the host list with `vty-client` after `tcp` and `traffic` last,
+      `gui` + `'desktop.traffic'`; `:154` (home routers): old `['wlan-ap', 'hdlc', 'eth-switch', 'arp', 'ipv4', 'nat',
+      'icmpv4', 'host', 'ipv6', 'nd', 'icmpv6', 'udp', 'tcp', 'hsrp', 'dhcp-client', 'dhcp-server', 'dhcpv6-client',
+      'dhcpv6-server', 'dns-client', 'dns-server', 'http-server', 'traceroute']`, new (the routing rows through
+      `routing`) `['wlan-ap', 'hdlc', 'ppp', 'eth-switch', 'cdp', 'lldp', 'arp', 'ipv4', 'nat', 'acl', 'gre', 'icmpv4',
+      'host', 'ipv6', 'nd', 'icmpv6', 'udp', 'tcp', 'vty', 'vty-client', 'logger', 'ntp', 'hsrp', 'ospf', 'eigrp', 'ike',
+      'dhcp-client', 'dhcp-server', 'dhcpv6-client', 'dhcpv6-server', 'dns-client', 'dns-server', 'http-server',
+      'restconf', 'traceroute']`; no Tunnel family (families stay `['Vlan']`).
+    - `device.catalog.network-data.test.ts:33-40` (validation as above: the P2 layer at stage P2, `MODELS` at P3),
+      `:64` (`defineModel(input, 'P3')`), `:119-131` (`ROUTER_P2` → `ROUTER_P3`, the NF-2911 list of
+      `device.catalog.test.ts:67`; families of nf1941 `['Vlan', 'Loopback', 'Tunnel']`, of nfc9300-48 `['Vlan',
+      'Port-channel', 'Loopback', 'Tunnel']` with its §2.1 list, of nfngfw1120 `['Loopback', 'Tunnel']`; ids.nfsensor's
+      host list as wlc.nfwlc3504's), `:137-138` (`portOwners` `{svi, channel}` + `tunnel: 'gre'`).
+    - `device.catalog.data.test.ts:117-175` (the per-model summary inline snapshot): every model with a P3 row takes
+      the values above, the controller NF-WLC-9800 `proc=eth-switch,vlan,cdp,arp,ipv4,icmpv4,host,udp,logger,ntp,
+      capwap-ac`; models without a P3 row (hubs, bridges, APs, modems, radios, towers) are unchanged. `:224`: the
+      controller's `profileConfig` is no longer absent: `{P3: ['service timestamps debug datetime msec', 'service
+      timestamps log datetime msec']}`, and `cdpDefault` is `true` (item 36).
+    - `device.catalog.p2.test.ts:136` (the wireless-controller rows filtered to stage P2), `:249` (the live controller
+      equals `defineModel(input, CATALOG_STAGE)`, the helper `defineModel(input, 'P2')`);
+      `device.catalog.define.p2.test.ts:78, :84` (title; the models computed at stage `'P2'`).
+37d. The [S18] Tunnel family on routing models (pins of the P2 router families):
+    - `device.virtual.test.ts:65`: old `applyConfigLine([['interface', 'Tunnel0']], ['shutdown'])` → `{ok: false,
+      error: 'Unknown interface Tunnel0'}`, new `{ok: true}`; added: `Port-channel1` on the router → `{ok: false, error:
+      'Unknown interface Port-channel1'}` (the refusal path stays pinned).
+    - `review-p05-catalog.switch-module-svi.test.ts:46` (nf1941, nf4331, nf4451): `['Vlan', 'Loopback']` →
+      `['Vlan', 'Loopback', 'Tunnel']`.
+    - `device.catalog.tunnel.test.ts:99-111`: the routing row brings `gre`, so the P3 model contains it,
+      `portOwners.tunnel` is `'gre'` (old: absent, `undefined`) and it validates `[]`; the old "no owner without gre"
+      assertions run on the daemon list without `gre` (same values, `[['bad-port-owner', 'portOwners.tunnel']]`).
+    - `device.virtual-tunnel.test.ts:137-138`: the stage-P2 router comes from `createStagedCatalog({stage: 'P2'})`
+      (was the real catalog); same assertions.
+    - W4b finding 0: the `iface` handler of `cli/handlers/config.ts` also accepts a not-yet-existing instance of the
+      model's own `tunnel`-role family (`interface Tunnel0`, `Tu1`, `tunnel2`; `isTunnelFamilyName`), so §3.10 step 1
+      and §3.13 work typed and through `Simulation.configure`; `PORT_FAMILIES` is unchanged, and a Port-channel or a
+      model without the family is refused as before. New test `cli.tunnel-interface.test.ts`.
+37e. The `desktop.traffic` panel and the P3 tables in every profile (web; `GUI_PANEL_SINCE` P3, §4.3's traffic row,
+    D2 "never gates a feature"): `apps/web/test/tabs.test.ts:150` (laptop desktop panels) and
+    `apps/web/test/desktop.ui.test.ts:137-138` (P1 wifi world: laptop1, pc1) append `'desktop.traffic'`; `:178` the
+    launcher count 4 → 5. `tabs.test.ts:185` pc.nfpc and `:189` laptop.nflaptop append `'flows'`; `:186` router.nf2911
+    → `['arp', 'rib', 'ppp', 'cdp-neighbours', 'lldp-neighbours', 'nat', 'acl', 'tunnels', 'rib6', 'nd', 'sockets',
+    'vty-logins', 'ntp-peers', 'clock', 'hsrp', 'ospf-interfaces', 'ospf-neighbors', 'ospf-lsdb', 'eigrp-neighbors',
+    'eigrp-topology', 'ipsec-sa', 'dhcp-bindings', 'dhcpv6-bindings', 'dns-cache', 'restconf-log']`; `:187`
+    mlswitch.nfc3650-24 → `['cam', 'arp', 'rib', 'ppp', 'vlans', 'port-security', 'dhcp-snooping', 'arp-inspection',
+    'dtp', 'etherchannel', 'stp', 'stp-bridge', 'cdp-neighbours', 'lldp-neighbours', 'nat', 'acl', 'tunnels', 'rib6',
+    'nd', 'sockets', 'vty-logins', 'ntp-peers', 'clock', 'hsrp', 'ospf-interfaces', 'ospf-neighbors', 'ospf-lsdb',
+    'eigrp-neighbors', 'eigrp-topology', 'ipsec-sa', 'dhcp-bindings', 'dhcpv6-bindings', 'dns-cache', 'restconf-log']`
+    (item 35's `:177-184` was written at 5263f16; recorded here exactly). P1/P2 worlds show the Traffic launcher.
+37f. `protocols.registry.test.ts:120` (item 31's rule): `processFactory('ppp')` (registered now, [S19]) →
+    `processFactory('tftp')` ([S29], not approved), same assertion.
+37g. Pre-flip conditions kept through `staged.world`'s overlay (R47's fold rule: a case about a daemon that does not
+    run removes the now-registered daemon with `{<name>: undefined}`; same assertions): `ospf.adjacency.test.ts:394`
+    `{ospf: undefined}`; `cli.flow.test.ts:163` `{traffic: undefined}`; `app.logger.test.ts:218` `{logger: undefined}`
+    (was `{}`); `device.emit-log.test.ts:157-166` (stage P2 from `createStagedCatalog({stage: 'P2', factories:
+    {logger: stub}})`, was the real catalog; stage P3 `{logger: undefined}`, was `{}`); `device.pipeline.p3.test.ts:277`
+    `{cdp: undefined, lldp: undefined}` and `:291` adds `lldp: undefined`; `cli.logging-show.test.ts:109-110` a router
+    model without the logger (`modelWithout(R, 'logger')`, new in `cli.p3-approved.fixture.ts`); `p2.world.test.ts:157`
+    the real models' P1 daemons read from `ALL_MODEL_INPUTS.map((i) => defineModel(i, 'P2'))`. `accept.p3.syslog`
+    drops its `FLIP_FACTORIES` and `withTimestampsProfile` overlays (no-ops since the flip; no assertion changed).
+37h. [S24] Unstamped cases in P3 worlds store the negations of the two profile lines first, as a learner would
+    (`no service timestamps debug datetime msec`, `no service timestamps log datetime msec`), same assertions:
+    `app.logger.test.ts:41-49` (`WITHOUT_P3_TIMESTAMPS` in `router()`), `app.syslog.test.ts:203` (R1's lines),
+    `cli.logging-show.test.ts:119` (R1's startup config). The stamped P3 texts stay pinned by `accept.p3.syslog`.
+37i. [R50] `protocols/eigrp.ts` `onConfig`: a stopped process arms `resync` only for an EIGRP line while a `router eigrp`
+    section is stored (the OSPF pattern), so `ip routing` / `no ip routing` without the section schedule nothing.
+    `accept.p3.silence` (a) gains, per world, the step()-level comparison (`at kind device port process key`, `seq` left
+    out) of the real catalog with the P2-stage engine; without the fix it fails on ccna2-l3-switch-svis,
+    ccna2-rapid-stp and ccna2-stp-guards. New fast test `eigrp.unconfigured-silence.test.ts`.
+37j. [R51] `l2.eth-switch.p0-parity.test.ts:124`: the VLAN-aware path stays `createSimulation({seed})` (the shipped
+    catalog). `stripP2` becomes `stripLater` (the `normaliseSnapshot` rule): it also removes the StateViews of processes
+    derived only through `since: 'P3'` rows, the stage-P3 tables and the tables owned only by removed processes. The
+    allowed removals (`:148`) add the fifteen P3 daemons, the stage-P3 tables and, on a managed switch only, `process
+    udp`, `process tcp` and `table sockets`, anchored at the end; a new pin requires `pc1: process traffic` and `pc1:
+    process vty-client` among the removals. The event comparison stays exact (count, first difference -1, `toEqual`).
+
 **W5**
 
 38. `SCENARIOS` gains `CCNA3_LABS` after `CCNA2_LABS`: `accept.p1.labs.test.ts:52` and `labs.solutions.test.ts:74`

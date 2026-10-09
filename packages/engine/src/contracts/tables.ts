@@ -13,6 +13,7 @@
  * Extra tables are reached with `DeviceTables.get(name)`; the snapshot exports them generically as
  * `TableSnapshot`s described by TABLE_DESCRIPTORS (column keys = row field names below).
  */
+import type { BuildStage, Capability } from './catalog.js';
 import type { DeviceId, PduId, PortId, ProcessName } from './ids.js';
 import type { IpAddress, Ipv4Address, Ipv6Address, MacAddress } from './addr.js';
 import type { SimTime } from './time.js';
@@ -1350,7 +1351,9 @@ export const TABLE_DESCRIPTORS: Readonly<Record<'cam' | 'arp' | 'rib' | ExtraTab
 /**
  * Extra tables implied by processes (defineModel derives `DeviceModel.tables` from these). The P2 rows (@since P2)
  * name daemons that no model runs before their factories are registered, so no P1 model gains a table; port-security
- * rows are written by eth-switch but hang off `vlan`, so only managed switches declare the table.
+ * rows are written by eth-switch but hang off `vlan`, so only managed switches declare the table. The P3 rows (the W4
+ * catalog flip) name daemons whose `CAPABILITY_PROCESSES` rows are all `since: 'P3'`, so no P1/P2-stage model gains
+ * one; the stage-filtered snooping tables are `STAGED_PROCESS_TABLES`, never plain `vlan` rows.
  */
 export const PROCESS_TABLES: Readonly<Partial<Record<ProcessName, readonly ExtraTableName[]>>> = Object.freeze({
   'wlan-ap': ['dot11-assoc'],
@@ -1372,7 +1375,38 @@ export const PROCESS_TABLES: Readonly<Partial<Record<ProcessName, readonly Extra
   'capwap-wtp': ['capwap'],
   'capwap-ac': ['capwap-aps', 'wlan-clients'],
   hsrp: ['hsrp'], // [SHOULD S2]
+  // ── P3 (ARCHITECTURE-P3 §2.6; the W4 catalog flip, the change that registers these daemons) ──
+  ppp: ['ppp'], // [S19]
+  cdp: ['cdp-neighbours'],
+  lldp: ['lldp-neighbours'],
+  acl: ['acl'],
+  gre: ['tunnels'], // [S18]
+  vty: ['vty-logins'], // [S13]
+  ntp: ['ntp-peers', 'clock'],
+  'syslog-server': ['syslog-messages'], // [S25]
+  ospf: ['ospf-interfaces', 'ospf-neighbors', 'ospf-lsdb'],
+  eigrp: ['eigrp-neighbors', 'eigrp-topology'], // [C1]
+  ike: ['ipsec-sa'], // [C13]
+  restconf: ['restconf-log'],
+  traffic: ['flows'],
+  // [S32] 'script-host': ['script-runs'] joins at the W6 flip, with its factory.
 });
+
+/**
+ * @since P3 Tables a daemon brings only from a stage on, and only to models with a capability (ARCHITECTURE-P3 §2.6,
+ * P3 review T6; the W4 catalog flip). `deriveTables` applies a row only when the model's build stage is at or after
+ * `since` and the model has `requires`, so the snooping tables are never plain `vlan` rows: no P1/P2-stage model and
+ * never the controller (which runs `vlan` too) declares them. A row's tables follow the daemon's own `PROCESS_TABLES`.
+ * [S16] would add 'storm-control' to the row (not approved, never in P3a).
+ */
+export const STAGED_PROCESS_TABLES: readonly {
+  process: ProcessName;
+  tables: readonly ExtraTableName[];
+  since: BuildStage;
+  requires: Capability;
+}[] = Object.freeze([
+  Object.freeze({ process: 'vlan', tables: Object.freeze(['dhcp-snooping', 'arp-inspection'] as const), since: 'P3', requires: 'managed-switch' } as const),
+]);
 
 /** Default ageing timers. */
 export const CAM_AGEING_NS = 300 * 1_000_000_000; // 300 s

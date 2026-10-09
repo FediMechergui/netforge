@@ -421,8 +421,13 @@ function checkDaemons(model: DeviceModel, caps: readonly Capability[], opts: Cat
     }
   }
   if (model.tables !== undefined) {
-    const expected = deriveTables(model.processes);
-    if (!sameList(model.tables, expected)) add('tables-mismatch', 'tables', `The tables must be ${expected.join(', ')}.`);
+    // P3 (§2.6): the STAGED_PROCESS_TABLES rows depend on the stage; without a stage the tables of any stage are accepted
+    const tables = model.tables;
+    const stages: readonly (BuildStage | undefined)[] = opts.stage !== undefined ? [opts.stage] : [undefined, ...BUILD_STAGES];
+    if (!stages.some((st) => sameList(tables, deriveTables(model.processes, caps, st)))) {
+      const expected = deriveTables(model.processes, caps, opts.stage);
+      add('tables-mismatch', 'tables', `The tables must be ${expected.join(', ')}.`);
+    }
   }
   if (model.ipDefaults !== undefined && model.capabilities !== undefined) {
     const expected = ipDefaultsFor(caps);

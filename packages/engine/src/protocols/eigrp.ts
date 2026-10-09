@@ -1059,8 +1059,11 @@ export function createEigrp(): Process {
       return readEigrpProcess(ctx.config.root) !== undefined ? [timer('resync', 0)] : [];
     },
 
-    onConfig(_ctx: ProcessCtx, delta: ConfigDelta): Action[] {
-      if (cfg === undefined && !isEigrpLine(delta)) return [];
+    onConfig(ctx: ProcessCtx, delta: ConfigDelta): Action[] {
+      // Silent in P1/P2 (§4.3): a stopped process arms `resync` only for an EIGRP line while a `router eigrp` section
+      // is stored, as ospf gates on its section (W4b fix step, finding 5: a bare `ip routing` / `no ip routing`, e.g.
+      // the P2 profile replay on a multilayer switch, no longer schedules an idle timer in a world without EIGRP).
+      if (cfg === undefined && (!isEigrpLine(delta) || readEigrpProcess(ctx.config.root) === undefined)) return [];
       return [timer('resync', 0)];
     },
 

@@ -43,7 +43,9 @@ describe('review P0.5: routers with a switch module can address the module switc
   it('derives a non-auto Vlan1 family (before Loopback) and the eth-switch SVI owner, and the catalog validates', () => {
     for (const type of ['router.nf1941', 'router.nf4331', 'router.nf4451']) {
       const model = ALL_MODELS.find((m) => m.type === type)!;
-      expect(model.virtualFamilies?.map((f) => f.family)).toEqual(['Vlan', 'Loopback']);
+      // ARCHITECTURE-P3 §9.2 W4 (the catalog flip, by the rule of item 34): the [S18] Tunnel family is derived last on
+      // routing models at stage P3 (`withTunnelFamily`), after the Vlan and Loopback families
+      expect(model.virtualFamilies?.map((f) => f.family)).toEqual(['Vlan', 'Loopback', 'Tunnel']);
       expect(model.virtualFamilies?.[0]).toEqual({ family: 'Vlan', short: 'Vl', role: 'svi', min: 1, max: 1, defaultAdminUp: false });
       expect(model.portOwners?.svi).toBe('eth-switch');
       expect(model.processes).not.toContain('eth-switch');

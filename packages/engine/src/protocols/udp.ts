@@ -52,7 +52,8 @@
  *  • The discard rule (M13, exact): a datagram to a port with no socket is consumed silently — no drop, no
  *    port-unreachable — and handed to the traffic daemon as `traffic.rx {pdu, iface, from, dstPort}` ONLY when the
  *    device runs `traffic` AND the payload starts with the traffic header (`isTrafficPayload`, protocols/traffic.ts).
- *    Every other datagram keeps the P1 path, so no P1 or P2 world (no device of theirs runs `traffic`) changes.
+ *    Every other datagram keeps the P1 path, so no P1 or P2 world changes: since the P3 catalog flip every host runs
+ *    `traffic` in every profile, but no P1 or P2 world sends a traffic payload (`isTrafficPayload`).
  *  • `udp.probe {session, dst, port, src?, timeoutNs}` (grader clones only): one datagram whose payload is the marker
  *    `NFPR` and the session, from an ephemeral port reserved for the probe (no socket, no `sockets` row) until the
  *    non-periodic timer `probe:<session>`. An ICMP error quoting it records `unreachable` with its type and code;

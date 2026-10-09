@@ -2,8 +2,8 @@
  * P3 acceptance — OSPF at scale (ARCHITECTURE-P3 D7, D8, D9, D10, §3.2, §4.2, §4.5, §7 W4 step 1, §12.2 R3,
  * §10.1 row `accept.p3.ospf-scale`).
  *
- * 50 NF-2911 routers in one area on the P3 catalog (`test/p3-flip.world.ts`: `staged.world` at stage P3 with the
- * approved P3 daemons until the W4 flip, the real catalog after it), configured through their startup texts:
+ * 50 NF-2911 routers in one area on the P3 catalog (`test/p3-flip.world.ts`: the real catalog since the W4 flip,
+ * ruling R47), configured through their startup texts:
  *   - a ring of GigE point-to-point links (Ri Gi0/0 — Ri+1 Gi0/1, 10.1.i.0/30, `ip ospf network point-to-point`);
  *   - 25 serial chords across the ring (Ri Se0/0/0, the DCE end with `clock rate 64000` — Ri+25 Se0/0/1, 10.2.i.0/30);
  *   - Loopback0 10.255.0.i/32 on each, router id i.i.i.i, `network 10.0.0.0 0.255.255.255 area 0`.

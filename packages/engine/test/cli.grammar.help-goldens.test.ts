@@ -65,7 +65,8 @@ function goldenFor(model: DeviceModel): Record<string, string[]> {
     if (list.some((t) => !NAVIGATION_WORDS.has(t))) out[mode] = list;
   }
   // the Tunnel family is derived at build stage P3 only (`withTunnelFamily`, the W4 flip): the same derivation here
-  // records its list now, so the flip moves no golden list
+  // records its list now, so the Tunnel family moves no golden list at the flip (the flip's dormant udp/tcp on managed
+  // switches, D22, did add `tcp` and `udp` to their `priv-exec debug` lists: ruling R48, §9.2 W4 entry 37b)
   for (const fam of withTunnelFamily(model.capabilities, model.virtualFamilies ?? [])) {
     if (fam.role !== 'tunnel') continue;
     const view: PortView = {

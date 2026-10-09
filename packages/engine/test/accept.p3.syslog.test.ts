@@ -2,13 +2,11 @@
  * P3 acceptance — [S24] local logging and [S25] syslog (ARCHITECTURE-P3 §10.1 row `accept.p3.syslog`; §3.7 steps 7–8;
  * D2, D4, D19, D20, D22; §4.3, §4.4; §5.7, §5.8; §7 W4 qa, approved items S24 and S25).
  *
- * The row, clause by clause, on `staged.world` at stage P3 (rule 13; rule 14: the qa step runs before the catalog flip).
- * Until the flip lands, two pieces of its data are laid over the staged catalog here, each a no-op once the real
- * catalog carries it:
- *   • `FLIP_FACTORIES`, the daemons the W4 flip registers (§7 W4 step 2);
- *   • [S24] the two `service timestamps` lines in `profileConfig.P3` of routers, managed switches and the controller
- *     (§7 W4 step 2, §9.2 item 36) — added only to a model that takes the P3 network defaults (`cdpDefault`, the D2 set)
- *     and has no P3 profile list yet (`withTimestampsProfile`).
+ * The row, clause by clause, on `staged.world` at stage P3 (rule 13). The W4 catalog flip made the two pieces of its
+ * data this file laid over the staged catalog before the flip the real catalog's, so ruling R47 removed both: the
+ * daemons the flip registers (`FLIP_FACTORIES`), and [S24] the two `service timestamps` lines in `profileConfig.P3` of
+ * routers, managed switches and the controller (§9.2 item 36; `withTimestampsProfile`), which `defineModel` now
+ * derives at stage P3 for the `cdpDefault` set (D2; `staged.world.p3-parity` compares them).
  * Lines a learner types go through the real CLI (`service ntp on`, `service syslog on` in the server's host shell; the
  * `logging …` lines, `shutdown`, `service timestamps …` on consoles).
  *
@@ -30,7 +28,6 @@
 import { describe, expect, it } from 'vitest';
 import { NF_WORLD_EPOCH_UNIX_MS } from '../src/contracts/clock.js';
 import type { DefaultsProfile } from '../src/contracts/catalog.js';
-import type { DeviceCatalog, DeviceModel } from '../src/contracts/device.js';
 import type { DeviceId, SessionId } from '../src/contracts/ids.js';
 import type { LoggerStateView, Severity } from '../src/contracts/process.js';
 import type { Simulation } from '../src/contracts/simulation.js';
@@ -38,50 +35,13 @@ import type { SyslogMessageRow } from '../src/contracts/tables.js';
 import { SEC, type SimTime } from '../src/contracts/time.js';
 import type { TraceEvent } from '../src/contracts/trace.js';
 import { createSimulation } from '../src/sim/simulation.js';
-import { createAcl } from '../src/protocols/acl.js';
-import { createCdp } from '../src/protocols/cdp.js';
-import { createEigrp } from '../src/protocols/eigrp.js';
-import { createGre } from '../src/protocols/gre.js';
-import { createIke } from '../src/protocols/ike.js';
-import { createLldp } from '../src/protocols/lldp.js';
-import { createLogger } from '../src/protocols/logger.js';
-import { createNtp } from '../src/protocols/ntp.js';
-import { createOspf } from '../src/protocols/ospf.js';
-import { createPpp } from '../src/protocols/ppp.js';
-import { createRestconf } from '../src/protocols/restconf.js';
-import { createSyslogServer } from '../src/protocols/syslog-server.js';
-import { createTraffic } from '../src/protocols/traffic.js';
-import { createVty } from '../src/protocols/vty.js';
-import { createVtyClient } from '../src/protocols/vty-client.js';
-import { createStagedCatalog, type StagedFactoryOverlay } from './staged.world.js';
-
-/** The daemons the W4 catalog flip registers (§7 W4 step 2), laid over the registry until it lands. */
-const FLIP_FACTORIES: StagedFactoryOverlay = {
-  ppp: createPpp, cdp: createCdp, lldp: createLldp, acl: createAcl, gre: createGre, vty: createVty, 'vty-client': createVtyClient,
-  logger: createLogger, ntp: createNtp, 'syslog-server': createSyslogServer, ospf: createOspf, eigrp: createEigrp, ike: createIke,
-  restconf: createRestconf, traffic: createTraffic,
-};
+import { createStagedCatalog } from './staged.world.js';
 
 /** [S24] The two visible P3 defaults of routers, managed switches and the controller (D2). */
 const TIMESTAMPS_LINES: readonly string[] = Object.freeze(['service timestamps debug datetime msec', 'service timestamps log datetime msec']);
 
-/**
- * The staged catalog with the W4 flip's [S24] `profileConfig.P3` on every model that takes the P3 network defaults
- * (`cdpDefault`: routers and managed switches with the NF-OS CLI, the controller) and has no P3 list yet; once the real
- * catalog carries the list, every model is returned unchanged.
- */
-function withTimestampsProfile(base: DeviceCatalog): DeviceCatalog {
-  const patch = (m: DeviceModel): DeviceModel =>
-    m.cdpDefault !== true || m.profileConfig?.P3 !== undefined
-      ? m
-      : Object.freeze({ ...m, profileConfig: Object.freeze({ ...(m.profileConfig ?? {}), P3: TIMESTAMPS_LINES }) });
-  const models = Object.freeze(base.list().map(patch));
-  const byType = new Map(models.map((m) => [m.type, m] as const));
-  return { ...base, get: (type: string) => byType.get(type), list: () => models };
-}
-
 function stagedWorld(seed: number, profile: DefaultsProfile = 'P3'): Simulation {
-  return createSimulation({ seed, profile, catalog: withTimestampsProfile(createStagedCatalog({ stage: 'P3', factories: FLIP_FACTORIES })) });
+  return createSimulation({ seed, profile, catalog: createStagedCatalog({ stage: 'P3' }) });
 }
 
 const SEED = 3_007_008;

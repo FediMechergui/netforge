@@ -274,7 +274,9 @@ describe('the control check on staged.world (stage P3, stub cdp and lldp through
 
   it('when the daemon does not run the frame is dropped exactly as today: the same drop as in a P2-stage world', () => {
     for (const native of [false, true]) {
-      const p3 = world({}, { native });
+      // ARCHITECTURE-P3 §9.2 W4 (the catalog flip registered cdp and lldp, so a world without them now removes them
+      // through the overlay, staged.world's documented way to model a missing daemon; same assertions)
+      const p3 = world({ cdp: undefined, lldp: undefined }, { native });
       expect(p3.device('r1')!.model.processes).not.toContain('cdp');
       const p2 = world({}, { native, stage: 'P2' });
       const got = dropsAt(inject(p3, 'GigabitEthernet0', [CDP, LLDP]), 'r1').map(dropShape);
@@ -288,7 +290,7 @@ describe('the control check on staged.world (stage P3, stub cdp and lldp through
     }
     // cdp runs but lldp does not: the LLDP frame still drops at step 10b
     const cdp = stub('cdp');
-    const mixed = world({ cdp: cdp.factory });
+    const mixed = world({ cdp: cdp.factory, lldp: undefined });
     expect(dropsAt(inject(mixed, 'GigabitEthernet0', [LLDP]), 'r1').map(dropShape)).toEqual([
       { port: 'GigabitEthernet0/0', reason: 'not-for-me', detail: PIPELINE_P2_DETAILS.linkLayerControl, proto: 'lldp', background: undefined },
     ]);

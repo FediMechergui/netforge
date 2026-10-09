@@ -28,7 +28,8 @@ describe('device/catalog models', () => {
     expect(NF_PC.ports.map((p) => [p.name, p.short, p.speedBps, p.autoMdix])).toEqual([['GigabitEthernet0', 'Gi0', SPEED_1G, false]]);
     // §9.2 'NF-2911 processes gain hdlc (P0.5); P1 adds the stack': the shim entries are derived at CATALOG_STAGE.
     // ARCHITECTURE-P2 §9.2 W4 item 13: a host gains dhcpv6-client at its final PROCESS_ORDER position.
-    expect(NF_PC.processes).toEqual(['arp', 'ipv4', 'icmpv4', 'host', 'ipv6', 'nd', 'icmpv6', 'udp', 'tcp', 'dhcp-client', 'dhcpv6-client', 'dns-client', 'http-client', 'traceroute']);
+    // ARCHITECTURE-P3 §9.2 W4 item 34: and, at the P3 flip, [S13] vty-client after tcp and traffic after traceroute.
+    expect(NF_PC.processes).toEqual(['arp', 'ipv4', 'icmpv4', 'host', 'ipv6', 'nd', 'icmpv6', 'udp', 'tcp', 'vty-client', 'dhcp-client', 'dhcpv6-client', 'dns-client', 'http-client', 'traceroute', 'traffic']);
     expect(NF_PC.hostnamePrefix).toBe('PC');
     expect(NF_PC.portsDefaultUp).toBe(true);
     expect(NF_PC.bootNs).toBe(2 * SEC);
@@ -44,7 +45,9 @@ describe('device/catalog models', () => {
     expect(NF_C2960.ports[24]).toMatchObject({ name: 'GigabitEthernet0/1', short: 'Gi0/1', speedBps: SPEED_1G, autoMdix: true });
     expect(NF_C2960.ports[25]).toMatchObject({ name: 'GigabitEthernet0/2', short: 'Gi0/2' });
     // ARCHITECTURE-P2 §9.2 W4 item 13: a managed switch gains vlan, dtp, etherchannel, stp right after eth-switch.
-    expect(NF_C2960.processes).toEqual(['eth-switch', 'vlan', 'dtp', 'etherchannel', 'stp', 'arp', 'ipv4', 'icmpv4', 'host']);
+    // ARCHITECTURE-P3 §9.2 W4 item 34: and, at the P3 flip, the managed-switch rows of §2.1 (cdp, lldp, acl, the
+    // dormant udp and tcp of D22, [S13] vty and vty-client, [S24] logger, ntp, restconf) at their PROCESS_ORDER positions.
+    expect(NF_C2960.processes).toEqual(['eth-switch', 'vlan', 'dtp', 'etherchannel', 'stp', 'cdp', 'lldp', 'arp', 'ipv4', 'acl', 'icmpv4', 'host', 'udp', 'tcp', 'vty', 'vty-client', 'logger', 'ntp', 'restconf']);
     expect(NF_C2960.hostnamePrefix).toBe('Switch');
     expect(NF_C2960.portsDefaultUp).toBe(true);
     expect(NF_C2960.bootNs).toBe(30 * SEC);
@@ -63,8 +66,10 @@ describe('device/catalog models', () => {
     expect(NF_2911.ports[0]?.autoMdix).toBe(false);
     expect(NF_2911.ports[2]?.speedBps).toBe(2_000_000);
     // §9.2: NF-2911 gains the hdlc daemon at P0.5 and the P1 stack at P1. ARCHITECTURE-P2 §9.2 W4 item 13: nat after
-    // ipv4, hsrp [S2] after tcp, dhcpv6-client and dhcpv6-server after dhcp-server.
-    expect(NF_2911.processes).toEqual(['hdlc', 'arp', 'ipv4', 'nat', 'icmpv4', 'ipv6', 'nd', 'icmpv6', 'udp', 'tcp', 'hsrp', 'dhcp-client', 'dhcp-server', 'dhcpv6-client', 'dhcpv6-server', 'dns-client', 'dns-server', 'http-server', 'traceroute']);
+    // ipv4, hsrp [S2] after tcp, dhcpv6-client and dhcpv6-server after dhcp-server. ARCHITECTURE-P3 §9.2 W4 item 34: the
+    // routing rows of §2.1 at their PROCESS_ORDER positions ([S19] ppp, cdp, lldp, acl, [S18] gre, [S13] vty and
+    // vty-client, [S24] logger, ntp, ospf, [C1] eigrp, [C13] ike, restconf).
+    expect(NF_2911.processes).toEqual(['hdlc', 'ppp', 'cdp', 'lldp', 'arp', 'ipv4', 'nat', 'acl', 'gre', 'icmpv4', 'ipv6', 'nd', 'icmpv6', 'udp', 'tcp', 'vty', 'vty-client', 'logger', 'ntp', 'hsrp', 'ospf', 'eigrp', 'ike', 'dhcp-client', 'dhcp-server', 'dhcpv6-client', 'dhcpv6-server', 'dns-client', 'dns-server', 'http-server', 'restconf', 'traceroute']);
     expect(NF_2911.hostnamePrefix).toBe('Router');
     expect(NF_2911.portsDefaultUp).toBe(false);
     expect(NF_2911.bootNs).toBe(45 * SEC);

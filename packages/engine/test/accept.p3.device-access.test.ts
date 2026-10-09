@@ -37,7 +37,7 @@ import { isDefaultHostname } from '../src/cli/handlers/ssh.js';
 import { VTY_PROMPT_PASSWORD } from '../src/protocols/vty.js';
 import { evaluateLab } from '../src/sim/lab-checks.js';
 import { runCheck } from '../src/sim/lab-checks/registry.js';
-import { configText, gradingClone, p3Factories } from './hardening.world.js';
+import { configText, gradingClone } from './hardening.world.js';
 import { createStagedSimulation } from './staged.world.js';
 
 const R1_ADDR = '192.168.10.1';
@@ -63,7 +63,7 @@ const SWITCH: Subject = { id: 'sw1', name: 'Switch1', hostname: 'SW1', bits: 204
 
 /** The world of the file header, booted; nothing about device access is configured yet. */
 function world(seed = 31): Simulation {
-  const sim = createStagedSimulation({ seed, stage: 'P3', factories: p3Factories() });
+  const sim = createStagedSimulation({ seed, stage: 'P3' });
   sim.addDevice({
     id: ROUTER.id, type: 'router.nf2911', name: ROUTER.name,
     startupConfig: configText([['interface GigabitEthernet0/0', ` ip address ${R1_ADDR} ${MASK}`, ' no shutdown']]),
@@ -280,7 +280,7 @@ describe('accept.p3.device-access: the lines round-trip through export, reload a
     const sim = configuredWorld();
     const topo = sim.exportTopology();
     expect(topo.profile).toBe('P3');
-    const reloaded = createStagedSimulation({ seed: 31, stage: 'P3', factories: p3Factories() });
+    const reloaded = createStagedSimulation({ seed: 31, stage: 'P3' });
     reloaded.loadTopology(topo);
     reloaded.runFor(BOOT_NS);
     for (const d of [ROUTER, SWITCH]) {

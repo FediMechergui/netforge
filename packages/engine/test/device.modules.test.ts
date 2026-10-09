@@ -137,7 +137,8 @@ describe('device modules: effective capabilities', () => {
     expect(wl.role).toBe('wireless-client');
     expect(wl.encap).toBe('dot11');
     expect(wl.ordinal).toBe(128);
-    expect(d.tables.names?.()).toEqual(['cam', 'arp', 'rib', 'rib6', 'nd', 'sockets', 'dns-cache', 'dot11-assoc']);
+    // ARCHITECTURE-P3 §9.2 W4 item 34: since the catalog flip the PC also owns the traffic generator's `flows` table
+    expect(d.tables.names?.()).toEqual(['cam', 'arp', 'rib', 'rib6', 'nd', 'sockets', 'dns-cache', 'flows', 'dot11-assoc']);
     expect(d.tables.get?.('dot11-assoc')?.name).toBe('dot11-assoc');
 
     d.setPower(true, 10);

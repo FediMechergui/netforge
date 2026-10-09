@@ -160,7 +160,9 @@ describe('flow stop and flow show', () => {
 
 describe('on a real P3-stage PC', () => {
   it('a flow job holds the terminal until the daemon ends it; Ctrl+C frees it', () => {
-    const sim = createStagedSimulation({ seed: 7, stage: 'P3' });
+    // ARCHITECTURE-P3 §9.2 W4 (the catalog flip registered the traffic daemon): the world keeps the pre-flip condition
+    // of this case, a PC without the daemon (staged.world's overlay removes it), so nothing ends the job
+    const sim = createStagedSimulation({ seed: 7, stage: 'P3', factories: { traffic: undefined } });
     const pc = sim.addDevice({ type: 'pc.nfpc', name: 'PC1' });
     sim.runFor(30 * SEC);
     const s = sim.cli.open(pc, 'console');
@@ -168,7 +170,7 @@ describe('on a real P3-stage PC', () => {
     expect(sim.cli.session(s)?.busy).toBe(false);
     const started = sim.cli.exec(s, 'flow start 10.0.0.2 rate 64 size 200 count 10');
     expect(started.error).toBeUndefined();
-    // this stage's catalog registers no traffic daemon before the W4 flip, so nothing ends the job
+    // no traffic daemon runs here (before the W4 flip no catalog registered one), so nothing ends the job
     expect(started.busy).toBe(true);
     expect(sim.cli.session(s)?.job).toEqual({ process: 'traffic', label: FLOW_JOB_LABEL });
     sim.cli.interrupt(s);

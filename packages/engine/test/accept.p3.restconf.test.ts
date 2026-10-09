@@ -2,10 +2,9 @@
  * P3 acceptance — a REST change over the simulated network (ARCHITECTURE-P3 §10.1 row `accept.p3.restconf`; §3.8
  * steps 1–7; D21, D22; §4.2, §4.3; §5.6; rule 20; §7 W4 qa).
  *
- * The row, clause by clause, on `staged.world` at stage P3 (rule 13; rule 14: the qa step runs before the catalog flip,
- * so the daemons the W4 flip registers are laid over the registry — `FLIP_FACTORIES`; after the flip the overlay names
- * the registry's own factories). Every request is the learner's host-shell `rest` command typed on PC1's console (a
- * journaled `cliExec`); console changes on the switches are typed too.
+ * The row, clause by clause, on `staged.world` at stage P3 (rule 13), whose registry is the real one since the W4
+ * catalog flip (ruling R47 removed the pre-flip overlay, `FLIP_FACTORIES`). Every request is the learner's host-shell
+ * `rest` command typed on PC1's console (a journaled `cliExec`); console changes on the switches are typed too.
  *
  *   §3.8 world: PC1 (NF-PC) 10.0.99.10/24 on SW1 Fa0/1 (access VLAN 99, PortFast); SW1 Gi0/2 ↔ SW2 Gi0/1 and SW2 Gi0/2 ↔
  *   SW3 Gi0/1, trunks; Vlan99 10.0.99.11 / .12 / .13. Each switch: `username admin privilege 15 secret Lab-Pass1`,
@@ -31,36 +30,14 @@ import type { RestconfLogRow } from '../src/contracts/tables.js';
 import { SEC } from '../src/contracts/time.js';
 import type { TraceEvent } from '../src/contracts/trace.js';
 import { createReplay } from '../src/sim/replay.js';
-import { createAcl } from '../src/protocols/acl.js';
-import { createCdp } from '../src/protocols/cdp.js';
-import { createEigrp } from '../src/protocols/eigrp.js';
-import { createGre } from '../src/protocols/gre.js';
-import { createIke } from '../src/protocols/ike.js';
-import { createLldp } from '../src/protocols/lldp.js';
-import { createLogger } from '../src/protocols/logger.js';
-import { createNtp } from '../src/protocols/ntp.js';
-import { createOspf } from '../src/protocols/ospf.js';
-import { createPpp } from '../src/protocols/ppp.js';
 import {
-  createRestconf,
   MSG_RESTCONF_LOGIN_FAILED,
   MSG_RESTCONF_LOGIN_NEEDED,
   MSG_RESTCONF_MEDIA_TYPE,
   RESTCONF_JSON_TYPE,
   RESTCONF_LOG_LIMIT,
 } from '../src/protocols/restconf.js';
-import { createSyslogServer } from '../src/protocols/syslog-server.js';
-import { createTraffic } from '../src/protocols/traffic.js';
-import { createVty } from '../src/protocols/vty.js';
-import { createVtyClient } from '../src/protocols/vty-client.js';
-import { createStagedCatalog, createStagedSimulation, type StagedFactoryOverlay } from './staged.world.js';
-
-/** The daemons the W4 catalog flip registers (§7 W4 step 2), laid over the registry until it lands. */
-const FLIP_FACTORIES: StagedFactoryOverlay = {
-  ppp: createPpp, cdp: createCdp, lldp: createLldp, acl: createAcl, gre: createGre, vty: createVty, 'vty-client': createVtyClient,
-  logger: createLogger, ntp: createNtp, 'syslog-server': createSyslogServer, ospf: createOspf, eigrp: createEigrp, ike: createIke,
-  restconf: createRestconf, traffic: createTraffic,
-};
+import { createStagedCatalog, createStagedSimulation } from './staged.world.js';
 
 const SEED = 3_008;
 const PASSWORD = 'Lab-Pass1';
@@ -101,7 +78,7 @@ function switchConfig(name: string, address: string, opts: { pcPort?: boolean; u
 
 /** The §3.8 world, booted and settled (trunks forwarding) at 100 s. */
 function world(seed = SEED): Simulation {
-  const sim = createStagedSimulation({ seed, stage: 'P3', factories: FLIP_FACTORIES });
+  const sim = createStagedSimulation({ seed, stage: 'P3' });
   sim.addDevice({ id: 'pc1', type: 'pc.nfpc', name: 'PC1', startupConfig: startup([['hostname PC1'], ['interface GigabitEthernet0', ` ip address ${PC} 255.255.255.0`]]) });
   sim.addDevice({ id: 'sw1', type: 'switch.nfc2960', name: 'SW1', startupConfig: switchConfig('SW1', SW.sw1, { pcPort: true, down: '', guest: true }) });
   sim.addDevice({ id: 'sw2', type: 'switch.nfc2960', name: 'SW2', startupConfig: switchConfig('SW2', SW.sw2, { up: true, down: UPLINK_NOTE }) });
@@ -440,7 +417,7 @@ describe('the journal and determinism', () => {
     const live = script();
     const journal = live.journal();
     expect(journal.entries.filter((e) => e.op.op === 'cliExec' && e.op.line.startsWith('rest ')).length).toBe(4);
-    const replay = createReplay(journal, { traceCapacity: 200_000, catalog: createStagedCatalog({ stage: 'P3', factories: FLIP_FACTORIES }) });
+    const replay = createReplay(journal, { traceCapacity: 200_000, catalog: createStagedCatalog({ stage: 'P3' }) });
     const r = replay.advance(live.position());
     expect(r.reached).toBe(true);
     expect(replay.position()).toEqual(live.position());

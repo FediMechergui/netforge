@@ -21,7 +21,7 @@ import type { BuildStage, PoeSpec } from '../../contracts/catalog.js';
 import { defineModel, type ModelInput, type PortInput, type SlotInput } from './define.js';
 
 /** Build stage the exported `MULTILAYER_MODELS` are defined for (device/catalog/index.ts re-defines MULTILAYER_INPUTS for its own stage when it differs). */
-export const MULTILAYER_DATA_STAGE: BuildStage = 'P2';
+export const MULTILAYER_DATA_STAGE: BuildStage = 'P3'; // ARCHITECTURE-P3 §7 W4 catalog flip (with CATALOG_STAGE)
 
 /** High-power (802.3bt class) power-sourcing port, 60 W. */
 const POE_HIGH: PoeSpec = { pse: { standard: 'bt', maxW: 60 } };

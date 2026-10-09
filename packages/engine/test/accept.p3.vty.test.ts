@@ -2,8 +2,9 @@
  * P3 acceptance [S13] — SSH-only access with a vty ACL, over the network (ARCHITECTURE-P3 §10.1 row `accept.p3.vty`;
  * §3.14, D14, D22, §2.4, §2.7; rulings R27, R38, R43; §7 W4 qa).
  *
- * Built on `staged.world` at stage P3 with the registry the W4 flip writes (`accept.p3.flip-factories.ts`), so the
- * world runs what a flipped P3 world runs. The §3.14 world: PC1 192.168.10.10 and PC2 192.168.10.11 on SW1 (NF-C2960,
+ * Built on `staged.world` at stage P3 with the registry the W4 catalog flip wrote (`PROCESS_FACTORIES` holds every
+ * approved P3 daemon since the flip; ruling R47 removed the pre-flip overlay), so the world runs what a flipped P3 world
+ * runs. The §3.14 world: PC1 192.168.10.10 and PC2 192.168.10.11 on SW1 (NF-C2960,
  * Vlan1 192.168.10.2) → R1 Gi0/0 192.168.10.1; the routers and the switch are configured through the grammar
  * (`Simulation.configure`) after boot, and every client line is typed on a PC's console. Each typed line is followed by
  * a run that dispatches the scheduler ONE EVENT AT A TIME (`stepped`), so the test sees in which dispatch each remote
@@ -43,7 +44,6 @@ import { MSG_REMOTE_DEPTH, REMOTE_SESSION_PREFIX } from '../src/cli/runtime.js';
 import { VTY_PROMPT_PASSWORD, VTY_SSH_VERSION, vtySshCrypt, vtySshKey } from '../src/protocols/vty.js';
 import { evaluateLab } from '../src/sim/lab-checks.js';
 import { createReplay } from '../src/sim/replay.js';
-import { P3_FLIP_FACTORIES } from './accept.p3.flip-factories.js';
 import { createStagedSimulation } from './staged.world.js';
 
 const R1 = '192.168.10.1';
@@ -82,7 +82,7 @@ function typed(sim: Simulation, device: string, lines: readonly string[]): void 
 
 /** The §3.14 world: PC1, PC2 and R1 on SW1, booted; R1 and SW1 then get `r1Lines` / `swLines` typed. */
 function world(r1Lines: readonly string[], swLines: readonly string[] = [], seed = 314): Simulation {
-  const sim = createStagedSimulation({ seed, stage: 'P3', factories: P3_FLIP_FACTORIES, pduRegistryLimit: 200_000 });
+  const sim = createStagedSimulation({ seed, stage: 'P3', pduRegistryLimit: 200_000 });
   sim.addDevice({ id: 'r1', type: 'router.nf2911', name: 'R1' });
   sim.addDevice({ id: 'sw1', type: 'switch.nfc2960', name: 'SW1' });
   sim.addDevice({ id: 'pc1', type: 'pc.nfpc', name: 'PC1', startupConfig: hostConfig('PC1', PC1) });
@@ -345,7 +345,7 @@ describe('accept.p3.vty [S13]: §3.14 SSH-only access with a vty ACL', () => {
   });
 
   it(`nested sessions stop at depth ${REMOTE_DEPTH_CAP}`, () => {
-    const sim = createStagedSimulation({ seed: 44, stage: 'P3', factories: P3_FLIP_FACTORIES });
+    const sim = createStagedSimulation({ seed: 44, stage: 'P3' });
     sim.addDevice({ id: 'sw1', type: 'switch.nfc2960', name: 'SW1' });
     sim.addDevice({ id: 'pc1', type: 'pc.nfpc', name: 'PC1', startupConfig: hostConfig('PC1', '192.168.10.100') });
     sim.addLink({ a: { device: 'pc1', port: 'GigabitEthernet0' }, b: { device: 'sw1', port: 'FastEthernet0/1' } });
@@ -421,7 +421,7 @@ describe('accept.p3.vty [S13]: on a managed switch (D22)', () => {
 
 describe('accept.p3.vty [S13]: replay-exact with remote sessions', () => {
   it('the journal replays to byte-identical trace and snapshot JSON, to the end and entry by entry', () => {
-    const sim = createStagedSimulation({ seed: 315, stage: 'P3', factories: P3_FLIP_FACTORIES, traceCapacity: 1_000_000 });
+    const sim = createStagedSimulation({ seed: 315, stage: 'P3', traceCapacity: 1_000_000 });
     const afterEntry: string[] = [];
     const snap = (): string => JSON.stringify(sim.snapshot());
     /** One journaled input: exactly one journal entry, the snapshot right after it recorded. */

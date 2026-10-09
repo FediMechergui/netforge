@@ -19,7 +19,10 @@
  *
  * P3 test-only data (rule 13), applied when the stage is 'P3' (every row is `since: 'P3'`, so no earlier stage derives
  * it). The W4 catalog flip (and the W6 flip for [S32]) makes it the real contract; `staged.world.p3-parity.test.ts`
- * (W4) asserts that this data equals the contract, and W8 reduces this file to a wrapper.
+ * (W4) asserts that this data equals the contract, and W8 reduces this file to a wrapper. Since the W4 flip the real
+ * registry holds every approved P3 daemon but [S32] `script-host`, so the default overlay at stage P3 builds the
+ * flipped catalog model for model (plus the test-only NF-DEVHOST), `profileConfig.P3` (the two [S24] lines, D2)
+ * included: a test that needs a P3 daemon ABSENT now removes it with `{ <name>: undefined }`.
  *   - `STAGED_PROCESS_ORDER`: the §2.1 final `PROCESS_ORDER` restricted to approved names (§8.5). The real
  *     `PROCESS_ORDER` is an order-preserving subsequence of it, so at stages up to P2 it orders exactly as the real one.
  *   - `P3_CAPABILITY_PROCESS_ROWS`: the §2.1 `CAPABILITY_PROCESSES` rows of P3, the approved items' rows included, and
@@ -39,14 +42,20 @@
  * ports, and exactly one daemon, the injector, which sends pre-built frames out of a port at a fixed spacing
  * (`injectFrames`). Without that factory nothing changes (no overlay the P2/P3 pins use registers it).
  *
- * With the default registry at stage P2 nothing is filtered and the catalog equals the real one, model for model
- * (`device.catalog.p2.test.ts`); at stage P2 `createStagedSimulation` is `createP2Simulation` (`staged.world.test.ts`).
+ * With the default registry at stage P2 nothing is filtered and the catalog equals the real model inputs defined at
+ * stage P2 (`defineModel(input, 'P2')`), model for model (`device.catalog.p2.test.ts`); at stage P2
+ * `createStagedSimulation` is `createP2Simulation` (`staged.world.test.ts`). It is NOT the shipped catalog: since the
+ * P3 W4 flip that one is derived at stage P3 and equals this helper at stage P3, apart from the test-only NF-DEVHOST
+ * (`staged.world.p3-parity.test.ts`). A test that must exercise the shipped models uses `createSimulation`.
  * The catalog is never validated: a filtered model is not the model its capabilities derive, which `validateCatalog`
  * would refuse by design.
  *
- * Limitation (until the W4 flip): a device that installs a module recomputes its daemon list with the REAL
- * `deriveProcesses` at `CATALOG_STAGE` and ranks names by the real `PROCESS_ORDER` (`device.ts` computeProcessOrder),
- * so a module added at run time in a P3 world adds no P3 daemon and ranks the model's P3 daemons after the others.
+ * Limitation (until the W4 flip, which lifted it): a device that installs a module recomputes its daemon list with
+ * the REAL `deriveProcesses` at `CATALOG_STAGE` and ranks names by the real `PROCESS_ORDER` (`device.ts`
+ * computeProcessOrder), so before the flip a module added at run time in a P3 world added no P3 daemon and ranked the
+ * model's P3 daemons after the others. Since the flip both are the P3 ones ([S32] `script-host` waits for W6), so
+ * the limitation is now the reverse one: in a world of this helper at stage P2 (or P1), a module that adds a
+ * capability at run time also brings that capability's P3 daemons (the W4b fix step).
  *
  * Nothing here is module-level mutable state: every call builds fresh, frozen models (rule 12). The P3 data are
  * plain literals; inputs are never mutated.

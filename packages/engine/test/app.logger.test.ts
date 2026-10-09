@@ -38,7 +38,18 @@ function startup(sections: readonly (readonly string[])[]): string {
   return out.join('\n');
 }
 
-/** R1 (NF-2911) with Gi0/0 and Gi0/1 up (Gi0/1 cabled to PC1), plus `lines`; booted (45 s) and settled at 100 s. */
+/**
+ * The two [S24] visible P3 defaults removed, as a learner removes them: ARCHITECTURE-P3 §9.2 W4 (the catalog flip) —
+ * since the flip a P3 world replays `service timestamps debug|log datetime msec` (profileConfig.P3, D2), so the router
+ * stores their negations first and the cases below keep exercising the renderer without a timestamps line (or with only
+ * the line a case adds), as they did on the pre-flip staged catalog.
+ */
+const WITHOUT_P3_TIMESTAMPS: readonly string[] = ['no service timestamps debug datetime msec', 'no service timestamps log datetime msec'];
+
+/**
+ * R1 (NF-2911) with Gi0/0 and Gi0/1 up (Gi0/1 cabled to PC1), without the two P3 timestamps lines, plus `lines`;
+ * booted (45 s) and settled at 100 s.
+ */
 function router(seed: number, lines: readonly string[] = []): Simulation {
   const sim = createStagedSimulation({ seed, stage: 'P3', factories: { logger: createLogger, ntp: createNtp } });
   sim.addDevice({
@@ -47,6 +58,7 @@ function router(seed: number, lines: readonly string[] = []): Simulation {
       ['hostname R1'],
       ['interface GigabitEthernet0/0', ' ip address 10.0.0.1 255.255.255.0', ' no shutdown'],
       ['interface GigabitEthernet0/1', ' ip address 10.0.1.1 255.255.255.0', ' no shutdown'],
+      ...WITHOUT_P3_TIMESTAMPS.map((l) => [l]),
       ...lines.map((l) => [l]),
     ]),
   });
@@ -215,7 +227,9 @@ describe('app.logger: the buffer on a real device (W1 emitLog)', () => {
   });
 
   it('a model without the logger factory gets nothing (silence), and the logger never answers a packet', () => {
-    const sim = createStagedSimulation({ seed: 4, stage: 'P3', factories: {} });
+    // ARCHITECTURE-P3 §9.2 W4 (the catalog flip registered the logger, so the overlay now removes it: staged.world's
+    // documented way to model a daemon without a factory)
+    const sim = createStagedSimulation({ seed: 4, stage: 'P3', factories: { logger: undefined } });
     sim.addDevice({ id: 'r1', type: 'router.nf2911', name: 'R1', startupConfig: startup([['hostname R1']]) });
     sim.runUntil(60 * SEC);
     expect(sim.device('r1')!.processes.has('logger')).toBe(false);

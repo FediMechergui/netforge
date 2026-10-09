@@ -2,11 +2,9 @@
  * test/accept.p3.eigrp.world.ts — the §3.12 world of the [C1] EIGRP acceptance rows (`accept.p3.eigrp`,
  * `accept.p3.eigrp-dual`; ARCHITECTURE-P3 §3.12, §10.1, §7 W4 qa). Not a test file. Owner: W4 qa (qa-eigrp-vty).
  *
- * The world is built on `staged.world` at stage P3 (rule 14: the catalog flip is a later step) with the registry the
- * flip writes: every approved P3 daemon's factory is laid over `PROCESS_FACTORIES` (`P3_FLIP_FACTORIES`,
- * `accept.p3.flip-factories.ts`), so the world
- * runs what a flipped P3 world runs (CDP in the P3 profile, the logger, the hidden vty listeners …), and these rows run
- * unchanged against the real catalog once the flip has landed.
+ * The world is built on `staged.world` at stage P3 with the registry the W4 catalog flip wrote (`PROCESS_FACTORIES`
+ * holds every approved P3 daemon since the flip; ruling R47 removed the pre-flip overlay, `P3_FLIP_FACTORIES`), so the
+ * world runs what a flipped P3 world runs (CDP in the P3 profile, the logger, the hidden vty listeners …).
  *
  * §3.12 (the routing map's §4.4, corrected): R1, R2, R3 (NF-2911) and R4 (NF-4331, whose third copper gigabit port
  * comes from an NF-NIM-2GE in slot 0/1), every router `router eigrp 100` / `network 10.0.0.0` (classful), K values
@@ -32,10 +30,7 @@ import type { Simulation } from '../src/contracts/simulation.js';
 import type { EigrpNeighborRow, EigrpTopologyRow, RouteRow } from '../src/contracts/tables.js';
 import { SEC, type SimTime } from '../src/contracts/time.js';
 import type { TraceEvent } from '../src/contracts/trace.js';
-import { P3_FLIP_FACTORIES } from './accept.p3.flip-factories.js';
 import { createStagedSimulation } from './staged.world.js';
-
-export { P3_FLIP_FACTORIES };
 
 export const R1 = 'r1';
 export const R2 = 'r2';
@@ -112,7 +107,7 @@ export function typed(sim: Simulation, device: string, lines: readonly string[])
 /** The §3.12 world of the file header, booted, configured through the grammar and cabled at `cabledAt` (not run). */
 export function eigrpAcceptWorld(opts: EigrpAcceptOptions = {}): EigrpAcceptWorld {
   const variant = opts.variant ?? 'fs';
-  const factories = opts.eigrp === undefined ? P3_FLIP_FACTORIES : { ...P3_FLIP_FACTORIES, eigrp: opts.eigrp };
+  const factories = opts.eigrp === undefined ? {} : { eigrp: opts.eigrp };
   const sim = createStagedSimulation({ seed: opts.seed ?? 312, stage: 'P3', factories, pduRegistryLimit: 200_000 });
   sim.addDevice({ id: R1, type: 'router.nf2911', name: 'R1' });
   sim.addDevice({ id: R2, type: 'router.nf2911', name: 'R2' });

@@ -147,7 +147,9 @@ describe('inspector tabs from gui + capabilities', () => {
     expect(inspectorTabLabel('wireless', byType('cell.nftower'))).toBe('Tower');
     expect(inspectorTabLabel('wireless', byType('modem.nfdsl'))).toBe('Modem');
     expect(inspectorTabLabel('ports', byType('pc.nfpc'))).toBe('Ports');
-    expect(panelsForTab(byType('laptop.nflaptop'), 'desktop')).toEqual(['desktop.ip-config', 'desktop.wifi', 'desktop.command-prompt', 'desktop.web-browser']);
+    // ARCHITECTURE-P3 §9.2 W4 (the catalog flip, by the rule of items 33–35): hosts gain the Traffic generator app
+    // (`desktop.traffic`, GUI_PANEL_SINCE P3) at the flip
+    expect(panelsForTab(byType('laptop.nflaptop'), 'desktop')).toEqual(['desktop.ip-config', 'desktop.wifi', 'desktop.command-prompt', 'desktop.web-browser', 'desktop.traffic']);
   });
 
   it('clamps a tab the device does not offer to overview', () => {
@@ -179,14 +181,31 @@ describe('table sections from ownership, not kind', () => {
     expect(sections('hub.nfhub4')).toEqual([]);
     // P1: L2 switches gain arp/ipv4 for the Vlan1 SVI. ARCHITECTURE-P2 §9.2 W4 item 19: since the W4 catalog flip a
     // managed switch owns the VLAN, port-security, trunk-negotiation, EtherChannel and spanning-tree tables.
-    expect(sections('switch.nfc2960')).toEqual(['cam', 'arp', 'rib', 'vlans', 'port-security', 'dtp', 'etherchannel', 'stp', 'stp-bridge']);
+    // ARCHITECTURE-P3 §9.2 W4 item 35: since the P3 catalog flip it also gains, in PROCESS_ORDER order of their daemons,
+    // dhcp-snooping and arp-inspection (vlan's stage-filtered tables), cdp-neighbours, lldp-neighbours, acl, sockets
+    // (the dormant transport, D22), the approved vty-logins, then ntp-peers, clock and restconf-log, all empty.
+    expect(sections('switch.nfc2960')).toEqual([
+      'cam', 'arp', 'rib', 'vlans', 'port-security', 'dhcp-snooping', 'arp-inspection', 'dtp', 'etherchannel', 'stp', 'stp-bridge',
+      'cdp-neighbours', 'lldp-neighbours', 'acl', 'sockets', 'vty-logins', 'ntp-peers', 'clock', 'restconf-log',
+    ]);
     // P1: hosts own the IPv6, socket and resolver tables; routers add the DHCP bindings. An AP has no transport daemon.
     // P2 (W4): routing devices add the NAT, standby-group and DHCPv6 tables (dhcpv6-client owns no table).
-    expect(sections('pc.nfpc')).toEqual(['arp', 'rib', 'rib6', 'nd', 'sockets', 'dns-cache']);
-    expect(sections('router.nf2911')).toEqual(['arp', 'rib', 'nat', 'rib6', 'nd', 'sockets', 'hsrp', 'dhcp-bindings', 'dhcpv6-bindings', 'dns-cache']);
-    expect(sections('mlswitch.nfc3650-24')).toEqual(['cam', 'arp', 'rib', 'vlans', 'port-security', 'dtp', 'etherchannel', 'stp', 'stp-bridge', 'nat', 'rib6', 'nd', 'sockets', 'hsrp', 'dhcp-bindings', 'dhcpv6-bindings', 'dns-cache']);
+    // P3 (the W4 flip, §9.2 item 35, the exact arrays `deriveTables` gives): hosts add the traffic generator's flows;
+    // routing devices the empty tables of their §2.1 routing rows at their daemons' PROCESS_ORDER positions.
+    expect(sections('pc.nfpc')).toEqual(['arp', 'rib', 'rib6', 'nd', 'sockets', 'dns-cache', 'flows']);
+    expect(sections('router.nf2911')).toEqual([
+      'arp', 'rib', 'ppp', 'cdp-neighbours', 'lldp-neighbours', 'nat', 'acl', 'tunnels', 'rib6', 'nd', 'sockets', 'vty-logins',
+      'ntp-peers', 'clock', 'hsrp', 'ospf-interfaces', 'ospf-neighbors', 'ospf-lsdb', 'eigrp-neighbors', 'eigrp-topology',
+      'ipsec-sa', 'dhcp-bindings', 'dhcpv6-bindings', 'dns-cache', 'restconf-log',
+    ]);
+    expect(sections('mlswitch.nfc3650-24')).toEqual([
+      'cam', 'arp', 'rib', 'ppp', 'vlans', 'port-security', 'dhcp-snooping', 'arp-inspection', 'dtp', 'etherchannel', 'stp',
+      'stp-bridge', 'cdp-neighbours', 'lldp-neighbours', 'nat', 'acl', 'tunnels', 'rib6', 'nd', 'sockets', 'vty-logins',
+      'ntp-peers', 'clock', 'hsrp', 'ospf-interfaces', 'ospf-neighbors', 'ospf-lsdb', 'eigrp-neighbors', 'eigrp-topology',
+      'ipsec-sa', 'dhcp-bindings', 'dhcpv6-bindings', 'dns-cache', 'restconf-log',
+    ]);
     expect(sections('ap.nfap-auto')).toEqual(['cam', 'arp', 'rib', 'dot11-assoc']);
-    expect(sections('laptop.nflaptop')).toEqual(['arp', 'rib', 'dot11-assoc', 'rib6', 'nd', 'sockets', 'dns-cache']);
+    expect(sections('laptop.nflaptop')).toEqual(['arp', 'rib', 'dot11-assoc', 'rib6', 'nd', 'sockets', 'dns-cache', 'flows']);
   });
 
   it('falls back to capabilities without a catalog entry and always shows tables that hold rows', () => {
