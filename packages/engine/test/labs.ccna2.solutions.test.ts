@@ -77,7 +77,7 @@ import {
   trunkPort,
   vlanSections,
 } from '../src/sim/scenarios/kit.js';
-import { CCNA1_LABS, SCENARIOS, TEMPLATES } from '../src/sim/scenarios.js';
+import { CCNA1_LABS, CCNA3_LABS, SCENARIOS, TEMPLATES } from '../src/sim/scenarios.js';
 
 /** Long enough for every model of a lab to boot (the router takes 45 s); `runToIdle` then waits out spanning tree. */
 const BOOT_NS = 90 * SEC;
@@ -190,10 +190,12 @@ describe('CCNA2 labs: the catalogue', () => {
   it('lists the templates, then the CCNA 1 labs, then the CCNA 2 labs in SCENARIOS, every name once', () => {
     const t = TEMPLATES.length;
     const c1 = CCNA1_LABS.length;
-    expect(SCENARIOS.length).toBe(t + c1 + CCNA2_LABS.length);
+    // P3 §9.2 W5 item 38: the CCNA 3 labs follow, pinned by reference to the arrays
+    expect(SCENARIOS.length).toBe(t + c1 + CCNA2_LABS.length + CCNA3_LABS.length);
     expect(SCENARIOS.slice(0, t)).toEqual(TEMPLATES);
     expect(SCENARIOS.slice(t, t + c1)).toEqual(CCNA1_LABS);
-    expect(SCENARIOS.slice(t + c1)).toEqual(CCNA2_LABS);
+    expect(SCENARIOS.slice(t + c1, t + c1 + CCNA2_LABS.length)).toEqual(CCNA2_LABS);
+    expect(SCENARIOS.slice(t + c1 + CCNA2_LABS.length)).toEqual(CCNA3_LABS);
     expect(new Set(SCENARIOS.map((s) => s.name)).size).toBe(SCENARIOS.length);
   });
 

@@ -2,7 +2,8 @@
  * The engine's two test projects, `fast` and `slow` (the header of `vitest.config.ts` gives the commands).
  *
  * `SLOW_TESTS` are name globs, so shards added after they were written are caught with no edit here: the replay-exact
- * shards (`accept.p2.replay-exact-templates`, `-ccna1`, `-ccna2`) and every digest shard (`accept.p3.p2-digests-templates`,
+ * shards of every stage (`accept.p2.replay-exact-templates`, `-ccna1`, `-ccna2`, and since W5 the CCNA 3 shard
+ * `accept.p3.replay-exact-ccna3`: the glob names any `accept.<stage>.replay-exact*`) and every digest shard (`accept.p3.p2-digests-templates`,
  * `-labs-a`, `-labs-b`, `-guards`, and any later `accept.<stage>.<profile>-digests*`); plus, since the P3 W4 catalog flip
  * (ruling R47), `accept.p3.silence` and `accept.p3.ospf-scale` by name. `fast` is every test file minus exactly those
  * globs, so the two projects never overlap and together never drop a file.
@@ -26,7 +27,7 @@ const ALL_TESTS = ['test/**/*.test.ts', 'src/**/*.test.ts'];
  */
 const SLOW_TESTS = [
   'test/accept.p2.loop-storm-bounded.test.ts',
-  'test/accept.p2.replay-exact*.test.ts',
+  'test/accept.*.replay-exact*.test.ts',
   'test/accept.*-digests*.test.ts',
   'test/accept.p3.silence.test.ts',
   'test/accept.p3.ospf-scale.test.ts',

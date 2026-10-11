@@ -776,6 +776,12 @@ export function createSimulation(opts: SimulationOptions): Simulation {
       if (d.hardware?.macSalt !== undefined) spec.macSalt = d.hardware.macSalt;
       if (d.ui !== undefined) spec.ui = d.ui;
       addDeviceTo(w, spec);
+      // [S32] (1.3) the host's `files:` store, written before boot (the store survives power-off; W5 integration,
+      // the auto report's gap: scripts reach a reload and a grader clone). A P1/P2 document never carries `files`.
+      if (d.files !== undefined && d.files.length > 0) {
+        const dev = w.devices.get(d.id);
+        dev?.applyActions(SIM_PROCESS_NAME, d.files.map((f) => ({ type: 'storage', op: 'write', fs: 'files', path: f.path, file: { content: f.content } }) as const), w.scheduler.now);
+      }
     }
     for (const l of topo.links) {
       const spec: AddLinkSpec = { id: l.id, a: l.a, b: l.b, media: l.media, lengthM: l.length_m ?? DEFAULT_LINK_LENGTH_M };
@@ -840,6 +846,14 @@ export function createSimulation(opts: SimulationOptions): Simulation {
       const salt = dev.spec.macSalt ?? 0;
       if (salt > 0) d.hardware = { macSalt: salt };
       if (dev.spec.ui !== undefined) d.ui = JSON.parse(JSON.stringify(dev.spec.ui)) as TopologyDeviceUi;
+      // [S32] (1.3) a non-empty `files:` store, in path order (an empty store writes nothing, so no P1/P2 byte moves)
+      const stored = dev.files?.('files') ?? [];
+      if (stored.length > 0) {
+        d.files = stored.flatMap((m) => {
+          const f = dev.readFile?.('files', m.path);
+          return f === undefined ? [] : [{ path: m.path, content: f.content }];
+        });
+      }
       devices.push(d);
     }
     const links: TopologyLink[] = [];
@@ -867,6 +881,9 @@ export function createSimulation(opts: SimulationOptions): Simulation {
     // (`schemaIdFor`: 1.2 for P2, 1.3 for P3), in the same step; a P1 world writes neither (P3 §9.2 item 16).
     if (w.profile !== 'P1') {
       topo.profile = w.profile;
+      topo.schema = schemaIdFor(topo);
+    } else if (devices.some((d) => d.files !== undefined)) {
+      // [S32] a P1 world loaded from a 1.3 document with files keeps them, in the schema that can express them
       topo.schema = schemaIdFor(topo);
     }
     return topo;

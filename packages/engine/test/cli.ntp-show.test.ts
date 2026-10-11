@@ -173,7 +173,7 @@ describe('show ntp status', () => {
       "  Time source: this device's own clock, served at stratum 8 (ntp master)",
     ]);
     const user = withClock(commandCtxFor(ROUTER, { mode: 'priv-exec' }), { source: 'user', authoritative: true, unixMs: 0, subMsNs: 0, tz: TZ });
-    expect(lines(run(user, HANDLERS.showNtpStatus))).toEqual(['Clock is not synchronised, stratum 16, no reference', '  Time source: set by hand (clock set); not synchronised']);
+    expect(lines(run(user, HANDLERS.showNtpStatus))).toEqual(['Clock is not synchronised, stratum 16, no reference', "  Time source: this device's own clock (set by hand, or kept after its time server was removed); not synchronised"]);
     // the fixture's default clock is the unset view of P3_CTX
     expect(lines(run(commandCtxFor(ROUTER, { mode: 'priv-exec' }), HANDLERS.showNtpStatus))).toEqual([
       'Clock is not synchronised, stratum 16, no reference',

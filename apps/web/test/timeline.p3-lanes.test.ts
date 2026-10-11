@@ -197,7 +197,7 @@ describe('the sentences of the mgmt and wan rows', () => {
     expect(words(write(1, 'ntp-peers', '10.0.0.10', { ...peer, selected: 'sys-peer' }))).toBe('time server 10.0.0.10 chosen as the time source, stratum 1');
     expect(words(write(1, 'ntp-peers', '10.0.0.10', { ...peer, stratum: 16, selected: 'reject' }))).toBe('time server 10.0.0.10 rejected, stratum 16');
     expect(words(write(1, 'ntp-peers', '10.0.0.10', { ...peer, selected: 'unreached' }))).toBe('time server 10.0.0.10 not answering, stratum 1');
-    expect(words(write(1, 'clock', 'clock', { source: 'user', offsetMs: 0, offsetSubMsNs: 0, since: 1 }))).toBe('clock set by hand');
+    expect(words(write(1, 'clock', 'clock', { source: 'user', offsetMs: 0, offsetSubMsNs: 0, since: 1 }))).toBe('clock on its own time (set by hand, or its time server removed)');
     expect(words(write(1, 'clock', 'clock', { source: 'master', stratum: 8, offsetMs: 0, offsetSubMsNs: 0, since: 1 }))).toBe('clock serving its own time (ntp master), stratum 8');
     expect(words(expire(1, 'clock', 'clock', { source: 'ntp' }, 'cleared'))).toBe('clock entry removed (cleared)');
   });

@@ -25,7 +25,9 @@
  *   - Crossing initiations: an IKE_SA_INIT request that arrives while this end's own request is outstanding is
  *     answered only when the peer's tunnel source address is the lower one (u32); this end then abandons its own
  *     exchange and becomes the responder. Otherwise the request is discarded with a note. The outcome is the same
- *     whichever request arrives first.
+ *     whichever request arrives first. When the discarding end's own IKE_SA_INIT has already been retransmitted (the
+ *     peer was not configured when it was first sent), it sends that request again at once, so the peer, now
+ *     initiating too, answers within one round trip rather than at the next retransmission or retry.
  *   - Retransmission: an unanswered request is sent again after 1, 2 and 4 s (`IKE_REXMT_DELAYS_NS`: three
  *     retransmissions); if the third is unanswered too, the exchange fails with `ike-no-response` after a final wait of
  *     `IKE_NO_RESPONSE_WAIT_NS` (8 s, the next doubling). Never periodic; a failed exchange is retried by the
@@ -337,6 +339,13 @@ function receiveRequest(t: IkeTunnel, msg: IkeMessage, env: IkeEnv): IkeStep {
       case 'init-sent':
       case 'auth-sent':
         if (ikeKeepsOwnExchange(env.local, env.peer)) {
+          // An IKE_SA_INIT of ours already sent again (retransmits > 0) went unanswered: the peer was not ready then.
+          // Send it once more at once, so the peer (now itself in init-sent, the higher address) abandons its own
+          // exchange and answers now instead of at our next retransmission or retry (W5 fix #13). A true simultaneous
+          // start has retransmits 0, so its messages are unchanged.
+          if (t.state === 'init-sent' && t.retransmits > 0 && t.outstanding !== undefined) {
+            return { tunnel: t, send: t.outstanding, note: `crossing IKE_SA_INIT from ${env.peer} discarded: the lower address ${env.local} keeps its own exchange and sends its request again now` };
+          }
           return { tunnel: t, note: `crossing IKE_SA_INIT from ${env.peer} discarded: the lower address ${env.local} keeps its own exchange` };
         }
         return respondToInit(t, msg, env, `crossing request from the lower address ${env.peer}`);

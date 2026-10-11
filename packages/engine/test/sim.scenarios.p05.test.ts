@@ -5,7 +5,8 @@
  */
 import { describe, expect, it } from 'vitest';
 import { SCENARIOS, TEMPLATES, HOME_WIFI_LAPTOP_UNITS, HOME_WIFI_PASSPHRASE, HOME_WIFI_SSID, RADIO_BRIDGE_DISTANCE_M, RADIO_BRIDGE_PEER_KEY, SERIAL_PAIR_CLOCK_RATE_BPS, pcRouterPc, threeRouters, twoPcsAndSwitch } from '../src/sim/scenarios.js';
-import { createCatalog } from '../src/device/catalog/index.js';
+import { ALL_MODULES, createCatalog } from '../src/device/catalog/index.js';
+import { modulePortSpecs } from '../src/device/catalog/define.js';
 import { PROCESS_FACTORIES } from '../src/protocols/index.js';
 import { prepareTopologyLoad, validateTopologyAgainstCatalog } from '../src/io/schema.js';
 import { walkConfigText } from '../src/cli/config-text.js';
@@ -32,11 +33,24 @@ function dev(t: Topology, id: string): TopologyDevice {
   return d;
 }
 
+/**
+ * The spec of a cabled port: a built-in port of the model, or (ARCHITECTURE-P3 §9.2 item 40d) a port of a module the
+ * device has installed (`TopologyDevice.modules`, e.g. the CCNA 3 EIGRP labs' NF-4331 with an NF-NIM-2GE in slot
+ * 0/1), resolved as the device itself resolves it (`modulePortSpecs`).
+ */
 function portSpec(t: Topology, ref: { device: string; port: string }): PortSpec {
-  const model = catalog.get(dev(t, ref.device).type);
-  const spec = model?.ports.find((p) => p.name === ref.port);
-  if (spec === undefined) throw new Error(`no port ${ref.device}/${ref.port}`);
-  return spec;
+  const d = dev(t, ref.device);
+  const model = catalog.get(d.type);
+  const builtIn = model?.ports.find((p) => p.name === ref.port);
+  if (builtIn !== undefined) return builtIn;
+  for (const install of d.modules ?? []) {
+    const slot = (model?.slots ?? []).find((s) => s.id === install.slot);
+    const module = ALL_MODULES.find((m) => m.type === install.module);
+    if (model === undefined || slot === undefined || module === undefined) continue;
+    const spec = modulePortSpecs(model, slot, module).find((p) => p.name === ref.port);
+    if (spec !== undefined) return spec;
+  }
+  throw new Error(`no port ${ref.device}/${ref.port}`);
 }
 
 /** Interface-section child lines of a device config (`interface <port>` → its indented lines). */

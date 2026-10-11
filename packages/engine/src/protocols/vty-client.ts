@@ -152,6 +152,12 @@ interface ClientSession {
   readonly user: string;
   /** Credentials the request supplied: every login prompt is answered with them instead of being relayed. */
   readonly given: { readonly user?: string; readonly password?: string };
+  /**
+   * The login prompts already answered with a supplied credential. Each kind is answered once: the same prompt again
+   * means the far end did not take the login, so the client gives up rather than answering it forever (W5 report: an
+   * empty user name re-prompted without counting an attempt looped a grader clone for minutes).
+   */
+  readonly answered: { user: boolean; password: boolean };
   password?: string;
   socket?: SocketId;
   phase: 'password' | 'connecting' | 'version' | 'auth' | 'retry' | 'open' | 'closing';
@@ -281,8 +287,13 @@ export function createVtyClient(): Process {
   function onPrompt(ctx: ProcessCtx, c: ClientSession, prompt: string, masked: boolean): Action[] {
     const name = vtyClientPromptName(prompt);
     if (c.remote === undefined && name === undefined) {
-      if (masked && c.given.password !== undefined) return typeLine(c, c.given.password);
-      if (!masked && c.given.user !== undefined) return typeLine(c, c.given.user);
+      const kind = masked ? 'password' : 'user';
+      const value = masked ? c.given.password : c.given.user;
+      if (value !== undefined) {
+        if (c.answered[kind]) return giveUp(ctx, c, kind);
+        c.answered[kind] = true;
+        return typeLine(c, value);
+      }
     }
     let remote: string | undefined;
     if (c.remote === undefined && name !== undefined) {
@@ -292,6 +303,16 @@ export function createVtyClient(): Process {
       debug(ctx, c, `${c.session}: logged in to ${name} (${c.target})`, { session: c.session, remote });
     }
     return [relayPrompt(c, prompt, masked, remote)];
+  }
+
+  /** A supplied credential was asked for again: the login did not go through; close the connection as failed. */
+  function giveUp(ctx: ProcessCtx, c: ClientSession, kind: 'user' | 'password'): Action[] {
+    const what = kind === 'user' ? 'user name' : 'password';
+    outcome(ctx, c, 'failed', `the far end asked for the ${what} again`);
+    debug(ctx, c, `${c.session}: ${c.target} asked for the ${what} again; the supplied login was not accepted`, { session: c.session });
+    c.phase = 'closing';
+    c.queue.length = 0;
+    return [print(c, VTY_CLIENT_DENIED), ...done(c), ...(c.socket !== undefined ? [toTcp({ kind: 'tcp.close', socket: c.socket })] : [])];
   }
 
   /** Terminal stream bytes from the far end: lines are printed, a prompt is relayed. */
@@ -369,7 +390,7 @@ export function createVtyClient(): Process {
     if (req.user !== undefined) given.user = req.user;
     if (req.password !== undefined) given.password = req.password;
     const c: ClientSession = {
-      session: req.session, proto: req.proto, target: req.target, port, user: req.user ?? '', given,
+      session: req.session, proto: req.proto, target: req.target, port, user: req.user ?? '', given, answered: { user: false, password: false },
       phase: 'connecting', rx: NO_BYTES, reader: createVtyTermReader(), txKey: 0, rxKey: 0, queue: [], sending: false,
       held: false, done: false, result,
     };

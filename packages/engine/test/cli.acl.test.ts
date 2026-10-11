@@ -15,10 +15,12 @@ import { createTable } from '../src/core/table.js';
 import { GRAMMAR, HANDLERS } from '../src/cli/grammar/index.js';
 import { HANDLER_REGISTRY } from '../src/cli/handlers/index.js';
 import {
+  MSG_ACL_ENTRY_EXISTS,
   MSG_ACL_NO_SEQ,
   MSG_ACL_NOT_CONFIGURED,
   MSG_ACL_OTHER_TYPE,
   MSG_ACL_SEQ_ALONE,
+  MSG_ACL_SEQ_REMARK,
   MSG_ACL_SEQ_TAKEN,
   MSG_ACL_TYPE_MISMATCH,
   MSG_ACL_UNKNOWN,
@@ -226,6 +228,28 @@ describe('list sections: sequence editing', () => {
     // the no form of a whole entry removes it too
     expect(typed(inList, 'config-ext-nacl', 'no permit tcp any any eq 80')).toEqual({});
     expect(readAcls(r.running).get('NO-WEB')?.entries).toEqual([]);
+  });
+
+  it('refuses a number a remark holds and an entry the list already holds, storing nothing (W5 fix #23, lab 17 report)', () => {
+    const { r, inList } = named();
+    expect(run(inList, HANDLERS.naclRemark, { text: 'the web policy' })).toEqual({});
+    typed(inList, 'config-ext-nacl', 'deny tcp host 192.168.10.12 host 192.168.20.100 eq www');
+    typed(inList, 'config-ext-nacl', 'permit ip any any');
+    const before = r.running.render();
+    // the remark took 10, the entries 20 and 30
+    expect(readAcls(r.running).get('NO-WEB')?.entries.map((e) => e.seq)).toEqual([20, 30]);
+    expect(typed(inList, 'config-ext-nacl', '10 permit tcp any any eq www')).toEqual({ error: MSG_ACL_SEQ_REMARK('10') });
+    // the same entry again under another number
+    expect(typed(inList, 'config-ext-nacl', '5 deny tcp host 192.168.10.12 host 192.168.20.100 eq www')).toEqual({ error: MSG_ACL_ENTRY_EXISTS(20) });
+    expect(r.running.render()).toBe(before);
+    // after `no 10` the number is free again
+    expect(typed(inList, 'config-ext-nacl', 'no 10')).toEqual({});
+    expect(typed(inList, 'config-ext-nacl', '10 permit tcp any any eq www')).toEqual({});
+    expect(readAcls(r.running).get('NO-WEB')?.entries.map((e) => `${e.seq} ${e.text}`)).toEqual([
+      '10 permit tcp any any eq www',
+      '20 deny tcp host 192.168.10.12 host 192.168.20.100 eq www',
+      '30 permit ip any any',
+    ]);
   });
 
   it('a standard section takes numbered entries and log; a standard form in an extended section is refused', () => {

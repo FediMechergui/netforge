@@ -383,4 +383,12 @@ export interface DeviceRuntime {
    */
   files?(fs: FileSystemId): readonly StoredFileMeta[];
   readFile?(fs: FileSystemId, path: string): StoredFile | undefined;
+  /**
+   * @since P3 [S25] (ruling R47; W5 integration, a minimal additive member, optional by meaning like `files?`) The CLI
+   * runtime reports that `session` entered (`open`) or left a configuration mode (`end`, `exit` from global
+   * configuration, the end of a headless `configure` run, or the session closing in it), so a P3 world logs a typed
+   * configuration change once, when the session leaves (device/device.ts). A device (or a test fake) without it
+   * changes nothing.
+   */
+  configSession?(session: SessionId, open: boolean, now: SimTime): void;
 }

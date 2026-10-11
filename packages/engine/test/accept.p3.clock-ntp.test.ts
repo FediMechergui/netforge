@@ -240,9 +240,9 @@ describe('§3.7 step 1: the unset clock; clock set', () => {
     expect(writes[0]!.row).toEqual({ key: 'clock', updatedAt: t, source: 'user', ...split(offset), since: t });
     expect(sim.cli.exec(s, 'show clock').output).toBe('10:30:00.000 UTC Mon Jan 6 2025');
     sim.runFor(2 * SEC + 250_000_000);
-    expect(sim.cli.exec(s, 'show clock detail').output).toBe('10:30:02.250 UTC Mon Jan 6 2025\nTime source: set by hand (clock set).');
+    expect(sim.cli.exec(s, 'show clock detail').output).toBe("10:30:02.250 UTC Mon Jan 6 2025\nTime source: this device's own clock, not synchronised (set by hand, or kept after its time server was removed).");
     expect(sim.cli.exec(s, 'show ntp status').output).toBe(
-      `Clock is not synchronised, stratum 16, no reference\n  Time source: set by hand (clock set); not synchronised\n  Last set 00:00:02 ago; it reads ${offsetText(split(offset).offsetMs, split(offset).offsetSubMsNs)} ms from true time\n  Requests answered as a time server: 0`,
+      `Clock is not synchronised, stratum 16, no reference\n  Time source: this device's own clock (set by hand, or kept after its time server was removed); not synchronised\n  Last set 00:00:02 ago; it reads ${offsetText(split(offset).offsetMs, split(offset).offsetSubMsNs)} ms from true time\n  Requests answered as a time server: 0`,
     );
     expect(fact(sim, { device: 'R1', fact: 'clock.source', equals: 'user' })).toEqual({ pass: true });
     expect(fact(sim, { device: 'R1', fact: 'clock.offsetMs', equals: split(offset).offsetMs })).toEqual({ pass: true });

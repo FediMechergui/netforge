@@ -70,7 +70,7 @@ describe('the device clock, extrapolated from the snapshot', () => {
 
   it('says where the time comes from, with the stratum', () => {
     expect(clockSourceText(UNSET)).toBe('not set: running from the boot default (shown with *)');
-    expect(clockSourceText({ source: 'user' })).toBe('set by hand (clock set)');
+    expect(clockSourceText({ source: 'user' })).toBe('own clock, not synchronised (set by hand, or kept after its time server was removed)');
     expect(clockSourceText(SYNCED)).toBe('synchronised by NTP, stratum 2, from 10.0.0.10');
     expect(clockSourceText({ source: 'master', stratum: 1 })).toBe('serves its own clock (ntp master), stratum 1');
     expect(clockSourceText({ source: 'host' })).toBe("the computer's own clock");

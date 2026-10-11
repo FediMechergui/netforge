@@ -1025,7 +1025,11 @@ crypto (approved, §8.5 P10).**
   headers and original compact payload encodings; IKE SPIs, nonces, KE values and ESP SPIs are FNV-derived (no
   randomness). Both ends initiate when their underlay becomes ready (`ike-kick`, 0 ns); when the two initiations
   cross, the exchange started by the lower tunnel source address continues and the other end abandons its own and
-  answers (listed deviation: RFC 7296 lets both complete and deletes one). An unanswered request is retransmitted after
+  answers (listed deviation: RFC 7296 lets both complete and deletes one). When the lower end has already retransmitted
+  its IKE_SA_INIT (its peer was not ready, so the crossing request is the peer's first), it still discards the peer's
+  request but sends its own again at once, outside the schedule below, and the higher end answers it (W5 fix #13,
+  amended by the W5 integration step; a true simultaneous start has no retransmission, so §3.13's sequence is
+  unchanged). An unanswered request is retransmitted after
   1, 2 and 4 s (non-periodic), then the SA fails with `ike-no-response`; a failed SA retries on a periodic 10 s timer
   (rule 19), so a wrong key never holds `runToIdle`. The responder matches the initiator's address against its
   keyring peers (no match → `NO_PROPOSAL_CHOSEN`, reason `ike-no-proposal`); a wrong key fails IKE_AUTH with
@@ -1705,6 +1709,9 @@ map), [S33] `snmp-traps`.
 //   [S24] emitLog(severity, facility, message, now, mnemonic?): void    (the one log path, D20)
 //   [S20] egressPolicy(port: PortId): EgressSchedulerSpec | undefined   (compiled from the port's output policy;
 //         read by the link model through LinkModelDeps.egressPolicy; [S21] adds fair-queue, police and shape to it)
+//   [S25] configSession?(session: SessionId, open: boolean, now: SimTime): void   (OBM; R53, W5 integration: the CLI
+//         runtime reports a session entering or leaving a configuration mode, so a P3 world logs a typed change once,
+//         when the session leaves it — R47)
 // DeviceRuntimeDeps: unchanged. The runtime schedules deviceConfigure (and [S13] remoteCli) through its existing
 //   `scheduler`; the Simulation's dispatch of that event is the one caller of cliCore.configure (D21) and of the
 //   CliRuntime remote-session methods (D14).
@@ -1881,7 +1888,7 @@ export interface LabPacketProbe { proto: 'ip' | 'icmp' | 'tcp' | 'udp'; src: str
 | REST change | `config`/`vlan` (the effect) plus `table restconf-log {whereOps: {path: {op: 'contains', value: 'vlan-list=30'}}, where: {method: 'PUT'}}` |
 | Reading JSON (lab 38; lesson 37 has no lab) | `table restconf-log {where: {method: 'GET'}, whereOps: {path: {op: 'contains', value: 'ietf-interfaces'}}}` plus the effect of the value read (`vlan`, `config`) |
 | A router-id fault (troubleshooting) | the live `fact ospf.routerId`; never a clone check alone, because the clone boots from the export and applies a configured router id the live router has not applied yet (no `clear ip ospf process`) |
-| [S13] Real logins, vty ACL | live: `table vty-logins {where: {proto: 'ssh', result: 'success'}}` (the learner's own login) and `{result: 'refused'}` from the denied PC; `acl {list, applied: [{vty: true, dir: 'in'}], entry: 'implicit', minMatches: 1}`; clone: `service {from, to, service: 'ssh', expect: 'success'}` and `{service: 'telnet', expect: 'refused'}` |
+| [S13] Real logins, vty ACL | live: `table vty-logins {where: {proto: 'ssh', result: 'success'}}` (the learner's own login) and `{result: 'refused'}` from the denied PC; `acl {list, applied: [{vty: true, dir: 'in'}]}` and the vty rows of the list read by action, not by sequence number (W5 integration, review of lab 15: a remark takes a number and an explicit `deny any` counts the refusal instead of the implicit deny): `table acl {where: {list, action: 'deny', lastIface: 'vty'}, whereOps: {matches: {op: 'ge', value: 1}}, exists: true}` (lab 15 also the `action: 'permit'` row for the admitted login); clone: `service {from, to, service: 'ssh', expect: 'success'}` and `{service: 'telnet', expect: 'refused'}` |
 | [S18] GRE | `fact tunnel.up {subject: 'Tunnel0', equals: true}`; `connectivity` site to site; `path {via: ['R1', 'R2']}` through the tunnel |
 | [S19] PPP and CHAP | `neighbor {protocol: 'ppp', state: 'opened'}`; `fact ppp.auth {subject: 'Se0/0/0', equals: 'chap'}`; `fact ppp.ipcp {equals: 'opened'}` |
 | [S20]/[S21] LLQ and policing | `config` lines and `fact qos.outputPolicy`/`qos.admitted`; `traffic {flows: [voice, bulk], expect: [{flow: 'f1', maxLossPct: 0, maxDelayMs: 100}]}` (clone) |
@@ -2055,7 +2062,7 @@ goldens. The source tags each `@since P3 (optional by meaning)`; the W8 extensio
 | tables.ts | `RouteRow.routeType` |
 | trace.ts | drop `rule`, log `mnemonic`, configChange `origin` |
 | snapshot.ts | `SimSnapshot.profile` ('P3' value), `DeviceSnapshot.clock`, `PortSnapshot.qos`, `PortSnapshot.txBacklog`, [S32] `DeviceSnapshot.storage` |
-| device.ts | the `origin` parameter of `DeviceRuntime.applyConfigLine` |
+| device.ts | the `origin` parameter of `DeviceRuntime.applyConfigLine`, [S25] `DeviceRuntime.configSession` (R53, W5 integration) |
 | StateViews | the tcp and udp `probes` member |
 | topology.ts | `Topology.profile` ('P3' value), [S32] `TopologyDevice.files` |
 | cli.ts / config.ts | `ConfigNode.seq`, `ConfigLineRule.sequenced`, `ConfigureOptions.origin`, [S25] `CliSessionView.monitor`, [S13] `CliSessionView.remote`, [S13] `FacadeCounters.remote` |
@@ -2920,10 +2927,12 @@ map's §4.4, with D14's event path and login table).
    transport (D22); with only `line vty 0 4` / `login local` (P1 lines) a telnet to SW1 draws "protocol unreachable",
    as in P2 (D14).
 8. **Grading (labs 15 and 19)**, live: `table vty-logins {device: 'R1', where: {proto: 'ssh', result: 'success'}}` and
-   `{result: 'refused'}`, `acl {device: 'R1', list: '10', applied: [{vty: true, dir: 'in'}], entry: 'implicit',
-   minMatches: 1}`; in the clone: `service {from: 'PC1', to: 'R1', service: 'ssh', user: 'admin', password: <lab
-   value>, expect: 'success'}`, `{from: 'PC2', …, expect: 'refused'}` and `{from: 'PC1', service: 'telnet', expect:
-   'refused'}`.
+   `{result: 'refused'}`, `acl {device: 'R1', list: '10', applied: [{vty: true, dir: 'in'}]}` and the list's vty rows
+   read by action (W5 integration; the numbered `entry: 'implicit'` read failed a course-style list with a remark or an
+   explicit `deny any`): `table acl {device: 'R1', where: {list: '10', action: 'deny', lastIface: 'vty'}, whereOps:
+   {matches: {op: 'ge', value: 1}}, exists: true}`, and in lab 15 the same row with `action: 'permit'` for PC1's login;
+   in the clone: `service {from: 'PC1', to: 'R1', service: 'ssh', user: 'admin', password: <lab value>, expect:
+   'success'}`, `{from: 'PC2', …, expect: 'refused'}` and `{from: 'PC1', service: 'telnet', expect: 'refused'}`.
 
 ---
 
@@ -4951,6 +4960,129 @@ assertions, stage made explicit" alone cannot hold):
     §10.1), assertions as the P2 shards (it covers the approved labs 10, 24, 25 and 33 and the approved tasks of the
     MUST labs, remote sessions included).
 
+The W5 integration step recorded these further migrations (`40b` is W6's; numbering resumes at `40c`):
+
+40c. (W5 sim, the approved clone kinds wired in `registry.ts`) `sim.lab-checks.registry.test.ts`: the case "the kinds a
+    later item brings fail with their W0 detail" (`:170-184` at 2fba082) becomes "the approved clone kinds run their
+    W5 checkers; the W0 stub texts stay on record". The same three assertions on `pcRouterPc`, old expected
+    `['Remote login checks are not available in this build.', 'Path checks are not available in this build.',
+    'Traffic flow checks are not available in this build.']` (also compared to `Object.values(UNAVAILABLE_KIND_DETAILS)`),
+    new expected exactly `["PC1's SSH login to R1 (10.0.0.254) was refused with a reset before any login: R1 does not
+    accept SSH there; this task expects it to succeed.", undefined, 'A traffic check needs at least one flow.']`, and
+    `Object.values(UNAVAILABLE_KIND_DETAILS)` stays pinned to the three W0 texts. The envelope case (`:253-270`): the
+    `service` row's old `'Remote login checks are not available in this build. Come back after the ACL lesson.'`
+    becomes the service checker's exact detail above followed by `' Come back after the ACL lesson.'`; the follow-up row
+    is unchanged.
+40d. (Item 38 forces it: labs 10 and 33 cable a module port, §3.12's NF-4331 with an NF-NIM-2GE in slot 0/1)
+    `sim.scenarios.p05.test.ts:35-40` `portSpec`: a port not among the model's built-in ports is resolved among the
+    ports of the device's installed modules (`TopologyDevice.modules`, through `modulePortSpecs(model, slot, module)`
+    with the module from `ALL_MODULES`, as the device resolves them). The `checkCable` assertion is unchanged; before,
+    `ccna3-eigrp-feasible-successor` and `ccna3-troubleshoot-eigrp` threw `no port r4/GigabitEthernet0/1/0` and `no
+    port r1/GigabitEthernet0/1/0`.
+40e. (Item 39 forces it) `apps/web/test/filemenu.groups.test.ts`, the second case ("put any other category after them
+    alphabetically…", `:39-59` at 5263f16): old expected `[template, ccna1-lab, ccna2-lab, ['alpha-extra', 'Alpha
+    extra', ['x1']], ['ccna3-lab', 'Labs: CCNA 3', ['c3a']], zeta]`; new expected `[template, ccna1-lab, ccna2-lab,
+    ['ccna3-lab', 'Labs: CCNA 3', ['c3a']], ['alpha-extra', 'Alpha extra', ['x1']], ['extra-lab', 'Labs: Extra course',
+    ['e1']], zeta]`, with the added input `meta('e1', 'extra-lab', 'Extra course')` keeping a course-lab category
+    without a fixed place covered (sorted among the others, labelled by its course). Same `toEqual` strength.
+40f. (W5 integration, review finding #24: the clock source `'user'` also means a clock kept after its NTP source was
+    removed, ntp.ts `loseSource`, so "set by hand" was false there) The `'user'` wording, P3 worlds only: `show clock
+    detail` (`cli/handlers/time.ts` `clockSourceText`) old `'Time source: set by hand (clock set).'`, new `"Time
+    source: this device's own clock, not synchronised (set by hand, or kept after its time server was removed)."`; `show
+    ntp status` (`sourceWords`) old `'set by hand (clock set); not synchronised'`, new `"this device's own clock (set by
+    hand, or kept after its time server was removed); not synchronised"`; the web inspector (`DeviceInspector.tsx`
+    `clockSourceText`) old `'set by hand (clock set)'`, new `'own clock, not synchronised (set by hand, or kept after
+    its time server was removed)'`; the timeline's clock words (`timeline-client.ts`) old `'clock set by hand'`, new
+    `'clock on its own time (set by hand, or its time server removed)'`. Pins migrated to the new exact texts:
+    `cli.time.test.ts:176`, `cli.ntp-show.test.ts:176`, `accept.p3.clock-ntp.test.ts:243-245`,
+    `apps/web/test/inspector.device-clock.test.ts:73`, `apps/web/test/timeline.p3-lanes.test.ts:200`. The ClockSource
+    comment in `contracts/clock.ts` states the second meaning (comment only, no member changed).
+
+**W5 integration rulings (2026-10-11; binding on W6)**
+
+- **R53. The [S25] configured-log seam is a contract member.** R47's "configured" log is told when a CLI session
+  enters or leaves a configuration mode through the reviewed additive member `DeviceRuntime.configSession?(session:
+  SessionId, open: boolean, now: SimTime): void` (`contracts/device.ts`, `@since P3`, optional by meaning like R23's
+  `files?`/`readFile?`: a device or a test fake without it logs nothing new). `device/device.ts` implements it with
+  `session: SessionId`; `cli/runtime.ts` calls `deps.device(s.device)?.configSession?.(s.id, inConfig, deps.now())`,
+  and the structural `ConfigSessionSink` cast is gone. No behaviour or byte changes (`device.configured-log`, the
+  digests and the silence tests are unchanged). §2.9 and §2.15 list it.
+- **R54. Edits outside the W5 builders' own files, accepted** (each with its regression test; no P1/P2 digest moves):
+  - `cli/handlers/time.ts`: `clock timezone <name> <h> 0` (or `00`) stores no zero minutes field (fix #19; an added
+    case in `cli.time.test.ts`), and the `'user'` clock-source wording of 40f;
+  - `cli/handlers/logging.ts`, `cli/grammar/logging.ts`: the bare positive `service timestamps <kind>` stores `…
+    uptime`, so `?` and Enter agree (fix #21; the spec is hidden and P3-only);
+  - `cli/handlers/acl.ts`: a sequence number a remark holds is refused (`MSG_ACL_SEQ_REMARK`, fix #23), and so is an
+    entry the list already holds under another number (`MSG_ACL_ENTRY_EXISTS`, the lab 17 report); added cases in
+    `cli.acl.test.ts`;
+  - `protocols/ospf.ts`: removing the running process's own `router ospf` section stops it in the configuration step,
+    so `no router ospf 1` / `router ospf 1` in one instant starts with the configured router ID (`ospf.process-restart`);
+    and the self-war copy cap `OSPF_SELF_WAR_MAX_COPIES` (the ospf builder's report: a router-ID conflict on a chain of
+    point-to-point links kept `runToIdle` from returning, against rule 19 and §4.2; `ospf.self-war-bounded`);
+  - `protocols/vty.ts` `vtyLineRanges` (fix #11), read by the vty server, `show ip ssh` (`cli/handlers/ssh.ts`), the
+    grader's vty facts (`sim/lab-checks/hardening.ts`) and, applied by the integration step at the hardening fixer's
+    request, `protocols/acl.ts` `readVtyAccessClasses` (a list a later wider section rebinds on all its lines is no
+    longer reported as bound; one section or non-overlapping sections read as before; `vty.line-ranges`);
+  - `protocols/vty-client.ts`: a supplied credential answers each login prompt once and the same prompt again fails the
+    login (the l2 report: a `service` check with no user against `login local` looped for minutes);
+  - `protocols/ike/exchange.ts`: the lower end's immediate resend after a retransmission (fix #13; D27 amended);
+  - `protocols/cdp.ts`, `device/device.ts`, `cli/runtime.ts`: R47's W5 items (the native-subinterface address, the
+    configured log at leaving configuration mode, through R53);
+  - `sim/simulation.ts`: a 1.3 document's host `files:` are written into the store before boot and exported again
+    (non-empty stores only), so a script survives a reload and reaches a grader clone (`sim.host-files-roundtrip`);
+  - `sim/lab-checks/traffic.ts`: every failing exit once a flow has started stops the flows and drains the clone with a
+    fresh `LAB_TRAFFIC_MAX_EVENTS` budget — fix #25, completed by the integration step for the event-limit exits and
+    the throw path, which drained with the exhausted remainder or not at all; `checkTraffic` gains an optional
+    `maxEvents` (default `LAB_TRAFFIC_MAX_EVENTS`; the registry never passes it) so a test reaches the limit cheaply;
+  - `io/lab-schema.ts`: the follow-up union of `connectivity.then` holds only the static kinds (fix #26);
+  - `vitest.workspace.ts`: the slow glob `test/accept.*.replay-exact*.test.ts` takes the CCNA 3 shard (fix #27);
+  - `apps/web/src/inspector/TablesView.tsx`: R52.
+  - §2.10's [S13] row and §3.14 step 8 now prescribe the vty rows of the `acl` table read by action, not
+    `entry: 'implicit'` (labs 15 and 19 grade that way: a course-style list with a remark or an explicit `deny any`
+    failed the numbered read).
+- **R55. Open, for the architect (nothing built for them in W5):**
+  - `protocols/ike/config.ts` `ikeKeyFor` accepts a profile with no `match identity remote` line or no pre-share
+    authentication lines (D27 does not require them; lab 25 grades them as configuration, fix #12);
+  - lab 27's `voice-first` cannot see an extra match line under `VOICE` that leaves the priority class empty once the
+    policer exists; grading it needs a contract change (a `traffic.after?: LabFault[]` member, or a `config` member
+    that counts matching lines);
+  - the bare `show controllers` and the slot form `show controllers serial 0/0/0` are not accepted (recorded in
+    `cli/grammar/serial.ts`; lab 22's hint names the accepted form);
+  - `cli/runtime.ts` `lineAuthOf` (the login prompt of a session opened with `cli.open(dev, 'vty')`) still reads the
+    first `line vty` section only; resolving it per line could move P1 output, so it stays.
+
+- **R56. R55 decided (architect, 2026-10-11).**
+  - `ikeKeyFor` refuses a profile without a `match identity remote` line covering the peer, or without both pre-share
+    authentication lines; the exchange then fails with `ike-no-proposal`, as on a real router. Owner: W6 **wan**, with
+    a case in `wan.ipsec.test.ts`; lab 25 keeps grading the lines as configuration.
+  - The `config` kind gains an additive `count?: number` (the exact number of lines matching under the section,
+    `@since P3`, optional by meaning). Lab 27 uses it to require exactly one `match` line under the VOICE class, which
+    closes the blind spot. Owners: W6 **sim** (member, checker, wrong-answer case) and W6 **qos** (the lab task).
+  - `show controllers` (bare) and `show controllers serial 0/0/0` (slot form) are accepted, with the same output as the
+    accepted form. Owner: W6 **cli**; the help golden gains them as additions.
+  - `lineAuthOf` stays as is, a listed deviation (§12 R2 (28)): resolving it per line could move P1 output.
+
+- **R57. W5 gate findings (architect, 2026-10-11).** Gate G W5 passed in the built bundle on its lab steps:
+  `ccna3-ospf-single-area` solved through the terminal (CDP answers, 100/100); `ccna3-ipsec-site-to-site` solved, the
+  ISP serial capture shows HDLC / IPv4 / ESP only (inner packet decoded, as simulated), Check 100/100 with "Only ESP
+  crosses the provider"; `ccna3-qos-voice-first` shows the per-class policy (VOICE as the priority lane, class-default)
+  in the port inspector and the QoS overlay's link load. Two defects:
+  - **(a) Generated traffic held the real-time clock in slow motion.** The worker clock clamps a slice while a frame is
+    in flight (P1 §3.14, so a ping animates), and only background legs are exempt. A continuous flow always has a frame
+    in flight, so a 50 pps flow played at about 1/750 of the chosen rate and lab 27's "watch the queue build" could not
+    happen in real time. Legs of traffic-generator datagrams never clamp the clock: the clock treats them like
+    background legs **for the clamp only**. They stay on the Packets list, in captures (the "Keep keepalives" option
+    does not hide them) and on the canvas, and the QoS overlay shows the stream. A ping, an HTTP fetch and every
+    other packet keep P1's animation exactly. Owner: the W5 fix step (web-shell's `bridge/worker/clock.ts`, with the
+    smallest engine marking it needs, additive), with a web test proving a continuous 50 pps flow plays at the chosen
+    rate and a ping still clamps.
+  - **(b) The protected banner is not where the gates look for it.** NetScope's frame detail shows no "Encrypted
+    (ESP, simulated)" / "Protected (TLS, simulated)" banner (§3.8 step 2 and the W5/W6 gate scripts put it there). The
+    Packet inspector shows the PDU's final layers even when opened from a protected hop, so its banner never appears
+    for a tunnelled packet. Owner: W6 **web-inspector**. NetScope's frame detail shows the banner for a frame whose
+    layers carry the protection (ESP, or a segment marked TLS/SSH/IKE), and the Packet inspector opened from a hop
+    shows that hop's layers with its banner.
+
 **W6 (the [S32] flip)**
 
 40b. NF-DEVHOST joins `computers.ts`: the catalog's model lists and counts by category, the Computers palette pins and
@@ -5361,7 +5493,7 @@ With the approved plan (§8.5):
 | Risk (spec §20) | Where it bites in P3a | Mitigation |
 |---|---|---|
 | **R1 scope** | The maps' MUST items sum to 117 ew, 2.25 × P2's MUST; the figures are uncalibrated (P2 recorded no effort actuals). The approved plan is 123.2 ew (135.5 with the contingency), about 1.6 × the recommended plan and 1.9 × P2's approved plan. | §8.4: duplicates counted once; demotions by exam value with stated fallbacks; every SHOULD and COULD item is its own set of bracketed wave items; a review contingency of ≈ 10 % of the whole approved plan (12.3 ew) spent before any cut; a cut order that removes the approved COULD items first, then the approved SHOULD items (never before the items that depend on them), and only then MUST. |
-| **R2 fidelity** | Deliberate deviations: (1) the OSPF hello reply after 1 s; (2) immediate direct LSAcks; (3) one OSPF process per device; (4) full SPF only and no LSA group pacing; (5) a deterministic DD sequence number; (6) serial routing bandwidth 1544 kb/s while `show interfaces` shows the clock rate; (7) equal-AD ties across protocols broken by metric; (8) NAT's use of a list is not counted; (9) no DHCP option 82; (10) DAI requires the binding's port to match; (11) the RSA key is a configuration line; (12) ACL log aggregation fixed at 5 minutes; (13) the existing admin-state log keeps severity 3; (14) no default WFQ on slow serial lines (FIFO with the 256-frame cap); (15) the traffic generator's discard sink on UDP 9; (16) TLS is a simulated state with no handshake bytes; (17) CDP uses an NF format and its rows are removed at link-down; (18) no hardware calendar: clocks reset on reload; (19) NTP steps the clock on the first valid reply; (20) RESTCONF serves a curated model with no candidate datastore; (21) the queueing sandbox schedules WFQ as flow DRR; (22) OSPF sends an extra hello when an interface's DR or BDR changes; (23) no ICMP for an outbound ACL deny of a packet NAT has already translated; (24) CDP and LLDP run on Ethernet ports only; (25) a managed switch's UDP and TCP stay dormant (protocol unreachable) until a P3 service is configured on it; (26) an unsynchronised NTP client re-polls on a fixed 1–32 s schedule; (27) PAT keeps a host's ICMP echo id, so while a PAT row is alive the router's own ping to the same server collides with it (P2 behaviour kept, since a fix would move P2 digests; R47). The approved items add: [S13] `access-class` refuses after the handshake, simulated SSH crypto, a managed switch answers vty only after a P3 line (`transport input`, an RSA key) wakes its transport; [S18] no GRE keepalives, no fragmentation (an oversize packet drops `mtu-exceeded`, D15); [S19] PPP on direct cables only, deterministic magic numbers and challenges, a 10 s retry, no CDPCP/LQM; [S20]/[S21] CBWFQ scheduled by DRR, a 200 ms LLQ burst, queueing policies on physical ports only; [S32] NF-Py is a subset with 2⁵³ integers; [C1] an EIGRP hello reply, reliable packets unicast to each neighbour, load and reliability constant (1 and 255), no automatic summarisation; [C13] simulated IPsec crypto (real headers, payload shown decoded, FNV proofs and ICVs), one fixed proposal, no rekey, lifetime or dead-peer detection, no replay window, crossing initiations resolved by the lower address, VTI only. | Each is a row of the fidelity table in `docs/CATALOG.md` (the architect adds it when the wave that builds the feature reports it) and, where a learner could notice, a sentence in the lesson. Behaviour that exam questions test (the election rules, the adjacency states, costs, AD values, first-match and implicit deny, wildcard maths, the snooping trust model, CDP/LLDP fields, NTP strata, REST verbs and status codes) is exact. |
+| **R2 fidelity** | Deliberate deviations: (1) the OSPF hello reply after 1 s; (2) immediate direct LSAcks; (3) one OSPF process per device; (4) full SPF only and no LSA group pacing; (5) a deterministic DD sequence number; (6) serial routing bandwidth 1544 kb/s while `show interfaces` shows the clock rate; (7) equal-AD ties across protocols broken by metric; (8) NAT's use of a list is not counted; (9) no DHCP option 82; (10) DAI requires the binding's port to match; (11) the RSA key is a configuration line; (12) ACL log aggregation fixed at 5 minutes; (13) the existing admin-state log keeps severity 3; (14) no default WFQ on slow serial lines (FIFO with the 256-frame cap); (15) the traffic generator's discard sink on UDP 9; (16) TLS is a simulated state with no handshake bytes; (17) CDP uses an NF format and its rows are removed at link-down; (18) no hardware calendar: clocks reset on reload; (19) NTP steps the clock on the first valid reply; (20) RESTCONF serves a curated model with no candidate datastore; (21) the queueing sandbox schedules WFQ as flow DRR; (22) OSPF sends an extra hello when an interface's DR or BDR changes; (23) no ICMP for an outbound ACL deny of a packet NAT has already translated; (24) CDP and LLDP run on Ethernet ports only; (25) a managed switch's UDP and TCP stay dormant (protocol unreachable) until a P3 service is configured on it; (26) an unsynchronised NTP client re-polls on a fixed 1–32 s schedule; (27) PAT keeps a host's ICMP echo id, so while a PAT row is alive the router's own ping to the same server collides with it (P2 behaviour kept, since a fix would move P2 digests; R47). (28) a console-opened `vty` session takes the login rule of the first `line vty` section only (R56). The approved items add: [S13] `access-class` refuses after the handshake, simulated SSH crypto, a managed switch answers vty only after a P3 line (`transport input`, an RSA key) wakes its transport; [S18] no GRE keepalives, no fragmentation (an oversize packet drops `mtu-exceeded`, D15); [S19] PPP on direct cables only, deterministic magic numbers and challenges, a 10 s retry, no CDPCP/LQM; [S20]/[S21] CBWFQ scheduled by DRR, a 200 ms LLQ burst, queueing policies on physical ports only; [S32] NF-Py is a subset with 2⁵³ integers; [C1] an EIGRP hello reply, reliable packets unicast to each neighbour, load and reliability constant (1 and 255), no automatic summarisation; [C13] simulated IPsec crypto (real headers, payload shown decoded, FNV proofs and ICVs), one fixed proposal, no rekey, lifetime or dead-peer detection, no replay window, crossing initiations resolved by the lower address, VTI only. | Each is a row of the fidelity table in `docs/CATALOG.md` (the architect adds it when the wave that builds the feature reports it) and, where a learner could notice, a sentence in the lesson. Behaviour that exam questions test (the election rules, the adjacency states, costs, AD values, first-match and implicit deny, wildcard maths, the snooping trust model, CDP/LLDP fields, NTP strata, REST verbs and status codes) is exact. |
 | **R3 performance** | SPF: about 1 ms for 500 vertices, and a flap re-runs SPF on every router of the area; memory for one LSDB per router. Trace volume: one tableWrite per ACL hit and per inspected ARP; CDP every 60 s per port. [S20] queueing at line rate. | The SPF throttle bounds frequency; LSA rows reference frozen bodies (C8 interning if needed); `accept.p3.ospf-scale` at 50 routers (a realistic ceiling for course labs). ACL rows only for applied lists; CDP/LLDP/OSPF hellos are background; one CDP transmit timer per device; rows rewritten only on displayed changes (rule 20); `accept.p3.mgmt-scale`. [S20] runs at WAN rates (64 kb/s–2 Mb/s) with generator caps and `accept.p3.qos-bounded`. |
 | **R4 legal** | The `%FAC-SEV-MNEMONIC` shape [S24/S25]; the `requests`-style module name [S32]; the names "CDP" and "EIGRP" [C1]; the YANG models; the IKEv2 payload names and proposal words [C13]. | Original wording for every message and mnemonic; CDP in an NF format under the NF OUI (P2 D8); EIGRP in its published RFC 7868 format (D23); IKEv2 and ESP names are IETF protocol facts; IETF module names only and an original `nf-native`; legal review before W2 for the flagged items (§8.5 P12). |
 | **R5 determinism** | Flooding order and SPF ties; same-instant multicast clones; BigInt in clock maths; the configure seam; [S32] floats. | The fixed orders of §4.5; LSUs bundled in LSDB key order; SPF ties never on heap order; same-instant clones processed in scheduler sequence; BigInt never leaves the clock helpers; the configure seam is an event, never nesting; no new rng stream; `accept.p3.determinism` (3 runs) and `accept.p2.replay-exact` over the CCNA 3 labs. |

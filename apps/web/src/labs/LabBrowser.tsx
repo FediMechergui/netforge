@@ -14,6 +14,11 @@
  * and, after a few seconds, why it can take a while (`LabWorkingNote`), and every load button stays disabled with the
  * reason. The seconds are wall time in the UI only; nothing here reaches the engine.
  *
+ * @since P3 (W5 web-shell, ARCHITECTURE-P3 §6, §11.2) The CCNA 3 labs (`ccna3-lab`, `course: 'CCNA 3'`, `topic` = the
+ * title of the module that holds the lesson) join the list after the CCNA 2 labs and group the same way: under the
+ * CCNA 3 course, then by module title, in the engine's course order (`CCNA3_LAB_ORDER`). The grouping is generic, so
+ * no code changed for them.
+ *
  * Presentational only: LabPanel owns the engine calls and passes the list and the busy state in. Wording is
  * original (§1.6).
  *

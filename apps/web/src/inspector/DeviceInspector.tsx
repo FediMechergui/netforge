@@ -183,7 +183,8 @@ export function clockSourceText(clock: Pick<DeviceClockSnapshot, 'source' | 'str
     case 'unset':
       return 'not set: running from the boot default (shown with *)';
     case 'user':
-      return 'set by hand (clock set)';
+      // `clock set`, or the value kept after the time server was removed (the engine's ntp loseSource)
+      return 'own clock, not synchronised (set by hand, or kept after its time server was removed)';
     case 'ntp':
       return `synchronised by NTP${stratum === '' ? '' : `, ${stratum}`}${clock.reference !== undefined ? `, from ${clock.reference}` : ''}`;
     case 'master':

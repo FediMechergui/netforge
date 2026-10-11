@@ -17,14 +17,15 @@
  *   line.access-class           `access-class <list> in` on vty lines
  *   show.ip-ssh                 (W3) `show ip ssh`: on with an RSA key (D14), the version in force (the `ip ssh version`
  *                               line, else 2 with a key of at least 768 bits and 1 below), the key size and name, the
- *                               login time-out and retries (defaults 120 s and 3), and each `line vty` section's
- *                               transport (`telnet ssh` when it has no `transport input` line, §5.2), access class and
+ *                               login time-out and retries (defaults 120 s and 3), and for each range of vty lines
+ *                               (the settings resolved per line number, as the vty daemon serves them; W5 fix #11) the
+ *                               transport (`telnet ssh` without a `transport input` line, §5.2), access class and
  *                               login rule
  * Every string is original wording (spec §1.6).
  */
 import { CLI_MESSAGES, type CliInputRequest, type CommandCtx, type CommandHandler, type CommandOutcome } from '../../contracts/cli.js';
-import type { ConfigNode } from '../../contracts/config.js';
 import { aclTypeOfNumber } from '../../core/acl.js';
+import { vtyLineRanges, vtyRangeName, type VtyLineRange } from '../../protocols/vty.js';
 import { secretTokens } from '../secrets.js';
 import {
   RSA_MODULUS_DEFAULT,
@@ -190,15 +191,15 @@ export function sshVersionInForce(ctx: Pick<CommandCtx, 'running'>): { version: 
   return { version: (rsaModulus(ctx) ?? RSA_MODULUS_DEFAULT) >= SSH_V2_MIN_MODULUS ? '2' : '1', configured: false };
 }
 
-/** One `line vty …` section as `show ip ssh` reports it. */
-function vtySectionText(section: ConfigNode): string {
-  const transport = section.children.find((c) => c.key === 'transport' && c.args[0] === 'input');
-  const accept = transport === undefined ? 'telnet ssh (no transport input line)' : transport.args.slice(1).join(' ');
-  const acl = section.children.find((c) => c.key === 'access-class');
-  const login = section.children.find((c) => c.key === 'login');
-  const parts = [`accepts ${accept}`, acl === undefined ? 'no access class' : `access class ${acl.args.join(' ')}`];
-  parts.push(login === undefined ? 'no login line' : login.args[0] === 'local' ? 'login local' : 'login with the line password');
-  return `  line vty ${section.args.slice(1).join(' ')}: ${parts.join('; ')}`;
+/**
+ * One range of vty lines as `show ip ssh` reports it: the settings resolved per line number, as the vty daemon serves
+ * them (`vtyLineRanges`; a single section, or sections that do not overlap, print as stored; W5 fix #11).
+ */
+function vtyRangeText(r: VtyLineRange): string {
+  const accept = r.transport === undefined ? 'telnet ssh (no transport input line)' : r.transport.join(' ');
+  const parts = [`accepts ${accept}`, r.accessClass === undefined ? 'no access class' : `access class ${r.accessClass} in`];
+  parts.push(r.login === undefined ? 'no login line' : r.login === 'local' ? 'login local' : 'login with the line password');
+  return `  line ${vtyRangeName(r)}: ${parts.join('; ')}`;
 }
 
 /** `show ip ssh` (§5.8; D14). */
@@ -211,9 +212,9 @@ const showIpSsh: CommandHandler = (ctx) => {
   const timeout = ipSshValue(ctx, 'time-out') ?? String(SSH_TIMEOUT_DEFAULT_S);
   const retries = ipSshValue(ctx, 'authentication-retries') ?? String(SSH_RETRIES_DEFAULT);
   lines.push(`  Login time-out ${timeout} s; failed logins allowed ${retries}`);
-  const vty = ctx.running.root.children.filter((c) => c.key === 'line' && c.args[0] === 'vty');
+  const vty = vtyLineRanges(ctx.running.root);
   if (vty.length === 0) lines.push('  No line vty section: remote logins are not offered');
-  for (const section of vty) lines.push(vtySectionText(section));
+  for (const range of vty) lines.push(vtyRangeText(range));
   return { output: lines.join('\n') };
 };
 

@@ -21,6 +21,10 @@
  * P3 (ARCHITECTURE-P3 D2, §7 W1 web-shell): "Use current defaults" is enabled whenever the world's profile is below
  * `LATEST_DEFAULTS_PROFILE` and its hint lists what it switches on, from `PROFILE_NOTES` (`currentDefaultsItem`); the
  * toast after the move lists the same notes.
+ *
+ * P3 (ARCHITECTURE-P3 §6, §11.2, §7 W5 web-shell, §9.2 item 39): the CCNA 3 labs (`ccna3-lab`) join `SCENARIOS` in W5
+ * and get their own fixed group, "Labs: CCNA 3", after the CCNA 2 labs (without a fixed place the group would sort
+ * among the other categories).
  */
 import { useRef, useState } from 'react';
 import {
@@ -229,9 +233,9 @@ export interface ScenarioGroup {
 }
 
 /** Categories with a fixed place, in menu order; any other category follows them alphabetically. */
-export const CATEGORY_ORDER: readonly string[] = Object.freeze(['template', 'ccna1-lab', 'ccna2-lab']);
+export const CATEGORY_ORDER: readonly string[] = Object.freeze(['template', 'ccna1-lab', 'ccna2-lab', 'ccna3-lab']);
 
-/** A course-lab category (`ccna1-lab`, `ccna2-lab`, …): its group is labelled by the course its labs name. */
+/** A course-lab category (`ccna1-lab`, `ccna2-lab`, `ccna3-lab`, …): its group is labelled by the course its labs name. */
 const COURSE_LAB = /-lab$/;
 
 function categoryLabel(category: string, items: readonly ScenarioMeta[]): string {
@@ -245,8 +249,8 @@ function categoryLabel(category: string, items: readonly ScenarioMeta[]): string
 }
 
 /**
- * Group scenarios by category: templates, the CCNA 1 labs, the CCNA 2 labs, then other categories alphabetically;
- * list order kept inside. Pure.
+ * Group scenarios by category: templates, the CCNA 1 labs, the CCNA 2 labs, the CCNA 3 labs, then other categories
+ * alphabetically; list order kept inside. Pure.
  */
 export function groupScenarios(list: readonly ScenarioMeta[]): ScenarioGroup[] {
   const byCategory = new Map<string, ScenarioMeta[]>();

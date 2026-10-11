@@ -81,6 +81,7 @@ export const REPLAY_EXACT_SHARD_OF_CATEGORY: Readonly<Record<string, string>> = 
   template: 'accept.p2.replay-exact-templates.test.ts',
   'ccna1-lab': 'accept.p2.replay-exact-ccna1.test.ts',
   'ccna2-lab': 'accept.p2.replay-exact-ccna2.test.ts',
+  'ccna3-lab': 'accept.p3.replay-exact-ccna3.test.ts',
 });
 
 /** The shard file of a category, or undefined when no shard takes it. */

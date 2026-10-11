@@ -7,6 +7,7 @@
  * struck-through "ghost" rows rebuilt from the `tableExpire` event. Countdowns tick at 4 Hz, never per frame.
  */
 import { memo, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { routeSourceCode } from '@netforge/engine';
 import type { ArpRow, CamRow, DeviceSnapshot, RouteRow, SimTime, TableColumn, TableSnapshot } from '@netforge/engine';
 import { fmtSimTime } from '../bridge/client';
 import { extrapolatedNow } from '../store/selectors';
@@ -267,16 +268,32 @@ const SOURCE_TITLE: Record<RouteRow['source'], string> = {
   EIGRP: 'D — route learned through EIGRP',
 };
 
+/**
+ * @since P3 (ARCHITECTURE-P3 D11, ruling R52; W5 web-shell) The source code a routing-table row shows in the Tables
+ * tab: the code `show ip route` prints (`routeSourceCode`), never the machine source — `C`, `L`, `S` / `S*`, `D*` (the
+ * DHCP default), `O`, `O E2` / `O*E2`, and [C1] `D` / `D*` for an `'EIGRP'` row. The badge's title tells the two `D`s
+ * apart; its class keeps the machine source as the styling hook.
+ */
+export function ribSourceCode(r: Pick<RouteRow, 'source' | 'routeType' | 'isDefault' | 'network' | 'prefixLen'>): string {
+  return routeSourceCode(r);
+}
+
+/** @since P3 (R52) The badge's title: what the code means, the OSPF external type included. */
+export function ribSourceTitle(r: Pick<RouteRow, 'source' | 'routeType'>): string {
+  const title = SOURCE_TITLE[r.source];
+  return r.source === 'O' && r.routeType === 'E2' ? `${title} (external, type 2)` : title;
+}
+
 function ribColumns(shortOf: (port: string) => string): Column<RouteRow>[] {
   return [
     {
       id: 'source',
       label: 'Src',
+      // the machine source sorts as the codes read (C, D*, D, L, O, S) and keeps the P1/P2 order
       sort: (r) => r.source,
       cell: (r) => (
-        <span className={`src-badge ${r.source}`} title={SOURCE_TITLE[r.source]}>
-          {r.source}
-          {r.isDefault ? '*' : ''}
+        <span className={`src-badge ${r.source}`} title={ribSourceTitle(r)}>
+          {ribSourceCode(r)}
         </span>
       ),
     },

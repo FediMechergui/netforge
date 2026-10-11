@@ -105,6 +105,13 @@ describe('configuration lines', () => {
     expect(r.running.render()).toContain('ntp master 3\n');
     typed(r, 'config', 'clock timezone NST -3 30');
     expect(r.running.render()).toContain('clock timezone NST -3 30\n');
+    // a zero minutes field is the same offset as none, and is stored without it (W5 fix #19)
+    for (const l of ['clock timezone CET 1 0', 'clock timezone CET 01 00']) {
+      typed(r, 'config', l);
+      expect(r.running.render(), l).toContain('clock timezone CET 1\n');
+      expect(r.running.render(), l).not.toContain('clock timezone CET 1 0');
+    }
+    typed(r, 'config', 'clock timezone NST -3 30');
     for (const l of ['no clock timezone', 'no ntp server 10.0.0.10', 'no ntp master', 'no ntp source']) expect(typed(r, 'config', l), l).toEqual({});
     const after = r.running.render();
     expect(after).not.toMatch(/clock timezone|ntp master|ntp source|10\.0\.0\.10/);
@@ -166,7 +173,7 @@ describe('show clock', () => {
   it('names every time source in the detail line', () => {
     const base = { authoritative: true, unixMs: NF_WORLD_EPOCH_UNIX_MS, subMsNs: 0, tz: UTC };
     expect(clockSourceText({ ...base, source: 'unset', authoritative: false })).toBe('No time source: the clock was never set.');
-    expect(clockSourceText({ ...base, source: 'user' })).toBe('Time source: set by hand (clock set).');
+    expect(clockSourceText({ ...base, source: 'user' })).toBe("Time source: this device's own clock, not synchronised (set by hand, or kept after its time server was removed).");
     expect(clockSourceText({ ...base, source: 'master', stratum: 3 })).toBe("Time source: this device's own clock, served at stratum 3.");
     expect(clockSourceText({ ...base, source: 'host' })).toBe("Time source: the host's own clock.");
   });

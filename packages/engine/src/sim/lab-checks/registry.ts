@@ -7,8 +7,11 @@
  * at call time (rule 12), so no module is read while this one evaluates. The P1 and P2 checkers (core, switching,
  * routing) are the P2 grader's functions moved verbatim; `neighbor` and `fact` run the data-driven frameworks of
  * facts.ts; `acl` and `aclDecision` run the W3 acl adapter (sim/lab-checks/acl.ts, a reviewed edit of this file);
- * the kinds whose checker a later wave item brings — [S13] `service`, [S18] `path` and [S20] `traffic` (W5 sim) — fail
- * with the one original detail the W0 stubs gave, until that item replaces the entry (a reviewed edit of this file).
+ * the approved clone kinds — [S13] `service` (sim/lab-checks/service.ts), [S18] `path` with [C13] `tunnelAt`
+ * (path.ts) and [S20] `traffic` (traffic.ts) — run through the clone host since the W5 sim item, a reviewed edit of
+ * this file that replaced the W0 stubs. Like `connectivity` they need the live world's clone host: inside
+ * `connectivity.then` (no host) each is refused with an original detail. UNAVAILABLE_KIND_DETAILS keeps the W0 stub
+ * texts as a record; no checker gives them any more.
  *
  * `runCheck` is the one dispatch: an unknown kind fails with an original detail, any error a checker throws becomes
  * the failing detail (as the closed switch of the P2 grader did), and the envelope is applied. `checkStatic` is the
@@ -38,8 +41,11 @@ import {
 } from './core.js';
 import { checkAcl, checkAclDecision } from './acl.js';
 import { checkFact, checkNeighbor } from './facts.js';
+import { checkPath } from './path.js';
 import { checkFhrp, checkNat, checkRoute } from './routing.js';
+import { checkService } from './service.js';
 import { checkEtherchannel, checkPortSecurity, checkStp, checkSwitchport, checkVlan } from './switching.js';
+import { checkTraffic } from './traffic.js';
 
 /** @since P3 What a checker is given: the graded world and, for the live world, its clone host. */
 export interface CheckContext {
@@ -54,7 +60,10 @@ export type Checker<K extends LabAssertion['kind']> = (ctx: CheckContext, a: Ext
 /** @since P3 One checker per assertion kind. */
 export type CheckerTable = { readonly [K in LabAssertion['kind']]: Checker<K> };
 
-/** @since P3 The details of the kinds whose checker a later wave item brings (the W0 stub texts, unchanged). */
+/**
+ * @since P3 The W0 stub texts of the three approved clone kinds, kept as a record: since the W5 sim item no checker
+ * gives them (CHECKERS runs service.ts, path.ts and traffic.ts).
+ */
 export const UNAVAILABLE_KIND_DETAILS = {
   service: 'Remote login checks are not available in this build.',
   path: 'Path checks are not available in this build.',
@@ -63,6 +72,11 @@ export const UNAVAILABLE_KIND_DETAILS = {
 
 /** The refusal of a ping inside `connectivity.then` (the text the P2 grader gives). */
 const FOLLOW_UP_PING = 'A follow-up check reads state; it cannot ping again.';
+
+/** @since P3 The refusals of the approved clone kinds inside `connectivity.then` (W5 sim, original wording). */
+const FOLLOW_UP_SERVICE = 'A follow-up check reads state; it cannot open a remote login.';
+const FOLLOW_UP_PATH = 'A follow-up check reads state; it cannot send a probe.';
+const FOLLOW_UP_TRAFFIC = 'A follow-up check reads state; it cannot start traffic.';
 
 /** @since P3 D5 The checker registry (file header). */
 export const CHECKERS = {
@@ -86,9 +100,9 @@ export const CHECKERS = {
   fact: (ctx, a) => checkFact(ctx.sim, a),
   acl: (ctx, a) => checkAcl(ctx.sim, a),
   aclDecision: (ctx, a) => checkAclDecision(ctx.sim, a),
-  service: () => fail(UNAVAILABLE_KIND_DETAILS.service),
-  path: () => fail(UNAVAILABLE_KIND_DETAILS.path),
-  traffic: () => fail(UNAVAILABLE_KIND_DETAILS.traffic),
+  service: (ctx, a) => (ctx.host === undefined ? fail(FOLLOW_UP_SERVICE) : checkService(ctx.sim, ctx.host, a)),
+  path: (ctx, a) => (ctx.host === undefined ? fail(FOLLOW_UP_PATH) : checkPath(ctx.sim, ctx.host, a)),
+  traffic: (ctx, a) => (ctx.host === undefined ? fail(FOLLOW_UP_TRAFFIC) : checkTraffic(ctx.sim, ctx.host, a)),
 } satisfies CheckerTable;
 
 /** The checker of `kind`, or undefined for a kind this grader does not know (an untyped lab). */

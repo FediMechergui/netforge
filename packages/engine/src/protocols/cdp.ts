@@ -183,12 +183,20 @@ export function discoveryPorts(ctx: Pick<ProcessCtx, 'model' | 'ports'>): PortVi
 }
 
 /**
- * The management address a port advertises: the port's own IPv4 address, else the IPv4 address of the first up
- * virtual port (SVI or loopback, canonical order) — a switch's management VLAN; undefined when there is none.
+ * The management address a port advertises: the port's own IPv4 address; else (ruling R47, W5) the address of its
+ * native subinterface, which carries the port's untagged traffic — read whether or not that subinterface is up yet,
+ * because the frame at the port's link-up is built before the subinterface comes up with it (an administratively down
+ * one is skipped); else the IPv4 address of the first up virtual port (SVI or loopback, canonical order) — a switch's
+ * management VLAN; undefined when there is none.
  */
 export function discoveryManagementAddress(ctx: Pick<ProcessCtx, 'model' | 'ports'>, port: PortId): string | undefined {
   const own = ctx.ports.get(port)?.l3.ipv4?.address;
   if (own !== undefined) return own;
+  for (const view of ctx.ports.values()) {
+    if (view.spec.parent !== port || view.dot1q?.native !== true || !view.adminUp) continue;
+    const address = view.l3.ipv4?.address;
+    if (address !== undefined) return address;
+  }
   for (const view of ctx.ports.values()) {
     const address = view.l3.ipv4?.address;
     if (address === undefined || !view.operUp) continue;

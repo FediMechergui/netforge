@@ -122,7 +122,10 @@
  *    severity 5, `UPDOWN`; every port, once per change); at boot completion a start log (`SYS`, 5, `BOOTED`); and a
  *    configuration log (`SYS`, 5, `CONFIGURED`) for a typed line or a configure-seam line that changed the running
  *    configuration, once per source (the console, or the configure origin) and dispatch instant — never for the boot
- *    replay or a daemon's `configLine` action;
+ *    replay or a daemon's `configLine` action. Ruling R47 (W5): while a CLI session is in a configuration mode
+ *    (`configSession`, reported by the CLI runtime) a typed change only marks the log pending, and it fires once when a
+ *    session leaves configuration mode (`end`, `exit` from global configuration, the end of a headless `configure`
+ *    run), not at the first changed line;
  *  - ruling R20: the `storage` action enforces the io limits of a `files:` store (`MAX_TOPOLOGY_FILES_PER_DEVICE` files,
  *    `MAX_TOPOLOGY_FILE_NAME_CHARS`-character names, `MAX_TOPOLOGY_FILE_CHARS` characters per file; io/schema.ts), so
  *    every file a host holds survives export and reload (`storageWriteProblem`).
@@ -192,7 +195,7 @@ import type { ConfigAst, ConfigDelta, ConfigNode, DefaultSlots } from '../contra
 import type { DeviceClockView } from '../contracts/clock.js';
 import type { DeviceModel, DeviceRuntime, DeviceRuntimeDeps, DeviceSpec, PortResolution } from '../contracts/device.js';
 import type { SimEventBody } from '../contracts/events.js';
-import type { DeviceId, PortId, ProcessName } from '../contracts/ids.js';
+import type { DeviceId, PortId, ProcessName, SessionId } from '../contracts/ids.js';
 import type { DropReason, EgressSchedulerSpec, FrameRxInfo, PolicerSpec, PortPhySettings, TransmitOptions, TxOutcome } from '../contracts/link.js';
 import type { AirView, MediumEvent } from '../contracts/medium.js';
 import type { Pdu, PduFactory, RewrapOp } from '../contracts/pdu.js';
@@ -986,6 +989,14 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
   /** @since P3 [S25] The source and instant of the last configuration log (RAM): one log per source and instant. */
   private lastConfigLog: { at: SimTime; source: string } | undefined;
   /**
+   * @since P3 [S25] (ruling R47, W5) The CLI sessions now in a configuration mode (`configSession`): while one is, a
+   * typed line that changes the running configuration leaves its log pending until a session leaves configuration mode.
+   * Mirrors the CLI runtime's sessions, so it survives power-off as they do.
+   */
+  private readonly configSessions = new Set<SessionId>();
+  /** @since P3 [S25] (ruling R47) A typed change waits for its configuration log (RAM: cleared at power-off). */
+  private configPending = false;
+  /**
    * @since P3 (D16) The QoS configuration generation: +1 for every configuration delta that can change a compiled
    * policy or a scheduler spec (`isQosConfigDelta`: class-map, policy-map, access-list, ip access-list, the interface
    * service-policy / bandwidth / fair-queue lines) and at power-off (the running configuration is replaced).
@@ -1496,6 +1507,24 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
     if (last !== undefined && last.at === now && last.source === source) return;
     this.lastConfigLog = { at: now, source };
     this.emitLog(EXTENDED_LOG_SEVERITY, FACILITY_SYS, configurationChangedMessage(origin), now, LOG_MNEMONIC_CONFIGURED);
+  }
+
+  /**
+   * @since P3 [S25] (ruling R47, W5) The CLI runtime reports that `session` entered (`open`) or left configuration mode
+   * (`end`, `exit` from global configuration, the end of a headless `configure` run, or the session closing while in
+   * it). When a session leaves and a typed change is pending, the configuration log fires now, once (P3 worlds only;
+   * `logConfigured`'s once-per-source-and-instant rule still holds). The contract member `DeviceRuntime.configSession?`
+   * (an additive optional member recorded in W5 integration, finding #32), so a hand-built device without it changes
+   * nothing.
+   */
+  configSession(session: SessionId, open: boolean, now: SimTime): void {
+    if (open) {
+      this.configSessions.add(session);
+      return;
+    }
+    if (!this.configSessions.delete(session) || !this.configPending) return;
+    this.configPending = false;
+    this.logConfigured(undefined, now);
   }
 
   onTxOutcome(portId: PortId, outcome: TxOutcome, now: SimTime): void {
@@ -2285,8 +2314,16 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
       ifacePort !== undefined && !this.isVirtual(ifacePort) && (PHY_CONFIG_KEYS.includes(key) || isSchedulerPhyLine(line)) ? ifacePort.id : undefined;
     if (phyPort !== undefined) this.deps.onPortPhyConfig?.({ device: this.id, port: phyPort }, now);
     if (qosDelta) this.syncEgressSpecs(now, phyPort);
-    // P3 [S25]: the configuration log of the extended-logging default (P3 worlds only)
-    if (user) this.logConfigured(origin, now);
+    // P3 [S25]: the configuration log of the extended-logging default (P3 worlds only). Ruling R47 (W5): a typed line
+    // while a CLI session is in configuration mode leaves the log pending until a session leaves it (`configSession`);
+    // a configure-seam line (an origin) and a line applied outside any session log at once, as before.
+    if (user) {
+      if (origin === undefined && this.configSessions.size > 0) {
+        if (this.extendedLogging && this.power && this.bootedAt !== undefined) this.configPending = true;
+      } else {
+        this.logConfigured(origin, now);
+      }
+    }
     return { ok: true };
   }
 
@@ -2511,6 +2548,7 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
     this.linkLogged.clear();
     this.lineLogged.clear();
     this.lastConfigLog = undefined;
+    this.configPending = false; // ruling R47: a change lost with the running configuration logs nothing
     for (const name of this.tables.names()) this.tables.get(name)?.clear('cleared');
     this.hostname = this.spec.name;
 

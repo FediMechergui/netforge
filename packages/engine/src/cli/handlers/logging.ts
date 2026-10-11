@@ -12,7 +12,7 @@
  *   config.logging-facility          `logging facility local0-7` / its `no` form
  *   config.service-timestamps        `service timestamps log|debug datetime [msec] [localtime] [show-timezone]` (the
  *                                    options in that canonical order, each once) | `… uptime` / `no service timestamps
- *                                    log|debug`
+ *                                    log|debug …`, and (ruling R47, W5) its short form `no service timestamps log|debug`
  *   exec.terminal-monitor            `terminal monitor` / `terminal no monitor` (a session flag, never stored)
  *   host.service-syslog              `service syslog on|off` → `syslog-server enable` / its removal
  *   show.logging                     (W3 cli) `show logging`: the logger StateView (`LoggerStateView`, R25)
@@ -33,6 +33,7 @@ import {
   SYSLOG_SERVER_LINE,
   TIMESTAMP_DATETIME_OPTIONS,
   TIMESTAMP_FORM_ARG,
+  TIMESTAMP_FORM_NEGATION_ONLY,
 } from '../grammar/logging.js';
 import { ctxP3 } from '../command-ctx-p3.js';
 import { globalContext, outcomeOf } from './common.js';
@@ -109,13 +110,20 @@ export function datetimeOptions(tail: string | undefined): string[] | undefined 
   return TIMESTAMP_DATETIME_OPTIONS.filter((o) => seen.has(o));
 }
 
-/** `service timestamps log|debug datetime …|uptime` / `no service timestamps log|debug`. */
+/**
+ * `service timestamps log|debug [datetime …|uptime]` / `no service timestamps log|debug [datetime …|uptime]`. Ruling
+ * R47 (W5): the short negation (the hidden bare spec) removes the line exactly as the long one does. The bare positive
+ * form stores `uptime`, as a real router does, so `?` (which offers `<cr>` after the kind) and Enter agree
+ * (W5 fix #21).
+ */
 const serviceTimestamps: CommandHandler = (ctx, args, negate) => {
   const kind = args['kind'] ?? '';
   if (kind === '') return { error: '% Give log or debug.' };
   const head = ['service', 'timestamps', kind];
   if (negate) return outcomeOf(ctx.config(head, true, globalContext()));
-  if (args[TIMESTAMP_FORM_ARG] === 'uptime') return outcomeOf(ctx.config([...head, 'uptime'], false, globalContext()));
+  if (args[TIMESTAMP_FORM_ARG] === 'uptime' || args[TIMESTAMP_FORM_ARG] === TIMESTAMP_FORM_NEGATION_ONLY) {
+    return outcomeOf(ctx.config([...head, 'uptime'], false, globalContext()));
+  }
   const options = datetimeOptions(args['options']);
   if (options === undefined) return { error: MSG_TIMESTAMP_OPTIONS };
   return outcomeOf(ctx.config([...head, 'datetime', ...options], false, globalContext()));

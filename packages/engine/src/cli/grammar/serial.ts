@@ -113,6 +113,8 @@ export const SERIAL_GRAMMAR: readonly CommandSpec[] = Object.freeze<CommandSpec[
     objectives: ['CCNA2.7.1'],
   },
   {
+    // Fidelity gap (P0.5, recorded in W5): a real router also takes a bare `show controllers` and the slot form
+    // `show controllers serial 0/0/0`; here only `show controllers serial [<full interface name>]` is accepted.
     path: ['show', 'controllers', 'serial', '<iface>'],
     mode: '@exec',
     privilege: 1,

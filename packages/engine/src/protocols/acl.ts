@@ -71,6 +71,7 @@ import {
   type AclDecision,
   type AclList,
 } from '../core/acl.js';
+import { vtyLineRanges } from './vty.js';
 
 /** @since P3 Process name (`PROCESS_ORDER`: after `nat`, before `gre`, §2.1). */
 export const ACL_PROCESS: ProcessName = 'acl';
@@ -141,18 +142,18 @@ export function readAccessGroups(config: Pick<ConfigAst, 'root'>): Map<string, A
 // ── [S13] the vty access-class bindings (D14) ──
 
 /**
- * @since P3 [S13] The lists bound by `access-class <list> in` under the `line vty …` sections, in first-seen order,
- * each once (normalised by `aclListName`). Pure.
+ * @since P3 [S13] The lists bound by `access-class <list> in` on the vty lines, each once (normalised by
+ * `aclListName`), in ascending line order. Read per line through `vtyLineRanges` (W5 fix #11, applied here by the W5
+ * integration step): a later, wider `line vty` section that binds another list on the same lines replaces the earlier
+ * binding there, so a list no line uses any more is not reported as bound. With one section, or sections that do not
+ * overlap, the result is every section's list, as before. Pure.
  */
 export function readVtyAccessClasses(config: Pick<ConfigAst, 'root'>): string[] {
   const out: string[] = [];
-  for (const section of config.root.children) {
-    if (section.key !== 'line' || section.args[0] !== 'vty') continue;
-    for (const c of section.children) {
-      if (c.key !== 'access-class' || c.args.length !== 2 || c.args[1] !== 'in' || c.args[0] === undefined) continue;
-      const name = aclListName(c.args[0]);
-      if (!out.includes(name)) out.push(name);
-    }
+  for (const range of vtyLineRanges(config.root)) {
+    if (range.accessClass === undefined) continue;
+    const name = aclListName(range.accessClass);
+    if (!out.includes(name)) out.push(name);
   }
   return out;
 }

@@ -27,20 +27,21 @@
  *   ssh.version          number   configuration: `ip ssh version <1|2>`; not set without the line
  *   ssh.keyBits          number   configuration: the key's modulus (`rsaModulus`, the size `show ip ssh` reports); not
  *                                 set without a key
- *   vty.transport        string   configuration: `transport input` of the first `line vty` section as stored ('ssh',
+ *   vty.transport        string   configuration: `transport input` of the lowest-numbered vty lines as stored ('ssh',
  *                                 'telnet', 'ssh telnet', 'all', 'none'); 'ssh telnet' when the line is absent (the
  *                                 effective default, §5.2, in the form the CLI stores both protocols); not set without
  *                                 a `line vty` section
- *   vty.loginLocal       boolean  configuration: `login local` in the first `line vty` section; not set without one
- *   vty.accessClass      string   configuration: the list of `access-class <list> in` in the first `line vty` section
- *                                 (a number as plain decimal text); not set without the line
+ *   vty.loginLocal       boolean  configuration: `login local` for the lowest-numbered vty lines; not set without a section
+ *   vty.accessClass      string   configuration: the list of `access-class <list> in` for the lowest-numbered vty lines
+ *                                 (a number as plain decimal text); not set without the line. The three vty facts read
+ *                                 the settings resolved per line number, as the vty daemon does (`vtyLineRanges`: `line
+ *                                 vty 0 15` typed after `line vty 0 4` counts for line 0; W5 fix #11)
  * A missing or malformed subject, or a subject the device or the topology does not have, fails the assertion with an
  * original detail.
  *
  * Nothing here draws randomness, advances time or emits trace.
  */
 import { normalizeMac, parseIpv4, portMac, u32ToIpv4 } from '../../contracts/addr.js';
-import type { ConfigNode } from '../../contracts/config.js';
 import type { DeviceRuntime } from '../../contracts/device.js';
 import type { PortState } from '../../contracts/port.js';
 import type { LabFactName } from '../../contracts/scenario.js';
@@ -48,6 +49,7 @@ import type { ArpInspectionRow, DhcpSnoopingRow } from '../../contracts/tables.j
 import { configTextLinesOf } from '../../cli/config-text.js';
 import { rsaModulus } from '../../cli/handlers/ssh.js';
 import { aclListName } from '../../protocols/acl.js';
+import { vtyLineRanges, type VtyLineRange } from '../../protocols/vty.js';
 import { arpInspectionActive, arpInspectionPort, readArpInspection } from '../../protocols/l2/arp-inspection.js';
 import { dhcpSnoopingActive, dhcpSnoopingPort, readDhcpSnooping } from '../../protocols/l2/dhcp-snooping.js';
 import { deviceNamed, noDevice, noPort, portNamed } from './core.js';
@@ -164,30 +166,32 @@ function readSshKeyBits(ctx: FactContext): FactReading {
   return { value: rsaModulus({ running: ctx.dev.running }) };
 }
 
-/** The first `line vty …` section of the configuration (file header). */
-function firstVtySection(dev: DeviceRuntime): ConfigNode | undefined {
-  return dev.running.root.children.find((c) => c.key === 'line' && c.args[0] === 'vty');
+/**
+ * The lowest-numbered vty lines (file header): their settings resolved per line number as the vty daemon resolves them
+ * (`vtyLineRanges`), so `line vty 0 15` typed after `line vty 0 4` counts for line 0 (W5 fix #11).
+ */
+function firstVtyLines(dev: DeviceRuntime): VtyLineRange | undefined {
+  return vtyLineRanges(dev.running.root)[0];
 }
 
 /** vty.transport (file header). */
 function readVtyTransport(ctx: FactContext): FactReading {
-  const vty = firstVtySection(ctx.dev);
+  const vty = firstVtyLines(ctx.dev);
   if (vty === undefined) return { value: undefined };
-  const line = vty.children.find((c) => c.key === 'transport' && c.args[0] === 'input' && c.args.length > 1);
-  return { value: line === undefined ? 'ssh telnet' : line.args.slice(1).join(' ') };
+  return { value: vty.transport === undefined || vty.transport.length === 0 ? 'ssh telnet' : vty.transport.join(' ') };
 }
 
 /** vty.loginLocal (file header). */
 function readVtyLoginLocal(ctx: FactContext): FactReading {
-  const vty = firstVtySection(ctx.dev);
+  const vty = firstVtyLines(ctx.dev);
   if (vty === undefined) return { value: undefined };
-  return { value: vty.children.some((c) => c.key === 'login' && c.args.length === 1 && c.args[0] === 'local') };
+  return { value: vty.login === 'local' };
 }
 
 /** vty.accessClass (file header). */
 function readVtyAccessClass(ctx: FactContext): FactReading {
-  const line = firstVtySection(ctx.dev)?.children.find((c) => c.key === 'access-class' && c.args.length === 2 && c.args[1] === 'in');
-  return { value: line === undefined ? undefined : aclListName(line.args[0]!) };
+  const list = firstVtyLines(ctx.dev)?.accessClass;
+  return { value: list === undefined ? undefined : aclListName(list) };
 }
 
 /** FACT_READERS entries of the l2 area. */

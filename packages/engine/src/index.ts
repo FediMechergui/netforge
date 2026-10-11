@@ -252,6 +252,8 @@ export * from './io/migrate.js';
 export * from './io/netforge-file.js';
 export * from './io/pcap.js';
 export * from './io/schema.js';
+// io — P3 W5 io [S37]: the lab-document schema (ARCHITECTURE-P3 D6)
+export * from './io/lab-schema.js';
 
 // capture
 export * from './capture/filter/complete.js';
@@ -308,3 +310,6 @@ export * from './protocols/ppp.js';
 // wan — P3 W3 wan [C13] (ARCHITECTURE-P3 D27, §3.13; ruling R36): the ike daemon and the crypto sections it reads
 export * from './protocols/ike/config.js';
 export * from './protocols/ike.js';
+
+// automation — P3 W5 auto [S32] (ARCHITECTURE-P3 D21, §3.8 step 8): the NF-Py script host (registered by the W6 flip)
+export * from './protocols/script-host.js';

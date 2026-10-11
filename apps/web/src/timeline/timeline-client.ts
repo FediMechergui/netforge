@@ -397,7 +397,7 @@ export function p3RowText(ev: RowEvent): string | undefined {
       const reference = textOf(r['reference']);
       switch (textOf(r['source'])) {
         case 'user':
-          return 'clock set by hand';
+          return 'clock on its own time (set by hand, or its time server removed)';
         case 'ntp':
           return `clock synchronised by NTP${reference === undefined ? '' : ` from ${reference}`}${stratum}`;
         case 'master':

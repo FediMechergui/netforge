@@ -552,6 +552,8 @@ interface SessionState {
   relay?: { prompt?: string; input?: 'plain' | 'secret'; remote?: string };
   /** @since P3 [S13] Client side: the address a `telnet` / `ssh` job connects to, until a remote session claims it. */
   outbound?: { target: string; linked: boolean };
+  /** @since P3 [S25] (ruling R47) The device was told this session is in a configuration mode (`syncConfigSession`). */
+  configOpen?: boolean;
 }
 
 /** @since P3 [S13] Thrown by `CommandCtx.block` when a `telnet` / `ssh` job would nest deeper than `REMOTE_DEPTH_CAP`. */
@@ -777,7 +779,21 @@ export function createCliRuntime(deps: CliRuntimeDepsP3, handlers?: Record<strin
     return out;
   };
 
+  /**
+   * @since P3 [S25] (ruling R47, W5) Tell the device when session `s` entered or left a configuration mode since it was
+   * last told; `closing` counts as leaving (the session goes away). P1/P2 worlds log nothing either way.
+   */
+  const syncConfigSession = (s: SessionState, closing = false): void => {
+    const inConfig = !closing && isConfigClassMode(s.mode);
+    if ((s.configOpen === true) === inConfig) return;
+    if (inConfig) s.configOpen = true;
+    else delete s.configOpen;
+    // `DeviceRuntime.configSession?` ([S25], R47): a device without it changes nothing
+    deps.device(s.device)?.configSession?.(s.id, inConfig, deps.now());
+  };
+
   const closeNow = (s: SessionState): void => {
+    syncConfigSession(s, true);
     sessions.delete(s.id);
   };
 
@@ -1323,6 +1339,8 @@ export function createCliRuntime(deps: CliRuntimeDepsP3, handlers?: Record<strin
     };
 
     headlessSessions.set(s.id, s);
+    // P3 [S25] (ruling R47): a run that starts in a configuration mode is a configuration session until it ends
+    syncConfigSession(s);
     try {
       if (replayContext) {
         // Enter the start context the way the console does (`interface X`, `router ospf 1`, …) so an interface the
@@ -1380,6 +1398,7 @@ export function createCliRuntime(deps: CliRuntimeDepsP3, handlers?: Record<strin
           return;
         }
         const r = runLine(s, text, s.mode, false);
+        syncConfigSession(s); // P3 [S25] (ruling R47): an `end` or `exit` in the run leaves configuration mode here
         const entry: ConfigureLineResult = { index, line: raw, ok: r.error === undefined, output: r.handlerOutput, mode: s.mode };
         if (r.error !== undefined) {
           entry.error = r.error;
@@ -1393,6 +1412,7 @@ export function createCliRuntime(deps: CliRuntimeDepsP3, handlers?: Record<strin
         reverted = true;
       }
     } finally {
+      syncConfigSession(s, true); // P3 [S25] (ruling R47): the end of the run leaves configuration mode
       headlessSessions.delete(s.id);
     }
 
@@ -1466,6 +1486,7 @@ export function createCliRuntime(deps: CliRuntimeDepsP3, handlers?: Record<strin
     } finally {
       s.executing = false;
     }
+    syncConfigSession(s, !sessions.has(s.id)); // P3 [S25] (ruling R47): `configure terminal`, `end`, `exit`
     return { r, prompt: r.closed !== true && sessions.has(s.id) };
   }
 
@@ -1605,6 +1626,7 @@ export function createCliRuntime(deps: CliRuntimeDepsP3, handlers?: Record<strin
       if (s !== undefined && s.job?.process === VTY_CLIENT_PROCESS) {
         deps.device(s.device)?.applyActions(CLI_PROCESS_NAME, [{ type: 'request', to: s.job.process, req: s.job.abort }], deps.now());
       }
+      if (s !== undefined) syncConfigSession(s, true); // P3 [S25] (ruling R47): closing leaves configuration mode
       sessions.delete(id);
     },
 
@@ -1780,6 +1802,7 @@ export function createCliRuntime(deps: CliRuntimeDepsP3, handlers?: Record<strin
       if (s.busy && s.job !== undefined) {
         deps.device(device)?.applyActions(CLI_PROCESS_NAME, [{ type: 'request', to: s.job.process, req: s.job.abort }], now);
       }
+      syncConfigSession(s, true); // P3 [S25] (ruling R47): a dropped remote session leaves configuration mode
       sessions.delete(s.id);
     },
 

@@ -10,7 +10,9 @@
  * highest up loopback > the highest up interface address); a later `router-id` change is shown as `configuredRouterId`
  * and applied by `clear ip ospf process` (`ospf.clear`) or a reload. With no `router-id` and no interface address at
  * all, the `ospfNoRouterId` log is written once. `no router ospf`, or a stored `no ip routing` (D7), stops the process:
- * neighbours and rows go, the LSDB is cleared and an empty `ipv4.routes` batch withdraws every route.
+ * neighbours and rows go, the LSDB is cleared and an empty `ipv4.routes` batch withdraws every route. `no router ospf`
+ * stops it inside the configuration dispatch itself (not at the coalesced resync), so a section removed and re-created
+ * in one instant restarts with a freshly chosen router id.
  *
  * Resync (`resync`, 0 ns, coalesced, after `init`, `onConfig` and `onLinkChange`): the daemon reads the port views after
  * the whole dispatch applied its actions (the stale-view lag of ipv4.ts) and reconciles the process, the enabled
@@ -48,7 +50,9 @@
  * (core/ospf-lsa.ts), install, flood, acknowledge, and an older copy answered with the database copy. A newer copy of a
  * self-originated LSA is installed, then re-originated above it (or flushed when no longer wanted); when such copies
  * keep arriving (another router with the same router id) the re-origination moves to the periodic `self-war:<lsa>` and
- * a log names the conflict once, so `runToIdle` still returns. MaxAge LSAs are removed once no retransmission list
+ * a log names the conflict once; after OSPF_SELF_WAR_MAX_COPIES such copies within the war window the router stops
+ * re-originating that LSA (the other copy stands), so the war's flooding and SPF work drain and `runToIdle` returns
+ * (rule 19) even between two routers that are not neighbours. MaxAge LSAs are removed once no retransmission list
  * holds them and no neighbour is exchanging; `maxage` (60 s, periodic, only while LSAs of other routers exist) ages
  * them out; `refresh` (periodic) re-originates every self LSA at 1800 s.
  *
@@ -183,6 +187,13 @@ export const OSPF_DSCP = 48;
 export const OSPF_PORT_ROLES: readonly PortRole[] = Object.freeze(['routed', 'wan', 'svi', 'virtual', 'subif', 'tunnel'] as PortRole[]);
 /** @since P3 Two newer copies of one self-originated LSA within this window are a router id conflict (`self-war`). */
 export const OSPF_SELF_WAR_WINDOW_NS = 60 * SEC;
+/**
+ * @since P3 (W5 fix, the ospf report; rule 19) Newer copies of one self-originated LSA, each within the war window of
+ * the one before, after which this router stops re-originating it: the other router's copy stands until the window
+ * passes with no newer copy. Without the cap, two routers with one id that are not neighbours re-originate over each
+ * other for ever, every round re-arming the non-periodic flooding and SPF work, so `runToIdle` never returned.
+ */
+export const OSPF_SELF_WAR_MAX_COPIES = 8;
 
 const NAME = OSPF_PROCESS;
 const DEBUG_RING = 256;
@@ -1271,6 +1282,11 @@ export function createOspf(): Process {
     }
     const due = lsaGenAt(lastOrig.get(key), ctx.now);
     const war = warSeen.get(key);
+    if (war !== undefined && war.count >= OSPF_SELF_WAR_MAX_COPIES && ctx.now - war.at < OSPF_SELF_WAR_WINDOW_NS) {
+      // the war is lost for now (rule 19): no re-origination, so the conflict's flooding and SPF work drain
+      dropGen(out, key);
+      return;
+    }
     if (!fromWar && war !== undefined && war.count >= 2 && ctx.now - war.at < OSPF_SELF_WAR_WINDOW_NS) {
       if (warDue.get(key) === undefined) {
         warDue.set(key, due);
@@ -1872,7 +1888,21 @@ export function createOspf(): Process {
       return run(ctx, (out) => onTimerKey(ctx, out, key));
     },
 
-    onConfig(ctx: ProcessCtx, _delta: ConfigDelta): Action[] {
+    onConfig(ctx: ProcessCtx, delta: ConfigDelta): Action[] {
+      // `no router ospf <pid>` destroys the running process at once (D7: the router id is chosen at process start), so a
+      // section removed and re-created in one instant starts a NEW process that picks its id again, never inheriting the
+      // deleted process's id; the coalesced resync then reconciles as usual (W5 fix, exposed by lab 07). Only the running
+      // process's own section counts: removing another `router ospf` section leaves the running process alone.
+      if (
+        proc !== undefined &&
+        delta.op === 'unset' &&
+        delta.context.length === 0 &&
+        delta.line[0] === 'router' &&
+        delta.line[1] === 'ospf' &&
+        Number(delta.line[2]) === proc.pid
+      ) {
+        return [...run(ctx, (out) => stop(ctx, out, 'no router ospf')), ...armResync()];
+      }
       if (proc === undefined && !hasRouterOspf(ctx)) return [];
       return armResync();
     },

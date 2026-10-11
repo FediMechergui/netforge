@@ -1,6 +1,8 @@
 // The File menu's template list (spec §13.1; ARCHITECTURE-P2 §6, §11.2, W6 web-shell): scenarios grouped by
 // category — templates, the CCNA 1 labs, the CCNA 2 labs ("Labs: CCNA 2"), then any other category alphabetically —
 // with list order kept inside each group. `groupScenarios` is pure.
+// P3 (ARCHITECTURE-P3 §9.2 item 39, §11.2; W5 web-shell): the CCNA 3 labs join `SCENARIOS` and take the fixed place
+// after the CCNA 2 labs, "Labs: CCNA 3".
 import { describe, expect, it, vi } from 'vitest';
 import { SCENARIOS, scenarioMeta } from '@netforge/engine';
 import type { ScenarioMeta } from '@netforge/engine';
@@ -25,13 +27,14 @@ function meta(name: string, category: string, course?: string): ScenarioMeta {
 }
 
 describe('File menu groups', () => {
-  it('place templates, then the CCNA 1 labs, then the CCNA 2 labs', () => {
-    expect(CATEGORY_ORDER).toEqual(['template', 'ccna1-lab', 'ccna2-lab']);
+  it('place templates, then the CCNA 1 labs, then the CCNA 2 labs, then the CCNA 3 labs', () => {
+    expect(CATEGORY_ORDER).toEqual(['template', 'ccna1-lab', 'ccna2-lab', 'ccna3-lab']);
     const groups = groupScenarios(SHIPPED);
     expect(groups.map((g) => [g.category, g.label])).toEqual([
       ['template', 'Templates'],
       ['ccna1-lab', 'Labs: CCNA 1'],
       ['ccna2-lab', 'Labs: CCNA 2'],
+      ['ccna3-lab', 'Labs: CCNA 3'],
     ]);
     for (const g of groups) expect(g.items.map((m) => m.name)).toEqual(SHIPPED.filter((m) => m.category === g.category).map((m) => m.name));
   });
@@ -42,6 +45,7 @@ describe('File menu groups', () => {
       meta('c2a', 'ccna2-lab', 'CCNA 2'),
       meta('x1', 'alpha-extra'),
       meta('c3a', 'ccna3-lab', 'CCNA 3'),
+      meta('e1', 'extra-lab', 'Extra course'),
       meta('t1', 'template'),
       meta('c1a', 'ccna1-lab', 'CCNA 1'),
       meta('t2', ''),
@@ -52,8 +56,11 @@ describe('File menu groups', () => {
       ['template', 'Templates', ['t1', 't2']],
       ['ccna1-lab', 'Labs: CCNA 1', ['c1a']],
       ['ccna2-lab', 'Labs: CCNA 2', ['c2a', 'c2b']],
-      ['alpha-extra', 'Alpha extra', ['x1']],
+      // P3 W5: `ccna3-lab` has a fixed place now (§9.2 items 39 and 40e); a course-lab category without one still sorts
+      // among the other categories and is still labelled by its course ('extra-lab').
       ['ccna3-lab', 'Labs: CCNA 3', ['c3a']],
+      ['alpha-extra', 'Alpha extra', ['x1']],
+      ['extra-lab', 'Labs: Extra course', ['e1']],
       ['zeta', 'Zeta', ['z1', 'z2']],
     ]);
   });

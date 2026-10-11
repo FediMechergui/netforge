@@ -88,7 +88,8 @@ export function clockSourceText(view: DeviceClockView): string {
     case 'unset':
       return 'No time source: the clock was never set.';
     case 'user':
-      return 'Time source: set by hand (clock set).';
+      // `clock set`, or the value a clock kept when its NTP source was removed (ntp.ts loseSource): true for both
+      return "Time source: this device's own clock, not synchronised (set by hand, or kept after its time server was removed).";
     case 'ntp':
       return `Time source: NTP, stratum ${view.stratum ?? '?'}${view.reference === undefined ? '' : `, from ${view.reference}`}.`;
     case 'master':
@@ -105,7 +106,9 @@ const clockTimezone: CommandHandler = (ctx, args, negate) => {
   const hours = args['hours'];
   if (zone === '' || hours === undefined) return { error: '% Expected clock timezone <name> <hours> [<minutes>].' };
   const minutes = args['minutes'];
-  const line = ['clock', 'timezone', zone, String(Number(hours)), ...(minutes === undefined ? [] : [String(Number(minutes))])];
+  // a zero minutes field is the same offset as none: stored without it, as a leading-zero hour is stored without the
+  // zero (`CET 1 0`, `CET 01 00` and `CET 1` are one line; W5 fix #19)
+  const line = ['clock', 'timezone', zone, String(Number(hours)), ...(minutes === undefined || Number(minutes) === 0 ? [] : [String(Number(minutes))])];
   return outcomeOf(ctx.config(line, false, globalContext()));
 };
 
@@ -288,7 +291,7 @@ function sourceWords(view: DeviceClockView): string {
     case 'master':
       return `this device's own clock, served at stratum ${view.stratum ?? 8} (ntp master)`;
     case 'user':
-      return 'set by hand (clock set); not synchronised';
+      return "this device's own clock (set by hand, or kept after its time server was removed); not synchronised";
     case 'host':
       return "the host's own clock";
     case 'unset':

@@ -4,7 +4,8 @@
  *
  * Global ([S24]): `logging buffered [<size>] [<level>]`, `logging console [<level>]` / `no logging console` (both forms
  * are stored), `logging monitor [<level>]`, `service timestamps log|debug datetime [msec] [localtime] [show-timezone]`
- * and `service timestamps log|debug uptime`. Global ([S25]): `logging host <addr>` (multi) and its alias
+ * and `service timestamps log|debug uptime`; ruling R47 (W5): the short negation `no service timestamps log|debug`
+ * (a hidden spec, so no help list moves). Global ([S25]): `logging host <addr>` (multi) and its alias
  * `logging <addr>` (stored as typed), `logging trap <level>`, `logging source-interface <if>`, `logging facility
  * local0-7`. A level is a number 0-7 or its keyword and is stored as the keyword (`logging trap warnings`).
  * Exec: `terminal monitor` / `terminal no monitor` (logs also print on this remote session). Host shell (servers):
@@ -61,6 +62,11 @@ export const TIMESTAMP_KINDS: readonly string[] = Object.freeze(['log', 'debug']
 export const TIMESTAMP_DATETIME_OPTIONS: readonly string[] = Object.freeze(['msec', 'localtime', 'show-timezone']);
 /** @since P3 [S24] Arg name (`fixedArgs`) naming the timestamp form (`datetime` | `uptime`). */
 export const TIMESTAMP_FORM_ARG = 'form';
+/**
+ * @since P3 [S24] (ruling R47, W5) The `TIMESTAMP_FORM_ARG` value of the hidden bare `service timestamps <kind>` spec:
+ * its negation is the short form (`no service timestamps debug`); the bare positive form stores `uptime` (W5 fix #21).
+ */
+export const TIMESTAMP_FORM_NEGATION_ONLY = 'negation-only';
 
 /** @since P3 [S24] Bounds of the log buffer, in bytes: the logger's (a size outside them would be ignored there). */
 export const LOG_BUFFER_MIN = LOGGING_BUFFER_MIN_BYTES;
@@ -203,6 +209,18 @@ export const LOGGING_GRAMMAR: readonly CommandSpec[] = Object.freeze<CommandSpec
     args: { kind: choiceArg('log for log lines, debug for debug lines', TIMESTAMP_KINDS) },
     handler: H.configServiceTimestamps,
     fixedArgs: { [TIMESTAMP_FORM_ARG]: 'uptime' },
+  },
+  // Ruling R47 (W5): the short negation `no service timestamps log|debug` removes the stamp line whatever its form.
+  // Hidden, so no help list changes. The positive bare form stores `uptime` (a real router's default), because the
+  // parser counts this spec in `?`'s `<cr>`: offering Enter for a line Enter refuses would be wrong (W5 fix #21).
+  {
+    ...GLOBAL_LINE,
+    path: ['service', 'timestamps', '<kind>'],
+    help: 'Stamp with the uptime (the bare form); the no form stops stamping these lines',
+    args: { kind: choiceArg('log for log lines, debug for debug lines', TIMESTAMP_KINDS) },
+    handler: H.configServiceTimestamps,
+    fixedArgs: { [TIMESTAMP_FORM_ARG]: TIMESTAMP_FORM_NEGATION_ONLY },
+    hidden: true,
   },
   {
     path: ['terminal', 'monitor'],

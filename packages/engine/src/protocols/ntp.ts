@@ -25,7 +25,9 @@
  *  • `ntp.clockSet {unixMs}` (the CLI's `clock set`) is `clock {op: 'set', unixMs, source: 'user'}`.
  *  • Losing the source — the sys-peer's `ntp server` line or the `ntp master` line removed — is a zero step to
  *    `master` (when `ntp master` is still configured) or to `user` (the value kept, no longer synchronised); the other
- *    servers are kicked.
+ *    servers are kicked. `user` thus has two causes, `clock set` and a lost source, and nothing records which one:
+ *    every reader words it as the device's own clock, true for both (contracts/clock.ts ClockSource; the CLI's
+ *    `show clock detail` and `show ntp status`, the web inspector and timeline), never as "set by hand" alone (W5 fix #24).
  *
  * Polling (D19, §4.2). A configured server is polled at once (at configuration or boot), then every 64 s on the
  * periodic `ntp-poll:<server>`. While the device is not synchronised by NTP it also

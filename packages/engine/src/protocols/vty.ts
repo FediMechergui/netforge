@@ -10,9 +10,11 @@
  * A transport refusal never reaches the daemon (tcp answers the SYN with a RST) and writes no row. On a managed switch
  * nothing reaches a listener until a P3 line wakes the dormant transport (D22, protocols/ip-upper.ts).
  *
- * A connection is served by the first `line vty` section whose transport allows its protocol (that section's
- * `login`, `password` and `access-class`). Authentication: `login local` → the `username … secret|password` lines;
- * else a line `password` (vty lines log in by default); else the login is refused ("no password set").
+ * A connection is served by the lowest-numbered vty lines whose transport allows its protocol (their `login`,
+ * `password` and `access-class`). The settings are resolved per line number (`vtyLineRanges`, W5 fix #11): `line vty
+ * 0 15` typed after `line vty 0 4` configures lines 0-4 too, a later setting replacing an earlier one.
+ * Authentication: `login local` → the `username … secret|password` lines; else a line `password` (vty lines log in by
+ * default); else the login is refused ("no password set").
  *  • telnet: the `access-class` check runs at once (`acl.check {family 4, list, tuple of the accepted SYN, token: the
  *    connection, owner 'vty'}`); then `Username: ` (login local) and `Password: ` (masked: `IAC WILL ECHO`) prompts;
  *    three failures close the connection.
@@ -326,7 +328,7 @@ export function vtyTermLine(line: string): Uint8Array {
 
 // ── the configuration ───────────────────────────────────────────────────────
 
-/** @since P3 [S13] One `line vty <first> [<last>]` section as the server reads it. */
+/** @since P3 [S13] One range of vty lines as the server reads it (resolved per line number since W5 fix #11). */
 export interface VtyLineConfig {
   /** 'vty 0 4'. */
   readonly name: string;
@@ -342,7 +344,7 @@ export interface VtyLineConfig {
 
 /** @since P3 [S13] What the server reads from the configuration. */
 export interface VtyConfig {
-  /** The `line vty` sections in configuration order. */
+  /** The vty lines, as ranges of line numbers sharing their settings (`vtyLineRanges`), ascending. */
   readonly lines: readonly VtyLineConfig[];
   /** A key is stored (`crypto key generate rsa …`). */
   readonly rsaKey: boolean;
@@ -368,38 +370,128 @@ function positive(token: string | undefined, fallback: number): number {
   return token !== undefined && Number.isInteger(n) && n > 0 ? n : fallback;
 }
 
-/** @since P3 [S13] Read the server's configuration (stored lines only; negations never count). Pure. */
-export function readVtyConfig(root: ConfigNode): VtyConfig {
-  const sections = new Map<string, { transport?: string[]; accessClass?: string; local: boolean; password?: string }>();
-  let rsaKey = false;
-  let sshRetries = VTY_SSH_RETRIES_DEFAULT;
-  let sshTimeoutS = VTY_SSH_TIMEOUT_DEFAULT_S;
+/**
+ * @since P3 [S13] (W5 fix #11) The settings of a run of vty line numbers, as the stored `line vty <first> [<last>]`
+ * sections give them: each value is the last one any section covering these lines set, in configuration order
+ * (`undefined`: no section covering them has that line).
+ */
+export interface VtyLineRange {
+  readonly first: number;
+  readonly last: number;
+  /** The `transport input …` values (undefined: no `transport input` line, so `telnet ssh`). */
+  readonly transport?: readonly string[];
+  /** The `access-class <list> in` list, as typed. */
+  readonly accessClass?: string;
+  /** `login local` → 'local'; a plain `login` → 'line'; undefined: no login line (vty lines log in by default). */
+  readonly login?: 'local' | 'line';
+  /** The stored line password. */
+  readonly password?: string;
+}
+
+/** The highest vty line number read (the grammar stops at 15; a larger stored number is clamped, never iterated). */
+const VTY_LINE_NUMBER_CAP = 1023;
+
+/** `vty <first> [<last>]` of a `line` header: the line-number range, or undefined for a malformed header. */
+function vtyRangeOf(tokens: readonly string[]): { first: number; last: number } | undefined {
+  if (tokens[0] !== 'line' || tokens[1] !== 'vty') return undefined;
+  const a = Number(tokens[2]);
+  const b = tokens[3] === undefined ? a : Number(tokens[3]);
+  if (!Number.isInteger(a) || !Number.isInteger(b) || a < 0 || b < 0) return undefined;
+  const first = Math.min(a, b, VTY_LINE_NUMBER_CAP);
+  return { first, last: Math.min(Math.max(a, b), VTY_LINE_NUMBER_CAP) };
+}
+
+/**
+ * @since P3 [S13] (W5 fix #11) Resolve the stored `line vty …` sections per line number, as a real router applies them:
+ * `line vty 0 15` typed after `line vty 0 4` configures lines 0-4 too (a later setting replaces an earlier one, line by
+ * line), and the router shows the result as `line vty 0 4` plus `line vty 5 15`. Lines are cut into ranges wherever
+ * the set of sections covering them changes, so a single section, or sections that do not overlap, come back exactly
+ * as stored. Ascending line numbers (the first range serves the first connection). Negations never count. Pure.
+ */
+export function vtyLineRanges(root: ConfigNode): VtyLineRange[] {
+  interface Settings { transport?: string[]; accessClass?: string; login?: 'local' | 'line'; password?: string; sections: string }
+  const perLine = new Map<number, Settings>();
+  let section = 0;
+  const cover = (r: { first: number; last: number }, apply: (s: Settings) => void): void => {
+    for (let n = r.first; n <= r.last; n++) {
+      let s = perLine.get(n);
+      if (s === undefined) {
+        s = { sections: '' };
+        perLine.set(n, s);
+      }
+      apply(s);
+    }
+  };
   for (const l of configTextLinesOf(root)) {
     if (l.negate) continue;
     const t = l.tokens;
     if (l.context.length === 0) {
-      if (t[0] === 'line' && t[1] === 'vty') sections.set(t.join(' '), sections.get(t.join(' ')) ?? { local: false });
-      else if (t[0] === 'crypto' && t[1] === 'key' && t[2] === 'generate' && t[3] === 'rsa') rsaKey = true;
-      else if (t[0] === 'ip' && t[1] === 'ssh' && t[2] === 'authentication-retries') sshRetries = positive(t[3], VTY_SSH_RETRIES_DEFAULT);
-      else if (t[0] === 'ip' && t[1] === 'ssh' && t[2] === 'time-out') sshTimeoutS = positive(t[3], VTY_SSH_TIMEOUT_DEFAULT_S);
+      const r = vtyRangeOf(t);
+      if (r === undefined) continue;
+      const id = section++;
+      cover(r, (s) => {
+        s.sections += `${id},`;
+      });
       continue;
     }
     const head = l.context[0];
-    if (l.context.length !== 1 || head === undefined || head[0] !== 'line' || head[1] !== 'vty') continue;
-    const key = head.join(' ');
-    const s = sections.get(key) ?? { local: false };
-    sections.set(key, s);
-    if (t[0] === 'transport' && t[1] === 'input') s.transport = t.slice(2);
-    else if (t[0] === 'access-class' && t[2] === 'in' && t[1] !== undefined) s.accessClass = t[1];
-    else if (t[0] === 'login') s.local = t[1] === 'local';
-    else if (t[0] === 'password' && t.length > 1) s.password = t.slice(1).join(' ');
+    if (l.context.length !== 1 || head === undefined) continue;
+    const r = vtyRangeOf(head);
+    if (r === undefined) continue;
+    if (t[0] === 'transport' && t[1] === 'input') cover(r, (s) => { s.transport = t.slice(2); });
+    else if (t[0] === 'access-class' && t[2] === 'in' && t[1] !== undefined) cover(r, (s) => { s.accessClass = t[1]; });
+    else if (t[0] === 'login') cover(r, (s) => { s.login = t[1] === 'local' ? 'local' : 'line'; });
+    else if (t[0] === 'password' && t.length > 1) cover(r, (s) => { s.password = t.slice(1).join(' '); });
+  }
+  const numbers = [...perLine.keys()].sort((a, b) => a - b);
+  const same = (a: Settings, b: Settings): boolean =>
+    a.sections === b.sections && a.accessClass === b.accessClass && a.login === b.login && a.password === b.password &&
+    (a.transport ?? []).join(' ') === (b.transport ?? []).join(' ') && (a.transport === undefined) === (b.transport === undefined);
+  const out: VtyLineRange[] = [];
+  let start: number | undefined;
+  for (let i = 0; i < numbers.length; i++) {
+    const n = numbers[i]!;
+    if (start === undefined) start = n;
+    const next = numbers[i + 1];
+    const s = perLine.get(n)!;
+    if (next !== undefined && next === n + 1 && same(s, perLine.get(next)!)) continue;
+    const range: { -readonly [K in keyof VtyLineRange]: VtyLineRange[K] } = { first: start, last: n };
+    if (s.transport !== undefined) range.transport = s.transport;
+    if (s.accessClass !== undefined) range.accessClass = s.accessClass;
+    if (s.login !== undefined) range.login = s.login;
+    if (s.password !== undefined) range.password = s.password;
+    out.push(range);
+    start = undefined;
+  }
+  return out;
+}
+
+/** @since P3 [S13] (W5 fix #11) `vty 0 4` (or `vty 5` for one line): a range's name as `show` and the debug print it. */
+export function vtyRangeName(r: Pick<VtyLineRange, 'first' | 'last'>): string {
+  return r.first === r.last ? `vty ${r.first}` : `vty ${r.first} ${r.last}`;
+}
+
+/**
+ * @since P3 [S13] Read the server's configuration (stored lines only; negations never count). The vty settings are
+ * resolved per line number (`vtyLineRanges`, W5 fix #11). Pure.
+ */
+export function readVtyConfig(root: ConfigNode): VtyConfig {
+  let rsaKey = false;
+  let sshRetries = VTY_SSH_RETRIES_DEFAULT;
+  let sshTimeoutS = VTY_SSH_TIMEOUT_DEFAULT_S;
+  for (const l of configTextLinesOf(root)) {
+    if (l.negate || l.context.length !== 0) continue;
+    const t = l.tokens;
+    if (t[0] === 'crypto' && t[1] === 'key' && t[2] === 'generate' && t[3] === 'rsa') rsaKey = true;
+    else if (t[0] === 'ip' && t[1] === 'ssh' && t[2] === 'authentication-retries') sshRetries = positive(t[3], VTY_SSH_RETRIES_DEFAULT);
+    else if (t[0] === 'ip' && t[1] === 'ssh' && t[2] === 'time-out') sshTimeoutS = positive(t[3], VTY_SSH_TIMEOUT_DEFAULT_S);
   }
   const lines: VtyLineConfig[] = [];
-  for (const [key, s] of sections) {
-    const login: VtyLineConfig['login'] = s.local ? 'local' : s.password !== undefined ? 'line' : 'none';
-    const line: { -readonly [K in keyof VtyLineConfig]: VtyLineConfig[K] } = { name: key.slice('line '.length), transport: transportOf(s.transport), login };
-    if (s.accessClass !== undefined) line.accessClass = s.accessClass;
-    if (s.password !== undefined) line.password = s.password;
+  for (const r of vtyLineRanges(root)) {
+    const login: VtyLineConfig['login'] = r.login === 'local' ? 'local' : r.password !== undefined ? 'line' : 'none';
+    const line: { -readonly [K in keyof VtyLineConfig]: VtyLineConfig[K] } = { name: vtyRangeName(r), transport: transportOf(r.transport), login };
+    if (r.accessClass !== undefined) line.accessClass = r.accessClass;
+    if (r.password !== undefined) line.password = r.password;
     lines.push(line);
   }
   return { lines, rsaKey, sshRetries, sshTimeoutS };
@@ -432,7 +524,7 @@ interface VtyConn {
   readonly localPort: number;
   /** When the connection was accepted (W4, R43: the `show users` "Connected for" column). */
   readonly since: SimTime;
-  /** The `line vty` section serving it (read at accept). */
+  /** The vty lines serving it: the lowest-numbered range whose transport allows its protocol (read at accept). */
   readonly line: VtyLineConfig;
   phase: 'check' | 'version' | 'auth' | 'user' | 'password' | 'open' | 'closing';
   user?: string;

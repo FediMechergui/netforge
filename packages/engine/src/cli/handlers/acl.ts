@@ -126,6 +126,10 @@ export const MSG_ACL_OTHER_TYPE = (name: string, type: 'standard' | 'extended'):
 export const MSG_NO_LIST_SECTION = '% Select a list first (ip access-list standard|extended <name>).';
 /** @since P3 `<seq> permit|deny …` with a number another entry of the list holds. */
 export const MSG_ACL_SEQ_TAKEN = (seq: string): string => `% Entry ${seq} already exists in this list; remove it first (no ${seq}).`;
+/** @since P3 (W5 fix #23) `<seq> permit|deny …` with a number a numbered remark of the list holds. */
+export const MSG_ACL_SEQ_REMARK = (seq: string): string => `% Number ${seq} holds a remark of this list; remove it first (no ${seq}) or choose another number.`;
+/** @since P3 (W5 report, lab 17) `<seq> permit|deny …` repeating an entry the list already holds under another number. */
+export const MSG_ACL_ENTRY_EXISTS = (seq: number): string => `% The list already holds this entry as entry ${seq}; remove it first (no ${seq}) to give it another number.`;
 /** @since P3 `no <seq>` naming no entry. */
 export const MSG_ACL_NO_SEQ = (seq: string): string => `% This list has no entry ${seq}.`;
 /** @since P3 A sequence number typed alone. */
@@ -261,8 +265,15 @@ const naclEntryP3: CommandHandler = (ctx, args, negate) => {
   if (tokens === undefined) return { error: MSG_ACL_P3_ENTRY };
   if (negate) return outcomeOf(ctx.config(tokens, true));
   if (seq !== undefined) {
-    if (listNamed(ctx, section.name)?.entries.some((e) => e.seq === Number(seq))) return { error: MSG_ACL_SEQ_TAKEN(seq) };
-    return outcomeOf(ctx.config([String(Number(seq)), ...tokens], false));
+    // config-ast stores nothing for a taken number or an entry the list already holds (its header: the handler words
+    // the refusal), so every such case is refused here, never accepted silently (W5 fix #23 and the lab 17 report)
+    const n = Number(seq);
+    const list = listNamed(ctx, section.name);
+    if (list?.entries.some((e) => e.seq === n)) return { error: MSG_ACL_SEQ_TAKEN(seq) };
+    if (sequencedNodes(ctx, section.name).some((x) => x.node.seq === n)) return { error: MSG_ACL_SEQ_REMARK(String(n)) };
+    const same = list?.entries.find((e) => e.text === tokens.join(' '));
+    if (same !== undefined) return { error: MSG_ACL_ENTRY_EXISTS(same.seq) };
+    return outcomeOf(ctx.config([String(n), ...tokens], false));
   }
   return outcomeOf(ctx.config(tokens, false));
 };

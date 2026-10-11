@@ -273,6 +273,49 @@ describe('ike exchange: crossing initiations (D27, §3.13 step 3)', () => {
   }
 });
 
+describe('ike exchange: a crossing request after this end already retransmitted (W5 fix #13)', () => {
+  it('the lower end discards the request but sends its own again at once; the peer answers it', () => {
+    const [r1, r2] = pair();
+    const first = r1.start();
+    // R2 was not ready: R1's first request and its first retransmission are lost
+    const again = r1.timeout();
+    expect(again.send).toEqual(first.send);
+    expect(r1.tunnel.retransmits).toBe(1);
+    const i2 = r2.start();
+    const resend = deliver(i2, r1);
+    expect(resend.send).toEqual(first.send);
+    expect(resend.timer).toBeUndefined();
+    expect(resend.note).toMatch(/lower address 209.165.200.225 keeps its own exchange and sends its request again now/);
+    expect(r1.tunnel).toMatchObject({ state: 'init-sent', retransmits: 1 });
+    const answer = deliver(resend, r2);
+    expect(answer.transition).toEqual({ from: 'init-sent', to: 'init-answered', cause: 'crossing request from the lower address 209.165.200.225' });
+    deliver(deliver(deliver(answer, r1), r2), r1);
+    expect([r1.tunnel.state, r2.tunnel.state]).toEqual(['established', 'established']);
+  });
+
+  it('the higher end, and the lower end in auth-sent, behave as before', () => {
+    const [r1, r2] = pair();
+    r2.start();
+    r2.timeout();
+    // R2 is the higher address: it answers a crossing request whatever its retransmissions
+    const i1 = r1.start();
+    expect(deliver(i1, r2).transition?.to).toBe('init-answered');
+
+    // R1 (the lower address) in auth-sent with its IKE_AUTH already retransmitted: a crossing IKE_SA_INIT is discarded
+    // and nothing is sent (only an unanswered IKE_SA_INIT is sent again at once)
+    const [a1, a2] = pair();
+    deliver(deliver(a1.start(), a2), a1);
+    expect(a1.tunnel.state).toBe('auth-sent');
+    a1.timeout();
+    expect(a1.tunnel.retransmits).toBe(1);
+    const stray = new End('r2', R2, R1, KEY).start();
+    const discard = deliver(stray, a1);
+    expect(discard.send).toBeUndefined();
+    expect(discard.note).toBe('crossing IKE_SA_INIT from 209.165.200.230 discarded: the lower address 209.165.200.225 keeps its own exchange');
+    expect(a1.tunnel).toMatchObject({ state: 'auth-sent', retransmits: 1 });
+  });
+});
+
 describe('ike exchange: failures (§3.13 step 10, D27)', () => {
   it('a wrong key: the responder answers AUTHENTICATION_FAILED; both ends fail with ike-failed', () => {
     const [r1, r2] = pair(KEY, 'another-key');

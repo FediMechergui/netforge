@@ -21,7 +21,9 @@ export const NTP_UNIX_OFFSET_S = 2_208_988_800;
 
 /**
  * @since P3 Where a device clock's value comes from: 'unset' (a network device that was never set), 'user'
- * (`clock set`), 'ntp' (a synchronisation), 'master' (`ntp master`), 'host' (hosts and servers boot with true time).
+ * (`clock set`, or the value a clock keeps after its NTP or master source was removed: the ntp daemon's loseSource;
+ * comment widened in W5, no member changed), 'ntp' (a synchronisation), 'master' (`ntp master`), 'host' (hosts and
+ * servers boot with true time).
  */
 export type ClockSource = 'unset' | 'user' | 'ntp' | 'master' | 'host';
 

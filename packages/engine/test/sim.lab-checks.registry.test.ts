@@ -168,19 +168,22 @@ describe('the registry is exhaustive', () => {
 });
 
 describe('stub details', () => {
-  it('the kinds a later item brings fail with their W0 detail', () => {
-    // ARCHITECTURE-P3 §9.2 W3 item 30f: the W3 acl adapter answers `acl` and `aclDecision`; three kinds stay stubbed
+  it('the approved clone kinds run their W5 checkers; the W0 stub texts stay on record', () => {
+    // ARCHITECTURE-P3 §9.2 W3 item 30f, then W5 (§9.2 item 40c): the W5 sim item gives `service`, `path` and
+    // `traffic` their checkers, so the same three assertions on this world now get the checkers' exact details: R1
+    // runs no SSH (a reset before any login), the path through R1 holds, and a traffic check with no flow is refused
     const got = details(world, [
       { kind: 'service', from: 'PC1', to: 'R1', service: 'ssh', expect: 'success' },
       { kind: 'path', from: 'PC1', to: 'PC2', via: ['R1'] },
       { kind: 'traffic', flows: [], runMs: 1000, expect: [] },
     ]);
-    expect(got).toEqual([
+    expect(got).toEqual(["PC1's SSH login to R1 (10.0.0.254) was refused with a reset before any login: R1 does not accept SSH there; this task expects it to succeed.", undefined, 'A traffic check needs at least one flow.']);
+    // the record of the W0 texts is still exported (no assertion uses it any more)
+    expect(Object.values(UNAVAILABLE_KIND_DETAILS)).toEqual([
       'Remote login checks are not available in this build.',
       'Path checks are not available in this build.',
       'Traffic flow checks are not available in this build.',
     ]);
-    expect(Object.values(UNAVAILABLE_KIND_DETAILS)).toEqual(got);
   });
 
   // ARCHITECTURE-P3 §9.2 W3 item 30f: the W3 adapters fill every entry, so each check runs with its own entry set to
@@ -251,7 +254,8 @@ describe('the feedback envelope', () => {
   });
 
   it('applies to the stub details and to the static checks of connectivity.then', () => {
-    // ARCHITECTURE-P3 §9.2 W3 item 30f: the `acl` row is replaced by the still-stubbed `service` row
+    // ARCHITECTURE-P3 §9.2 W3 item 30f: the `acl` row is replaced by the `service` row; W5 (§9.2 item 40c): the
+    // service checker's own exact detail, then the assertion's feedback
     const got = details(world, [
       { kind: 'service', from: 'PC1', to: 'R1', service: 'ssh', expect: 'success', feedback: 'Come back after the ACL lesson.' },
       {
@@ -264,7 +268,7 @@ describe('the feedback envelope', () => {
       },
     ]);
     expect(got).toEqual([
-      'Remote login checks are not available in this build. Come back after the ACL lesson.',
+      "PC1's SSH login to R1 (10.0.0.254) was refused with a reset before any login: R1 does not accept SSH there; this task expects it to succeed. Come back after the ACL lesson.",
       'After the ping from PC1: R1 has no configuration line at no-such-line. Inner advice. Outer advice.',
     ]);
   });
