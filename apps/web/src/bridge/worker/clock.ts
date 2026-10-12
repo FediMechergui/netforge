@@ -10,11 +10,37 @@
  * (keepalives, beacons: `frameTx.background`) never clamp the clock while `ignoreBackground` is set, so periodic
  * maintenance traffic cannot lock the UI in slow motion. `frameAbort` shortens a leg to its `abortAt`.
  *
+ * P3 (ARCHITECTURE-P3 §9.2 ruling R57(a)): legs of traffic-generator datagrams (protocols/traffic.ts, the host shell's
+ * `flow` job and the desktop Traffic app) never clamp the clock either. A running flow always has a frame in flight, so
+ * clamping on its legs held the clock in permanent slow motion (a 50 pps flow played at a small fraction of the chosen
+ * rate). The clock recognises such a leg by what it already receives: the daemon gives every datagram it builds the
+ * PDU tag `'traffic'` (`TRAFFIC_DATAGRAM_TAG`), and the tag stays on the PDU through forwarding (a clone keeps its
+ * meta) and tunnelling (a rewrap keeps the PDU), so every leg's `frameTx.pdu.tag` and `InflightFrame.pdu.tag` carry it
+ * — the same test the engine's traffic grader makes (sim/lab-checks/traffic.ts `trafficActivity`). No engine marking
+ * is needed. The exemption is for the clamp only and unconditional: unlike a background leg, a traffic leg does not
+ * clamp under `ignoreBackground: false` (the View menu's "Background frames") nor when it matches the simulation-mode
+ * clamp filter. The leg is still recorded (so a resync, a prune and an abort treat it like any other), its `frameTx`
+ * reaches every other consumer unchanged (the Packets list, NetScope captures — it is not `background`, so "Keep
+ * keepalives and beacons" does not hide it — and the canvas, which paces such a leg on wall time itself,
+ * canvas/traffic-legs.ts), and every other leg (a ping, an HTTP fetch, ARP) clamps exactly as before.
+ *
+ * P3 (R57(a), W5 fix step) the reported rate tells the truth when the engine cannot keep up. An unclamped flow at a
+ * high rate can need more sub-steps than `MAX_SUBSTEPS` in one slice, or more CPU than the wall time it covers (the
+ * caller then caps the catch-up at MAX_SLICE_WALL_MS and the rest of the wall time is lost). `runSlice` records the
+ * fraction of the wall time that really passed (`SliceOptions.wallMs`, else `elapsedMs`) that the slice covered, and
+ * `currentRate` (the batch's `effectiveRate`) is the clamped rate times that fraction: the "slow-motion" chip shows the
+ * shortfall and the canvas extrapolates with the rate sim time really advances at, instead of running ahead and being
+ * set back by every batch. A slice that covers its wall time restores the full rate; so do a new rate, play/pause and a
+ * new world.
+ *
  * `performance.now()` is read by the caller (index.ts), never here, so the slice algorithm stays testable.
  */
 import { MS, inflightKey, matchesTraceFilter } from '@netforge/engine';
 import type { InflightFrame, RunOptions, RunStats, SimTime, Simulation, TraceEvent, TraceFilter } from '@netforge/engine';
-import { DEFAULT_CLOCK_POLICY, type ClockPolicy } from '../protocol';
+import { DEFAULT_CLOCK_POLICY, isTrafficDatagram, TRAFFIC_DATAGRAM_TAG, type ClockPolicy } from '../protocol';
+
+/** @since P3 (R57(a)) Re-exported from protocol.ts, where the canvas reads them too. */
+export { isTrafficDatagram, TRAFFIC_DATAGRAM_TAG };
 
 /** Safety bound on sub-steps per slice. */
 export const MAX_SUBSTEPS = 5000;
@@ -23,6 +49,8 @@ interface Flight {
   txStart: SimTime;
   arrive: SimTime;
   background: boolean;
+  /** @since P3 (R57(a)) A leg of a traffic-generator datagram: never clamps. */
+  traffic: boolean;
   /** The leg's `frameTx` (rebuilt from the engine's list on resync): what the clamp filter is matched against. */
   event: TraceEvent;
 }
@@ -31,6 +59,11 @@ interface Flight {
 export interface SliceOptions extends RunOptions {
   /** Called once with the stats of the sub-step that stopped on a breakpoint; the slice then ends. */
   onStop?(stats: RunStats): void;
+  /**
+   * @since P3 (R57(a)) The wall time that really passed since the previous slice, when the caller capped `elapsedMs`
+   * (a late tick: the engine could not keep up, or timers were throttled). Absent or not above `elapsedMs`: `elapsedMs`.
+   */
+  wallMs?: number;
 }
 
 /** A `frameTx` shaped from an engine in-flight frame, so a resync can be matched by the clamp filter too. */
@@ -56,7 +89,7 @@ export interface WorkerClock {
   readonly policy: Readonly<ClockPolicy>;
   readonly playing: boolean;
   readonly rate: number;
-  /** Frames the clamp currently considers (tests, status). */
+  /** Frames the clamp currently considers (tests, status); never a traffic-generator leg (R57(a)). */
   readonly clampingFlights: number;
   setPlaying(p: boolean): void;
   setRate(r: number): void;
@@ -74,8 +107,17 @@ export interface WorkerClock {
   resync(frames: readonly InflightFrame[]): void;
   /** Drop legs that already arrived. */
   prune(now: SimTime): void;
-  /** Sim ns per wall ms in force right now (rate×1e6 when idle or paused, lower while clamped). */
+  /**
+   * Sim ns per wall ms in force right now (rate×1e6 when idle or paused, lower while clamped). @since P3 (R57(a))
+   * While playing it is also scaled by `throughput`.
+   */
   currentRate(now: SimTime): number;
+  /**
+   * @since P3 (R57(a)) The fraction (0..1] of the wall time that really passed which the last slice covered: below 1
+   * when it ended on `MAX_SUBSTEPS` or its wall time was capped by the caller (`SliceOptions.wallMs`); 1 after a
+   * slice that covered it, a new rate, play/pause or a new world.
+   */
+  readonly throughput: number;
   /** Run one slice covering `elapsedMs` of wall time; returns the sim ns advanced. */
   runSlice(sim: Pick<Simulation, 'now' | 'nextEventTime' | 'runUntil'>, elapsedMs: number, opts?: SliceOptions): SimTime;
 }
@@ -96,9 +138,11 @@ export function createWorkerClock(initial: Partial<ClockPolicy> = {}): WorkerClo
   let playing = false;
   let rate = 1;
   let clampFilter: TraceFilter | null = null;
+  /** R57(a): the share of the real wall time the last slice covered (see `WorkerClock.throughput`). */
+  let throughput = 1;
 
   const clamps = (f: Flight): boolean =>
-    !(f.background && policy.ignoreBackground) && (clampFilter === null || matchesTraceFilter(clampFilter, f.event));
+    !f.traffic && !(f.background && policy.ignoreBackground) && (clampFilter === null || matchesTraceFilter(clampFilter, f.event));
 
   /** Shortest clamping leg and earliest clamping arrival, or undefined when nothing clamps. */
   function clampWindow(): { minDur: number; earliestArrive: number } | undefined {
@@ -135,12 +179,17 @@ export function createWorkerClock(initial: Partial<ClockPolicy> = {}): WorkerClo
       for (const f of flights.values()) if (clamps(f)) n++;
       return n;
     },
+    get throughput() {
+      return throughput;
+    },
     setPlaying(p) {
       playing = p;
+      throughput = 1;
     },
     setRate(r) {
       if (!Number.isFinite(r) || r <= 0) throw new RangeError(`Rate must be a positive number, got ${r}.`);
       rate = r;
+      throughput = 1;
     },
     setPolicy(p) {
       validatePolicy(p);
@@ -156,6 +205,7 @@ export function createWorkerClock(initial: Partial<ClockPolicy> = {}): WorkerClo
           txStart: ev.txStart,
           arrive: ev.arrive,
           background: ev.background === true,
+          traffic: isTrafficDatagram(ev.pdu),
           event: ev,
         });
       } else if (ev.kind === 'frameAbort') {
@@ -166,12 +216,20 @@ export function createWorkerClock(initial: Partial<ClockPolicy> = {}): WorkerClo
     },
     clear() {
       flights.clear();
+      throughput = 1;
     },
     resync(frames) {
       flights.clear();
+      throughput = 1;
       for (const f of frames) {
         const arrive = f.abortAt !== undefined && f.abortAt < f.arrive ? Math.max(f.txStart, f.abortAt) : f.arrive;
-        flights.set(inflightKey(f.pdu.id, f.link, f.to), { txStart: f.txStart, arrive, background: f.background === true, event: frameEventOf(f) });
+        flights.set(inflightKey(f.pdu.id, f.link, f.to), {
+          txStart: f.txStart,
+          arrive,
+          background: f.background === true,
+          traffic: isTrafficDatagram(f.pdu),
+          event: frameEventOf(f),
+        });
       }
     },
     prune,
@@ -180,8 +238,8 @@ export function createWorkerClock(initial: Partial<ClockPolicy> = {}): WorkerClo
       const full = rate * MS;
       if (!playing) return full;
       const w = clampWindow();
-      if (w === undefined) return full;
-      return Math.min(full, w.minDur / policy.minTransitWallMs);
+      if (w === undefined) return full * throughput;
+      return Math.min(full, w.minDur / policy.minTransitWallMs) * throughput;
     },
     runSlice(sim, elapsedMs, opts) {
       const start = sim.now;
@@ -237,6 +295,13 @@ export function createWorkerClock(initial: Partial<ClockPolicy> = {}): WorkerClo
         wallLeft -= advanced / r;
         now = sim.now;
       }
+
+      // R57(a): the share of the real wall time this slice covered (it ended on the sub-step bound with wall time
+      // left, or the caller capped the wall time it was given); a breakpoint ends the slice by design
+      const cut = !stopped && wallLeft > 0 && guard > MAX_SUBSTEPS;
+      const wall = Math.max(elapsedMs, opts?.wallMs ?? 0);
+      const covered = cut ? Math.max(0, elapsedMs - wallLeft) : elapsedMs;
+      throughput = stopped || !(wall > 0) ? 1 : Math.min(1, covered / wall);
 
       prune(sim.now);
       return sim.now - start;

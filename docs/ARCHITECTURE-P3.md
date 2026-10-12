@@ -5075,7 +5075,14 @@ The W5 integration step recorded these further migrations (`40b` is W6's; number
     does not hide them) and on the canvas, and the QoS overlay shows the stream. A ping, an HTTP fetch and every
     other packet keep P1's animation exactly. Owner: the W5 fix step (web-shell's `bridge/worker/clock.ts`, with the
     smallest engine marking it needs, additive), with a web test proving a continuous 50 pps flow plays at the chosen
-    rate and a ping still clamps.
+    rate and a ping still clamps. Mechanism (W5 fix step, no engine change): the clock exempts a leg whose PDU tag is
+    `'traffic'` (the generator tags every datagram, and forwarding and ESP/GRE rewraps keep it), the canvas
+    (`canvas/traffic-legs.ts`) paces those legs itself so each crosses its link in the clamp's 400 ms of wall time
+    without holding the clock (at most one start per lane every 16 ms, frozen while paused), and the batch's
+    `effectiveRate` is scaled by the share of wall time each slice really covered, so a flow that outruns the engine
+    (the sub-step bound, a capped catch-up) shows as slow motion instead of a clock that runs ahead; ICMP errors that a
+    flow provokes are other packets and still clamp, so a flow to an address that answers with errors plays in slow
+    motion until `flow stop`.
   - **(b) The protected banner is not where the gates look for it.** NetScope's frame detail shows no "Encrypted
     (ESP, simulated)" / "Protected (TLS, simulated)" banner (§3.8 step 2 and the W5/W6 gate scripts put it there). The
     Packet inspector shows the PDU's final layers even when opened from a protected hop, so its banner never appears

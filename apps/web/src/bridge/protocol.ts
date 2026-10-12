@@ -90,6 +90,7 @@ import type {
   ModuleType,
   PduId,
   PduJson,
+  PduSummary,
   ScenarioMeta,
   SeekTarget,
   SessionId,
@@ -117,6 +118,9 @@ import type {
  * waits (ping's 1 s spacing, ARP retries, CAM ageing) still run at `rate`. The
  * engine and the capsule formula are unchanged; only the sim→wall mapping is
  * adaptive. Tests and `runToIdle` use `minTransitWallMs: 0`.
+ * @since P3 (ARCHITECTURE-P3 R57(a)) Legs of traffic-generator datagrams (PDU tag 'traffic') never clamp, whatever
+ * the policy (worker/clock.ts): a running flow always has a frame in flight and would otherwise hold the clock in slow
+ * motion. They are still drawn (the canvas paces them itself on wall time, canvas/traffic-legs.ts), listed and captured.
  */
 export interface ClockPolicy {
   /** 0 = pure rate×wall (tests / turbo). UI default 400. */
@@ -125,6 +129,21 @@ export interface ClockPolicy {
   ignoreBackground: boolean;
 }
 export const DEFAULT_CLOCK_POLICY: Readonly<ClockPolicy> = Object.freeze({ minTransitWallMs: 400, ignoreBackground: true });
+
+/**
+ * @since P3 (R57(a)) The PDU tag the traffic generator gives every datagram it builds (engine protocols/traffic.ts
+ * `sendNext`, `ctx.newPdu(…, {tag: 'traffic'})`); no other daemon uses it. A clone keeps it (forwarding) and a rewrap
+ * keeps the PDU (ESP, GRE), so every leg of a generated datagram carries it.
+ */
+export const TRAFFIC_DATAGRAM_TAG = 'traffic';
+
+/**
+ * @since P3 (R57(a)) Is this leg's PDU a traffic-generator datagram: a leg the worker clock never clamps on and the
+ * canvas paces on wall time (the same test the engine's traffic grader makes, sim/lab-checks/traffic.ts)?
+ */
+export function isTrafficDatagram(pdu: Pick<PduSummary, 'tag'>): boolean {
+  return pdu.tag === TRAFFIC_DATAGRAM_TAG;
+}
 
 /** @since P1 Worker playback mode. 'simulation' = pause-at-event learning mode (the engine FidelityMode is unrelated). */
 export type PlaybackMode = 'realtime' | 'simulation';
@@ -199,6 +218,8 @@ export interface EngineBatch {
    * Sim ns per wall ms in force when the batch was posted (not a slice average). Equals rate×1e6
    * when idle or paused, lower while the ClockPolicy clamp is active. The status bar shows it as "slow-motion ×N"; the canvas
    * uses it to extrapolate `now` between batches.
+   * @since P3 (R57(a)) While playing it is also lower when the engine cannot keep up: scaled by the share of the real
+   * wall time the last slice covered (worker/clock.ts `throughput`), so the extrapolated clock does not run ahead.
    */
   effectiveRate: number;
   /** Trace events dropped from the ring since last batch (UI shows a warning). */

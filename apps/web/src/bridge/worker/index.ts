@@ -358,7 +358,9 @@ const REVIEW_SLICE: SliceOptions = { stopOn: { kinds: [] }, onStop: () => undefi
 
 function tick(): void {
   const wall = performance.now();
-  const elapsed = Math.min(MAX_SLICE_WALL_MS, Math.max(0, wall - lastTickWall));
+  // R57(a): the wall time that really passed goes to the slice too, so a capped catch-up shows in `effectiveRate`
+  const passed = Math.max(0, wall - lastTickWall);
+  const elapsed = Math.min(MAX_SLICE_WALL_MS, passed);
   lastTickWall = wall;
   if (!sim) return;
   // [S1] background work first: parked replayers catch up with their targets, empty slots refill (never during review)
@@ -375,16 +377,17 @@ function tick(): void {
   if (reviewPending()) settleReview();
   if (!clock.playing || timeMachine.seeking) return;
   if (timeMachine.reviewing) {
-    reviewTick(elapsed);
+    reviewTick(elapsed, passed);
     return;
   }
   try {
     const run = simMode.runOptions();
     let stopped: StopInfo | undefined;
     if (run?.stopOn === undefined) {
-      clock.runSlice(sim, elapsed);
+      clock.runSlice(sim, elapsed, { wallMs: passed });
     } else {
       clock.runSlice(sim, elapsed, {
+        wallMs: passed,
         stopOn: run.stopOn,
         onStop: (stats) => {
           stopped = stopInfoOf(stats, 'breakpoint') ?? undefined;
@@ -411,9 +414,9 @@ function tick(): void {
 }
 
 /** [S1] Playing in review: the cursor replay moves forward at the clock's pace; at the live position review ends. */
-function reviewTick(elapsed: number): void {
+function reviewTick(elapsed: number, passed: number): void {
   try {
-    clock.runSlice(timeMachine.reviewDriver(), elapsed, REVIEW_SLICE);
+    clock.runSlice(timeMachine.reviewDriver(), elapsed, { ...REVIEW_SLICE, wallMs: passed });
     if (timeMachine.atLive()) {
       // review ends by itself; the clock keeps playing, now in the present
       endReview();

@@ -705,6 +705,8 @@ function runCanvas(scene: Scene, tip: HTMLElement, openMenu: (m: ContextMenuRequ
       // P3 (R42): the IPsec legs' pulse runs on wall time, static under reduced motion
       wall,
       reducedMotion: scene.reducedMotion,
+      // P3 (R57(a)): traffic-generator legs cross on pace time (stepped like `now` under reduced motion)
+      pace: { wall: sampleWall, playing: st.playing, effectiveRate: st.effectiveRate, epoch: st.epoch },
       showBackground: overlays.backgroundFrames,
       vlanColours: topo.vlan,
       untaggedVlan: ends === null ? undefined : (from) => untaggedVlanOf(ends, from),

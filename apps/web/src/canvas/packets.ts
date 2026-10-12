@@ -30,6 +30,12 @@
  * summary's `tunnel` member through the WAN model's `tunnelLegStyle`: a GRE leg carries a `G` badge (top-left, opposite
  * the `Q` badge); an IPsec (ESP) leg carries a small padlock there and breathes (`encryptedPulseAlpha`, a slow alpha
  * pulse on wall time), static under reduced motion. Every other leg draws exactly as before.
+ *
+ * @since P3 (ARCHITECTURE-P3 §9.2 ruling R57(a), W5 fix step) A leg of a traffic-generator datagram never clamps the
+ * clock, so at any usable rate it would be on the wire for a sliver of a screen frame. With `pace` given, the layer
+ * places such a leg where `TrafficLegPacer` (traffic-legs.ts) says: crossing its link in the clamp's 400 ms of wall
+ * time without holding the clock, a bounded sample per lane, drawn without a trail while it runs ahead of `now` (the
+ * trails of a stream's overlapping legs would fill the cable). Every other leg is placed at `now` as before.
  */
 import { Container, Graphics, type Text } from 'pixi.js';
 import {
@@ -44,8 +50,10 @@ import {
   type ProtoName,
   type SimTime,
 } from '@netforge/engine';
+import { isTrafficDatagram } from '../bridge/protocol';
 import { protocolVocab, type PacketShape } from '../vocab/protocols';
 import { encryptedPulseAlpha, tunnelLegStyle } from './overlays/wan-model';
+import { TrafficLegPacer, type TrafficPaceInput } from './traffic-legs';
 import { bezierAt, bezierTangent, geomBounds, type CableGeom, type Pt } from './cables';
 import { vlanColor } from './l2';
 import { isRadioLink } from './ports';
@@ -337,13 +345,40 @@ export interface PacketUpdateInput {
   wall?: number;
   /** @since P3 (R42) Reduced motion: the IPsec pulse stays static. */
   reducedMotion?: boolean;
+  /**
+   * @since P3 (R57(a)) The clock as the traffic pacer needs it (traffic-legs.ts): traffic-generator legs are then paced
+   * on wall time. Absent: they are placed at `now` like every other leg.
+   */
+  pace?: Omit<TrafficPaceInput, 'inflight' | 'now'>;
+}
+
+/** One leg to place this frame: at `now`, or (a paced traffic leg) at its own sim instant. */
+interface LegToPlace {
+  f: InflightFrame;
+  at: SimTime;
+  /** Drawn ahead of `now` on pace time: no trail. */
+  paced: boolean;
 }
 
 export class PacketLayer {
   private readonly views = new Map<string, PacketView>();
   private generation = 0;
+  /** @since P3 (R57(a)) Paces traffic-generator legs. */
+  private readonly traffic = new TrafficLegPacer();
 
   constructor(private readonly root: Container) {}
+
+  /** The legs to place this frame (R57(a): traffic legs where the pacer says, when `pace` is given). */
+  private legsOf(input: PacketUpdateInput): LegToPlace[] {
+    const legs: LegToPlace[] = [];
+    if (input.pace === undefined) {
+      for (const f of input.inflight) legs.push({ f, at: input.now, paced: false });
+      return legs;
+    }
+    for (const f of input.inflight) if (!isTrafficDatagram(f.pdu)) legs.push({ f, at: input.now, paced: false });
+    for (const l of this.traffic.step({ ...input.pace, inflight: input.inflight, now: input.now })) legs.push({ f: l.frame, at: l.at, paced: l.paced });
+    return legs;
+  }
 
   /** Place every visible capsule. Returns the number of legs currently on a medium (on screen or not). */
   update(input: PacketUpdateInput): number {
@@ -354,9 +389,9 @@ export class PacketLayer {
     let onWire = 0;
     let drawn = 0;
     const placed: PacketView[] = [];
-    for (const f of input.inflight) {
+    for (const { f, at, paced } of this.legsOf(input)) {
       if (f.background === true && !input.showBackground) continue;
-      const place = framePlacement(f, input.now);
+      const place = framePlacement(f, at);
       if (!place) continue;
       const path = resolveLegPath(f, input.paths);
       if (!path) continue;
@@ -405,7 +440,7 @@ export class PacketLayer {
       pv.pdu = f.pdu.id;
 
       pv.trail.clear();
-      if (input.trails && place.head - place.tail > 0.002) {
+      if (input.trails && !paced && place.head - place.tail > 0.002) {
         const steps = 10;
         const tailU = toU(place.tail);
         const headU = toU(place.head);

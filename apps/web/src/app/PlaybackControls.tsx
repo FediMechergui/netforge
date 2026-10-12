@@ -2,7 +2,7 @@
  * Play / pause / step / rate controls plus the simulated clock (spec §8.1 top bar).
  * The clock is extrapolated between batches with `effectiveRate` so it ticks
  * smoothly; a "slow-motion ×N" chip appears while the clock policy clamps the
- * rate below the requested one.
+ * rate below the requested one (P3 R57(a): or while the engine cannot keep up with it).
  */
 import { useEffect, useState } from 'react';
 import { MS } from '@netforge/engine';
@@ -166,7 +166,10 @@ export function PlaybackControls() {
         {!RATE_PRESETS.some((r) => r === rate) && <option value={String(rate)}>{fmtRate(rate)}</option>}
       </select>
       {slow && (
-        <span className="slowmo" title="Frames are on a cable: the clock is clamped so each transit stays visible">
+        <span
+          className="slowmo"
+          title="The clock runs below the chosen rate: frames on a cable are slowed so each transit stays visible, or the simulation cannot keep up"
+        >
           slow-motion ×{slowFactor >= 100 ? Math.round(slowFactor) : slowFactor.toFixed(1)}
         </span>
       )}
