@@ -4,6 +4,7 @@
  *
  * Assertion kinds and what they read:
  *   config       → `DeviceRuntime.running.query(path)` (dotted ConfigAst path), then `exists` / `equals` / `contains`;
+ *                  P3 (ruling R56; optional by meaning) `count`: exactly that many lines match the path, checked first;
  *   port         → the live `PortState` (operUp, adminUp, ipv4, ipv6, duplex, speedBps, role; P2 errDisabled);
  *   table        → `DeviceRuntime.tables.get(name)`, rows filtered by `where` (field-by-field, text-compared; P2: a
  *                  value of a column whose TABLE_DESCRIPTORS format is 'port' is first resolved through the device's
@@ -176,10 +177,22 @@ export function verdict(subject: string, problems: readonly string[]): Check {
 
 // ── static assertions ────────────────────────────────────────────────────────
 
+/** @since P3 (R56) "no configuration line", "1 configuration line", "3 configuration lines". */
+function configLines(n: number): string {
+  return n === 0 ? 'no configuration line' : n === 1 ? '1 configuration line' : `${n} configuration lines`;
+}
+
 export function checkConfig(sim: Simulation, a: Extract<LabAssertion, { kind: 'config' }>): Check {
   const dev = deviceNamed(sim, a.device);
   if (dev === undefined) return noDevice(a.device);
   const nodes = dev.running.query(a.path);
+  // P3 (ruling R56; optional by meaning, absent = the P1 check and detail byte for byte): `count` is the exact number of
+  // lines the path matches (an extra `match` line under a class is a wrong answer); `exists` / `equals` / `contains`,
+  // when given as well, must hold too
+  if (a.count !== undefined) {
+    if (nodes.length !== a.count) return fail(`${a.device} has ${configLines(nodes.length)} at ${a.path}, expected exactly ${a.count}.`);
+    if (a.exists === undefined && a.equals === undefined && a.contains === undefined) return PASS;
+  }
   if (a.exists !== undefined) {
     if (nodes.length > 0 === a.exists) return PASS;
     return fail(a.exists ? `${a.device} has no configuration line at ${a.path}.` : `${a.device} still has a configuration line at ${a.path}.`);

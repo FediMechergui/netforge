@@ -13,6 +13,10 @@
  * device, port, link or session) exactly as a click does. Every encoding has a non-colour channel (§7): the kind
  * is its vocabulary label, the protocol its badge letter, a stop its ⏸ glyph and its sentence.
  *
+ * P3 (ARCHITECTURE-P3 §9.2 ruling R57(b)): a `frameTx` row is one leg, so activating it opens the Packet inspector on
+ * the packet as it was on that leg (`inspectPduAtHop`, with that leg's banner); every other row keeps
+ * `selectionForEvent`'s selection.
+ *
  * ponytail: local component state for the chips with the store mirrored through `setSimModeUi`, rather than a
  * second source of truth; one breakpoint at a time; and follow-the-tail is just "the scroller is at the bottom".
  */
@@ -20,7 +24,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import type { DeviceId, TraceEvent } from '@netforge/engine';
 import { engine, fmtSimTime } from '../bridge/client';
 import type { PlaybackMode, StopInfo } from '../bridge/protocol';
-import { deviceName, portLabel, toastError, useDeviceIndex } from '../inspector/PacketInspector';
+import { deviceName, inspectPduAtHop, portLabel, toastError, useDeviceIndex } from '../inspector/PacketInspector';
 import { store, useStore } from '../store/store';
 import { protocolClassName, protocolLabel, protocolVocab } from '../vocab/protocols';
 import { TRACE_KIND_VOCAB } from '../vocab/trace-kinds';
@@ -64,6 +68,19 @@ const FALLBACK_PAGE_ROWS = 10;
 
 /** The scroll sync must run before paint in the browser; on the server there is no layout to read. */
 const useScrollSync = typeof window === 'undefined' ? useEffect : useLayoutEffect;
+
+/**
+ * What a click (or Enter / Space) on a row does. P3 (ruling R57(b)): a `frameTx` row opens the Packet inspector on that
+ * leg (`inspectPduAtHop`, which selects the same packet); any other row selects what `selectionForEvent` names.
+ */
+export function activateSimEvent(ev: TraceEvent): void {
+  if (ev.kind === 'frameTx') {
+    inspectPduAtHop(ev);
+    return;
+  }
+  const sel = selectionForEvent(ev);
+  if (sel !== null) store.getState().select(sel);
+}
 
 export function SimEventsPanel() {
   const epoch = useStore((s) => s.epoch);
@@ -210,10 +227,7 @@ export function SimEventsPanel() {
     }
   }, []);
 
-  const activate = useCallback((ev: TraceEvent): void => {
-    const sel = selectionForEvent(ev);
-    if (sel !== null) store.getState().select(sel);
-  }, []);
+  const activate = useCallback((ev: TraceEvent): void => activateSimEvent(ev), []);
 
   const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>): void => {
     if (e.key === 'Enter' || e.key === ' ') {

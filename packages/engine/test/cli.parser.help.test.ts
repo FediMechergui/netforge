@@ -77,7 +77,8 @@ describe('help lists', () => {
     // ARCHITECTURE-P2 §9.2 W4 item 18: a router's show subtree gains `access-lists` and `standby`
     // ARCHITECTURE-P3 §9.2 W2 item 21b (the W2 subset of item 21's show list): `class-map`, `clock` and `policy-map`
     // ARCHITECTURE-P3 §9.2 W3 item 30e: item 21's final router show list (the W3 shows join)
-    expect(tokens(help(GRAMMAR, priv, 'show '))).toEqual(['access-lists', 'arp', 'cdp', 'class-map', 'clock', 'crypto', 'history', 'hosts', 'interfaces', 'ip', 'ipv6', 'lldp', 'logging', 'ntp', 'policy-map', 'ppp', 'restconf', 'running-config', 'ssh', 'standby', 'startup-config', 'users', 'version']);
+    // ARCHITECTURE-P3 §9.2 W6 item 40h (ruling R56): the bare `show controllers` form is listed
+    expect(tokens(help(GRAMMAR, priv, 'show '))).toEqual(['access-lists', 'arp', 'cdp', 'class-map', 'clock', 'controllers', 'crypto', 'history', 'hosts', 'interfaces', 'ip', 'ipv6', 'lldp', 'logging', 'ntp', 'policy-map', 'ppp', 'restconf', 'running-config', 'ssh', 'standby', 'startup-config', 'users', 'version']);
     expect(tokens(help(GRAMMAR, sw, 'show '))).toContain('mac');
     expect(tokens(help(GRAMMAR, pc, 'show '))).toEqual(['arp', 'history', 'hosts', 'interfaces', 'ip', 'running-config', 'version']);
   });

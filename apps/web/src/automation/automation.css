@@ -1,0 +1,311 @@
+/* [S32] The automation workspace (ARCHITECTURE-P3 §6; W6 web-desktop). Prefix auto- (layout) and py- (highlight).
+   Every class keeps a non-colour channel: keywords bold, comments italic, errors and marks underlined, gutter glyphs. */
+
+.auto-ws {
+  gap: 10px;
+}
+.auto-ws section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.auto-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* ── files ──────────────────────────────────────────────────────────────── */
+
+.auto-file-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.auto-file {
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-2);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.auto-file:hover {
+  border-color: var(--border-strong);
+}
+.auto-file.is-open {
+  border: 2px solid var(--accent);
+  font-weight: 600;
+}
+.auto-file:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.auto-unsaved {
+  color: var(--warn);
+}
+.auto-new {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.auto-new .input {
+  width: 14em;
+}
+
+/* ── toolbar and arguments ─────────────────────────────────────────────── */
+
+.auto-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.auto-toolbar .desk-heading {
+  margin: 0;
+}
+.auto-spacer {
+  flex: 1 1 auto;
+}
+.auto-confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.auto-args {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.auto-args .input {
+  flex: 1 1 12em;
+  min-width: 8em;
+}
+.auto-args .desk-hint {
+  flex-basis: 100%;
+}
+
+/* ── editor ─────────────────────────────────────────────────────────────── */
+
+.auto-editor {
+  --auto-line: 18px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  height: calc(var(--auto-line) * 16 + 12px);
+  min-height: calc(var(--auto-line) * 4 + 12px);
+  overflow: hidden;
+  resize: vertical;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: var(--auto-line);
+}
+.auto-editor:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+.auto-gutter {
+  overflow: hidden;
+  padding: 6px 0 40px;
+  border-right: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text-faint);
+  text-align: right;
+  user-select: none;
+}
+.auto-gutter-line {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+  min-width: 4.5ch;
+  height: var(--auto-line);
+  padding: 0 6px 0 4px;
+  white-space: nowrap;
+}
+.auto-gutter-glyph {
+  display: inline-block;
+  width: 1ch;
+  font-weight: 700;
+}
+.auto-gutter-line.is-syntax {
+  color: var(--err);
+  font-weight: 700;
+}
+.auto-gutter-line.is-failed {
+  color: var(--warn);
+  font-weight: 700;
+}
+.auto-code {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+}
+.auto-hl,
+.auto-input {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 6px 8px;
+  border: 0;
+  font: inherit;
+  line-height: inherit;
+  letter-spacing: normal;
+  white-space: pre;
+  tab-size: 4;
+  -moz-tab-size: 4;
+  overflow-wrap: normal;
+}
+.auto-hl {
+  overflow: hidden;
+  /* room for the textarea's scroll bars, so both layers can scroll as far */
+  padding-right: 40px;
+  padding-bottom: 40px;
+  color: var(--text);
+  pointer-events: none;
+}
+.auto-input {
+  overflow: auto;
+  resize: none;
+  outline: none;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--text);
+  -webkit-text-fill-color: transparent;
+}
+.auto-input::selection {
+  background: var(--sel-strong);
+}
+.auto-input[readonly] {
+  cursor: progress;
+}
+
+/* the highlight classes (py-<class>) */
+.py-keyword {
+  color: var(--accent);
+  font-weight: 700;
+}
+.py-builtin {
+  color: var(--purple);
+}
+.py-number {
+  color: var(--yellow);
+}
+.py-string {
+  color: var(--ok);
+}
+.py-comment {
+  color: var(--text-faint);
+  font-style: italic;
+}
+.py-op {
+  color: var(--text-dim);
+}
+.py-error {
+  color: var(--err);
+  text-decoration: underline solid var(--err) 2px;
+}
+.py-mark {
+  background: color-mix(in srgb, var(--err) 18%, transparent);
+  text-decoration: underline solid var(--err) 2px;
+  text-underline-offset: 3px;
+}
+
+.auto-syntax {
+  margin: 0;
+  font-size: 12px;
+}
+.auto-syntax.is-error {
+  color: var(--err);
+}
+.auto-syntax.is-ok {
+  color: var(--text-dim);
+}
+
+/* ── run, output, requests ──────────────────────────────────────────────── */
+
+.auto-run-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.auto-run-state {
+  margin: 0;
+  font-weight: 600;
+}
+.auto-run-state.is-failed {
+  color: var(--err);
+}
+.auto-run-state.is-completed {
+  color: var(--ok);
+}
+.auto-subheading {
+  margin: 6px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+}
+.auto-output {
+  max-height: 14em;
+  margin: 0;
+  padding: 6px 8px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre;
+}
+.auto-output:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+.auto-traceback {
+  border-left: 3px solid var(--err);
+}
+.auto-requests {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.auto-request {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 2px 8px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.auto-request-line {
+  overflow-wrap: anywhere;
+}
+.auto-request-result {
+  grid-column: 2;
+}
+.auto-request .btn {
+  grid-column: 3;
+  grid-row: 1 / span 2;
+}
+.auto-request.is-failed .auto-request-result {
+  color: var(--err);
+}
+.auto-request.is-pending .auto-request-result {
+  color: var(--text-dim);
+}

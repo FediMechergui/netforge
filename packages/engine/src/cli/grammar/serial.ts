@@ -6,6 +6,14 @@
  * Every interface line requires the selected interface to be a serial port. `show controllers serial` and
  * `debug serial` are executable everywhere the network OS runs but are not listed by `?` in P0.5, so the P0 help
  * lists of the P0 router stay identical (ARCHITECTURE-P1 §9.2). Help strings are original wording (spec §1.6).
+ *
+ * P3 (ARCHITECTURE-P3 §9.2 ruling R56; W6 cli): `show controllers [<iface>]` also accepts the bare `show controllers`
+ * (every serial port) and the slot form `show controllers serial 0/0/0` (the interface typed as its family word and
+ * number, which the parser joins as it does for `interface serial 0/0/0`). Both run the accepted form's handler with
+ * the same arguments, so their output is that of `show controllers serial [<iface>]` byte for byte. As R56 says ("the
+ * help golden gains them as additions"; W6a integration, §9.2 item 40h), this form is listed by `?`: `show ` offers
+ * `controllers` wherever the network OS runs, and `show controllers ` offers the serial ports. The accepted P0.5 form
+ * and `debug serial` stay hidden, so every other listing is unchanged.
  */
 import type { CommandSpec, PortRequirement } from '../../contracts/cli.js';
 import {
@@ -37,6 +45,14 @@ export const MSG_NOT_SERIAL = '% This setting applies to serial interfaces only.
 
 const H = SERIAL_HANDLERS;
 const SERIAL_PORT = kindsPort(['serial'], MSG_NOT_SERIAL);
+
+/** @since P3 (W6 cli, R56: exported; the text is P0.5's) Mismatch of `show controllers` naming a port that is not serial. */
+export const MSG_NO_LINE_CONTROLLER = '% Only serial interfaces have line controllers.';
+/** The interface argument of both `show controllers` forms: an existing serial port, optional (absent = every one). */
+const CONTROLLER_IFACE = ifaceArg('Limit the output to one serial interface', {
+  optional: true,
+  portFilter: kindsPort(['serial'], MSG_NO_LINE_CONTROLLER),
+});
 
 /** @since P3 Mismatch of `bandwidth` on a port that takes none. */
 export const MSG_BANDWIDTH_PORT = '% Bandwidth applies to serial interfaces, routed Ethernet interfaces, subinterfaces and tunnels.';
@@ -113,24 +129,35 @@ export const SERIAL_GRAMMAR: readonly CommandSpec[] = Object.freeze<CommandSpec[
     objectives: ['CCNA2.7.1'],
   },
   {
-    // Fidelity gap (P0.5, recorded in W5): a real router also takes a bare `show controllers` and the slot form
-    // `show controllers serial 0/0/0`; here only `show controllers serial [<full interface name>]` is accepted.
+    // the accepted form (P0.5): `show controllers serial` (every serial port) or `show controllers serial <name>`
     path: ['show', 'controllers', 'serial', '<iface>'],
     mode: '@exec',
     privilege: 1,
     help: 'Cable end, clock and framing of serial interfaces',
-    args: {
-      iface: ifaceArg('Limit the output to one serial interface', {
-        optional: true,
-        portFilter: kindsPort(['serial'], '% Only serial interfaces have line controllers.'),
-      }),
-    },
+    args: { iface: CONTROLLER_IFACE },
     handler: H.showControllers,
     filterable: true,
     hidden: true,
     grammars: NFOS_ONLY,
     since: 'P0.5',
     objectives: ['CCNA2.7.1'],
+  },
+  {
+    // P3 ruling R56 (W6 cli; file header), closing the P0.5 fidelity gap recorded in W5: the bare `show controllers`
+    // and the slot form `show controllers serial 0/0/0`. Never ambiguous with the accepted form: a line both complete
+    // matches the accepted form on one more keyword (`serial`), so `show controllers serial` stays its; a slot number
+    // after `serial` is no interface name, so `show controllers serial 0/0/0` is this one's alone. Listed by `?` (R56,
+    // §9.2 item 40h).
+    path: ['show', 'controllers', '<iface>'],
+    mode: '@exec',
+    privilege: 1,
+    help: 'Cable end, clock and framing of serial interfaces',
+    args: { iface: CONTROLLER_IFACE },
+    handler: H.showControllers,
+    filterable: true,
+    grammars: NFOS_ONLY,
+    since: 'P3',
+    objectives: ['CCNA2.7.1', 'CCNA3.wan.2'],
   },
   ...debugSpecs(SERIAL_DEBUG_CATEGORIES, { serial: ['CCNA2.7.1'] }),
 ]);

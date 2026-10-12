@@ -12,13 +12,23 @@
  * `QosMark` record of the PDU's provenance, D16, and [C13] its `Encrypt` / `Decrypt` records) and [S20] the wait chips
  * ("waited 41 ms in VOICE (priority)", from each `frameQueued` of the PDU to its next `frameTx` from that port).
  *
+ * P3 (ARCHITECTURE-P3 §9.2 ruling R57(b); W6 web-inspector): opened from a hop — `inspectPduAtHop(frameTx)`, the call a
+ * Packets-list row of a leg or a provenance stop makes — the inspector shows the packet as it was on that leg, with that
+ * leg's banner: an ESP leg of an IPsec ping at the provider says "Encrypted (ESP, simulated)" although the packet the
+ * engine now holds was decrypted at the far end. The engine keeps only a packet's newest image, so the leg is rebuilt
+ * by undoing, newest first, every change its provenance recorded after the leg left its device (`rewindToHop`): field
+ * changes are undone exactly; a header a later device removed is listed by name only (its fields were not kept); when
+ * every header is known the leg's bytes are re-encoded with the engine's codecs and kept only if they decode back to
+ * the same fields and the leg's size. The hop belongs to the selection it was opened with: any other selection of the
+ * packet (the canvas, the Events list, "Inspect layers") shows today's view, unchanged.
+ *
  * Also hosts the small shared helpers of the inspector module: the PduJson cache
  * (`fetchPdu`, `usePduJson`), the device index hook, value formatters and the
  * dock-reveal helper. They live here (not in a separate file) because the module
  * owns a fixed file list.
  */
-import { memo, useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
-import { qosDscpText, vtySshCrypt, vtySshKey, vtyText } from '@netforge/engine';
+import { memo, useCallback, useEffect, useMemo, useState, useSyncExternalStore, type CSSProperties } from 'react';
+import { ETHERTYPE_VLAN, createPduFactory, qosDscpText, vtySshCrypt, vtySshKey, vtyText } from '@netforge/engine';
 import type {
   DeviceId,
   DeviceSnapshot,
@@ -26,11 +36,13 @@ import type {
   FieldValue,
   LayerView,
   Mutation,
+  PduFactory,
   PduId,
   PduJson,
   PduMeta,
   PortId,
   PortRef,
+  ProtoName,
   SimTime,
   TraceEvent,
 } from '@netforge/engine';
@@ -452,7 +464,11 @@ export function sshPlaintextOf(layers: readonly Pick<LayerView, 'proto' | 'field
   return { type, name: SSH_MESSAGE_NAMES[type] ?? `message ${type}`, text: visibleText(vtyText(plain.subarray(1))) };
 }
 
-function ProtectedBanner({ layers, by }: { layers: readonly LayerView[]; by: ProtectionKind }) {
+/**
+ * The protected banner: its title, why the fields are readable here, and [S13] an SSH packet's simulated plaintext.
+ * @since P3 Exported (ruling R57(b)): NetScope's frame detail shows the same banner.
+ */
+export function ProtectedBanner({ layers, by }: { layers: readonly Pick<LayerView, 'proto' | 'fields'>[]; by: ProtectionKind }) {
   const title = protectedBannerTitle(by);
   const ssh = by === 'ssh' ? sshPlaintextOf(layers) : undefined;
   return (
@@ -596,6 +612,246 @@ function queueKindOf(index: ReadonlyMap<DeviceId, DeviceSnapshot>, w: QueueWait)
 
 const NO_EVENTS: readonly TraceEvent[] = [];
 
+// ── P3 (ruling R57(b)): the packet as it was on one leg ─────────────────────
+
+/** @since P3 A hop the inspector can be opened from: the `frameTx` that put the packet on one wire. */
+export type PacketHop = EventOf<'frameTx'>;
+
+interface OpenedHop {
+  readonly hop: PacketHop;
+  /** The store's selection object the hop was opened with: any other selection ends the hop. */
+  readonly selection: unknown;
+  /** A reset restarts PDU ids: a hop of the previous world never applies. */
+  readonly epoch: unknown;
+}
+
+let openedHop: OpenedHop | null = null;
+const hopListeners = new Set<() => void>();
+
+function subscribeHop(listener: () => void): () => void {
+  hopListeners.add(listener);
+  return () => {
+    hopListeners.delete(listener);
+  };
+}
+
+const hopSnapshot = (): OpenedHop | null => openedHop;
+
+/**
+ * @since P3 (ruling R57(b)) Select packet `hop.pdu.id` and open the inspector on it as it was on that leg — the call a
+ * Packets-list row, a sim-mode row or a provenance stop makes. Selecting the packet any other way shows its newest image.
+ */
+export function inspectPduAtHop(hop: PacketHop): void {
+  store.getState().select({ kind: 'pdu', id: hop.pdu.id });
+  const now = store.getState();
+  openedHop = { hop, selection: now.selection, epoch: now.epoch };
+  for (const listener of hopListeners) listener();
+}
+
+/** @since P3 The hop packet `id` was opened from, while the selection it was opened with is still the store's. */
+export function usePacketHop(id: PduId): PacketHop | undefined {
+  const selection = useStore((s) => s.selection);
+  const epoch = useStore((s) => s.epoch);
+  const opened = useSyncExternalStore(subscribeHop, hopSnapshot, hopSnapshot);
+  if (opened === null || selection === null || selection === undefined) return undefined;
+  if (opened.selection !== selection || opened.epoch !== epoch || opened.hop.pdu.id !== id) return undefined;
+  return opened.hop;
+}
+
+/** @since P3 How much of a header the rewind knows: every field, some (a tag a later device popped), or none. */
+export type HopLayerKept = 'all' | 'some' | 'none';
+
+/** @since P3 One header of a packet as it was on a leg, outermost first. */
+export interface HopLayer {
+  readonly proto: ProtoName;
+  /** The fields known for that leg (empty when none was kept). */
+  readonly fields: Readonly<Record<string, FieldValue>>;
+  readonly kept: HopLayerKept;
+}
+
+/** @since P3 A packet rebuilt as it was on one leg (`rewindToHop`). */
+export interface HopImage {
+  readonly hop: PacketHop;
+  /** The headers on that leg, outermost first. */
+  readonly layers: readonly HopLayer[];
+  /**
+   * The leg's exact image (bytes, decoded layers, the provenance up to the leg, the leg's summary): the packet itself
+   * when nothing changed after the leg, else re-encoded from `layers` when every header is known and the bytes decode
+   * back to the same fields and the leg's size. Absent otherwise.
+   */
+  readonly image?: PduJson;
+  /** Changes the provenance recorded after the leg (the ones undone). */
+  readonly later: number;
+  /** A later change could not be undone exactly (bits flipped on a cable, a record that matches no header). */
+  readonly inexact: boolean;
+}
+
+/**
+ * @since P3 Index of the first provenance record made after `hop` left its device: records after the leg's time, and
+ * at the same instant those of another device or the bits a cable flipped in the copy it carried (the tap records the
+ * frame before that damage).
+ */
+export function hopCut(provenance: readonly Mutation[], hop: Pick<PacketHop, 't' | 'from'>): number {
+  for (let i = 0; i < provenance.length; i++) {
+    const m = provenance[i];
+    if (m === undefined) continue;
+    if (m.at > hop.t) return i;
+    if (m.at === hop.t && (m.device !== hop.from.device || m.reason === 'Corruption')) return i;
+  }
+  return provenance.length;
+}
+
+interface RewindLayer {
+  proto: ProtoName;
+  fields: Record<string, FieldValue>;
+  kept: HopLayerKept;
+}
+
+const FIELD_PATH = /^([a-z0-9_]+)(?:\[(\d+)\])?\.(.+)$/;
+
+/** Undo one recorded change on the stack (newest first). False when it cannot be undone exactly. */
+function undoMutation(stack: RewindLayer[], m: Mutation): boolean {
+  switch (m.reason) {
+    case 'Encapsulate': {
+      // the pushed header was the outermost one right after the change
+      if (stack[0]?.proto !== m.field) return false;
+      stack.shift();
+      return true;
+    }
+    case 'Decapsulate':
+      // a header removed later: its name is known, its fields were not kept
+      stack.unshift({ proto: m.field as ProtoName, fields: {}, kept: 'none' });
+      return true;
+    case 'VlanTagPush': {
+      const eth = stack[0];
+      const tag = stack[1];
+      if (eth?.proto !== 'ethernet' || tag?.proto !== 'dot1q') return false;
+      stack.splice(1, 1);
+      if (eth.kept !== 'none') {
+        if (tag.fields.type !== undefined) eth.fields.type = tag.fields.type;
+        else eth.kept = 'some';
+      }
+      return true;
+    }
+    case 'VlanTagPop': {
+      const eth = stack[0];
+      if (eth?.proto !== 'ethernet') return false;
+      const inner = eth.fields.type;
+      const fields: Record<string, FieldValue> = { vid: m.before };
+      if (inner !== undefined) fields.type = inner;
+      stack.splice(1, 0, { proto: 'dot1q', fields, kept: 'some' });
+      if (eth.kept !== 'none') eth.fields.type = ETHERTYPE_VLAN;
+      return true;
+    }
+    case 'Corruption':
+      // the record keeps the byte, not where it was: the flip cannot be undone
+      return false;
+    default: {
+      const path = FIELD_PATH.exec(m.field);
+      if (path === null) return false;
+      const [, proto, at, field] = path;
+      if (proto === undefined || field === undefined) return false;
+      const index = at !== undefined ? (stack[Number(at)]?.proto === proto ? Number(at) : -1) : stack.findIndex((l) => l.proto === proto);
+      const layer = stack[index];
+      if (layer === undefined) return false;
+      if (layer.kept === 'none') return true; // nothing of that header was kept: nothing to undo
+      if (m.before === null) delete layer.fields[field];
+      else layer.fields[field] = m.before;
+      return true;
+    }
+  }
+}
+
+function sameFieldValue(a: FieldValue | undefined, b: FieldValue | undefined): boolean {
+  if (a instanceof Uint8Array && b instanceof Uint8Array) return a.length === b.length && a.every((x, i) => x === b[i]);
+  return a === b;
+}
+
+let rebuildFactory: PduFactory | undefined;
+
+/** Re-encode a fully known leg; kept only when it decodes back to the same headers and fields and the leg's size. */
+function rebuildImage(pdu: PduJson, hop: PacketHop, layers: readonly HopLayer[], cut: number): PduJson | undefined {
+  if (layers.length === 0 || layers.some((l) => l.kept !== 'all')) return undefined;
+  try {
+    rebuildFactory ??= createPduFactory();
+    const built = rebuildFactory.build(
+      layers.map((l) => ({ proto: l.proto, fields: { ...l.fields } })),
+      pdu.meta,
+    ).toJSON();
+    if (built.bytes.length !== hop.pdu.size || built.layers.length !== layers.length) return undefined;
+    for (let i = 0; i < layers.length; i++) {
+      const want = layers[i];
+      const got = built.layers[i];
+      if (want === undefined || got === undefined || want.proto !== got.proto) return undefined;
+      const keys = Object.keys(want.fields);
+      if (keys.length !== Object.keys(got.fields).length) return undefined;
+      for (const k of keys) if (!sameFieldValue(want.fields[k], got.fields[k])) return undefined;
+    }
+    return {
+      id: pdu.id,
+      bytes: built.bytes,
+      layers: built.layers,
+      meta: pdu.meta,
+      provenance: pdu.provenance.slice(0, cut),
+      summary: hop.pdu.summary,
+      topProto: hop.pdu.proto,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * @since P3 (ruling R57(b)) Packet `pdu` (its newest image) as it was on leg `hop`: every change recorded after the leg
+ * is undone, newest first. Field changes are undone exactly; a header a later device removed comes back by name only
+ * (`kept: 'none'`); a tag a later switch popped comes back with its VID (`kept: 'some'`). Bits a cable flipped cannot
+ * be undone (`inexact`).
+ */
+export function rewindToHop(pdu: PduJson, hop: PacketHop): HopImage {
+  const cut = hopCut(pdu.provenance, hop);
+  const later = pdu.provenance.length - cut;
+  const stack: RewindLayer[] = pdu.layers.map((l) => ({ proto: l.proto, fields: { ...l.fields }, kept: 'all' }));
+  if (later === 0) return { hop, layers: stack, image: pdu, later, inexact: false };
+  let inexact = false;
+  for (let i = pdu.provenance.length - 1; i >= cut; i--) {
+    const m = pdu.provenance[i];
+    if (m !== undefined && !undoMutation(stack, m)) inexact = true;
+  }
+  const image = inexact ? undefined : rebuildImage(pdu, hop, stack, cut);
+  return image === undefined ? { hop, layers: stack, later, inexact } : { hop, layers: stack, image, later, inexact };
+}
+
+/**
+ * @since P3 (ruling R57(b)) The channel protecting a packet on one leg: ESP when an ESP header is on that leg (the PDU's
+ * own mark is cleared where the tunnel ends); otherwise the packet's mark (TLS, SSH and IKE mark a segment end to end,
+ * except a segment that crossed an IPsec tunnel, whose TLS/SSH mark the tail cleared with the ESP one, D27; and a
+ * protected PDU without `protectedBy` is still P2's DTLS) — but not ESP on a leg outside the tunnel.
+ */
+export function hopProtection(layers: readonly Pick<HopLayer, 'proto'>[], meta: PduMeta): ProtectionKind | undefined {
+  if (layers.some((l) => l.proto === 'esp')) return 'esp';
+  const by = protectionOf({ meta });
+  return by === 'esp' ? undefined : by;
+}
+
+/** @since P3 Words of a header whose fields the rewind could not recover. */
+export const HOP_LAYER_NOT_KEPT: Readonly<Record<Exclude<HopLayerKept, 'all'>, string>> = Object.freeze({
+  none: 'header not kept',
+  some: 'some fields not kept',
+});
+
+/** @since P3 The note under a leg rebuilt without its bytes (original wording). */
+export function hopRebuiltNote(at: Pick<HopImage, 'layers' | 'inexact'>): string {
+  const lost = at.layers.some((l) => l.kept !== 'all');
+  const parts = [
+    'NetForge keeps only the newest bytes of a packet, so this leg was rebuilt by undoing the changes recorded after it.',
+  ];
+  if (lost) parts.push('Headers a later device removed were not kept: they are listed by name, and their fields are missing.');
+  else parts.push('Every field is known, but the bytes of the leg could not be rebuilt from them.');
+  if (at.inexact) parts.push('A later change could not be undone (for example bits flipped on a cable), so some fields may show the packet as it is now.');
+  parts.push('Capture on this link in NetScope to keep every byte of every leg.');
+  return parts.join(' ');
+}
+
 // ── component ───────────────────────────────────────────────────────────────
 
 interface HotField {
@@ -603,7 +859,130 @@ interface HotField {
   field: string;
 }
 
+/**
+ * The packet inspector of `pdu`. P3 (ruling R57(b)): opened from a hop (`inspectPduAtHop`), it shows the packet as it was
+ * on that leg — its exact image when it can be rebuilt, else its headers by name with the fields that were kept.
+ */
 export function PacketInspector({ pdu }: { pdu: PduJson }) {
+  const hop = usePacketHop(pdu.id);
+  const at = useMemo(() => (hop === undefined ? undefined : rewindToHop(pdu, hop)), [pdu, hop]);
+  if (at === undefined) return <PacketView pdu={pdu} />;
+  const key = `${at.hop.t}:${at.hop.from.device}/${at.hop.from.port}`;
+  if (at.image !== undefined) return <PacketView key={key} pdu={at.image} at={at} />;
+  return <HopLayersView key={key} pdu={pdu} at={at} />;
+}
+
+/** @since P3 Where the inspected leg ran, and the way back to the packet's newest image. */
+function HopStrip({ at, devices }: { at: HopImage; devices: ReadonlyMap<DeviceId, DeviceSnapshot> }) {
+  const { hop } = at;
+  return (
+    <div className="pk-meta" aria-label="Inspected leg">
+      <span>
+        As sent from <b>{portLabel(devices, hop.from)}</b> to <b>{portLabel(devices, hop.to)}</b> at {fmtSimTime(hop.t)}
+        {at.later > 0 ? ` · ${at.later} later change${at.later === 1 ? '' : 's'} undone` : ''}
+      </span>
+      <button type="button" className="link-btn" onClick={() => selectPdu(hop.pdu.id)}>
+        show the packet as it is now
+      </button>
+    </div>
+  );
+}
+
+/** The marking chips and the queue waits of the header (rendered only when there are some). */
+function PacketMarks({
+  marks,
+  waits,
+  devices,
+}: {
+  marks: readonly MarkingChip[];
+  waits: readonly QueueWait[];
+  devices: ReadonlyMap<DeviceId, DeviceSnapshot>;
+}) {
+  if (marks.length === 0 && waits.length === 0) return null;
+  return (
+    <div className="pk-meta" aria-label="Marking and queueing">
+      {marks.map((m, i) => (
+        <span
+          key={`m${i}`}
+          className={`chip tiny${m.reason === 'QosMark' ? ' accent' : ''}`}
+          title={m.cause !== undefined ? `${m.text} — ${m.cause}` : m.text}
+        >
+          <span aria-hidden="true">{MARKING_GLYPH[m.reason]}</span> {m.text} on {deviceName(devices, m.device)}
+        </span>
+      ))}
+      {waits.map((w, i) => (
+        <span key={`w${i}`} className="chip tiny" title={`queued at ${fmtSimTime(w.queuedAt)} behind ${w.depth - 1} other packet(s)`}>
+          <span aria-hidden="true">⧗</span> {queueWaitText(w, queueKindOf(devices, w))} at {portLabel(devices, { device: w.device, port: w.port })}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/** Size, birth, origin, tag and flow; lineage and the provenance link. */
+function PacketMetaLines({ pdu, size, devices }: { pdu: PduJson; size: number; devices: ReadonlyMap<DeviceId, DeviceSnapshot> }) {
+  const { meta } = pdu;
+  const originName = deviceName(devices, meta.origin);
+  return (
+    <>
+      <div className="pk-meta">
+        <span>{size} bytes on the wire</span>
+        <span>born {fmtSimTime(meta.born)}</span>
+        <span>
+          created on{' '}
+          <button
+            type="button"
+            className="link-btn"
+            onClick={() => store.getState().select({ kind: 'device', id: meta.origin })}
+          >
+            {originName}
+          </button>
+        </span>
+        {meta.tag !== undefined && <span className="chip tiny">tag {meta.tag}</span>}
+        {meta.flow !== undefined && <span className="chip tiny" title="Conversation key">{meta.flow}</span>}
+      </div>
+      <div className="pk-meta">
+        {meta.parent !== undefined && (
+          <span>
+            copy of{' '}
+            <button type="button" className="link-btn" onClick={() => selectPdu(meta.parent as PduId)}>
+              #{meta.parent}
+            </button>
+          </span>
+        )}
+        {meta.triggeredBy !== undefined && (
+          <span>
+            caused by{' '}
+            <button type="button" className="link-btn" onClick={() => selectPdu(meta.triggeredBy as PduId)}>
+              #{meta.triggeredBy}
+            </button>
+          </span>
+        )}
+        <span>
+          {pdu.provenance.length} recorded change{pdu.provenance.length === 1 ? '' : 's'} ·{' '}
+          <button type="button" className="link-btn" onClick={() => revealDockTab('provenance')}>
+            open the provenance timeline
+          </button>
+        </span>
+      </div>
+    </>
+  );
+}
+
+/** The waits of PDU `id` in class queues, up to the leg's time when a leg is inspected. */
+function useQueueWaits(id: PduId, until?: SimTime): QueueWait[] {
+  const events = useStore((s) => s.events) ?? NO_EVENTS;
+  return useMemo(() => {
+    const all = queueWaitsOf(events, id);
+    return until === undefined ? all : all.filter((w) => w.queuedAt <= until);
+  }, [events, id, until]);
+}
+
+/**
+ * One exact image: today's view of the packet, or (P3, `at`) the image of the leg it was opened from, with that leg's
+ * banner and the strip that names the leg.
+ */
+function PacketView({ pdu, at }: { pdu: PduJson; at?: HopImage }) {
   const [selectedLayer, setSelectedLayer] = useState<number | null>(null);
   const [hot, setHot] = useState<HotField | null>(null);
   const devices = useDeviceIndex();
@@ -623,17 +1002,15 @@ export function PacketInspector({ pdu }: { pdu: PduJson }) {
   const selectedRange: ByteRange | null = selLayerView ? [selLayerView.offset, selLayerView.length] : null;
   const hotRange: ByteRange | null = (hot && pdu.layers[hot.layer]?.fieldRanges[hot.field]) || null;
 
-  const { meta } = pdu;
-  const originName = deviceName(devices, meta.origin);
-  const protection = protectionOf(pdu);
+  // P3 (R57(b)): a leg's banner follows that leg's headers; today's view follows the packet's mark
+  const protection = at === undefined ? protectionOf(pdu) : hopProtection(pdu.layers, pdu.meta);
   const protectedLayers = useMemo(
     () => (protection !== undefined ? protectedLayerIndexes(pdu.layers, protection) : new Set<number>()),
     [protection, pdu.layers],
   );
   // P3: the marking chips (QosMark, [C13] Encrypt/Decrypt) and [S20] the waits of this PDU in class queues
   const marks = useMemo(() => markingChipsOf(pdu.provenance), [pdu.provenance]);
-  const events = useStore((s) => s.events) ?? NO_EVENTS;
-  const waits = useMemo(() => queueWaitsOf(events, pdu.id), [events, pdu.id]);
+  const waits = useQueueWaits(pdu.id, at?.hop.t);
 
   return (
     <div className="pk">
@@ -644,65 +1021,10 @@ export function PacketInspector({ pdu }: { pdu: PduJson }) {
           {protection !== undefined && <span className="chip tiny">{PROTECTED_HEADER_CHIPS[protection]}</span>}
         </div>
         <div className="pk-summary">{pdu.summary}</div>
+        {at !== undefined && <HopStrip at={at} devices={devices} />}
         {protection !== undefined && <ProtectedBanner layers={pdu.layers} by={protection} />}
-        {(marks.length > 0 || waits.length > 0) && (
-          <div className="pk-meta" aria-label="Marking and queueing">
-            {marks.map((m, i) => (
-              <span
-                key={`m${i}`}
-                className={`chip tiny${m.reason === 'QosMark' ? ' accent' : ''}`}
-                title={m.cause !== undefined ? `${m.text} — ${m.cause}` : m.text}
-              >
-                <span aria-hidden="true">{MARKING_GLYPH[m.reason]}</span> {m.text} on {deviceName(devices, m.device)}
-              </span>
-            ))}
-            {waits.map((w, i) => (
-              <span key={`w${i}`} className="chip tiny" title={`queued at ${fmtSimTime(w.queuedAt)} behind ${w.depth - 1} other packet(s)`}>
-                <span aria-hidden="true">⧗</span> {queueWaitText(w, queueKindOf(devices, w))} at {portLabel(devices, { device: w.device, port: w.port })}
-              </span>
-            ))}
-          </div>
-        )}
-        <div className="pk-meta">
-          <span>{size} bytes on the wire</span>
-          <span>born {fmtSimTime(meta.born)}</span>
-          <span>
-            created on{' '}
-            <button
-              type="button"
-              className="link-btn"
-              onClick={() => store.getState().select({ kind: 'device', id: meta.origin })}
-            >
-              {originName}
-            </button>
-          </span>
-          {meta.tag !== undefined && <span className="chip tiny">tag {meta.tag}</span>}
-          {meta.flow !== undefined && <span className="chip tiny" title="Conversation key">{meta.flow}</span>}
-        </div>
-        <div className="pk-meta">
-          {meta.parent !== undefined && (
-            <span>
-              copy of{' '}
-              <button type="button" className="link-btn" onClick={() => selectPdu(meta.parent as PduId)}>
-                #{meta.parent}
-              </button>
-            </span>
-          )}
-          {meta.triggeredBy !== undefined && (
-            <span>
-              caused by{' '}
-              <button type="button" className="link-btn" onClick={() => selectPdu(meta.triggeredBy as PduId)}>
-                #{meta.triggeredBy}
-              </button>
-            </span>
-          )}
-          <span>
-            {pdu.provenance.length} recorded change{pdu.provenance.length === 1 ? '' : 's'} ·{' '}
-            <button type="button" className="link-btn" onClick={() => revealDockTab('provenance')}>
-              open the provenance timeline
-            </button>
-          </span>
-        </div>
+        <PacketMarks marks={marks} waits={waits} devices={devices} />
+        <PacketMetaLines pdu={pdu} size={size} devices={devices} />
       </div>
 
       <div className="pk-layers">
@@ -735,6 +1057,85 @@ export function PacketInspector({ pdu }: { pdu: PduJson }) {
         </div>
         <HexView bytes={pdu.bytes} layers={pdu.layers} selected={selectedRange} hot={hotRange} />
       </div>
+    </div>
+  );
+}
+
+/**
+ * @since P3 (ruling R57(b)) A leg whose bytes could not be rebuilt: its headers outermost first (a header a later device
+ * removed by name only), the leg's banner over the layers it protects, and the note that says why there are no bytes.
+ */
+function HopLayersView({ pdu, at }: { pdu: PduJson; at: HopImage }) {
+  const devices = useDeviceIndex();
+  const { hop } = at;
+  const protection = hopProtection(at.layers, pdu.meta);
+  const protectedLayers = useMemo(
+    () => (protection !== undefined ? protectedLayerIndexes(at.layers, protection) : new Set<number>()),
+    [protection, at.layers],
+  );
+  // the packet up to the leg: the marks and the change count it had then
+  const cut = pdu.provenance.length - at.later;
+  const before = useMemo<PduJson>(() => ({ ...pdu, provenance: pdu.provenance.slice(0, cut) }), [pdu, cut]);
+  const marks = useMemo(() => markingChipsOf(before.provenance), [before.provenance]);
+  const waits = useQueueWaits(pdu.id, hop.t);
+
+  return (
+    <div className="pk">
+      <div className="pk-head">
+        <div className="insp-title-row">
+          <span className={`proto-chip ${protoClass(hop.pdu.proto)}`}>{hop.pdu.proto}</span>
+          <span className="insp-title mono">Packet #{pdu.id}</span>
+          {protection !== undefined && <span className="chip tiny">{PROTECTED_HEADER_CHIPS[protection]}</span>}
+        </div>
+        <div className="pk-summary">{hop.pdu.summary}</div>
+        <HopStrip at={at} devices={devices} />
+        {protection !== undefined && <ProtectedBanner layers={at.layers} by={protection} />}
+        <PacketMarks marks={marks} waits={waits} devices={devices} />
+        <PacketMetaLines pdu={before} size={hop.pdu.size} devices={devices} />
+      </div>
+
+      <div className="pk-layers">
+        {at.layers.map((layer, i) => (
+          <HopLayerCard key={`${i}:${layer.proto}`} layer={layer} simulated={protectedLayers.has(i)} />
+        ))}
+      </div>
+
+      <div className="pk-hexwrap">
+        <h4>Bytes</h4>
+        <div className="insp-note" role="note">
+          {hopRebuiltNote(at)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const DEFAULT_CURSOR: CSSProperties = { cursor: 'default' };
+
+/** @since P3 A header of a rebuilt leg: its known fields, and words for the ones that were not kept. */
+function HopLayerCard({ layer, simulated }: { layer: HopLayer; simulated: boolean }) {
+  const fields = Object.entries(layer.fields);
+  return (
+    <div className={`pk-layer ${protoClass(layer.proto)}`}>
+      <div className="pk-layer-head" style={DEFAULT_CURSOR}>
+        <span className="proto">{layer.proto}</span>
+        {layer.kept !== 'all' && <span className="dim">{HOP_LAYER_NOT_KEPT[layer.kept]}</span>}
+        {simulated && <span className="chip tiny">{PROTECTED_LAYER_MARK}</span>}
+      </div>
+      {fields.length > 0 && (
+        <dl className="pk-fields">
+          {fields.map(([name, value]) => {
+            const text = fmtValue(layer.proto, name, value);
+            const validity = typeof value === 'boolean' && name.endsWith('Valid') ? (value ? 'valid' : 'invalid') : undefined;
+            return (
+              <div key={name} className="pk-field">
+                <dt>{name}</dt>
+                <dd>{validity ? <span className={validity}>{text}</span> : text}</dd>
+              </div>
+            );
+          })}
+        </dl>
+      )}
     </div>
   );
 }

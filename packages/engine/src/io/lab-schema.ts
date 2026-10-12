@@ -382,6 +382,7 @@ function buildLabSchemas() {
       equals: z.union([line, list(line)], { errorMap: () => ({ message: 'must be a string or a list of strings' }) }).optional(),
       exists: bool().optional(),
       contains: line.optional(),
+      count: natural().optional(),
       ...notes,
     }),
     port: obj({ kind: z.literal('port'), device, port, field: oneOf<Member<'port', 'field'>>({ operUp: true, adminUp: true, ipv4: true, ipv6: true, duplex: true, speedBps: true, role: true, errDisabled: true }), equals: scalar(), ...notes }),

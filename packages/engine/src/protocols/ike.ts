@@ -14,7 +14,9 @@
  * exchange completes, `{op: 'down', reason}` when it fails or an established SA is replaced by the peer's new exchange.
  *
  * The exchange (§3.13 steps 2–5, 10): at `ike-kick` (and at the periodic `ike-retry` of a failed tunnel) the key is
- * looked up (`protocols/ike/config.ts`: IPsec profile → IKEv2 profile → keyring peer of the tunnel destination) and
+ * looked up (`protocols/ike/config.ts`: IPsec profile → IKEv2 profile → keyring peer of the tunnel destination; the
+ * IKEv2 profile must also hold a remote identity line and both pre-share authentication lines, ruling R56, or there is
+ * no key and the exchange fails `ike-no-proposal`) and
  * `ikeStart` runs; while the IPsec profile does not exist the tunnel waits, sends nothing and stays negotiating, and a
  * configuration change that creates it kicks the tunnel again. A received IKEv2 message is matched to the tunnel whose
  * source and destination are its destination and source (no match: a `crypto ikev2` debug line, discarded) and fed

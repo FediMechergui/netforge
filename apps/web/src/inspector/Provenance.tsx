@@ -9,6 +9,10 @@
  * quoted (click → that device's config). Above it, the "family" strip: the
  * packets this one came from or caused (ARP request/reply, echo reply, flood
  * copies), assembled from `meta.parent` / `meta.triggeredBy`.
+ *
+ * P3 (ARCHITECTURE-P3 §9.2 ruling R57(b); W6 web-inspector): a stop that sent the packet on a wire offers "layers as sent",
+ * which opens the Packet inspector on the packet as it was on that leg (`inspectPduAtHop`): an ESP leg at the provider
+ * shows its headers under the "Encrypted (ESP, simulated)" banner.
  */
 import { memo, useEffect, useMemo, useState } from 'react';
 import type {
@@ -31,11 +35,13 @@ import {
   deviceName,
   fetchPdu,
   fmtMutationValue,
+  inspectPduAtHop,
   pduIdOf,
   portShort,
   selectPdu,
   useDeviceIndex,
   usePduJson,
+  type EventOf,
 } from './PacketInspector';
 import './inspector.css';
 
@@ -142,6 +148,8 @@ export interface Hop {
   consumedBy?: string;
   /** Wire time of the frame leaving this hop. */
   wire?: { link: LinkId; ns: SimTime };
+  /** @since P3 (R57(b)) The last frame this stop sent: the leg "layers as sent" opens the inspector on. */
+  tx?: EventOf<'frameTx'>;
 }
 
 const pushUnique = (list: string[], v: string): void => {
@@ -206,6 +214,7 @@ export function buildHops(pdu: PduJson, events: readonly TraceEvent[]): Hop[] {
         if (ev?.kind === 'frameTx') {
           pushUnique(cur.outPorts, ev.from.port);
           cur.wire = { link: ev.link, ns: ev.arrive - ev.txStart };
+          cur.tx = ev;
         }
         break;
       case 'mut':
@@ -489,6 +498,7 @@ const HopColumn = memo(function HopColumn({ hop, devices }: { hop: Hop; devices:
           {hop.outPorts.length > 0 && `out ${hop.outPorts.map(short).join(', ')}`}
         </div>
       )}
+      {hop.tx !== undefined && <InspectLegButton leg={hop.tx} />}
       <div className="prov-chips">
         {primary.length === 0 && !hop.drop && <span className="hop-none">no header changes here</span>}
         {primary.map((m, i) => (
@@ -529,6 +539,20 @@ const HopColumn = memo(function HopColumn({ hop, devices }: { hop: Hop; devices:
     </div>
   );
 });
+
+/** @since P3 (R57(b)) Open the Packet inspector on the packet as this stop sent it. */
+function InspectLegButton({ leg }: { leg: EventOf<'frameTx'> }) {
+  return (
+    <button
+      type="button"
+      className="link-btn"
+      title="Open the Packet inspector on the packet as it left here, with the headers of that leg"
+      onClick={() => inspectPduAtHop(leg)}
+    >
+      layers as sent
+    </button>
+  );
+}
 
 function MutationChip({ m, derived }: { m: Mutation; derived: boolean }) {
   const reason = reasonKey(m.reason);

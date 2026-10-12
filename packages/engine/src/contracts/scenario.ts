@@ -190,7 +190,13 @@ export interface LabPacketProbe {
  * @since P3 Every kind carries the optional-by-meaning LabAssertionNotes envelope (spec §12.4).
  */
 export type LabAssertion = (
-  | { kind: 'config'; device: string; path: string; equals?: string | readonly string[]; exists?: boolean; contains?: string }
+  /**
+   * `count` @since P3 (optional by meaning; ruling R56): the exact number of configuration lines `path` matches under
+   * its section — `class-map.match-all.VOICE.match` counts every `match` line of that class map, whatever their
+   * arguments — so an extra line is a wrong answer. It counts the matches of the path, not of `equals` / `contains`;
+   * with either (or `exists`) given, that check must hold too. Absent = P1 behaviour.
+   */
+  | { kind: 'config'; device: string; path: string; equals?: string | readonly string[]; exists?: boolean; contains?: string; count?: number }
   /** `field` 'errDisabled' @since P2 (the cause string, e.g. 'psecure-violation'). */
   | { kind: 'port'; device: string; port: string; field: 'operUp' | 'adminUp' | 'ipv4' | 'ipv6' | 'duplex' | 'speedBps' | 'role' | 'errDisabled'; equals: string | number | boolean }
   /**

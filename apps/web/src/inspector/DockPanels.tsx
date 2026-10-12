@@ -2,6 +2,11 @@
  * Bottom-dock tabs owned by the inspector module: Packets, Events (lanes by kind),
  * Tables (every device side by side) and Provenance. Lists render only the newest
  * rows (enough virtualisation for P0), memoise rows and pre-compute their text.
+ *
+ * P3 (ARCHITECTURE-P3 §9.2 ruling R57(b)): a Packets row is one leg (one `frameTx`), so clicking it opens the Packet
+ * inspector on the packet as it was on that leg (`inspectPduAtHop`) — an ESP leg of an IPsec ping shows the
+ * "Encrypted (ESP, simulated)" banner although the engine now holds the packet decrypted at the far end. The row stays
+ * highlighted by packet id, as before.
  */
 import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { DeviceId, DeviceSnapshot, PduId, TraceEvent, TraceKind } from '@netforge/engine';
@@ -10,9 +15,9 @@ import { store, useStore } from '../store/store';
 import {
   deviceName,
   fmtMutationValue,
+  inspectPduAtHop,
   pduIdOf,
   portLabel,
-  selectPdu,
   useDeviceIndex,
   type EventOf,
 } from './PacketInspector';
@@ -79,7 +84,6 @@ export function PacketsPanel() {
   }, [source, query, devices]);
 
   const scrollRef = useFollowScroll(lines, follow);
-  const onPick = useCallback((id: PduId) => selectPdu(id), []);
 
   return (
     <div className="dock-panel">
@@ -130,7 +134,6 @@ export function PacketsPanel() {
                   key={`${l.ev.pdu.id}:${l.ev.link}:${l.ev.t}:${i}`}
                   line={l}
                   selected={selectedPdu === l.ev.pdu.id}
-                  onPick={onPick}
                 />
               ))}
             </tbody>
@@ -141,18 +144,19 @@ export function PacketsPanel() {
   );
 }
 
-const PacketRow = memo(function PacketRow({
-  line,
-  selected,
-  onPick,
-}: {
-  line: PacketLine;
-  selected: boolean;
-  onPick(id: PduId): void;
-}) {
+/**
+ * @since P3 (ruling R57(b)) What clicking a Packets row does: open the Packet inspector on that row's leg, the packet as
+ * it was on that wire with that leg's banner (`inspectPduAtHop`), not the packet's newest image.
+ */
+export function openPacketLeg(ev: FrameTx): void {
+  inspectPduAtHop(ev);
+}
+
+/** One leg of the Packets list (exported for the R57(b) test, which runs its click handler). */
+export const PacketRow = memo(function PacketRow({ line, selected }: { line: PacketLine; selected: boolean }) {
   const { ev } = line;
   return (
-    <tr className={`is-clickable${selected ? ' is-selected' : ''}`} onClick={() => onPick(ev.pdu.id)}>
+    <tr className={`is-clickable${selected ? ' is-selected' : ''}`} onClick={() => openPacketLeg(ev)}>
       <td className="mono">{fmtSimTime(ev.t)}</td>
       <td className="num">{ev.pdu.id}</td>
       <td>{line.from}</td>

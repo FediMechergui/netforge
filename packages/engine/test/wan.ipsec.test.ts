@@ -85,7 +85,14 @@ interface IpsecWorldOptions {
   readonly r2Protection?: string | null;
   /** R2 without crypto sections and without Tunnel0 (a silent peer). */
   readonly r2Silent?: boolean;
+  /** Lines left out of R1's / R2's IKEv2 profile section, by prefix (ruling R56; default none). */
+  readonly r1ProfileOmit?: readonly string[];
+  readonly r2ProfileOmit?: readonly string[];
 }
+
+/** `sections` with the lines of its IKEv2 profile that start with one of `omit` left out (none: `sections` itself). */
+const omitProfileLines = (sections: string[][], omit: readonly string[] = []): string[][] =>
+  omit.length === 0 ? sections : sections.map((s) => (s[0] === 'crypto ikev2 profile PROF' ? s.filter((l, i) => i === 0 || !omit.some((p) => l.trimStart().startsWith(p))) : s));
 
 /** The §3.13 world plus the injector on R1 Gi0/1, run to idle (which must return). */
 function ipsecWorld(opts: IpsecWorldOptions = {}): Simulation {
@@ -99,7 +106,7 @@ function ipsecWorld(opts: IpsecWorldOptions = {}): Simulation {
       [`interface ${GI0}`, ` ip address 192.168.1.1 ${MASK24}`, ' no shutdown'],
       [`interface ${GI1}`, ` ip address 192.168.3.1 ${MASK24}`, ' no shutdown'],
       [`interface ${SE0}`, ` ip address ${R1_ADDR} ${MASK30}`, ' no shutdown'],
-      ...cryptoSections('R2', R2_ADDR, KEY),
+      ...omitProfileLines(cryptoSections('R2', R2_ADDR, KEY), opts.r1ProfileOmit),
       [`interface ${TU0}`, ...tunnelLines('172.16.0.1', R2_ADDR, r1p)],
       ['ip route 0.0.0.0 0.0.0.0 209.165.200.226', `ip route 192.168.2.0 ${MASK24} ${TU0}`],
     ]),
@@ -121,7 +128,7 @@ function ipsecWorld(opts: IpsecWorldOptions = {}): Simulation {
       ...(opts.r2Silent === true
         ? [['ip route 0.0.0.0 0.0.0.0 209.165.200.229']]
         : [
-            ...cryptoSections('R1', R1_ADDR, opts.r2Key ?? KEY, opts.r2KeyringPeer ?? R1_ADDR),
+            ...omitProfileLines(cryptoSections('R1', R1_ADDR, opts.r2Key ?? KEY, opts.r2KeyringPeer ?? R1_ADDR), opts.r2ProfileOmit),
             [`interface ${TU0}`, ...tunnelLines('172.16.0.2', R1_ADDR, r2p)],
             ['ip route 0.0.0.0 0.0.0.0 209.165.200.229', `ip route 192.168.1.0 ${MASK24} ${TU0}`, `ip route 192.168.3.0 ${MASK24} ${TU0}`],
           ]),
@@ -223,6 +230,37 @@ describe('wan.ipsec [C13]: the key of a protected tunnel (protocols/ike/config.t
     expect(ikeKeyText(['nf7', encodeReversibleSecret(KEY).slice(4)])).toBe(KEY);
     expect(ikeKeyText([encodeReversibleSecret(KEY)])).toBe(KEY);
     expect(ikeKeyText([KEY])).toBe(KEY);
+  });
+
+  it('ruling R56: a profile without a remote identity line, or without both pre-share authentication lines, offers no key; the chain\'s own outcomes come first', () => {
+    const lookup = (profileLines: readonly string[], peer = R2_ADDR): string => {
+      const sim = createStagedSimulation({ seed: 1, stage: 'P3', factories: { gre: createGre, ike: createIke } });
+      const [keyring, , ipsec] = cryptoSections('R2', R2_ADDR, KEY);
+      sim.addDevice({ id: 'r', type: 'router.nf2911', name: 'R', startupConfig: startup([['hostname R'], keyring!, ['crypto ikev2 profile PROF', ...profileLines], ipsec!]) });
+      expect(sim.runToIdle().stopped).toBeUndefined();
+      const look = ikeKeyFor(readIkeConfig(sim.device('r')!.running.root), 'VPN', peer);
+      return look.status === 'ok' ? `ok:${look.key}` : look.status;
+    };
+    const identity = ` match identity remote address ${R2_ADDR} 255.255.255.255`;
+    const remote = ' authentication remote pre-share';
+    const local = ' authentication local pre-share';
+    const keyring = ' keyring local KR';
+    expect(lookup([identity, remote, local, keyring])).toBe(`ok:${KEY}`);
+    // a covering line with a wider mask is enough; so is the line typed without its mask (the host mask)
+    expect(lookup([' match identity remote address 209.165.200.0 255.255.255.0', remote, local, keyring])).toBe(`ok:${KEY}`);
+    expect(lookup([` match identity remote address ${R2_ADDR}`, remote, local, keyring])).toBe(`ok:${KEY}`);
+    // no remote identity line at all
+    expect(lookup([remote, local, keyring])).toBe('no-identity');
+    // one or both pre-share lines missing
+    expect(lookup([identity, local, keyring])).toBe('no-authentication');
+    expect(lookup([identity, remote, keyring])).toBe('no-authentication');
+    expect(lookup([identity, keyring])).toBe('no-authentication');
+    // both gaps: the identity names the outcome
+    expect(lookup([keyring])).toBe('no-identity');
+    // the chain's outcomes are the ones it named before the ruling, whatever else the profile lacks
+    expect(lookup([identity, keyring], '209.165.200.99')).toBe('identity-mismatch');
+    expect(lookup([remote, local])).toBe('no-keyring');
+    expect(lookup([keyring], '209.165.200.99')).toBe('no-peer');
   });
 });
 
@@ -568,6 +606,68 @@ describe('wan.ipsec [C13]: failures (§3.13 step 10; §4.2)', () => {
     expect(spis[0]).toBe(spis[1]);
     expect(spis[0]).not.toBe(sent[0]!.f.spiI);
     expect(silent.runToIdle().stopped).toBeUndefined();
+  });
+
+  it('ruling R56: R2\'s profile without its two pre-share authentication lines refuses R1 with NO_PROPOSAL_CHOSEN, both ends ike-no-proposal; the lines typed back bring the SA up at the next periodic retry', () => {
+    const sim = ipsecWorld({ r2ProfileOmit: ['authentication '] });
+    expect(sim.device('r2')!.running.render()).not.toContain('authentication');
+    const evs = sim.trace(0).events;
+    // R2 has no key: it sends nothing of its own and refuses R1's request in IKE_SA_INIT (no IKE_AUTH is ever sent)
+    const msgs = ikeMessages(sim, evs);
+    expect(msgs.map((m) => [m.device, m.f.exchange, m.f.flags, m.f.notify ?? null])).toEqual([
+      ['r1', IKE_SA_INIT, IKE_FLAG_INITIATOR, null],
+      ['r2', IKE_SA_INIT, IKE_FLAG_RESPONSE, 'NO_PROPOSAL_CHOSEN'],
+    ]);
+    const r2Debug = evs.flatMap((e) => (e.kind === 'debug' && e.event.device === 'r2' && e.event.process === 'ike' ? [e.event.message] : []));
+    expect(r2Debug).toContain(`${TU0}: no pre-shared key for ${R1_ADDR} (no-authentication)`);
+    for (const d of ['r1', 'r2']) {
+      expect(saRow(sim, d)).toMatchObject({ state: 'failed', reason: 'ike-no-proposal' });
+      expect(tunnelRow(sim, d)).toMatchObject({ mode: 'ipsec', state: 'down', reason: 'ike-no-proposal' });
+      expect(tunnelUp(sim, d)).toBe(false);
+    }
+    expect(saRow(sim, 'r1')!.role).toBe('initiator');
+    // no authentication failure was logged: nothing was authenticated
+    expect(evs.filter((e) => e.kind === 'log' && e.facility === 'IKE')).toEqual([]);
+    // the lines typed back: nothing before the next periodic retry, which succeeds
+    const prof = [['crypto', 'ikev2', 'profile', 'PROF']];
+    apply(sim, 'r2', prof, ['authentication', 'remote', 'pre-share']);
+    apply(sim, 'r2', prof, ['authentication', 'local', 'pre-share']);
+    expect(sim.runToIdle().stopped).toBeUndefined();
+    expect([saRow(sim, 'r1')!.state, saRow(sim, 'r2')!.state]).toEqual(['failed', 'failed']);
+    // the retries fire 10 s after each end failed (R2 at its own start, R1 when the refusal arrived); the exchange
+    // they start completes within the next second
+    sim.runFor(11 * SEC);
+    expect([saRow(sim, 'r1')!.state, saRow(sim, 'r2')!.state]).toEqual(['established', 'established']);
+    expect([tunnelUp(sim, 'r1'), tunnelUp(sim, 'r2')]).toEqual([true, true]);
+    expect(ping(sim, 'pc1', '192.168.2.10').text).toContain('!!!!!');
+  });
+
+  it('ruling R56: R1\'s profile without a remote identity line refuses R2\'s request with NO_PROPOSAL_CHOSEN; one missing pre-share line on R2 is refused the same way', () => {
+    // R1 (the lower address) has no key: it sends nothing of its own, so R2's request is not a crossing and is refused
+    const noIdentity = ipsecWorld({ r1ProfileOmit: ['match identity'] });
+    expect(noIdentity.device('r1')!.running.render()).not.toContain('match identity');
+    const evs = noIdentity.trace(0).events;
+    expect(ikeMessages(noIdentity, evs).map((m) => [m.device, m.f.exchange, m.f.flags, m.f.notify ?? null])).toEqual([
+      ['r2', IKE_SA_INIT, IKE_FLAG_INITIATOR, null],
+      ['r1', IKE_SA_INIT, IKE_FLAG_RESPONSE, 'NO_PROPOSAL_CHOSEN'],
+    ]);
+    const r1Debug = evs.flatMap((e) => (e.kind === 'debug' && e.event.device === 'r1' && e.event.process === 'ike' ? [e.event.message] : []));
+    expect(r1Debug).toContain(`${TU0}: no pre-shared key for ${R2_ADDR} (no-identity)`);
+    for (const d of ['r1', 'r2']) {
+      expect(saRow(noIdentity, d)).toMatchObject({ state: 'failed', reason: 'ike-no-proposal' });
+      expect(tunnelRow(noIdentity, d)).toMatchObject({ state: 'down', reason: 'ike-no-proposal' });
+    }
+    expect(saRow(noIdentity, 'r2')!.role).toBe('initiator');
+    // the periodic retry repeats the refusal without holding runToIdle
+    noIdentity.runFor(30 * SEC);
+    expect([saRow(noIdentity, 'r1')!.reason, saRow(noIdentity, 'r2')!.reason]).toEqual(['ike-no-proposal', 'ike-no-proposal']);
+    expect(noIdentity.runToIdle().stopped).toBeUndefined();
+
+    const noLocal = ipsecWorld({ r2ProfileOmit: ['authentication local'] });
+    expect(noLocal.device('r2')!.running.render()).toContain('authentication remote pre-share');
+    const refusal = ikeMessages(noLocal, noLocal.trace(0).events).find((m) => m.device === 'r2' && m.f.flags === IKE_FLAG_RESPONSE)!;
+    expect(refusal.f).toMatchObject({ exchange: IKE_SA_INIT, notify: 'NO_PROPOSAL_CHOSEN' });
+    for (const d of ['r1', 'r2']) expect(saRow(noLocal, d)).toMatchObject({ state: 'failed', reason: 'ike-no-proposal' });
   });
 });
 

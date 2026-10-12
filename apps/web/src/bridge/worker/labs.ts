@@ -2,7 +2,10 @@
  * Lab activation and grading in the worker (ARCHITECTURE-P1 §4.13, §7 "Labs browser").
  *
  * The worker keeps a reference to the active `ScenarioInfo` — the engine only round-trips `topology.lab`, so
- * reopening a saved file looks the lab up in `SCENARIOS` by the name the document carried and activates it again.
+ * reopening a saved file looks the lab up by the name the document carried and activates it again. Every lookup goes
+ * through `resolveLab(ref)` (ARCHITECTURE-P3 D6 [S37], §7 W6 web-shell), the seam P3b's assessment engine plugs into: a
+ * name resolves a built-in scenario, and a lab document (`netforge.lab/1`) resolves through the zod schema of
+ * io/lab-schema.ts and `scenarioOf`.
  * Grading is `evaluateLab` (sim/lab-checks.ts), which reads structured state and runs `connectivity` assertions in
  * a disposable clone: it never advances the live clock, emits trace or draws the simulation's rng.
  *
@@ -13,8 +16,8 @@
  * ponytail: grading is synchronous inside the worker. A lab is a handful of assertions over a small world, and the
  * clone a `connectivity` assertion builds is bounded by the engine's own caps, so there is nothing to schedule.
  */
-import { SCENARIOS, evaluateLab } from '@netforge/engine';
-import type { LabStatus, ScenarioInfo, Simulation, TraceEvent, TraceKind } from '@netforge/engine';
+import { SCENARIOS, evaluateLab, parseLabDocument, scenarioOf } from '@netforge/engine';
+import type { LabDocument, LabStatus, ScenarioInfo, Simulation, TraceEvent, TraceKind } from '@netforge/engine';
 
 /** Wall time between automatic lab evaluations (§4.13). */
 export const LAB_CHECK_EVERY_MS = 2000;
@@ -27,15 +30,40 @@ const RELEVANT = new Set<string>(LAB_RELEVANT_KINDS);
 /** Whether a batch's events warrant an automatic re-check. */
 export const labRelevant = (events: readonly TraceEvent[]): boolean => events.some((ev) => RELEVANT.has(ev.kind));
 
-/** The scenario with this name, if this build has it. */
-export const scenarioByName = (name: string): ScenarioInfo | undefined => SCENARIOS.find((s) => s.name === name);
+/**
+ * @since P3 [S37] What names a lab: a built-in scenario's name (a lab or a template, as `loadScenario` and a saved
+ * file's `topology.lab.name` carry it), or a lab document (`netforge.lab/1`, contracts/lab-document.ts).
+ */
+export type LabRef = string | LabDocument;
+
+/**
+ * @since P3 [S37] The scenario a lab reference names (ARCHITECTURE-P3 D6, §7 W6 web-shell).
+ *
+ *   • a name — the built-in scenario of that name (the first one, as `SCENARIOS.find` did), or undefined when this
+ *     build has none: a saved file of a lab from another build reopens as a plain world (P1 §4.13). The version a
+ *     saved file carries is not compared, so a file saved before a lab's version bump still reopens its lab.
+ *   • a lab document — checked by io/lab-schema.ts (`parseLabDocument`: a document reaching the worker is untrusted
+ *     input, whatever its static type) and turned into the lab the engine runs by `scenarioOf`. The document's lab is
+ *     returned even when a built-in lab has the same name: the document is what its author wrote. A document the
+ *     schema refuses throws the schema's readable, path-qualified Error; it is a wrong file, not a missing lab.
+ *
+ * Pure: it reads no simulation and keeps nothing, and a document's scenario shares no member with the document.
+ */
+export function resolveLab(ref: LabRef | undefined): ScenarioInfo | undefined {
+  if (ref === undefined) return undefined;
+  if (typeof ref === 'string') return SCENARIOS.find((s) => s.name === ref);
+  return scenarioOf(parseLabDocument(ref));
+}
+
+/** The scenario with this name, if this build has it (`resolveLab` of a name). */
+export const scenarioByName = (name: string): ScenarioInfo | undefined => resolveLab(name);
 
 export interface WorkerLabs {
   /** The active lab, or undefined when a plain template (or nothing) is loaded. */
   readonly active: ScenarioInfo | undefined;
   /** Activate a scenario that has tasks; anything else deactivates. */
   activate(scenario: ScenarioInfo | undefined): void;
-  /** Reopening a saved file: `topology.lab?.name` looked up in SCENARIOS (§4.13). */
+  /** Reopening a saved file: `topology.lab?.name` resolved by `resolveLab` (§4.13). */
   activateByName(name: string | undefined): void;
   /** Evaluate now (the panel's Check button). Null when no lab is active. */
   check(sim: Simulation): LabStatus | null;
@@ -82,7 +110,7 @@ export function createWorkerLabs(): WorkerLabs {
     },
     activate,
     activateByName(name) {
-      activate(name === undefined ? undefined : scenarioByName(name));
+      activate(resolveLab(name));
     },
     check(sim) {
       lastCheckWall = Number.NEGATIVE_INFINITY;

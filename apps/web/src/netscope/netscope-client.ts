@@ -17,6 +17,9 @@
  *  • `capturePortOf` adapts whatever the bridge exposes: the agreed `captures()` with a one-shot fallback
  *    to the earlier `listCaptures()` spelling, and `startCapture`/`importCapture` returning either an id
  *    or a CaptureInfo. That keeps this wave independent of the shell wave's rename.
+ *
+ * @since P3 (ARCHITECTURE-P3 §9.2 ruling R57(b); W6 web-inspector) The port also reads the mark the engine put on a
+ * live frame's PDU (`pduMeta`, through `EngineApi.pdu`), so the frame detail can show the TLS, SSH and IKE banners.
  */
 import { CAPTURE_QUERY_SCAN_BUDGET } from '@netforge/engine';
 import type {
@@ -32,6 +35,8 @@ import type {
   DisplayFilterError,
   FollowStreamResult,
   PcapFormat,
+  PduId,
+  PduMeta,
 } from '@netforge/engine';
 
 /** Rows asked for in one `queryCapture` call. */
@@ -66,6 +71,14 @@ export interface CapturePort {
   captureStats(id: CaptureId, filter?: string): Promise<CaptureStatistics>;
   exportCapture(id: CaptureId, opts: CaptureExportOptions): Promise<Uint8Array>;
   importCapture(bytes: Uint8Array, name: string): Promise<CaptureId>;
+  /**
+   * @since P3 (ruling R57(b); optional by meaning) The meta of a live frame's PDU (`CaptureRow.pdu`) as the engine holds
+   * it now — `protected` / `protectedBy` mark a TLS, SSH or IKE segment end to end, except that a segment which crossed an
+   * IPsec tunnel has lost its TLS/SSH mark (the tunnel tail clears the single mark slot, D27; open for the architect).
+   * Undefined when the engine no longer holds that PDU or the bridge cannot read PDUs; a port without it shows no TLS,
+   * SSH or IKE banner.
+   */
+  pduMeta?(id: PduId): Promise<PduMeta | undefined>;
 }
 
 type AnyFn = (...args: unknown[]) => unknown;
@@ -125,6 +138,11 @@ export function capturePortOf(api: unknown): CapturePort {
     captureStats: async (id, filter) => (await callOne(api, 'captureStats', [id, filter])) as CaptureStatistics,
     exportCapture: async (id, opts) => (await callOne(api, 'exportCapture', [id, opts])) as Uint8Array,
     importCapture: async (bytes, name) => captureIdOf(await callOne(api, 'importCapture', [bytes, name])),
+    pduMeta: async (id) => {
+      if (methodOf(api, 'pdu') === undefined) return undefined;
+      const pdu = (await callOne(api, 'pdu', [id])) as { meta?: PduMeta } | undefined;
+      return pdu?.meta;
+    },
   };
 }
 

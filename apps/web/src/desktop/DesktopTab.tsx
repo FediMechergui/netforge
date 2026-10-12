@@ -38,6 +38,21 @@ export function TrafficWindow(props: DesktopAppProps) {
 }
 registerDesktopWindowApp('desktop.traffic', TrafficWindow);
 
+// P3 [S32] (ARCHITECTURE-P3 §6 "Automation workspace", D24; W6 web-desktop): the automation workspace of a
+// programmable host (its `gui` lists `desktop.automation`) is a lazy chunk too — with the NF-Py tokenizer it highlights
+// with, which the main bundle therefore never carries.
+const LazyAutomationApp = lazy(() => import('../automation/AutomationWorkspace').then((m) => ({ default: m.AutomationApp })));
+
+/** @since P3 [S32] The automation workspace's window content: the lazy app inside its own Suspense boundary. */
+export function AutomationWindow(props: DesktopAppProps) {
+  return (
+    <Suspense fallback={<p className="desk-empty">Loading the automation workspace…</p>}>
+      <LazyAutomationApp {...props} />
+    </Suspense>
+  );
+}
+registerDesktopWindowApp('desktop.automation', AutomationWindow);
+
 /** Launchers per row in the grid (arrow-key geometry; the CSS grid uses the same count). */
 export const DESKTOP_GRID_COLUMNS = 3;
 
@@ -149,6 +164,15 @@ export function DesktopAppGlyph({ app }: { app: GuiPanelId }): ReactNode {
           <line x1="4" y1="22" x2="18" y2="22" />
           <path d="M14 18 L19 22 L14 26" />
           <circle cx="27" cy="22" r="1.5" className="is-filled" />
+        </svg>
+      );
+    case 'desktop.automation':
+      return (
+        <svg {...GLYPH_PROPS} className="desk-glyph">
+          <rect x="3" y="5" width="26" height="22" rx="2" />
+          <path d="M10 11 L6 16 L10 21" />
+          <path d="M22 11 L26 16 L22 21" />
+          <line x1="18" y1="10" x2="14" y2="22" />
         </svg>
       );
     default:

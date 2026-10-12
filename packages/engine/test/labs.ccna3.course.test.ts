@@ -6,10 +6,11 @@
  *     two approved SHOULD labs (24 [S18], 40 [S32]) and the three approved COULD labs (10 and 33 [C1], 25 [C13]) — in
  *     the order the lesson skeleton (curriculum/ccna3/lessons.ts) meets them, the two W6 automation labs included;
  *     every name is the lab of exactly one lesson, and no lesson names a lab the order does not know;
- *   • `CCNA3_LABS` is every lab of the ten area files sorted by that order (a name whose lab has not landed yet is
- *     absent, as in CCNA 2), each lab sits in the file its area owns (§11.2), and every lab is named in the order;
- *   • from W5 every lab a lesson points at is in `SCENARIOS` exactly once as a `ccna3-lab` (§11.3; the two automation
- *     labs from W6, so they may still be absent);
+ *   • `CCNA3_LABS` is every lab of the eleven lab files (the ten W5 area files and W6's automation.ts, §9.2 item 40g)
+ *     sorted by that order (a name whose lab has not landed yet is absent, as in CCNA 2), each lab sits in the file
+ *     its area owns (§11.2), and every lab is named in the order;
+ *   • every lab a lesson points at is in `SCENARIOS` exactly once as a `ccna3-lab` (§11.3), lab 38 included from W6;
+ *     only lab 40 [S32] may still be absent, until the flip step lands it;
  *   • no lab file imports the catalogue it belongs to (the arrays are read at module scope: a cycle is the rule-12
  *     hazard).
  */
@@ -21,6 +22,7 @@ import type { ScenarioInfo } from '../src/contracts/scenario.js';
 import { CCNA3_MODULES } from '../src/curriculum/ccna3/lessons.js';
 import {
   CCNA3_ACL_LABS,
+  CCNA3_AUTOMATION_LABS,
   CCNA3_DISCOVERY_LABS,
   CCNA3_EIGRP_LABS,
   CCNA3_HARDENING_LABS,
@@ -35,7 +37,10 @@ import {
 } from '../src/sim/scenarios/ccna3/index.js';
 import { SCENARIOS } from '../src/sim/scenarios.js';
 
-/** The ten area files of W5 (the automation file joins in W6), with the lab names §11.1 and §11.2 give each. */
+/**
+ * The eleven lab files — the ten area files of W5 and W6's automation.ts (§9.2 item 40g) — with the lab names §11.1
+ * and §11.2 give each. Lab 40 is named in the automation file but lands only after the [S32] flip step.
+ */
 const FILES: readonly { file: string; labs: readonly ScenarioInfo[]; names: readonly string[] }[] = [
   {
     file: 'ospf',
@@ -51,15 +56,16 @@ const FILES: readonly { file: string; labs: readonly ScenarioInfo[]; names: read
   { file: 'discovery', labs: CCNA3_DISCOVERY_LABS, names: ['ccna3-discover-neighbours'] },
   { file: 'time', labs: CCNA3_TIME_LABS, names: ['ccna3-time-and-logs'] },
   { file: 'troubleshooting', labs: CCNA3_TROUBLESHOOTING_LABS, names: ['ccna3-troubleshoot-enterprise'] },
+  { file: 'automation', labs: CCNA3_AUTOMATION_LABS, names: ['ccna3-restconf-change', 'ccna3-script-inventory'] },
 ];
 
-/** The W6 automation labs (sim/scenarios/ccna3/automation.ts): already in the order, not yet in a file. */
-const AUTOMATION_NAMES: readonly string[] = ['ccna3-restconf-change', 'ccna3-script-inventory'];
+/** The labs that may still be missing from `SCENARIOS`: lab 40 [S32], which needs NF-DEVHOST from the flip step. */
+const AWAITING_FLIP: readonly string[] = ['ccna3-script-inventory'];
 
 /** The lessons of the skeleton in teaching order. */
 const LESSONS = CCNA3_MODULES.flatMap((m) => m.lessons);
 
-/** Every lab of the ten files, in file order. */
+/** Every lab of the eleven files, in file order. */
 const ALL_FILE_LABS: readonly ScenarioInfo[] = FILES.flatMap((f) => f.labs);
 
 describe('CCNA3 labs: the course order', () => {
@@ -68,8 +74,8 @@ describe('CCNA3 labs: the course order', () => {
     expect(new Set(CCNA3_LAB_ORDER).size).toBe(21);
     expect(Object.isFrozen(CCNA3_LAB_ORDER)).toBe(true);
     for (const name of CCNA3_LAB_ORDER) expect(name, name).toMatch(/^ccna3(-[a-z0-9]+)+$/);
-    // the area files' names and the two automation labs are exactly the order's names
-    const planned = [...FILES.flatMap((f) => f.names), ...AUTOMATION_NAMES];
+    // the lab files' names (the two automation labs included) are exactly the order's names
+    const planned = FILES.flatMap((f) => f.names);
     expect(new Set(planned).size).toBe(planned.length);
     expect([...planned].sort()).toEqual([...CCNA3_LAB_ORDER].sort());
   });
@@ -90,7 +96,7 @@ describe('CCNA3 labs: the course order', () => {
 });
 
 describe('CCNA3 labs: the catalogue', () => {
-  it('sorts every lab of the ten files by the course order, each lab in the file of its area', () => {
+  it('sorts every lab of the eleven files by the course order, each lab in the file of its area', () => {
     const names = ALL_FILE_LABS.map((l) => l.name);
     expect(new Set(names).size).toBe(names.length);
     for (const f of FILES) {
@@ -110,10 +116,10 @@ describe('CCNA3 labs: the catalogue', () => {
     expect(order('ccna3-serial-links')).toBeLessThan(order('ccna3-troubleshoot-enterprise'));
   });
 
-  it('lists every lab a lesson points at in SCENARIOS once, from W5 (the automation labs from W6, §11.3)', () => {
+  it('lists every lab a lesson points at in SCENARIOS once (lab 38 from W6; lab 40 after the flip step, §11.3)', () => {
     for (const name of CCNA3_LAB_ORDER) {
       const found = SCENARIOS.filter((s) => s.name === name);
-      if (AUTOMATION_NAMES.includes(name) && found.length === 0) continue;
+      if (AWAITING_FLIP.includes(name) && found.length === 0) continue;
       expect(found.map((s) => s.category), name).toEqual(['ccna3-lab']);
     }
   });

@@ -28,6 +28,7 @@
  */
 import type { ScenarioInfo } from '../../../contracts/scenario.js';
 import { CCNA3_ACL_LABS } from './acl.js';
+import { CCNA3_AUTOMATION_LABS } from './automation.js';
 import { CCNA3_DISCOVERY_LABS } from './discovery.js';
 import { CCNA3_EIGRP_LABS } from './eigrp.js';
 import { CCNA3_HARDENING_LABS } from './hardening.js';
@@ -48,6 +49,7 @@ export * from './qos.js';
 export * from './discovery.js';
 export * from './time.js';
 export * from './troubleshooting.js';
+export * from './automation.js';
 
 /**
  * The CCNA 3 lab names in the order the course meets them (§11.1; the lesson number in each comment). The 21 labs of
@@ -105,6 +107,7 @@ export const CCNA3_LABS: readonly ScenarioInfo[] = inCourseOrder(
     CCNA3_DISCOVERY_LABS,
     CCNA3_TIME_LABS,
     CCNA3_TROUBLESHOOTING_LABS,
+    CCNA3_AUTOMATION_LABS,
   ],
   CCNA3_LAB_ORDER,
 );

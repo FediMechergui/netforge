@@ -23,7 +23,9 @@
  * outbound; a marking list that matches the bulk data too; (W5 fixes #16-#18) an extra match line that keeps VOIP from
  * ever matching (the learner's burst, `QOS_LEARNER_FLOWS`, arrives unmarked), marking lists wider than the voice ports
  * (`gt 16383`, `range 1024 65535`, `range 16384 32768`), and CS6 with the burst sent again (the live row shows 48,
- * failing the marking and the priority task). A right answer typed in other forms (`class-map VOIP`, `set
+ * failing the marking and the priority task); (W6, ruling R56) an extra match line under VOICE (`match cos 5`) that
+ * leaves the priority class empty while every other check of the task passes (the bulk is policed, so the clone's line
+ * never congests): the `config` kind's `count` fails it. A right answer typed in other forms (`class-map VOIP`, `set
  * dscp 46`, `match dscp 46`, `police 64000` with its default actions) still earns full marks.
  */
 import { readFileSync } from 'node:fs';
@@ -183,6 +185,27 @@ function llqOnly(): string[] {
   return r1Lines('class-map match-all VOICE');
 }
 
+/** The datagrams of the learner's voice burst (`count N` of `QOS_LEARNER_FLOWS`). */
+function burstCount(): number {
+  const n = Number(/\bcount (\d+)\b/.exec(QOS_LEARNER_FLOWS[0]?.lines[0] ?? '')?.[1]);
+  expect(n).toBeGreaterThan(0);
+  return n;
+}
+
+/** Packets of the live world that R1's output policy put in class `name` of Serial0/0/0 (undefined: no such class). */
+function serialClassMatched(sim: Simulation, name: string): number | undefined {
+  return sim.device(idOf(sim, 'R1'))!.qosCounters('Serial0/0/0')?.classes.find((c) => c.name === name)?.matched;
+}
+
+/** The priority task's `config` check that counts VOICE's match lines (ruling R56), and its index. */
+function voiceCount(): { index: number; a: Extract<LabAssertion, { kind: 'config' }> } {
+  const assertions = lab.tasks?.find((t) => t.id === 'voice-first')?.assertions ?? [];
+  const index = assertions.findIndex((a) => a.kind === 'config' && a.count !== undefined);
+  const a = assertions[index];
+  if (a?.kind !== 'config') throw new Error('task voice-first has no config count');
+  return { index, a };
+}
+
 describe('CCNA3 lab file: qos.ts', () => {
   it('exports exactly the lab of lesson 27, under the name §11.1 freezes', () => {
     expect(CCNA3_QOS_LABS.map((l) => l.name)).toEqual(QOS_NAMES);
@@ -314,6 +337,8 @@ describe(`CCNA3 lab: ${lab.name}`, () => {
     // without the learner's voice burst (step 2) the live EF row is missing: the marking is not proven yet (W5 fix #16)
     expect(taskPasses(evaluateLab(sim, lab))).toEqual({ 'mark-voice': false, 'voice-first': false, 'police-bulk': true });
     sendVoiceBurst(sim);
+    // the whole burst, marked EF at the edge, took the priority class out of the serial port (R56's near miss: none)
+    expect(serialClassMatched(sim, 'VOICE')).toBe(burstCount());
     const now = sim.now;
     const head = sim.trace(0).next;
     const pdus = sim.snapshot().pduCount;
@@ -446,6 +471,39 @@ describe(`CCNA3 lab: ${lab.name} — wrong answers and other right forms`, () =>
     const status = evaluateLab(sim, lab);
     expect(taskPasses(status)['mark-voice']).toBe(false);
     expect(failing(status).filter((f) => f.startsWith('mark-voice#'))).toEqual([`mark-voice#${indexOf('mark-voice', 'table')}: ${"The flows table of PC-S has no row with src=192.168.1.10 flow=f1 dscp=46. Send the voice burst from PC-V after MARK is attached (step 2): PC-S must see it arrive as EF (46)."}`]);
+  }, LAB_TEST_TIMEOUT_MS);
+
+  it('an extra match line under VOICE that leaves the priority class empty fails the priority task on its count (R56)', () => {
+    const { index, a } = voiceCount();
+    expect(a).toMatchObject({ device: 'R1', path: 'class-map.match-all.VOICE.match', count: 1 });
+    expect(a.equals).toBeUndefined();
+    expect(a.contains).toBeUndefined();
+    expect(a.exists).toBeUndefined();
+
+    const sim = labWorld();
+    applySolution(sim, r1Solution(new Map([['match dscp ef', ['match dscp ef', 'match cos 5']]])));
+    sendVoiceBurst(sim);
+    // the burst arrived as EF, yet not one packet entered the priority class: under match-all both lines must hold, and a
+    // routed packet on the serial line carries no 802.1Q priority, so every packet fell through to class-default
+    expect(sim.device(idOf(sim, 'PC-S'))!.tables.get<FlowRow>('flows')?.rows().find((r) => r.flow === 'f1')?.dscp).toBe(46);
+    expect(serialClassMatched(sim, 'VOICE')).toBe(0);
+    expect(serialClassMatched(sim, 'class-default')).toBeGreaterThanOrEqual(burstCount());
+
+    const status = evaluateLab(sim, lab);
+    expect(taskPasses(status)).toEqual({ 'mark-voice': true, 'voice-first': false, 'police-bulk': true });
+    // the count is the priority task's only failing check: `equals` finds its one `dscp ef` line, and with the bulk
+    // policed at the edge the clone's line never congests, so the voice crosses class-default in time
+    expect(failing(status).filter((f) => f.startsWith('voice-first#'))).toEqual([
+      `voice-first#${index}: R1 has 2 configuration lines at class-map.match-all.VOICE.match, expected exactly 1. ${a.feedback ?? ''}`,
+    ]);
+    expect(resultOf(status, 'voice-first', indexOf('voice-first', 'traffic')).pass).toBe(true);
+
+    // the blind spot the count closes: without it the task passed
+    const blind: ScenarioInfo = {
+      ...lab,
+      tasks: (lab.tasks ?? []).map((t) => ({ ...t, assertions: t.assertions.filter((x) => !(x.kind === 'config' && x.count !== undefined)) })),
+    };
+    expect(taskPasses(evaluateLab(sim, blind))).toEqual({ 'mark-voice': true, 'voice-first': true, 'police-bulk': true });
   }, LAB_TEST_TIMEOUT_MS);
 
   it('marking lists wider than the voice ports fail the marking task (W5 fix #17)', () => {

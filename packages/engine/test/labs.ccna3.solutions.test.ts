@@ -13,13 +13,13 @@
  *     says why on a failing assertion;
  *   • SOLVED: `configure` accepts every line of the reference solution as written (a refused line is a defect in the
  *     lab and is reported in full), the world runs to idle, the logins the lab asks the learner to make before Check
- *     (labs 15 and 19 grade the learner's own remote logins live, §11.2, and lab 27 the learner's voice burst, §3.5
- *     step 8; their lab files give them as data, typed here on the hosts' consoles) are typed, and every task passes —
- *     full marks;
+ *     (labs 15 and 19 grade the learner's own remote logins live, §11.2, lab 27 the learner's voice burst, §3.5 step
+ *     8, and lab 38 the learner's RESTCONF requests, §3.8 step 7; their lab files give them as data, typed here on the
+ *     hosts' consoles) are typed, and every task passes — full marks;
  *   • grading is read-only (same clock, trace head and PDU count) and repeatable (two evaluations are equal).
  *
- * Static cases: the lab names come from `CCNA3_LAB_ORDER` — every lab of the ten W5 files is named there exactly once
- * (a lab the order does not know is refused), sits in the file its area owns (§11.2, rule 18), and `CCNA3_LABS`
+ * Static cases: the lab names come from `CCNA3_LAB_ORDER` — every lab of the eleven lab files (the ten W5 area files and
+ * W6's automation.ts, §9.2 item 40g) is named there exactly once (a lab the order does not know is refused), sits in the file its area owns (§11.2, rule 18), and `CCNA3_LABS`
  * follows that order; the order itself follows the lesson skeleton; `SCENARIOS` is the templates, then the CCNA 1,
  * CCNA 2 and CCNA 3 labs; the kit writes P3 topologies with the 1.3 schema; no lab file imports the catalogue it is
  * part of.
@@ -42,6 +42,7 @@ import { createSimulation } from '../src/sim/simulation.js';
 import {
   ACL_STANDARD_LOGINS,
   CCNA3_ACL_LABS,
+  CCNA3_AUTOMATION_LABS,
   CCNA3_DISCOVERY_LABS,
   CCNA3_EIGRP_LABS,
   CCNA3_HARDENING_LABS,
@@ -54,6 +55,7 @@ import {
   CCNA3_VPN_LABS,
   CCNA3_WAN_LABS,
   QOS_LEARNER_FLOWS,
+  RESTCONF_LAB_REQUESTS,
   SECURE_ACCESS_LOGINS,
 } from '../src/sim/scenarios/ccna3/index.js';
 import { PC, SWITCH, device, link, topology } from '../src/sim/scenarios/kit.js';
@@ -70,7 +72,11 @@ const LOGIN_LINE_NS = 5 * SEC;
 
 const catalog = createCatalog(PROCESS_FACTORIES);
 
-/** The ten W5 lab files (§11.2: each owned by the area that knows the feature), with the labs their lessons give them. */
+/**
+ * The eleven lab files (§11.2: each owned by the area that knows the feature), with the labs their lessons give them:
+ * the ten W5 area files and W6's automation.ts (§9.2 item 40g). Lab 40 (`ccna3-script-inventory`) is named there but
+ * lands only after the [S32] flip step, so until then that file's array holds lab 38 alone.
+ */
 const FILES: readonly { file: string; labs: readonly ScenarioInfo[]; names: readonly string[] }[] = [
   {
     file: 'ospf',
@@ -86,23 +92,23 @@ const FILES: readonly { file: string; labs: readonly ScenarioInfo[]; names: read
   { file: 'discovery', labs: CCNA3_DISCOVERY_LABS, names: ['ccna3-discover-neighbours'] },
   { file: 'time', labs: CCNA3_TIME_LABS, names: ['ccna3-time-and-logs'] },
   { file: 'troubleshooting', labs: CCNA3_TROUBLESHOOTING_LABS, names: ['ccna3-troubleshoot-enterprise'] },
+  { file: 'automation', labs: CCNA3_AUTOMATION_LABS, names: ['ccna3-restconf-change', 'ccna3-script-inventory'] },
 ];
-
-/** The two automation labs W6 brings (`automation.ts`), already in the course order. */
-const W6_LABS: readonly string[] = ['ccna3-restconf-change', 'ccna3-script-inventory'];
 
 /**
  * The actions a lab asks the learner to take before Check, as the lab files give them: the console lines typed on each
- * host after the solution — the remote logins of labs 15 and 19 (§11.2 "graded live through the remote terminal") and
- * lab 27's bounded voice burst (§3.5 step 8: the live EF row at PC-S; W5 fix #16).
+ * host after the solution — the remote logins of labs 15 and 19 (§11.2 "graded live through the remote terminal"),
+ * lab 27's bounded voice burst (§3.5 step 8: the live EF row at PC-S; W5 fix #16) and lab 38's RESTCONF requests (§3.8
+ * step 7: the GET and the PUTs its `restconf-log` tasks read; each answer takes 50 ms, so `LOGIN_LINE_NS` is ample).
  */
 const LEARNER_LOGINS: Readonly<Record<string, readonly { readonly from: string; readonly lines: readonly string[] }[]>> = {
   'ccna3-acl-standard': ACL_STANDARD_LOGINS,
   'ccna3-secure-device-access': SECURE_ACCESS_LOGINS,
   'ccna3-qos-voice-first': QOS_LEARNER_FLOWS,
+  'ccna3-restconf-change': RESTCONF_LAB_REQUESTS,
 };
 
-/** Every lab of the ten files, in file order. */
+/** Every lab of the eleven files, in file order. */
 const ALL_FILE_LABS: readonly ScenarioInfo[] = FILES.flatMap((f) => f.labs);
 
 /** The lessons of the skeleton in teaching order, with the title of the module that holds each. */
@@ -165,7 +171,7 @@ describe('CCNA3 labs: the catalogue', () => {
     for (const name of CCNA3_LAB_ORDER) expect(name).toMatch(/^ccna3(-[a-z0-9]+)+$/);
   });
 
-  it('takes the lab names from CCNA3_LAB_ORDER: every lab of the ten files is named there once, and CCNA3_LABS follows it', () => {
+  it('takes the lab names from CCNA3_LAB_ORDER: every lab of the eleven files is named there once, and CCNA3_LABS follows it', () => {
     const names = ALL_FILE_LABS.map((l) => l.name);
     // no lab twice, in one file or across two
     expect(new Set(names).size).toBe(names.length);
@@ -185,7 +191,7 @@ describe('CCNA3 labs: the catalogue', () => {
     }
     // every planned name is in the course order, and every ordered name has a file (W6's automation.ts included)
     for (const name of planned) expect(CCNA3_LAB_ORDER, name).toContain(name);
-    for (const name of CCNA3_LAB_ORDER) expect([...planned, ...W6_LABS], name).toContain(name);
+    for (const name of CCNA3_LAB_ORDER) expect(planned, name).toContain(name);
   });
 
   it('orders the labs as the lesson skeleton meets them', () => {

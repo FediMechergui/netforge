@@ -172,12 +172,14 @@ describe('serial lines', () => {
     expect(tokens(gig, '')).toEqual(['bandwidth', 'cdp', 'delay', 'description', 'do', 'duplex', 'encapsulation', 'end', 'exit', 'fair-queue', 'ip', 'ipv6', 'lldp', 'mac-address', 'no', 'service-policy', 'shutdown', 'speed', 'standby']);
   });
 
-  it('show controllers serial and debug serial run but are not listed', () => {
+  it('show controllers serial and debug serial run but are not listed; the bare show controllers is (R56, item 40h)', () => {
     const priv = matchContextFor(model, 'priv-exec');
     expect(ok(priv, 'show controllers serial se0/0/0').args.iface).toBe('Serial0/0/0');
     expect(ok(priv, 'show controllers serial').args).toEqual({});
     expect(fail(priv, 'show controllers serial gi0/0')).toMatchObject({ kind: 'invalid-arg', error: { column: 24 } });
-    expect(tokens(priv, 'show ')).not.toContain('controllers');
+    // ARCHITECTURE-P3 §9.2 W6 item 40h (ruling R56): the bare form is listed; the accepted form's `serial` keyword is not
+    expect(tokens(priv, 'show ')).toContain('controllers');
+    expect(tokens(priv, 'show controllers ')).not.toContain('serial');
     expect(ok(priv, 'debug serial').args.category).toBe('serial');
     // ARCHITECTURE-P2 §9.2 W4 item 18: `standby` (hsrp, routing row) joins through the registry
     // ARCHITECTURE-P3 §9.2 W3 item 30e: every §5.8 debug category (the MUST rows and the approved items') joins
@@ -269,8 +271,8 @@ describe('inventory and status tables', () => {
     const r1 = on('router.nf2911', 'priv-exec');
     // the P0 show list plus (ARCHITECTURE-P2 §9.2 W4 item 18) `access-lists` and `standby`, and (ARCHITECTURE-P3 §9.2 W2
     // item 21b, the W2 subset of item 21's priv-exec show list) `class-map`, `clock` and `policy-map`, and (W3 item 30e)
-    // item 21's final list
-    expect(tokens(r1, 'show ')).toEqual(['access-lists', 'arp', 'cdp', 'class-map', 'clock', 'crypto', 'history', 'hosts', 'interfaces', 'ip', 'ipv6', 'lldp', 'logging', 'ntp', 'policy-map', 'ppp', 'restconf', 'running-config', 'ssh', 'standby', 'startup-config', 'users', 'version']);
+    // item 21's final list, and (W6a integration, item 40h: ruling R56) the bare `show controllers` form
+    expect(tokens(r1, 'show ')).toEqual(['access-lists', 'arp', 'cdp', 'class-map', 'clock', 'controllers', 'crypto', 'history', 'hosts', 'interfaces', 'ip', 'ipv6', 'lldp', 'logging', 'ntp', 'policy-map', 'ppp', 'restconf', 'running-config', 'ssh', 'standby', 'startup-config', 'users', 'version']);
     expect(ok(r1, 'show interfaces serial0/0/0').args.iface).toBe('Serial0/0/0');
   });
 

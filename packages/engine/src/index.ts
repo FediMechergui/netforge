@@ -281,6 +281,8 @@ export * from './sim/journal.js';
 export * from './sim/replay.js';
 // sim — P3 W1: the defaults ladder (D2)
 export * from './sim/defaults-upgrade.js';
+// sim — P3 W6 sim [S37]: headless grading of a lab document (ARCHITECTURE-P3 D6)
+export * from './sim/grade.js';
 
 // curriculum
 export * from './contracts/curriculum.js';

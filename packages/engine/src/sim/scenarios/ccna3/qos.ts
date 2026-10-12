@@ -1,6 +1,6 @@
 /**
  * sim/scenarios/ccna3/qos.ts — the CCNA 3 quality-of-service lab (ARCHITECTURE-P3 §11.1, §11.2, §2.10, §3.5, §3.11,
- * D16; §7 W5 qos; rulings R44 and R26).
+ * D16; §7 W5 qos; rulings R44, R26 and R56).
  *
  *   • `ccna3-qos-voice-first` — lesson 27 "Marking, queuing and policing" (module "Quality of service"): two desks
  *     share a 128 kb/s serial link to a far site. The learner marks the voice flow EF at the trust boundary (R1's LAN
@@ -33,9 +33,10 @@
  *     class-default). This traffic check proves LLQ only while the serial line is congested, i.e. before MARK's
  *     policer exists: once the bulk flow is policed to 64 kb/s at the edge the line never congests in the clone, and
  *     unmarked voice crosses class-default in time too. So this task also carries the marking's own proof (the
- *     `set dscp ef` line, MARK inbound on Gi0/0 and the live EF row at PC-S). An extra match line under VOICE that keeps
- *     the priority class empty is not gradeable with the §2.10 kinds (the traffic kind has no `after` to remove the
- *     policer, and `config` cannot count nodes): reported to the architect (W5 integration, finding #18);
+ *     `set dscp ef` line, MARK inbound on Gi0/0 and the live EF row at PC-S). For the same reason the clone cannot see
+ *     an extra match line under VOICE that keeps the priority class empty (`match cos 5` beside `match dscp ef`: under
+ *     match-all both must hold, and a routed packet on the serial line carries no 802.1Q priority), and `equals` passes
+ *     when any one line matches; the `config` kind's `count` (ruling R56) requires exactly one match line under VOICE;
  *   • policing — the policer line of MARK's class-default (`config`), a ping from PC-D that still gets through
  *     (`connectivity`: a policer that drops even conforming packets fails it — it drops the desks' ARP too, since
  *     class-default holds every frame that is not control traffic) and the same two flows in the clone, where the bulk
@@ -182,7 +183,7 @@ export const ccna3QosVoiceFirst: ScenarioInfo = {
     '',
     '## 4. Put voice first',
     '',
-    '- Create the class map `VOICE` (match all) that matches DSCP `ef`.',
+    '- Create the class map `VOICE` (match all) with one match line, for DSCP `ef`. Keep it to that one line: under match all a packet must pass every match line of the class, so an extra line can leave the priority queue empty.',
     `- Create the policy map \`WAN-EDGE\` whose class \`VOICE\` gets a priority queue of ${QOS_LAB_PRIORITY_KBPS} kb/s. Optionally give \`class-default\` a fair queue.`,
     `- On \`Serial0/0/0\`, set the interface bandwidth to ${QOS_LAB_LINE_BPS / 1000} kb/s so the router admits the policy against the real line rate, and attach \`WAN-EDGE\` in the output direction.`,
     '',
@@ -288,7 +289,7 @@ export const ccna3QosVoiceFirst: ScenarioInfo = {
     {
       id: 'voice-first',
       title: 'Put voice first on the serial line',
-      description: `R1 Serial0/0/0 has a bandwidth of ${QOS_LAB_LINE_BPS / 1000} kb/s and the output policy WAN-EDGE, whose class VOICE (DSCP EF) gets a ${QOS_LAB_PRIORITY_KBPS} kb/s priority queue; with voice and 200 kb/s of bulk data offered together, every voice packet arrives within ${QOS_LAB_VOICE_MAX_DELAY_MS} ms.`,
+      description: `R1 Serial0/0/0 has a bandwidth of ${QOS_LAB_LINE_BPS / 1000} kb/s and the output policy WAN-EDGE, whose class VOICE (one match line: DSCP EF) gets a ${QOS_LAB_PRIORITY_KBPS} kb/s priority queue; with voice and 200 kb/s of bulk data offered together, every voice packet arrives within ${QOS_LAB_VOICE_MAX_DELAY_MS} ms.`,
       points: 40,
       dependsOn: ['mark-voice'],
       hint: 'Queuing happens where packets wait: on the way out of the slow serial interface. Match the voice by the DSCP that R1 has just written.',
@@ -298,6 +299,15 @@ export const ccna3QosVoiceFirst: ScenarioInfo = {
         { kind: 'fact', device: 'R1', fact: 'qos.inputPolicy', subject: 'GigabitEthernet0/0', equals: 'MARK' },
         voiceArrivedEf(),
         { kind: 'config', device: 'R1', path: 'class-map.match-all.VOICE.match', equals: 'dscp ef' },
+        // R56: exactly one match line — an extra one (`match cos 5`) can empty the class, and once the bulk is policed
+        // neither `equals` nor the traffic check below can tell
+        {
+          kind: 'config',
+          device: 'R1',
+          path: 'class-map.match-all.VOICE.match',
+          count: 1,
+          feedback: 'VOICE needs exactly one match line, DSCP EF: under match-all a packet must pass every match line, so an extra one can leave the priority queue empty.',
+        },
         { kind: 'config', device: 'R1', path: 'policy-map.WAN-EDGE.class.VOICE.priority', equals: String(QOS_LAB_PRIORITY_KBPS) },
         {
           kind: 'config',

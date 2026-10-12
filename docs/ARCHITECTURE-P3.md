@@ -1885,7 +1885,7 @@ export interface LabPacketProbe { proto: 'ip' | 'icmp' | 'tcp' | 'udp'; src: str
 | QoS marking | `config` lines, `fact qos.inputPolicy`, `table flows {where: {src: '192.168.1.10', flow: 'f1', dscp: 46}}` on the receiver (both senders default to `f1`, so the source is part of the key; `dscp 46` exactly, since `ge 46` would pass CS6 = 48) |
 | CDP, LLDP | `neighbor {protocol: 'cdp' \| 'lldp', neighbor, iface}`; `fact cdp.enabled {subject: port, equals: false}` for edge hardening |
 | NTP | `fact ntp.synced`, `ntp.stratum`, `ntp.peer` (a device name), `clock.source` |
-| REST change | `config`/`vlan` (the effect) plus `table restconf-log {whereOps: {path: {op: 'contains', value: 'vlan-list=30'}}, where: {method: 'PUT'}}` |
+| REST change | `config`/`vlan` (the effect) plus `table restconf-log {where: {method: 'PUT', path: '/restconf/data/nf-native:native/vlan/vlan-list=30'}, whereOps: {status: {op: 'le', value: 204}}}` (the whole path, so a PUT to `vlan-list=300` is no match; W6a integration) |
 | Reading JSON (lab 38; lesson 37 has no lab) | `table restconf-log {where: {method: 'GET'}, whereOps: {path: {op: 'contains', value: 'ietf-interfaces'}}}` plus the effect of the value read (`vlan`, `config`) |
 | A router-id fault (troubleshooting) | the live `fact ospf.routerId`; never a clone check alone, because the clone boots from the export and applies a configured router id the live router has not applied yet (no `clear ip ospf process`) |
 | [S13] Real logins, vty ACL | live: `table vty-logins {where: {proto: 'ssh', result: 'success'}}` (the learner's own login) and `{result: 'refused'}` from the denied PC; `acl {list, applied: [{vty: true, dir: 'in'}]}` and the vty rows of the list read by action, not by sequence number (W5 integration, review of lab 15: a remark takes a number and an explicit `deny any` counts the refusal instead of the implicit deny): `table acl {where: {list, action: 'deny', lastIface: 'vty'}, whereOps: {matches: {op: 'ge', value: 1}}, exists: true}` (lab 15 also the `action: 'permit'` row for the admitted login); clone: `service {from, to, service: 'ssh', expect: 'success'}` and `{service: 'telnet', expect: 'refused'}` |
@@ -2057,17 +2057,17 @@ goldens. The source tags each `@since P3 (optional by meaning)`; the W8 extensio
 | catalog.ts / device.ts | `DeviceModel.cdpDefault`, [S18] `VirtualFamilySpec.encap` |
 | port.ts | `PortCounters.aclDenies` |
 | pdu.ts | `PduMeta.protectedBy` (its [S13] 'ssh' and [C13] 'esp', 'ike' values too) |
-| process.ts | drop action `rule`, `ipv4.resume.after`, `nat.outbound.filterOut`, `acl.filter.inPort`, `acl.filter.natted`, [S13] `tcp.listen.service`, [S18] `icmp.error.param` |
+| process.ts | drop action `rule`, `ipv4.resume.after`, `nat.outbound.filterOut`, `acl.filter.inPort`, `acl.filter.natted`, [S13] `tcp.listen.service`, [S18] `icmp.error.param`, `udp.send.dscp` (R24; W6a integration) |
 | transport.ts | `tcp.listen.tls`, `tcp.connect.tls` |
 | tables.ts | `RouteRow.routeType` |
 | trace.ts | drop `rule`, log `mnemonic`, configChange `origin` |
-| snapshot.ts | `SimSnapshot.profile` ('P3' value), `DeviceSnapshot.clock`, `PortSnapshot.qos`, `PortSnapshot.txBacklog`, [S32] `DeviceSnapshot.storage` |
+| snapshot.ts | `SimSnapshot.profile` ('P3' value), `DeviceSnapshot.clock`, `PortSnapshot.qos`, `PortSnapshot.txBacklog`, [S32] `DeviceSnapshot.storage`, [S21] `PortQosView` class `police` counts (R26), `DeviceClockSnapshot.tzName` (R42; both W6a integration) |
 | device.ts | the `origin` parameter of `DeviceRuntime.applyConfigLine`, [S25] `DeviceRuntime.configSession` (R53, W5 integration) |
 | StateViews | the tcp and udp `probes` member |
 | topology.ts | `Topology.profile` ('P3' value), [S32] `TopologyDevice.files` |
-| cli.ts / config.ts | `ConfigNode.seq`, `ConfigLineRule.sequenced`, `ConfigureOptions.origin`, [S25] `CliSessionView.monitor`, [S13] `CliSessionView.remote`, [S13] `FacadeCounters.remote` |
-| scenario.ts | `LabAssertionNotes.feedback` / `.misconception`, the widened `connectivity`, `route`, `table`, `cut` members, [C13] `path.tunnelAt` |
-| link.ts | [S20] `TransmitOptions`, `LinkModelDeps.egressPolicy`, `LinkModel.egressQueues` |
+| cli.ts / config.ts | `ConfigNode.seq`, `ConfigLineRule.sequenced`, `ConfigureOptions.origin`, [S25] `CliSessionView.monitor`, [S13] `CliSessionView.remote`, [S13] `FacadeCounters.remote`, [S20] `CliRuntimeDeps.egressQueues` (R32; W6a integration) |
+| scenario.ts | `LabAssertionNotes.feedback` / `.misconception`, the widened `connectivity`, `route`, `table`, `cut` members, [C13] `path.tunnelAt`, the `config` kind's `count` (R56; W6a integration) |
+| link.ts | [S20] `TransmitOptions`, `LinkModelDeps.egressPolicy`, `LinkModel.egressQueues`, [S21] `PolicerSpec.conform` / `.exceed` (R26; W6a integration) |
 
 (The OBM members of items that are not approved — [S29] `DeviceModel.storage`, [S34] `PduMeta.mirror`, [S6]
 `Route6Row.routeType`, [S10] `TraceFilter.reasons`, [S31] `TopologyDevice.nvram` — are never added in P3a.)
@@ -2691,10 +2691,11 @@ VLAN 99; management SVIs Vlan99 10.0.99.11 / .12 / .13. Each switch's initial co
    body (JSON pretty-printed as text); then `cliDone`. `rest GET https://10.0.99.11/restconf/data/ietf-interfaces:
    interfaces` prints the RFC 7951 JSON of the switch's interfaces, rendered from the running configuration.
 7. **Lab tasks:** `vlan {device: 'SW1'|'SW2'|'SW3', vlan: 30, name: 'VOICE'}` (the effect); `table {device: 'SW1'…,
-   table: 'restconf-log', where: {method: 'PUT'}, whereOps: {path: {op: 'contains', value: 'vlan-list=30'}, status:
-   {op: 'le', value: 204}}}` (proves the change came through the API); and the **JSON reading tasks** that lesson 37's
-   lab used to carry: `table {device: 'SW2', table: 'restconf-log', where: {method: 'GET'}, whereOps: {path: {op:
-   'contains', value: 'ietf-interfaces'}}}` (the learner read the interfaces) and `vlan {device: 'SW3', vlan: 40, name:
+   table: 'restconf-log', where: {method: 'PUT', path: '/restconf/data/nf-native:native/vlan/vlan-list=30'}, whereOps:
+   {status: {op: 'le', value: 204}}}` (proves the change came through the API; the whole path as the instructions print
+   it, so an accepted PUT to `vlan-list=300` is no match — W6a integration, the auto-38 review fix); and the **JSON
+   reading tasks** that lesson 37's lab used to carry: `table {device: 'SW2', table: 'restconf-log', where: {method:
+   'GET', status: 200}, whereOps: {path: {op: 'contains', value: 'ietf-interfaces'}}}` (the learner read the interfaces) and `vlan {device: 'SW3', vlan: 40, name:
    'FINANCE'}` (the value found in the JSON was acted on). All live reads; no clone and no replay of the requests.
    Three runs with one seed are byte-identical; the journal replays the `cliExec` ops.
 8. **[S32] variant (lab 40).** A script saved in DEV1's `files:` store (NF-DEVHOST) loops over the three switches with
@@ -5096,6 +5097,84 @@ The W5 integration step recorded these further migrations (`40b` is W6's; number
     `device.catalog.end-devices.test.ts` get the new exact values with `pc.nfdevhost`; `CAPABILITY_PROCESSES` gains the
     `programmable` row and `PROCESS_ORDER` `script-host` (the pins of item 31–33 are re-derived by the same rules);
     `docs/CATALOG.md` gains the model (architect). No P1/P2 digest moves (no shipped world holds the model).
+
+The W6a integration step (2026-10-12) recorded these migrations (the W5 integration took `40c`–`40f`, so W6's resume at
+`40g`):
+
+40g. (Item 38 forces it once lab 38 lands: `ccna3/index.ts` puts `CCNA3_AUTOMATION_LABS` into `CCNA3_LABS`, 20 labs;
+    review findings #0, #5, #6) `labs.ccna3.solutions.test.ts` and `labs.ccna3.course.test.ts`: `FILES` gains the row
+    `{file: 'automation', labs: CCNA3_AUTOMATION_LABS, names: ['ccna3-restconf-change', 'ccna3-script-inventory']}`
+    (imported from `ccna3/index.js`), so the "ten files" become eleven and `CCNA3_LABS.length` equals the files' 20
+    labs again (`:175` and `course :100`, unchanged assertions). In the solutions test `W6_LABS` is dropped and "every
+    ordered name has a file" checks `planned` alone; `LEARNER_LOGINS` gains `'ccna3-restconf-change':
+    RESTCONF_LAB_REQUESTS` (the learner's `rest` GET and PUTs, typed on PC1's console `LOGIN_LINE_NS` apart), so the
+    generic "scores full marks" case runs lab 38 as the lab asks. In the course test `AUTOMATION_NAMES` leaves `planned`
+    (its names now come from `FILES`, and the exact `Set`-size and sorted-equality checks stay), and the `SCENARIOS`
+    allowance shrinks to lab 40 alone (`AWAITING_FLIP = ['ccna3-script-inventory']`) until the flip step lands it. Every
+    assertion keeps its strength; only cases are added.
+40h. (Ruling R56, cli: "the help golden gains them as additions") The P3 spec `show controllers [<iface>]` is listed by
+    `?` (the accepted P0.5 form and `debug serial` stay hidden). `goldens/cli-help.p05.json` regenerated, additions
+    only: `controllers`, in sorted position, joins the `priv-exec show` list of each of the 37 network-OS models (37
+    lists moved, no entry removed or reordered; `cli.help-superset` holds). Pins: `cli.grammar.p05.test.ts:180`
+    `not.toContain('controllers')` becomes `toContain('controllers')`, with an added exact check that `show controllers `
+    does not offer the accepted form's `serial`, and the case title says so; `cli.grammar.p05.test.ts:273` and
+    `cli.parser.help.test.ts:80` (the router `show ` list) gain `'controllers'` between `'clock'` and `'crypto'` (exact
+    `toEqual`); W6's own `cli.serial-controllers.test.ts` pins the listing (`show controllers ` → `['Serial0/0/0',
+    'Serial0/0/1', '|']`, `show controllers serial ` → `['0/0/0', '0/0/1']` on the NF-2911).
+40i. (Ruling R56, sim, forced by the contract member; review finding #9) `io/lab-schema.ts`, the `config` assertion
+    schema, gains `count: natural().optional()` (a reviewed additive edit by W6 sim in W5 io's file: without it lab
+    27's document is refused and the compile-time member check fails), and `io.lab-schema.test.ts:139`'s every-member
+    fixture `EVERY_KIND.config` gains `count: 1` (same `toEqual` strength; the fixture is typed
+    `Required<Extract<LabAssertion, …>>`, so the engine typecheck requires it).
+
+**W6a integration: open for the architect (nothing more was built for these)**
+
+- **A TLS or SSH segment loses its mark inside an IPsec tunnel** (review finding #3). `setEspProtection`
+  (`protocols/gre.ts`) overwrites the single `PduMeta.protectedBy` slot with `'esp'` at the head and clears it at the
+  tail (D27), so SSH or HTTPS carried through lab 25's VTI shows no TLS/SSH banner on either LAN, in NetScope or the
+  Packet inspector. Keeping the inner mark needs a contract decision (an additive `PduMeta` member, or R47's planned
+  `ProcessCtx.protect` saving and restoring it): a module-level map in gre.ts is barred by §4.5. The web comments
+  (`netscope-client.ts`, `DetailTree.tsx`, `PacketInspector.tsx` `hopProtection`) now state the gap.
+- **Headless grading of a saved troubleshooting lab** (sim, findings #1 and #2). `gradeTopology` injects the faults
+  only for a submission canonically equal to `doc.topology`; a world saved before its faults land, an export at t = 0,
+  any cosmetic edit of the untouched file (a device moved 1 px, the devices reordered) and live err-disabled ports are
+  still graded as repaired (100/100 on four labs). A `Topology` carries neither a save time nor err-disable state; the
+  verifiers proposed an optional-by-meaning `Topology.lab.pendingFaults?` plus the live err-disable causes, written by
+  `exportTopology`. Separately, the runtime rows (`vty-login`, `acl` hits, `flows`, `syslog-messages`,
+  `restconf-log`) do not survive a save, so headless grading cannot equal live grading for labs 15, 19, 27, 29 and
+  38 as §10.1's `accept.p3.lab-document` row says; `sim.grade.parity.test.ts`'s `RELOAD_DIFFERENCES` lists those
+  assertions with no ruling behind it. Both need a ruling before W7.
+- **Lab 38's API path** (auto-38). The PUT task now matches the whole path (`vlan-list=300` is no match; §3.8 step 7
+  and the assertion table updated). A PUT to `…/vlan-list=30/` (one trailing `/`, which `parseApiPath` drops) or with
+  the module repeated on a later step is accepted (201) but not graded as the API change; closing it needs an `eq` /
+  `endsWith` `whereOps` op or a normalised-path column in `RestconfLogRow`.
+- **`show controllers` is listed on every network-OS model** (40h), including hubs, APs, modems and bridges that have
+  no serial port and only print the no-serial refusal; R56 reads unscoped. Scoping the visible form would shrink the
+  40h additions.
+
+**W6a rulings (architect, 2026-10-12)**
+
+- **R58. The W6a open items, decided.**
+  - (a) **The inner mark survives a tunnel.** W8 item 47's additive `ProcessCtx.protect(pdu, by | null)` also keeps the
+    inner `protectedBy` while ESP wraps the packet (an optional-by-meaning `PduMeta.innerProtectedBy?`), and restores
+    it at the tail. A TLS or SSH segment carried through lab 25's VTI then shows its banner on both LANs and ESP on
+    the provider legs. Owner: W8 (with item 47).
+  - (b) **Headless grading grades what a document can prove.**
+    - `exportTopology` writes an optional-by-meaning `Topology.lab.pendingFaults?` (the scheduled faults that have not
+      landed yet) and the live err-disable causes. `gradeTopology` replays them in its clone, so a world saved before
+      its faults land, or after a cosmetic edit, is graded on the faulted network.
+    - An assertion that reads a runtime-only table (`vty-logins`, `acl` hit rows, `flows`, `syslog-messages`,
+      `restconf-log`) is reported headless as **not gradable headless**: a third status beside pass and fail, never
+      counted as either. The `RELOAD_DIFFERENCES` allow-list becomes that rule.
+    - §10.1's `accept.p3.lab-document` row is amended: headless grading equals live grading for every assertion
+      gradable headless, and names the others.
+    - Owner: W7 **sim** (with `accept.p3.lab-document`).
+  - (c) **Lab 38's path.** The restconf daemon writes the canonical path it resolved into `restconf-log` (the trailing
+    `/` dropped, a repeated module prefix collapsed), so the whole-path assertion grades every accepted PUT to the
+    VLAN 30 entry. Owner: W6b **auto** (restconf and lab 38's test).
+  - (d) **`show controllers` scope.** The visible form is offered on models with the routing capability or a serial
+    port or slot (routers, layer-3 switches, firewalls); hubs, access points, modems and bridges no longer list it.
+    The help golden moves by removals from item 40h's additions only. Owner: W6b **cli**.
 
 **W7 (the course and profile flip)**
 

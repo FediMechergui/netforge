@@ -25,13 +25,27 @@
  * click. NetScope writes its own typing and applying back to the slice, so the slice always holds what NetScope shows
  * and a second click on the same link still finds a change to adopt whenever the learner filtered something else since
  * (`filterAdoption` decides; it ignores NetScope's own writes).
+ *
+ * @since P3 (ruling R57(b); W6 web-inspector) The frame detail shows the protected banner (`frameProtection`): an ESP
+ * header decides by itself; for a TCP or UDP frame of a live capture the mark the engine put on its PDU is read once per
+ * decoded frame (`CapturePort.pduMeta`), and the banner follows when it names TLS, SSH or IKE.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { CaptureId, CaptureInfo, CaptureRow, CaptureSpec, CaptureStatistics, FollowStreamResult, PcapFormat } from '@netforge/engine';
+import type {
+  CaptureId,
+  CaptureInfo,
+  CaptureRecordDetail,
+  CaptureRow,
+  CaptureSpec,
+  CaptureStatistics,
+  FollowStreamResult,
+  PcapFormat,
+  PduMeta,
+} from '@netforge/engine';
 import { engine } from '../bridge/client';
 import { store, useStore } from '../store/store';
 import { CaptureControls, capturePointsOf } from './CaptureControls';
-import { DetailTree, rangeOf, type HotField } from './DetailTree';
+import { DetailTree, frameNeedsMark, frameProtection, rangeOf, type HotField } from './DetailTree';
 import { FilterBar } from './FilterBar';
 import { FollowStream } from './FollowStream';
 import { HexPane } from './HexPane';
@@ -299,6 +313,25 @@ export function NetScope() {
     };
   }, [details, activeId, selected]);
 
+  // P3 (ruling R57(b)): the mark the engine put on the selected frame's PDU, read once per decoded frame, for the TLS,
+  // SSH and IKE banners (an ESP header needs no read). A mark kept for another decode is never used.
+  const [mark, setMark] = useState<{ detail: CaptureRecordDetail; meta: PduMeta | undefined } | null>(null);
+  useEffect(() => {
+    const pdu = detail?.row.pdu;
+    if (detail === undefined || pdu === undefined || port.pduMeta === undefined || !frameNeedsMark(detail.layers)) return undefined;
+    let live = true;
+    port
+      .pduMeta(pdu)
+      .then((meta) => {
+        if (live) setMark({ detail, meta });
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [port, detail]);
+  const protection = detail === undefined ? undefined : frameProtection(detail.layers, mark?.detail === detail ? mark.meta : undefined);
+
   // Follow stream and statistics are read when their view is opened. Each drops what it holds before it
   // asks, so a refused or still-running query can never leave the previous capture's numbers on screen.
   useEffect(() => {
@@ -529,6 +562,7 @@ export function NetScope() {
                 hot={hot}
                 onHot={setHot}
                 note={selected === null ? 'Select a frame to decode it. Arrow keys walk the list, Enter opens the frame.' : 'That frame is no longer in the capture.'}
+                protection={protection}
               />
               <HexPane detail={detail} loading={detailLoading} selected={ranges.selected} hot={ranges.hot} note="Select a frame to see its bytes." />
             </>

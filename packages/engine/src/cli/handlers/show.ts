@@ -684,6 +684,8 @@ const showHistory: CommandHandler = (ctx) => {
 };
 
 // ── show controllers serial ─────────────────────────────────────────────────
+// P3 ruling R56 (W6 cli): the bare `show controllers` and the slot form `show controllers serial 0/0/0` reach this
+// handler with the accepted form's arguments (none, or the resolved serial port), so they print the same blocks.
 
 /** One `show controllers serial` block. */
 function controllerBlock(ctx: CommandCtx, p: PortView): string {

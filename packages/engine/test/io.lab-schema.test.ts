@@ -136,7 +136,7 @@ type Kind = LabAssertion['kind'];
 
 /** One assertion of every kind of §2.10 with EVERY member set (the compiler holds both lists complete). */
 const EVERY_KIND: { readonly [K in Kind]: Required<Extract<LabAssertion, { kind: K }>> } = {
-  config: { kind: 'config', device: 'R1', path: 'interface GigabitEthernet0/0/ip address', equals: ['192.168.1.1 255.255.255.0'], exists: true, contains: '192.168', feedback: 'Address the LAN side.', misconception: 'mask' },
+  config: { kind: 'config', device: 'R1', path: 'interface GigabitEthernet0/0/ip address', equals: ['192.168.1.1 255.255.255.0'], exists: true, contains: '192.168', count: 1, feedback: 'Address the LAN side.', misconception: 'mask' },
   port: { kind: 'port', device: 'R1', port: 'Gi0/0', field: 'operUp', equals: true, feedback: 'f', misconception: 'm' },
   table: {
     kind: 'table',

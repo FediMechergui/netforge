@@ -22,6 +22,13 @@
  * holds the pre-shared key. The first broken link names the outcome; only a missing IPsec profile keeps the tunnel
  * waiting (`ipsecProfileMissing`: the tunnel stays down `ike-negotiating` until the profile exists); every other gap
  * means there is no key, so the exchange fails `ike-no-proposal` (D27).
+ *
+ * Ruling R56 (W6 wan): once the chain has found the key, the IKEv2 profile must also be complete, as a real router
+ * selects no incomplete profile: at least one `match identity remote address` line (the chain above already refused
+ * lines that do not cover the peer: `identity-mismatch`), and both `authentication local pre-share` and `authentication
+ * remote pre-share`. A profile without them has no key (`no-identity`, `no-authentication`), so the exchange fails
+ * `ike-no-proposal` like every other gap. These two come after the chain (not at the profile's link) so the outcome
+ * the chain names for a profile that also lacks them is the one it named before the ruling.
  */
 import { ipv4ToU32, isIpv4, type Ipv4Address } from '../../contracts/addr.js';
 import type { ConfigNode } from '../../contracts/config.js';
@@ -86,7 +93,14 @@ export type IkeKeyLookup =
   /** The IKEv2 profile names no keyring, or one that does not exist. */
   | { readonly status: 'no-keyring' }
   /** The keyring has no peer with this address, or that peer has no key. */
-  | { readonly status: 'no-peer' };
+  | { readonly status: 'no-peer' }
+  /** The IKEv2 profile has no `match identity remote address` line (ruling R56). */
+  | { readonly status: 'no-identity' }
+  /** The IKEv2 profile lacks `authentication local pre-share` or `authentication remote pre-share` (ruling R56). */
+  | { readonly status: 'no-authentication' };
+
+/** The one authentication method simulated (`authentication local|remote pre-share`). */
+export const IKE_AUTH_PRE_SHARE = 'pre-share';
 
 /**
  * The key a stored `pre-shared-key` value names: as typed, or the plain text of a reversibly encoded value (`nf7
@@ -162,7 +176,11 @@ export function ikeIdentityCovers(m: IkeIdentityMatch, peer: Ipv4Address): boole
   return ((ipv4ToU32(m.address) & mask) >>> 0) === ((ipv4ToU32(peer) & mask) >>> 0);
 }
 
-/** The pre-shared key a tunnel protected by IPsec profile `ipsecProfile` uses with `peer`, or why there is none. */
+/**
+ * The pre-shared key a tunnel protected by IPsec profile `ipsecProfile` uses with `peer`, or why there is none: the
+ * chain's first broken link, then (ruling R56) an IKEv2 profile without a remote identity line or without both
+ * pre-share authentication lines.
+ */
 export function ikeKeyFor(cfg: IkeConfig, ipsecProfile: string, peer: Ipv4Address): IkeKeyLookup {
   const v = cfg.ipsecProfiles.get(ipsecProfile);
   if (v === undefined) return { status: 'no-ipsec-profile' };
@@ -173,5 +191,8 @@ export function ikeKeyFor(cfg: IkeConfig, ipsecProfile: string, peer: Ipv4Addres
   if (kr === undefined) return { status: 'no-keyring' };
   const entry = kr.peers.find((e) => e.address === peer && e.key !== undefined);
   if (entry === undefined || entry.key === undefined) return { status: 'no-peer' };
+  // ruling R56: a profile with no remote identity, or without both pre-share lines, is incomplete and offers no key
+  if (p.identities.length === 0) return { status: 'no-identity' };
+  if (p.authLocal !== IKE_AUTH_PRE_SHARE || p.authRemote !== IKE_AUTH_PRE_SHARE) return { status: 'no-authentication' };
   return { status: 'ok', key: entry.key };
 }

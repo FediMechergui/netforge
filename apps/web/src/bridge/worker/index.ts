@@ -82,7 +82,7 @@ import type { BatchListener, ClockPolicy, EngineApi, EngineBatch, PlaybackMode, 
 import { createBatcher, type Batcher, type PostOptions } from './batch';
 import { createWorkerClock, type SliceOptions } from './clock';
 import { createWorkerCaptures } from './captures';
-import { createWorkerLabs } from './labs';
+import { createWorkerLabs, resolveLab } from './labs';
 import { createLaneIndex } from './lanes';
 import { createSimMode, endedOf, stepOptions, stopInfoOf } from './sim-mode';
 import { REVIEW_EVENTS_PER_BATCH, SeekSupersededError, createTimeMachine } from './time-machine';
@@ -553,8 +553,9 @@ const api: EngineApi = {
   async loadTopology(t: Topology) {
     const s = mutable();
     loadInto(s, t);
-    // Reopening a saved lab: the document's `lab` section names it (§4.13).
-    activateLab(s, t.lab === undefined ? undefined : SCENARIOS.find((x) => x.name === t.lab?.name));
+    // Reopening a saved lab: the document's `lab` section names it (§4.13), resolved through the [S37] seam
+    // (`resolveLab`, ARCHITECTURE-P3 D6), as loadScenario and useCurrentDefaults resolve theirs.
+    activateLab(s, resolveLab(t.lab?.name));
     return postFull();
   },
   async exportTopology() {
@@ -564,7 +565,7 @@ const api: EngineApi = {
     return scenarioList(requireSim());
   },
   async loadScenario(name: string, opts?: { seed?: number }) {
-    const sc = SCENARIOS.find((x) => x.name === name);
+    const sc = resolveLab(name);
     if (!sc) throw new Error(`There is no template called "${name}".`);
     const s = mutable();
     const missing = missingTypes(s, scenarioMeta(sc));
@@ -849,7 +850,7 @@ const api: EngineApi = {
     const t = withCurrentDefaults(s.exportTopology(), (type) => s.catalog.get(type));
     loadInto(s, t);
     // The world keeps its lab, exactly as reopening the saved document would (§4.13).
-    activateLab(s, t.lab === undefined ? undefined : SCENARIOS.find((x) => x.name === t.lab?.name));
+    activateLab(s, resolveLab(t.lab?.name));
     return postFull();
   },
 
