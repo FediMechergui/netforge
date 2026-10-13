@@ -299,21 +299,21 @@ describe('staged.world models at stage P3', () => {
     );
   });
 
-  it('the test-only NF-DEVHOST is a programmable host at stage P3 only, right after the Computers models', () => {
+  it('NF-DEVHOST is a programmable host, the last Computers model (the W6 flip made the test-only input real)', () => {
     const inputs = stagedModelInputs('P3');
-    const real = ALL_MODEL_INPUTS.some((i) => i.type === NF_DEVHOST_TYPE);
     expect(inputs.filter((i) => i.type === NF_DEVHOST_TYPE)).toHaveLength(1);
     expect(inputs.filter((i) => i.type !== NF_DEVHOST_TYPE || ALL_MODEL_INPUTS.includes(i))).toEqual(ALL_MODEL_INPUTS);
-    if (!real) {
-      // the test-only input (until the W6 flip puts the real model in computers.ts; then the real input is used)
-      const at = inputs.findIndex((i) => i.type === NF_DEVHOST_TYPE);
-      expect(inputs[at - 1]!.category).toBe('computers');
-      expect(inputs.slice(at + 1).some((i) => i.category === 'computers')).toBe(false);
-      expect(inputs.length).toBe(ALL_MODEL_INPUTS.length + 1);
-    }
+    // the W6 flip: the real input in computers.ts, so every stage lists exactly the real inputs (the test-only input,
+    // added at stage P3 only, is gone) — still right after the other Computers models
+    expect(ALL_MODEL_INPUTS.some((i) => i.type === NF_DEVHOST_TYPE)).toBe(true);
+    expect(inputs).toEqual(ALL_MODEL_INPUTS);
+    const at = inputs.findIndex((i) => i.type === NF_DEVHOST_TYPE);
+    expect(inputs[at - 1]!.category).toBe('computers');
+    expect(inputs.slice(at + 1).some((i) => i.category === 'computers')).toBe(false);
     expect(stagedModelInputs('P2')).toEqual(ALL_MODEL_INPUTS);
     expect(nfDevhostTestInput()).not.toBe(nfDevhostTestInput());
     expect(nfDevhostTestInput()).toEqual(nfDevhostTestInput());
+    expect(nfDevhostTestInput()).toEqual(inputs[at]);
 
     const dev = createStagedCatalog({ stage: 'P3', factories: withP3('script-host', 'traffic', 'vty-client') }).get(NF_DEVHOST_TYPE)!;
     expect(dev.model).toBe('NF-DEVHOST');
@@ -327,10 +327,23 @@ describe('staged.world models at stage P3', () => {
     expect(dev.tables).toEqual(['cam', 'arp', 'rib', 'rib6', 'nd', 'sockets', 'dns-cache', 'flows', 'script-runs']);
     expect(dev.gui).toEqual(expect.arrayContaining(['desktop.command-prompt', 'desktop.traffic', 'desktop.automation']));
     expect(dev.cli.shell).toBe('host');
-    if (!real) expect(dev.ports.map((p) => p.name)).toEqual(['GigabitEthernet0']);
+    expect(dev.ports.map((p) => p.name)).toEqual(['GigabitEthernet0']);
     expect(createStagedCatalog({ stage: 'P3', factories: withP3() }).get(NF_DEVHOST_TYPE)!.processes).not.toContain('script-host');
-    expect(createStagedCatalog({ stage: 'P2' }).get(NF_DEVHOST_TYPE)).toBeUndefined();
-    expect(createP2Catalog().get(NF_DEVHOST_TYPE)).toBeUndefined();
+    // the W6 flip: a real model exists at every stage (as NF-WLC-9800 does); before P3 `programmable` brings nothing, so
+    // at stage P2 NF-DEVHOST is a plain host (the P2 host stack, no script host, no Traffic or automation panel)
+    const p2 = createStagedCatalog({ stage: 'P2' }).get(NF_DEVHOST_TYPE)!;
+    expect(p2.capabilities).toEqual(['host', 'programmable']);
+    expect(p2.processes).toEqual(['arp', 'ipv4', 'icmpv4', 'host', 'ipv6', 'nd', 'icmpv6', 'udp', 'tcp', 'dhcp-client', 'dhcpv6-client', 'dns-client', 'http-client', 'traceroute']);
+    expect(p2.tables).toEqual(['cam', 'arp', 'rib', 'rib6', 'nd', 'sockets', 'dns-cache']);
+    for (const panel of ['desktop.traffic', 'desktop.automation'] as const) expect(p2.gui).not.toContain(panel);
+    expect(createP2Catalog().get(NF_DEVHOST_TYPE)).toEqual(p2);
+    // every stage before P3 (P1 too, review finding W6b #0; docs/CATALOG.md says so): NF-DEVHOST is NF-PC's plain host
+    for (const stage of ['P1', 'P2'] as const) {
+      const catalog = createStagedCatalog({ stage });
+      const [dev0, pc0] = [catalog.get(NF_DEVHOST_TYPE)!, catalog.get('pc.nfpc')!];
+      expect([stage, dev0.capabilities, dev0.processes, dev0.tables, dev0.gui]).toEqual([stage, ['host', 'programmable'], pc0.processes, pc0.tables, pc0.gui]);
+      expect([stage, dev0.processes.includes('script-host'), (dev0.gui ?? []).includes('desktop.automation')]).toEqual([stage, false, false]);
+    }
   });
 
   it('builds leave the real inputs, models and contract data untouched', () => {

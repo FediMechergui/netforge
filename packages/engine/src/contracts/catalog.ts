@@ -87,7 +87,8 @@ export const CAPABILITIES = [
   // ── P3 (appended) ──
   /**
    * @since P3 [S32] A host that runs the NF-Py script host and the automation workspace (ARCHITECTURE-P3 §2.1, D21).
-   * Implies `host`. Its `script-host` row is added by the W6 flip, in the change that registers the daemon.
+   * Implies `host`. Its `script-host` row was added by the W6 flip, in the change that registered the daemon
+   * (NF-DEVHOST, `pc.nfdevhost`, is the one model that declares it).
    */
   'programmable',
 ] as const;
@@ -705,7 +706,8 @@ export function ipDefaultsFor(caps: readonly Capability[]): IpDefaults {
  * daemons: `ppp` [S19] after hdlc (the encapsulation switch disarms HDLC keepalives first); `cdp`, `lldp` after stp
  * (eth-switch flushes the CAM first on a link change); `acl`, `gre` [S18] after nat; `vty`, `vty-client` [S13],
  * `logger` [S24], `ntp` and `syslog-server` [S25] after tcp; `ospf`, `eigrp` [C1] and `ike` [C13] after hsrp;
- * `restconf` after http-server; `traffic` after traceroute. The W6 flip inserts `script-host` [S32] last. The names of
+ * `restconf` after http-server; `traffic` after traceroute. The W6 flip (the second, alone, §7 W6) inserted
+ * `script-host` [S32] last, with NF-DEVHOST, the one model whose `programmable` capability derives it. The names of
  * unapproved items (ospfv3, tftp, snmp-agent, snmp-manager) are never inserted in P3a. The relative order of every
  * earlier name is unchanged, so every P1/P2 model list stays an order-preserving subsequence.
  */
@@ -756,6 +758,7 @@ export const PROCESS_ORDER: readonly ProcessName[] = Object.freeze([
   'traceroute',
   'traffic', // P3
   'capwap-ac',
+  'script-host', // P3 [S32], the W6 flip
 ]);
 
 export interface CapabilityProcess {
@@ -836,9 +839,10 @@ export const CAPABILITY_PROCESSES: Readonly<Record<Capability, readonly Capabili
   ],
   // ── P3 ── (ARCHITECTURE-P3 §2.1, §0 rule 3) Wave 0 added no row: every P3 row (`since: 'P3'`) is added by the change
   // that registers its daemon. The W4 catalog flip added the rows above (host, server, routing, managed-switch,
-  // wireless-controller); the W6 flip adds [S32] `programmable`'s `script-host` only; until then it contributes
-  // nothing beyond what `host` brings. Unapproved items (ospfv3, tftp, snmp-agent, snmp-manager) get no row.
-  programmable: [],
+  // wireless-controller); the W6 flip (the second, alone) added [S32] `programmable`'s `script-host` only — no `tftp`,
+  // which is [S29] (not approved; a script needs nothing from TFTP, D21). Unapproved items (ospfv3, tftp, snmp-agent,
+  // snmp-manager) get no row.
+  programmable: [cp('script-host', 'P3')],
 });
 
 /**

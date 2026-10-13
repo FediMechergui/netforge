@@ -20,16 +20,18 @@ import {
   restBodyOf,
 } from '../src/cli/handlers/devhost.js';
 import { matchCommand } from '../src/cli/parser.js';
-import { defineStagedModel, nfDevhostTestInput } from './staged.world.js';
+import { defineStagedModel, nfDevhostTestInput, stagedRegistry } from './staged.world.js';
 import { APPROVED_GRAMMAR, APPROVED_HANDLERS, approvedHarness, withProcesses } from './cli.p3-approved.fixture.js';
 import { catalogModel, commandCtxFor, matchContextFor, type RecordingCtx } from './cli.p05.fixture.js';
 
 const INVENTORY = 'import requests\nprint("ok")\n';
 
-/** The test-only NF-DEVHOST with the script host among its daemons (its factory arrives with the W6 flip). */
+/**
+ * NF-DEVHOST with the script host among its daemons: the real model since the W6 flip registered `script-host`
+ * (before it, the test-only input's model had the daemon appended by hand).
+ */
 function devhostModel(): DeviceModel {
-  const m = defineStagedModel(nfDevhostTestInput(), 'P3');
-  return { ...m, processes: [...m.processes, 'script-host'] };
+  return defineStagedModel(nfDevhostTestInput(), 'P3');
 }
 
 /** A small in-memory store with the runtime's reader shape. */
@@ -86,7 +88,8 @@ describe('cli.devhost handlers', () => {
       { to: 'script-host', req: { kind: 'script.run', token: 'py:s_1@0', file: 'inventory.py', argv: ['R1', 'R2'], session: 's_1' } },
     ]);
     expect(run(devCtx({}), H.hostPython, { file: 'missing.py' })).toEqual({ error: msgNoSuchFile('missing.py') });
-    const noHost = devCtx({ 'inventory.py': INVENTORY }, defineStagedModel(nfDevhostTestInput(), 'P3'));
+    // R47's fold rule since the W6 flip: the case about a host without the daemon removes the now-registered script host
+    const noHost = devCtx({ 'inventory.py': INVENTORY }, defineStagedModel(nfDevhostTestInput(), 'P3', stagedRegistry({ 'script-host': undefined })));
     expect(run(noHost, H.hostPython, { file: 'inventory.py' })).toEqual({ error: MSG_NO_SCRIPT_HOST });
   });
 

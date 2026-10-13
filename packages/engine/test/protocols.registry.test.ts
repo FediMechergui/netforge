@@ -8,6 +8,8 @@
  * ARCHITECTURE-P3 §9.2 W4 item 31 (the P3 catalog flip): the registry also maps the seven P3 MUST daemons (ospf, acl,
  * cdp, lldp, ntp, restconf, traffic) and the eight approved ones (ppp, gre, vty, vty-client, logger, syslog-server,
  * eigrp, ike), each at its PROCESS_ORDER position; the "unregistered" pins name daemons that stay unregistered in P3a.
+ * ARCHITECTURE-P3 §9.2 W6 item 40b (the [S32] flip, alone): by item 31's rule the map also holds `script-host` (its
+ * PROCESS_ORDER position: last), and exactly one model runs it, NF-DEVHOST (`pc.nfdevhost`, `programmable`).
  */
 import { describe, expect, it } from 'vitest';
 import {
@@ -59,6 +61,7 @@ import {
   createIke,
   createRestconf,
   createTraffic,
+  createScriptHost,
   processFactory,
 } from '../src/protocols/index.js';
 import { ALL_MODELS, ALL_MODULES, CATALOG_STAGE, createCatalog } from '../src/device/catalog/index.js';
@@ -132,6 +135,8 @@ describe('protocols registry', () => {
       traceroute: createTraceroute,
       traffic: createTraffic,
       'capwap-ac': createCapwapAc,
+      // ARCHITECTURE-P3 §9.2 W6 item 40b: [S32] the script host at its §2.1 position (last)
+      'script-host': createScriptHost,
     });
     expect([HDLC_PROCESS, WLAN_AP_PROCESS, WLAN_CLIENT_PROCESS, CELL_CLIENT].every((n) => REGISTERED_PROCESSES.includes(n))).toBe(true);
   });
@@ -153,7 +158,7 @@ describe('protocols registry', () => {
 
   it('processFactory returns undefined for unknown and inherited names', () => {
     // ARCHITECTURE-P3 §9.2 W4 item 31: 'ppp' [S19] and 'ospf' are registered now; the pins name daemons that stay
-    // unregistered in P3a: [S29] 'tftp' and [S6] 'ospfv3' (not approved; 'script-host' would move again at W6)
+    // unregistered in P3a: [S29] 'tftp' and [S6] 'ospfv3' (not approved; 'script-host' is registered since the W6 flip)
     expect(processFactory('tftp')).toBeUndefined();
     expect(processFactory('ospfv3')).toBeUndefined();
     expect(processFactory('toString')).toBeUndefined();
@@ -189,5 +194,8 @@ describe('protocols registry', () => {
     // W6 catalog: exactly one model runs each CAPWAP daemon (the NF-AP-1832 and the NF-WLC-9800)
     expect(ALL_MODELS.filter((m) => m.processes.includes('capwap-wtp')).map((m) => m.type)).toEqual(['ap.nfap-lw']);
     expect(ALL_MODELS.filter((m) => m.processes.includes('capwap-ac')).map((m) => m.type)).toEqual(['wlc.nfwlc9800']);
+    // ARCHITECTURE-P3 §9.2 W6 item 40b: exactly one model runs the [S32] script host, NF-DEVHOST
+    expect(ALL_MODELS.filter((m) => m.processes.includes('script-host')).map((m) => m.type)).toEqual(['pc.nfdevhost']);
+    expect(createCatalog(PROCESS_FACTORIES).process('script-host')).toBe(createScriptHost);
   });
 });

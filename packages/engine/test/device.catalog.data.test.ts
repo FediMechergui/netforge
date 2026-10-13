@@ -7,6 +7,11 @@
  * derived lists of the data models are the P2 lists with the §2.1 names inserted at their `PROCESS_ORDER` positions by
  * capability, and their tables; NF-WLC-9800 gains exactly `cdp-neighbours`, `ntp-peers` and `clock` (never the
  * snooping tables); item 36: its `profileConfig.P3` holds the two [S24] `service timestamps` lines.
+ *
+ * ARCHITECTURE-P3 §9.2 W6 item 40b (the [S32] flip, alone): NF-DEVHOST (`pc.nfdevhost`, `host` + `programmable`) joins
+ * the Computers category, last: the model count 55 → 56, the summary gains its row (the P3 host stack plus
+ * `script-host`, the `script-runs` table, the `desktop.automation` panel), and the Computers list and the counts by
+ * category are pinned exactly.
  */
 import { describe, expect, it } from 'vitest';
 import {
@@ -100,7 +105,8 @@ describe('catalog index', () => {
 
   it('lists every model once, in DEVICE_CATEGORIES order, each category populated', () => {
     // ARCHITECTURE-P2 §9.2 W6 item 23: the NF-WLC-9800 controller appliance joins the catalog (54 → 55)
-    expect(ALL_MODELS).toHaveLength(55);
+    // ARCHITECTURE-P3 §9.2 W6 item 40b: [S32] NF-DEVHOST joins the Computers category (55 → 56)
+    expect(ALL_MODELS).toHaveLength(56);
     expect(ALL_MODULES).toHaveLength(9);
     expect(new Set(ALL_MODELS.map((m) => m.type)).size).toBe(ALL_MODELS.length);
     expect(new Set(ALL_MODELS.map((m) => m.model)).size).toBe(ALL_MODELS.length);
@@ -124,6 +130,7 @@ describe('catalog index', () => {
     // PROCESS_ORDER positions by capability (routing, managed-switch, wireless-controller, host, server), the host
     // `desktop.traffic` panel (GUI_PANEL_SINCE P3) and the [S18] Tunnel family with its `gre` owner on routing models
     // other than home routers; models without a P3 row (hubs, bridges, APs, modems, radios, towers) are unchanged.
+    // §9.2 W6 item 40b: the [S32] NF-DEVHOST row (`programmable`: `script-host` last, `desktop.automation`) is added.
     const table = Object.fromEntries(ALL_MODELS.map((m) => [m.type, summary(m)]));
     expect(table).toMatchInlineSnapshot(`
       {
@@ -156,6 +163,7 @@ describe('catalog index', () => {
         "modem.nfcable": "caps=modem | proc=eth-switch | roles=switched access-line | cli=none/nfos/1/ | gui=physical,modem.status | owners= | host= | virtual= | up=true",
         "modem.nfdsl": "caps=modem | proc=eth-switch | roles=switched access-line | cli=none/nfos/1/ | gui=physical,modem.status | owners= | host= | virtual= | up=true",
         "modem.nfont": "caps=modem | proc=eth-switch | roles=switched access-line | cli=none/nfos/1/ | gui=physical,modem.status | owners= | host= | virtual= | up=true",
+        "pc.nfdevhost": "caps=host,programmable | proc=arp,ipv4,icmpv4,host,ipv6,nd,icmpv6,udp,tcp,vty-client,dhcp-client,dhcpv6-client,dns-client,http-client,traceroute,traffic,script-host | roles=routed | cli=host/host/15/console | gui=physical,desktop.ip-config,desktop.command-prompt,desktop.web-browser,desktop.traffic,desktop.automation | owners= | host=GigabitEthernet0 | virtual= | up=true",
         "pc.nfpc": "caps=host | proc=arp,ipv4,icmpv4,host,ipv6,nd,icmpv6,udp,tcp,vty-client,dhcp-client,dhcpv6-client,dns-client,http-client,traceroute,traffic | roles=routed | cli=host/host/15/console | gui=physical,desktop.ip-config,desktop.command-prompt,desktop.web-browser,desktop.traffic | owners= | host=GigabitEthernet0 | virtual= | up=true",
         "pc.nfpc-wifi": "caps=host,wifi-client | proc=wlan-client,arp,ipv4,icmpv4,host,ipv6,nd,icmpv6,udp,tcp,vty-client,dhcp-client,dhcpv6-client,dns-client,http-client,traceroute,traffic | roles=routed wireless-client | cli=host/host/15/console | gui=physical,desktop.ip-config,desktop.wifi,desktop.command-prompt,desktop.web-browser,desktop.traffic | owners= | host=GigabitEthernet0,Wlan0 | virtual= | up=true",
         "phone.nfsmartphone": "caps=host,wifi-client,cellular-client | proc=wlan-client,cell-client,arp,ipv4,icmpv4,host,ipv6,nd,icmpv6,udp,tcp,vty-client,dhcp-client,dhcpv6-client,dns-client,http-client,traceroute,traffic | roles=wireless-client cellular | cli=host/host/15/console | gui=physical,desktop.ip-config,desktop.wifi,desktop.cellular,desktop.command-prompt,desktop.web-browser,desktop.traffic | owners= | host=Wlan0,Cellular0 | virtual= | up=true",
@@ -243,6 +251,33 @@ describe('catalog index', () => {
     expect(ALL_MODELS.filter((m) => m.category === 'wireless').map((m) => m.type)).toEqual(['ap.nfap-auto', 'ap.nfap-lw', 'ap.nfap-mesh', 'ap.nfap-ax', 'wlc.nfwlc9800']);
     expect(ALL_MODELS.filter((m) => m.category === 'legacy').map((m) => m.type)).toEqual(['hub.nfhub4', 'hub.nfhub8', 'hub.nfcoax', 'repeater.nfrep', 'bridge.nfbr2', 'bridge.nfbr4', 'wlc.nfwlc3504']);
     expect(types.indexOf('wlc.nfwlc3504')).toBeLessThan(types.indexOf('ap.nfap-auto'));
+  });
+
+  it('the W6 [S32] flip: NF-DEVHOST is a programmable host that closes the Computers category (§9.2 item 40b)', () => {
+    const dev = ALL_MODELS.find((m) => m.type === 'pc.nfdevhost')!;
+    expect([dev.model, dev.kind, dev.category, dev.icon, dev.hostnamePrefix, dev.family]).toEqual(['NF-DEVHOST', 'pc', 'computers', 'pc', 'PC', 'nf-devhost']);
+    expect(dev.capabilities).toEqual(['host', 'programmable']);
+    // the P3 host stack, then [S32] the script host (its `programmable` row; no tftp, which is [S29]), last in PROCESS_ORDER
+    expect(dev.processes).toEqual([
+      'arp', 'ipv4', 'icmpv4', 'host', 'ipv6', 'nd', 'icmpv6', 'udp', 'tcp', 'vty-client', 'dhcp-client', 'dhcpv6-client',
+      'dns-client', 'http-client', 'traceroute', 'traffic', 'script-host',
+    ]);
+    expect(dev.tables).toEqual(['cam', 'arp', 'rib', 'rib6', 'nd', 'sockets', 'dns-cache', 'flows', 'script-runs']);
+    expect(dev.gui).toEqual(['physical', 'desktop.ip-config', 'desktop.command-prompt', 'desktop.web-browser', 'desktop.traffic', 'desktop.automation']);
+    expect(dev.cli).toEqual({ shell: 'host', grammar: 'host', initialPrivilege: 15, consoleVia: ['console'] });
+    expect(dev.ports.map((p) => `${p.name}:${p.short}:${p.role}:${p.speedBps}`)).toEqual(['GigabitEthernet0:Gi0:routed:1000000000']);
+    expect([dev.hostPorts, dev.ipForwarding, dev.portsDefaultUp, dev.slots ?? []]).toEqual([['GigabitEthernet0'], false, true, []]);
+    for (const k of ['profileConfig', 'cdpDefault', 'defaultConfig']) expect(Object.keys(dev)).not.toContain(k);
+    // the only model with `programmable`, so the only one that runs the script host or offers the automation workspace
+    expect(ALL_MODELS.filter((m) => (m.capabilities ?? []).includes('programmable')).map((m) => m.type)).toEqual(['pc.nfdevhost']);
+    expect(ALL_MODELS.filter((m) => m.processes.includes('script-host')).map((m) => m.type)).toEqual(['pc.nfdevhost']);
+    expect(ALL_MODELS.filter((m) => (m.gui ?? []).includes('desktop.automation')).map((m) => m.type)).toEqual(['pc.nfdevhost']);
+    // palette: NF-DEVHOST closes the Computers category; the model counts by category (56 models)
+    expect(ALL_MODELS.filter((m) => m.category === 'computers').map((m) => m.type)).toEqual(['pc.nfpc', 'pc.nfpc-wifi', 'laptop.nflaptop', 'pc.nfdevhost']);
+    expect(Object.fromEntries(DEVICE_CATEGORIES.map((c) => [c.id, ALL_MODELS.filter((m) => m.category === c.id).length]))).toEqual({
+      routers: 5, switches: 5, 'multilayer-switches': 2, 'data-centre': 2, legacy: 7, security: 3, wireless: 5, 'home-soho': 3,
+      radios: 3, 'wan-isp': 5, computers: 4, servers: 2, mobile: 3, voice: 1, peripherals: 1, iot: 5,
+    });
   });
 
   it('every model that boots the IPv4 host stack has somewhere to hold an address', () => {

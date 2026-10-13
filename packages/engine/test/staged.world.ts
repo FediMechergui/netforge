@@ -18,10 +18,10 @@
  *      removing one is the caller's choice and the device logs it at boot.
  *
  * P3 test-only data (rule 13), applied when the stage is 'P3' (every row is `since: 'P3'`, so no earlier stage derives
- * it). The W4 catalog flip (and the W6 flip for [S32]) makes it the real contract; `staged.world.p3-parity.test.ts`
- * (W4) asserts that this data equals the contract, and W8 reduces this file to a wrapper. Since the W4 flip the real
- * registry holds every approved P3 daemon but [S32] `script-host`, so the default overlay at stage P3 builds the
- * flipped catalog model for model (plus the test-only NF-DEVHOST), `profileConfig.P3` (the two [S24] lines, D2)
+ * it). The W4 catalog flip and the W6 flip for [S32] made it the real contract; `staged.world.p3-parity.test.ts`
+ * asserts that this data equals the contract, and W8 reduces this file to a wrapper. Since the W6 flip the real
+ * registry holds every approved P3 daemon, [S32] `script-host` included, so the default overlay at stage P3 builds the
+ * flipped catalog model for model (NF-DEVHOST is a real model now), `profileConfig.P3` (the two [S24] lines, D2)
  * included: a test that needs a P3 daemon ABSENT now removes it with `{ <name>: undefined }`.
  *   - `STAGED_PROCESS_ORDER`: the §2.1 final `PROCESS_ORDER` restricted to approved names (§8.5). The real
  *     `PROCESS_ORDER` is an order-preserving subsequence of it, so at stages up to P2 it orders exactly as the real one.
@@ -32,9 +32,10 @@
  *   - `P3_STAGED_PROCESS_TABLES`: the §2.6 stage-filtered snooping tables (the W4 `STAGED_PROCESS_TABLES` row): `vlan`
  *     brings `dhcp-snooping` and `arp-inspection` from stage P3, to `managed-switch` models only, never to the
  *     controller (which runs `vlan` too).
- *   - NF-DEVHOST (`nfDevhostTestInput`, type `pc.nfdevhost`, `host` + `programmable`) for [S32], in the catalog at
- *     stage P3 right after the last Computers model, until the W6 flip puts the real model in `computers.ts` (then the
- *     real input is used and the test-only one is not added).
+ *   - NF-DEVHOST ([S32], type `pc.nfdevhost`, `host` + `programmable`): test-only data in waves 0–5, reduced by the W6
+ *     flip to the real contract. The real model is in `computers.ts` (`NF_DEVHOST_MODEL_INPUT`, the last Computers
+ *     input, so it is in every stage's model inputs, like every other real model); `NF_DEVHOST_TYPE` is re-exported
+ *     from there and `nfDevhostTestInput()` returns a fresh copy of the real input, for the tests that import them.
  *
  * The test injector (W1 qa, ARCHITECTURE-P3 §7 W1 qa, D13): when the registry overlay registers a factory named
  * `injector` (`INJECTOR_PROCESS`; `test/inject.ts` provides it, `withInjector(...)`), the catalog also holds the test-only
@@ -45,15 +46,16 @@
  * With the default registry at stage P2 nothing is filtered and the catalog equals the real model inputs defined at
  * stage P2 (`defineModel(input, 'P2')`), model for model (`device.catalog.p2.test.ts`); at stage P2
  * `createStagedSimulation` is `createP2Simulation` (`staged.world.test.ts`). It is NOT the shipped catalog: since the
- * P3 W4 flip that one is derived at stage P3 and equals this helper at stage P3, apart from the test-only NF-DEVHOST
- * (`staged.world.p3-parity.test.ts`). A test that must exercise the shipped models uses `createSimulation`.
+ * P3 W4 flip that one is derived at stage P3 and, since the W6 flip, equals this helper at stage P3 model for model
+ * with no extra model (`staged.world.p3-parity.test.ts`). A test that must exercise the shipped models uses
+ * `createSimulation`.
  * The catalog is never validated: a filtered model is not the model its capabilities derive, which `validateCatalog`
  * would refuse by design.
  *
  * Limitation (until the W4 flip, which lifted it): a device that installs a module recomputes its daemon list with
  * the REAL `deriveProcesses` at `CATALOG_STAGE` and ranks names by the real `PROCESS_ORDER` (`device.ts`
  * computeProcessOrder), so before the flip a module added at run time in a P3 world added no P3 daemon and ranked the
- * model's P3 daemons after the others. Since the flip both are the P3 ones ([S32] `script-host` waits for W6), so
+ * model's P3 daemons after the others. Since the flips both are the P3 ones ([S32] `script-host` from W6), so
  * the limitation is now the reverse one: in a world of this helper at stage P2 (or P1), a module that adds a
  * capability at run time also brings that capability's P3 daemons (the W4b fix step).
  *
@@ -76,7 +78,7 @@ import type { ProcessFactory } from '../src/contracts/process.js';
 import type { Simulation, SimulationOptions } from '../src/contracts/simulation.js';
 import { PROCESS_TABLES, type ExtraTableName, type TableName } from '../src/contracts/tables.js';
 import { ALL_MODEL_INPUTS, ALL_MODULES } from '../src/device/catalog.js';
-import { hostEth } from '../src/device/catalog/computers.js';
+import { NF_DEVHOST_MODEL_INPUT, hostEth } from '../src/device/catalog/computers.js';
 import { deepFreeze, defineModel, derivePortOwners, modulesFitting, type ModelInput } from '../src/device/catalog/define.js';
 import { resolvePortName } from '../src/device/catalog/names.js';
 import { PROCESS_FACTORIES } from '../src/protocols/index.js';
@@ -239,26 +241,16 @@ export const P3_STAGED_PROCESS_TABLES: readonly StagedProcessTables[] = Object.f
   Object.freeze({ process: 'vlan', tables: Object.freeze(['dhcp-snooping', 'arp-inspection'] as const), since: 'P3' as BuildStage, requires: 'managed-switch' as Capability }),
 ]);
 
-/** The type of the test-only NF-DEVHOST ([S32]). */
-export const NF_DEVHOST_TYPE = 'pc.nfdevhost';
+/** The type of NF-DEVHOST ([S32]): since the W6 flip the real model's, re-exported from `computers.ts`. */
+export { NF_DEVHOST_TYPE } from '../src/device/catalog/computers.js';
 
 /**
- * The test-only NF-DEVHOST input ([S32], ARCHITECTURE-P3 §7 W0 qa, until the W6 flip): a workstation with `host` and
- * `programmable` (the NF-Py script host and the automation workspace), one gigabit adapter, category Computers. Built
- * at call time (rule 12); a fresh object each call.
+ * NF-DEVHOST's input ([S32]). Test-only data in waves 0–5; since the W6 flip it is reduced to the real contract: a
+ * fresh copy of the real `NF_DEVHOST_MODEL_INPUT` (`computers.ts`) each call (rule 12), kept for the tests that build
+ * the model from its input. W8 may fold it into its importers.
  */
 export function nfDevhostTestInput(): ModelInput {
-  return {
-    type: NF_DEVHOST_TYPE,
-    model: 'NF-DEVHOST',
-    description: 'Developer workstation with one gigabit network adapter, a host shell and a scripting workspace',
-    category: 'computers',
-    icon: 'pc',
-    capabilities: ['host', 'programmable'],
-    ports: [hostEth('GigabitEthernet0', SPEED_1G)],
-    family: 'nf-devhost',
-    tags: ['developer', 'workstation', 'automation', 'scripting', 'computer', 'host', 'end device'],
-  };
+  return structuredClone(NF_DEVHOST_MODEL_INPUT);
 }
 
 // ── registry overlay ───────────────────────────────────────────────────────────────────────────────────────────
@@ -414,19 +406,12 @@ export function defineStagedModel(input: ModelInput, stage: BuildStage, registry
 }
 
 /**
- * The model inputs of a stage, palette order: every real input (`ALL_MODEL_INPUTS`), plus at stage P3 the test-only
- * NF-DEVHOST right after the last Computers input, unless the real catalog already has that type (the W6 flip).
+ * The model inputs of a stage, palette order: every real input (`ALL_MODEL_INPUTS`), at every stage. Until the W6
+ * flip stage P3 added the test-only NF-DEVHOST after the last Computers input; the real model (the last Computers
+ * input, `computers.ts`) replaced it, so the stage no longer changes the list.
  */
-export function stagedModelInputs(stage: BuildStage): readonly ModelInput[] {
-  const out = [...ALL_MODEL_INPUTS];
-  if (stageIncluded('P3', stage) && !out.some((i) => i.type === NF_DEVHOST_TYPE)) {
-    let at = -1;
-    out.forEach((i, k) => {
-      if (i.category === 'computers') at = k;
-    });
-    out.splice(at < 0 ? out.length : at + 1, 0, nfDevhostTestInput());
-  }
-  return Object.freeze(out);
+export function stagedModelInputs(_stage: BuildStage): readonly ModelInput[] {
+  return Object.freeze([...ALL_MODEL_INPUTS]);
 }
 
 // ── the test injector's host (W1 qa: test/inject.ts, ARCHITECTURE-P3 §7 W1 qa, D13) ─────────────────────────────

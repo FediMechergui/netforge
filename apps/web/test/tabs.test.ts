@@ -150,6 +150,10 @@ describe('inspector tabs from gui + capabilities', () => {
     // ARCHITECTURE-P3 §9.2 W4 (the catalog flip, by the rule of items 33–35): hosts gain the Traffic generator app
     // (`desktop.traffic`, GUI_PANEL_SINCE P3) at the flip
     expect(panelsForTab(byType('laptop.nflaptop'), 'desktop')).toEqual(['desktop.ip-config', 'desktop.wifi', 'desktop.command-prompt', 'desktop.web-browser', 'desktop.traffic']);
+    // ARCHITECTURE-P3 §9.2 W6 item 40b (the [S32] flip): NF-DEVHOST, a programmable host, has the host tabs and adds the
+    // automation workspace (`desktop.automation`) after the Traffic generator on its Desktop tab
+    expect(tabsOf('pc.nfdevhost')).toEqual(['overview', 'ports', 'config', 'tables', 'processes', 'physical', 'desktop']);
+    expect(panelsForTab(byType('pc.nfdevhost'), 'desktop')).toEqual(['desktop.ip-config', 'desktop.command-prompt', 'desktop.web-browser', 'desktop.traffic', 'desktop.automation']);
   });
 
   it('clamps a tab the device does not offer to overview', () => {
@@ -206,6 +210,8 @@ describe('table sections from ownership, not kind', () => {
     ]);
     expect(sections('ap.nfap-auto')).toEqual(['cam', 'arp', 'rib', 'dot11-assoc']);
     expect(sections('laptop.nflaptop')).toEqual(['arp', 'rib', 'dot11-assoc', 'rib6', 'nd', 'sockets', 'dns-cache', 'flows']);
+    // ARCHITECTURE-P3 §9.2 W6 item 40b (the [S32] flip): NF-DEVHOST's script host brings the (empty) script-runs table
+    expect(sections('pc.nfdevhost')).toEqual(['arp', 'rib', 'rib6', 'nd', 'sockets', 'dns-cache', 'flows', 'script-runs']);
   });
 
   it('falls back to capabilities without a catalog entry and always shows tables that hold rows', () => {

@@ -20,7 +20,7 @@ import { device, topology } from './accept.p05.harness.js';
 /**
  * Model ids of docs/CATALOG.md: "Network devices", then "End devices", in document order. ARCHITECTURE-P2 §9.2 W6
  * item 23: the NF-WLC-9800 controller at its palette position (closing the Wireless category) and the NF-WLC-3504 in
- * the Legacy group (closing it).
+ * the Legacy group (closing it). ARCHITECTURE-P3 §9.2 W6 item 40b: [S32] NF-DEVHOST closes the Computers category.
  */
 const CATALOG_MD_MODELS: readonly string[] = [
   'router.nf1941', 'router.nf2911', 'router.nf4331', 'router.nf4451', 'router.nfgeneric',
@@ -31,7 +31,7 @@ const CATALOG_MD_MODELS: readonly string[] = [
   'ap.nfap-auto', 'ap.nfap-lw', 'ap.nfap-mesh', 'ap.nfap-ax', 'wlc.nfwlc9800',
   'wrouter.nfhome', 'wrouter.nfhome-ax', 'radio.nfptp5', 'radio.nfptp60', 'cell.nftower',
   'modem.nfdsl', 'modem.nfcable', 'modem.nfont', 'csu.nfcsu', 'cloud.nfinternet',
-  'pc.nfpc', 'pc.nfpc-wifi', 'laptop.nflaptop', 'server.nfserver', 'server.nfrack',
+  'pc.nfpc', 'pc.nfpc-wifi', 'laptop.nflaptop', 'pc.nfdevhost', 'server.nfserver', 'server.nfrack',
   'phone.nfsmartphone', 'tablet.nftablet', 'tablet.nftablet-lte', 'ipphone.nfphone', 'printer.nfprinter',
   'tv.nfsmarttv', 'iot.nfsensor', 'iot.nfcamera', 'iot.nfthermostat', 'iot.nfplug', 'iot.nfgateway',
 ];

@@ -9,8 +9,8 @@
  *   • `CCNA3_LABS` is every lab of the eleven lab files (the ten W5 area files and W6's automation.ts, §9.2 item 40g)
  *     sorted by that order (a name whose lab has not landed yet is absent, as in CCNA 2), each lab sits in the file
  *     its area owns (§11.2), and every lab is named in the order;
- *   • every lab a lesson points at is in `SCENARIOS` exactly once as a `ccna3-lab` (§11.3), lab 38 included from W6;
- *     only lab 40 [S32] may still be absent, until the flip step lands it;
+ *   • every lab a lesson points at is in `SCENARIOS` exactly once as a `ccna3-lab` (§11.3), the two W6 automation labs
+ *     included (lab 38 from W6a, lab 40 [S32] since the flip step, W6b: no lab may be absent, §9.2 item 40m);
  *   • no lab file imports the catalogue it belongs to (the arrays are read at module scope: a cycle is the rule-12
  *     hazard).
  */
@@ -39,7 +39,7 @@ import { SCENARIOS } from '../src/sim/scenarios.js';
 
 /**
  * The eleven lab files — the ten area files of W5 and W6's automation.ts (§9.2 item 40g) — with the lab names §11.1
- * and §11.2 give each. Lab 40 is named in the automation file but lands only after the [S32] flip step.
+ * and §11.2 give each. The automation file holds labs 38 and 40 since the [S32] flip step (W6b, §9.2 item 40m).
  */
 const FILES: readonly { file: string; labs: readonly ScenarioInfo[]; names: readonly string[] }[] = [
   {
@@ -58,9 +58,6 @@ const FILES: readonly { file: string; labs: readonly ScenarioInfo[]; names: read
   { file: 'troubleshooting', labs: CCNA3_TROUBLESHOOTING_LABS, names: ['ccna3-troubleshoot-enterprise'] },
   { file: 'automation', labs: CCNA3_AUTOMATION_LABS, names: ['ccna3-restconf-change', 'ccna3-script-inventory'] },
 ];
-
-/** The labs that may still be missing from `SCENARIOS`: lab 40 [S32], which needs NF-DEVHOST from the flip step. */
-const AWAITING_FLIP: readonly string[] = ['ccna3-script-inventory'];
 
 /** The lessons of the skeleton in teaching order. */
 const LESSONS = CCNA3_MODULES.flatMap((m) => m.lessons);
@@ -116,10 +113,10 @@ describe('CCNA3 labs: the catalogue', () => {
     expect(order('ccna3-serial-links')).toBeLessThan(order('ccna3-troubleshoot-enterprise'));
   });
 
-  it('lists every lab a lesson points at in SCENARIOS once (lab 38 from W6; lab 40 after the flip step, §11.3)', () => {
+  it('lists every lab a lesson points at in SCENARIOS once (labs 38 and 40 from W6, §11.3)', () => {
+    // §9.2 item 40m: the flip step landed lab 40, so the W6a allowance for it (AWAITING_FLIP) is gone
     for (const name of CCNA3_LAB_ORDER) {
       const found = SCENARIOS.filter((s) => s.name === name);
-      if (AWAITING_FLIP.includes(name) && found.length === 0) continue;
       expect(found.map((s) => s.category), name).toEqual(['ccna3-lab']);
     }
   });

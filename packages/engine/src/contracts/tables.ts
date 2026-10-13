@@ -1389,7 +1389,8 @@ export const PROCESS_TABLES: Readonly<Partial<Record<ProcessName, readonly Extra
   ike: ['ipsec-sa'], // [C13]
   restconf: ['restconf-log'],
   traffic: ['flows'],
-  // [S32] 'script-host': ['script-runs'] joins at the W6 flip, with its factory.
+  // ── P3 [S32] (the W6 flip, alone: the change that registers the script host and adds NF-DEVHOST) ──
+  'script-host': ['script-runs'],
 });
 
 /**

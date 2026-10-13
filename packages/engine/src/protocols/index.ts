@@ -15,8 +15,9 @@
  *    `capwap-wtp` and the wireless controller's `capwap-ac`;
  *  - P3 daemons (ARCHITECTURE-P3 §2.1, §7 W4 step 2 — the catalog flip registers them): the seven MUST daemons
  *    `ospf`, `acl`, `cdp`, `lldp`, `ntp`, `restconf`, `traffic`, and the approved items' daemons `ppp` [S19], `gre`
- *    [S18], `vty` and `vty-client` [S13], `logger` [S24], `syslog-server` [S25], `eigrp` [C1] and `ike` [C13].
- *    ([S32] `script-host` joins at the W6 flip; the unapproved ospfv3, tftp, snmp-agent and snmp-manager never do.)
+ *    [S18], `vty` and `vty-client` [S13], `logger` [S24], `syslog-server` [S25], `eigrp` [C1] and `ike` [C13];
+ *    and (§7 W6, the second catalog flip, alone) the NF-Py script host `script-host` [S32] of the `programmable`
+ *    NF-DEVHOST. The unapproved ospfv3, tftp, snmp-agent and snmp-manager never join.
  * Keys follow the canonical daemon order (`PROCESS_ORDER` in contracts/catalog.ts), so this object lists every
  * name that order does. Every factory is re-exported for direct use. Each daemon is silent without configuration
  * or a request (ARCHITECTURE-P1 §5.3), so registering them never changes P0 scenario traffic.
@@ -69,6 +70,7 @@ import { createEigrp } from './eigrp.js';
 import { createIke } from './ike.js';
 import { createRestconf } from './restconf.js';
 import { createTraffic } from './traffic.js';
+import { createScriptHost } from './script-host.js';
 
 export { createWlanAp } from './wlan-ap.js';
 export { createWlanClient } from './wlan-client.js';
@@ -116,6 +118,7 @@ export { createEigrp } from './eigrp.js';
 export { createIke } from './ike.js';
 export { createRestconf } from './restconf.js';
 export { createTraffic } from './traffic.js';
+export { createScriptHost } from './script-host.js';
 
 /** Daemon name → factory, in canonical daemon order (`PROCESS_ORDER`). Frozen: the registry is static data. */
 export const PROCESS_FACTORIES: Readonly<Record<ProcessName, ProcessFactory>> = Object.freeze({
@@ -165,6 +168,7 @@ export const PROCESS_FACTORIES: Readonly<Record<ProcessName, ProcessFactory>> = 
   traceroute: createTraceroute,
   traffic: createTraffic, // P3
   'capwap-ac': createCapwapAc,
+  'script-host': createScriptHost, // P3 [S32], the W6 flip
 });
 
 /** Registered daemon names, in registry (canonical daemon) order. */

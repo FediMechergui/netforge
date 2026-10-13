@@ -199,8 +199,30 @@ export const NF_LAPTOP_MODEL_INPUT: ModelInput = {
   tags: ['notebook', 'portable', 'computer', 'wireless', 'wi-fi', 'host', 'end device'],
 };
 
-/** Catalog inputs of the Computers category, in palette order. */
-export const COMPUTER_MODEL_INPUTS: readonly ModelInput[] = Object.freeze([NF_PC_MODEL_INPUT, NF_PC_WIFI_MODEL_INPUT, NF_LAPTOP_MODEL_INPUT]);
+/** @since P3 [S32] The type id of NF-DEVHOST. */
+export const NF_DEVHOST_TYPE = 'pc.nfdevhost';
+
+/**
+ * @since P3 [S32] NF-DEVHOST — the developer workstation of the automation lessons (ARCHITECTURE-P3 §2.1, D21; §7 W6,
+ * the second catalog flip): a host whose `programmable` capability adds the NF-Py script host (`script-host`, the only
+ * daemon of its row: no TFTP, which is [S29]) and the automation workspace (`desktop.automation`), with its scripts in
+ * the host's `files:` store. One gigabit adapter and no expansion bay; it is the `staged.world` test-only input of
+ * waves 0–5 made real, unchanged. Defined at stage P3, its daemons are the P3 host stack plus `script-host`.
+ */
+export const NF_DEVHOST_MODEL_INPUT: ModelInput = {
+  type: NF_DEVHOST_TYPE,
+  model: 'NF-DEVHOST',
+  description: 'Developer workstation with one gigabit network adapter, a host shell and a scripting workspace',
+  category: 'computers',
+  icon: 'pc',
+  capabilities: ['host', 'programmable'],
+  ports: [hostEth('GigabitEthernet0', SPEED_1G)],
+  family: 'nf-devhost',
+  tags: ['developer', 'workstation', 'automation', 'scripting', 'computer', 'host', 'end device'],
+};
+
+/** Catalog inputs of the Computers category, in palette order ([S32] NF-DEVHOST last, from the W6 flip). */
+export const COMPUTER_MODEL_INPUTS: readonly ModelInput[] = Object.freeze([NF_PC_MODEL_INPUT, NF_PC_WIFI_MODEL_INPUT, NF_LAPTOP_MODEL_INPUT, NF_DEVHOST_MODEL_INPUT]);
 
 /** Computers category models defined for END_DEVICE_STAGE, in palette order. */
 export const COMPUTER_MODELS: readonly DeviceModel[] = Object.freeze(COMPUTER_MODEL_INPUTS.map((m) => defineModel(m, END_DEVICE_STAGE)));

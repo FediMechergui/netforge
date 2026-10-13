@@ -5176,6 +5176,109 @@ The W6a integration step (2026-10-12) recorded these migrations (the W5 integrat
     port or slot (routers, layer-3 switches, firewalls); hubs, access points, modems and bridges no longer list it.
     The help golden moves by removals from item 40h's additions only. Owner: W6b **cli**.
 
+The W6b integration step (2026-10-13: the [S32] flip alone, then lab 40 and R58 (c)/(d)) recorded these migrations:
+
+40j. (Item 40b's flip; the test-only NF-DEVHOST of rule 13 becomes the real input) `staged.world.test.ts:302-346`:
+    the `if (!real)` branches become unconditional — `stagedModelInputs('P3')` equals `ALL_MODEL_INPUTS` (no extra
+    test-only input), the Computers-position and `['GigabitEthernet0']` pins always run, and `nfDevhostTestInput()`
+    equals the real input; at `:334-339` `createStagedCatalog({stage: 'P2'}).get(NF_DEVHOST_TYPE)` and
+    `createP2Catalog().get(NF_DEVHOST_TYPE)` change from `toBeUndefined()` to exact pins (capabilities `['host',
+    'programmable']`, the P2 host stack, tables `['cam', 'arp', 'rib', 'rib6', 'nd', 'sockets', 'dns-cache']`, no
+    `desktop.traffic` or `desktop.automation`), and `:340-346` adds the same at stage P1 (NF-PC's processes, tables and
+    desktop apps). Like NF-WLC-9800, the real NF-DEVHOST is in every stage's model inputs; `programmable`'s only row is
+    `since: 'P3'`, so before P3 the model has NF-PC's daemons, tables and desktop apps — its shell still lists the five
+    `programmable` commands of `cli/grammar/devhost.ts` (`python` refusing with no script host; open item below).
+    `docs/CATALOG.md` says so, pinned by the added case `device.catalog.end-devices.test.ts:176`. The flip's other pins
+    are item 40b's own: `accept.p05.catalog.test.ts:34` `CATALOG_MD_MODELS` gains `'pc.nfdevhost'` after
+    `'laptop.nflaptop'`; `device.catalog.{data,p2,p3,end-devices}.test.ts`, `protocols.registry.test.ts` and the web
+    `tabs.test.ts` and `desktop.ui.test.ts` gain the exact values (in `device.catalog.p3.test.ts`
+    `CAPABILITY_PROCESSES.programmable` `[]` becomes `[script-host since P3]`, `PROCESS_TABLES['script-host']`
+    `undefined` becomes `['script-runs']`, and the order's `not.toContain('script-host')` becomes `PROCESS_ORDER.at(-1)
+    === 'script-host'`); `goldens/cli-help.p05.json` gains the `pc.nfdevhost` entry (its `user-exec` and `user-exec
+    show` lists; additions only, item 21's rule; `cli.help-superset` holds). No P1/P2 digest moved.
+40k. (Rule 13's parity, now without the W6 exceptions; item 40b) `staged.world.p3-parity.test.ts`: `:49`
+    `STAGED_PROCESS_ORDER` equals `PROCESS_ORDER` and `PROCESS_ORDER.at(-1)` is `script-host` (was the filter plus
+    `not.toContain`); `:55` all 16 `P3_DAEMONS` are registered and `PROCESS_FACTORIES['script-host']` is
+    `createScriptHost` (was "absent"); `:63` the `programmable` rows equal the real row (was `[]`); `:73`
+    `PROCESS_TABLES['script-host']` is `['script-runs']` (was `undefined`); `:80` the `script-host` filter is dropped;
+    `:89` the staged P3 catalog equals the real one "and nothing else" (was "plus NF-DEVHOST"), `stagedModelInputs('P3')`
+    equals `stagedModelInputs('P2')` and `nfDevhostTestInput()` equals `NF_DEVHOST_MODEL_INPUT`; `:111` the staged world
+    also boots `pc.nfdevhost` with the real daemons. Every assertion is as strong or stronger.
+40l. (R47's fold rule, as 37g) `cli.devhost.test.ts:33`: `devhostModel()` no longer appends `script-host` by hand (the
+    real model lists it, so it would appear twice); `:92` the "no script host" case removes the now-registered daemon
+    with `stagedRegistry({'script-host': undefined})`. Same assertions.
+40m. (Lab 40 lands: `CCNA3_AUTOMATION_LABS` is `[ccna3RestconfChange, ccna3ScriptInventory]`, so `CCNA3_LABS` holds the
+    21 labs of `CCNA3_LAB_ORDER` and `SCENARIOS` ends with them; W6b integration findings #0, #1, #4, #5, #6; the form of
+    40g, cases added and one allowance removed)
+    - `labs.ccna3.solutions.test.ts`: `LEARNER_LOGINS` gains `'ccna3-script-inventory': SCRIPT_LAB_RUNS` (from
+      `ccna3/index.js`: `python inventory.py` typed on DEV1's console after the solution fixes SW3; the run ends well
+      within `LOGIN_LINE_NS`), so the generic "scores full marks" case runs lab 40 as the lab asks; the header comments
+      no longer say lab 40 has not landed. No assertion changes.
+    - `labs.ccna3.course.test.ts`: `AWAITING_FLIP` and its `continue` are removed, so every `CCNA3_LAB_ORDER` name must
+      be in `SCENARIOS` exactly once as a `ccna3-lab` (the case title says "labs 38 and 40 from W6"; a stronger case).
+    - `sim.grade.parity.test.ts`: `LEARNER_ACTIONS` gains `'ccna3-script-inventory': SCRIPT_LAB_RUNS`;
+      `RELOAD_DIFFERENCES` gains four solved-point entries with reason `'learner history'`: task `inventory-completed`
+      `{kind: 'fact', device: 'DEV1', fact: 'automation.lastRun'}` (its FactReader source is `script-runs.state`, a
+      runtime-only table) and task `every-switch-read` `{kind: 'table', device, table: 'restconf-log'}` for each of SW1,
+      SW2 and SW3. Each names exactly one assertion; the unsolved point grades the same and has no entry.
+40n. (Ruling R58 (d), cli; removes part of 40h's additions) The visible `show controllers [<iface>]` spec takes
+    `requiresAny: CONTROLLERS_LISTED_ON`, `['routing', 'cloud']` (`cli/grammar/serial.ts`), and a hidden twin with the
+    same path and `excludesAny` on the same capabilities keeps the R56 lines executable, unlisted, on every other
+    network-OS model (the two are never in scope together). `goldens/cli-help.p05.json` regenerated by removals only:
+    `controllers` leaves the `priv-exec show` list of 23 models (`switch.nfc2960-8`, `switch.nfc2960`,
+    `switch.nfc2960-48`, `switch.nfc2960-24pg`, `switch.nfc9200-48`, `hub.nfhub4`, `hub.nfhub8`, `hub.nfcoax`,
+    `repeater.nfrep`, `bridge.nfbr2`, `bridge.nfbr4`, `ap.nfap-auto`, `ap.nfap-lw`, `ap.nfap-mesh`, `ap.nfap-ax`,
+    `wlc.nfwlc9800`, `radio.nfptp5`, `radio.nfptp60`, `cell.nftower`, `modem.nfdsl`, `modem.nfcable`, `modem.nfont`,
+    `csu.nfcsu`) and 14 keep it (the 13 models with the routing capability and `cloud.nfinternet`); no list is
+    reordered and no other entry moves (`cli.help-superset` holds: the frozen P1 copy never had it). Pins:
+    `cli.serial-controllers.test.ts:128` (W6's own file) `[ACCEPTED_PATH, NEW_PATH]` becomes `[ACCEPTED_PATH, NEW_PATH,
+    NEW_PATH]` (the twin), with the gate pins and the scope cases added; `cli.grammar.p05.test.ts:175` and
+    `cli.parser.help.test.ts:83` gain checks only (40h's NF-2911 pins are unchanged: a router still lists it). The
+    cloud is listed under the ruling's "serial port" clause (its `cloud` capability; Serial0–3); the CSU/DSU stays
+    unlisted (open item below).
+
+R58 (c) needed no migration: `restconf.test.ts` gains cases only (`restconfLogPath` as a pure function, and every
+accepted PUT to one entry logging one path on the staged world), and lab 38's near miss "a PUT to `…/vlan-list=30/`"
+is now graded as the API change in W6's own `labs.ccna3.automation.test.ts`.
+
+**W6b integration: open for the architect (nothing more was built for these)**
+
+- **R58 (b) leaves out `script-runs`** (finding #2). Lab 40's task `inventory-completed` is a `fact` assertion
+  (`automation.lastRun`, FactReader source `script-runs.state`, `sim/lab-checks/automation.ts:45`), and `script-runs`
+  is a runtime-only table an export does not carry; its task `every-switch-read` reads `restconf-log`. A learner who
+  fixes SW3 and runs the script scores 100 live and 0 from `gradeTopology` on the saved world ("DEV1 automation.lastRun
+  of inventory.py is not set"). As worded, W7's rule would report `inventory-completed` as a real fail. Proposed: add
+  `script-runs` to R58 (b)'s runtime-only tables, say that the rule covers any assertion whose verdict rests on one —
+  including a `fact` whose FactReader `source` names one — and name lab 40 (its fact and its three `restconf-log`
+  rows) in the amended §10.1 `accept.p3.lab-document` row beside labs 15, 19, 27, 29 and 38. Until then
+  `sim.grade.parity.test.ts` lists those four assertions in `RELOAD_DIFFERENCES` (40m).
+- **R58 (d) and the CSU/DSU** (cli review). `csu.nfcsu` has Serial0 and Serial1, so "a serial port" lists it, but its
+  only capability is `modem`, the modems' (`modem.nfdsl`, `modem.nfcable`, `modem.nfont`), which the ruling names among
+  the models that no longer list the form. A `CommandSpec` is scoped only by capabilities (`requires`, `requiresAny`,
+  `excludesAny`), so listing it would list the modems too: it stays unlisted (23 removals, 40n). Either amend R58 (d)
+  to exclude the CSU/DSU, or approve a contract change (a capability of its own, or a port-kind scope gate on
+  `CommandSpec`). Listing `cloud.nfinternet` is also a builder reading of the "serial port" clause beyond the ruling's
+  parenthesis "(routers, layer-3 switches, firewalls)"; if the ruling means the routing capability alone,
+  `CONTROLLERS_LISTED_ON` becomes `['routing']`, the golden loses `controllers` from the cloud's list as well (24
+  removals), and 40n's cloud pins are reverted.
+- **NF-DEVHOST before P3** (catalog review). `CommandSpec.since` gates nothing in the parser, and
+  `cli/grammar/devhost.ts` is scoped by `requiresAny: ['programmable']` alone, so a stage-P1 or stage-P2 NF-DEVHOST
+  (test catalogs only; the shipped catalog is at stage P3) lists `python`, `python3`, `type`, `del` and `dir`, which
+  NF-PC does not (`python` refuses with no script host; the others read the files store). Either accept it as recorded
+  in 40j, or gate those commands by stage.
+
+**W6b rulings (architect, 2026-10-13)**
+
+- **R59. The W6b open items, decided.**
+  - (a) R58(b)'s runtime-only tables also include `script-runs`. Lab 40's `automation.lastRun` fact is therefore
+    reported headless as not gradable headless, never failed. Owner: W7 **qa-labdoc**, with R58(b).
+  - (b) R58(d) reads as built: `show controllers` is listed on the routing models and on the Internet cloud, whose
+    serial ports carry the router serial grammar. The CSU/DSU has only the `modem` capability, which it shares with the
+    modems, so it is not listed; no contract change.
+  - (c) The dev-host shell commands (`python`, `python3`, `type`, `del`, `dir`) are offered only where the script
+    host runs (`requiresAny` on `script-host`), so an NF-DEVHOST in a world without it lists none of them. Owner: W7
+    **cli**, with a case in `cli.devhost.test.ts`.
+
 **W7 (the course and profile flip)**
 
 41. `learn.course-profile.test.ts:43` (`profileForCourse('ccna3')` is `'P2'`) becomes `'P3'` — a changed pin, not a new

@@ -1,7 +1,9 @@
 /**
- * labs.ccna3.automation — the W6 auto lab 38, proved (ARCHITECTURE-P3 §7 W6 "auto", §11.1 lesson 38, §11.2, §3.8,
- * §5.6, D21, D22). The local copy of the checks of the sim builder's `labs.ccna3.solutions.test.ts`, filtered to
- * `ccna3-restconf-change`, plus what only this lab needs.
+ * labs.ccna3.automation — the W6 auto labs 38 and 40 [S32], proved (ARCHITECTURE-P3 §7 W6 "auto", §11.1 lessons 38 and
+ * 40, §11.2, §3.8 (step 8 for lab 40), §5.6, D21, D22; ruling R58 (c)). The local copy of the checks of the sim
+ * builder's `labs.ccna3.solutions.test.ts`, filtered to the two automation labs, plus what only these labs need.
+ *
+ * Lab 38 `ccna3-restconf-change`:
  *   • metadata (§11.2) and the file rules (rule 12), as for every CCNA 3 lab; the timing sentence in the instructions;
  *     the lab joins `CCNA3_LABS` and `SCENARIOS` in course order; it survives the [S37] lab document round trip;
  *   • the world: a P3-profile topology (schema 1.3) loaded as a P3 world; PortFast on PC1's port; the API answering on
@@ -12,32 +14,54 @@
  *     read-only and repeatable; the solution alone cannot pass the API tasks; a copy of the unsolved and of the solved
  *     world settles within the grader clone's event cap (`accept.p3.grader-bounded`'s rule, the API's changes carried
  *     by the export).
- * Lab-specific cases: the learner's path on PC1's console, job by job (the GET prints the note inside the JSON, a GET
- * without credentials is 401, each PUT is 201 then 204, the note acted on through the API instead of the console); one
- * near-miss wrong answer (or more) per task — a GET refused 401 and a GET of the wrong switch (read), the note's VLAN
- * made on the switch that holds the note (act), a VLAN named `Voice` (the effect), the VLAN typed on the consoles, the
- * VLAN typed on the consoles plus an accepted PUT to `vlan-list=300` (the path is matched whole, not as a substring), a
- * PUT without its Content-Type (415), a POST, a PUT whose body key differs from the URL's (400) (the API task); and §3.8 step
- * 7's determinism: the journal replays the `cliExec` requests to byte-identical trace and snapshot JSON, and three runs
- * with one seed are byte-identical.
+ *   Lab-specific cases: the learner's path on PC1's console, job by job (the GET prints the note inside the JSON, a GET
+ *   without credentials is 401, each PUT is 201 then 204, the note acted on through the API instead of the console); one
+ *   near-miss wrong answer (or more) per task — a GET refused 401 and a GET of the wrong switch (read), the note's VLAN
+ *   made on the switch that holds the note (act), a VLAN named `Voice` (the effect), the VLAN typed on the consoles, the
+ *   VLAN typed on the consoles plus an accepted PUT to `vlan-list=300` (the path is matched whole, not as a substring), a
+ *   PUT without its Content-Type (415), a POST, a PUT whose body key differs from the URL's (400) (the API task); the
+ *   R58 (c) near miss the other way: a PUT to VLAN 30's entry written with a trailing `/`, or with the module repeated on
+ *   a later step, is the same entry, logged under the canonical path and graded as the API change; and §3.8 step 7's
+ *   determinism: the journal replays the `cliExec` requests to byte-identical trace and snapshot JSON, and three runs
+ *   with one seed are byte-identical.
+ *
+ * Lab 40 `ccna3-script-inventory` ([S32], §3.8 step 8, after the NF-DEVHOST flip):
+ *   • metadata and file rules as above; the world: DEV1 is the real NF-DEVHOST (`pc.nfdevhost`) with `inventory.py` in
+ *     its `files:` store from the lab document (schema 1.3), SW1 and SW2 accept API logins, SW3 accepts none (no `ip
+ *     http authentication local`), no run and no request yet;
+ *   • UNSOLVED: every task fails with a detail; SOLVED — the fix on SW3 through `configure`, then `SCRIPT_LAB_RUNS` typed
+ *     on DEV1's console as the generic solutions test types learner lines: full marks; read-only and repeatable; the fix
+ *     alone (no run) passes nothing; the grader never runs the script (no `script-runs` row and no request appear while
+ *     it grades, and a copy of the world settles within the clone's event cap with no run in it);
+ *   • the learner's path: the first run reads SW1 and SW2, then stops with an HTTPError traceback naming 401 and SW3's
+ *     address (the `script-runs` row says failed, SW3 logs a 401); `show restconf` on SW3 says why; the fix on SW3's
+ *     console; the second run from the automation workspace completes with the exact inventory, one strictly sequential
+ *     GET per switch, and full marks;
+ *   • one near miss or more per task — the run before the fix, a copy of the script run under another name, a run
+ *     stopped from the workspace (the run); the script edited to skip SW3, and the fix typed on the wrong switch (every
+ *     switch read);
+ *   • determinism: the journal (the console fix, the `python` job) replays to byte-identical trace and snapshot JSON, and
+ *     three runs with one seed are byte-identical.
  */
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import type { DeviceId } from '../src/contracts/ids.js';
+import type { DeviceId, SessionId } from '../src/contracts/ids.js';
 import { labDocumentOf, scenarioOf } from '../src/contracts/lab-document.js';
-import type { LabAssertion } from '../src/contracts/scenario.js';
+import type { LabAssertion, ScenarioInfo } from '../src/contracts/scenario.js';
 import { scenarioMeta } from '../src/contracts/scenario.js';
 import type { Simulation } from '../src/contracts/simulation.js';
-import type { RestconfLogRow } from '../src/contracts/tables.js';
+import type { RestconfLogRow, ScriptRunRow } from '../src/contracts/tables.js';
 import { SEC } from '../src/contracts/time.js';
 import { TOPOLOGY_SCHEMA_ID_1_3, schemaIdFor, type Topology } from '../src/contracts/topology.js';
 import type { TraceEvent } from '../src/contracts/trace.js';
 import { CCNA3_MODULES } from '../src/curriculum/ccna3/lessons.js';
+import { NF_DEVHOST_TYPE } from '../src/device/catalog/computers.js';
 import { createCatalog } from '../src/device/catalog/index.js';
 import { labDocumentFromJson, labDocumentToJson, validateLabDocument } from '../src/io/lab-schema.js';
 import { PROCESS_FACTORIES } from '../src/protocols/index.js';
+import type { ScriptHostStateView, ScriptRunView } from '../src/protocols/script-host.js';
 import { LAB_CLONE_BOOT_EVENTS, evaluateLab } from '../src/sim/lab-checks.js';
 import { createReplay } from '../src/sim/replay.js';
 import {
@@ -48,7 +72,16 @@ import {
   RESTCONF_LAB_REQUESTS,
   RESTCONF_LAB_SECRET,
   RESTCONF_LAB_USER,
+  SCRIPT_LAB_ADDRESSES,
+  SCRIPT_LAB_FAULTY,
+  SCRIPT_LAB_FILE,
+  SCRIPT_LAB_INVENTORY,
+  SCRIPT_LAB_PATH,
+  SCRIPT_LAB_RUNS,
+  SCRIPT_LAB_SECRET,
+  SCRIPT_LAB_USER,
   ccna3RestconfChange,
+  ccna3ScriptInventory,
   restconfLabGetInterfaces,
   restconfLabPutVlan,
 } from '../src/sim/scenarios/ccna3/automation.js';
@@ -65,17 +98,20 @@ const TRACE_CAPACITY = 1_000_000;
 /** The assertion kinds a CCNA 3 lab may use (§11.2). */
 const LAB_KINDS: readonly LabAssertion['kind'][] = ['neighbor', 'fact', 'acl', 'aclDecision', 'route', 'table', 'connectivity', 'config', 'vlan', 'service', 'path', 'traffic'];
 const LAB = ccna3RestconfChange;
+const SLAB = ccna3ScriptInventory;
 const A = RESTCONF_LAB_ADDRESSES;
+const D = SCRIPT_LAB_ADDRESSES;
 const AUTH = `-u ${RESTCONF_LAB_USER}:${RESTCONF_LAB_SECRET}`;
 const JSON_HEADER = `-H "Content-Type: ${RESTCONF_LAB_JSON_TYPE}"`;
 const catalog = createCatalog(PROCESS_FACTORIES);
 
 type Requests = typeof RESTCONF_LAB_REQUESTS;
 
-function labWorld(opts: { traceCapacity?: number } = {}): Simulation {
-  const sim = createSimulation({ seed: LAB.seed ?? 1, ...opts });
-  sim.loadTopology({ ...LAB.build(), lab: { name: LAB.name, version: LAB.version ?? 1 } });
-  for (const f of LAB.faults ?? []) sim.injectFault(f.at, f.fault);
+/** The lab's world as `loadScenario` builds it: the lab seed, the lab stamp, its scheduled faults, booted and settled. */
+function labWorld(opts: { traceCapacity?: number } = {}, lab: ScenarioInfo = LAB): Simulation {
+  const sim = createSimulation({ seed: lab.seed ?? 1, ...opts });
+  sim.loadTopology({ ...lab.build(), lab: { name: lab.name, version: lab.version ?? 1 } });
+  for (const f of lab.faults ?? []) sim.injectFault(f.at, f.fault);
   sim.runFor(BOOT_NS);
   sim.runToIdle();
   return sim;
@@ -132,16 +168,9 @@ function requestsWith(index: number, line: string | undefined): Requests {
   return requestsOf(lines);
 }
 
-interface Reply {
-  readonly text: string;
-  readonly status?: number;
-  /** The printed body (after the blank line that ends the headers). */
-  readonly body: string;
-}
-
-/** Type `line` on a fresh console of PC1 (a `rest` job), run until the job has ended, and read what it printed. */
-function rest(sim: Simulation, line: string): Reply {
-  const s = sim.cli.open(idOf(sim, 'PC1'), 'console');
+/** Type `line` on a fresh console of `host` (a job), run until the job has ended, and return what the session printed. */
+function job(sim: Simulation, host: string, line: string): string {
+  const s: SessionId = sim.cli.open(idOf(sim, host), 'console');
   const cursor = sim.trace(0).next;
   const started = sim.cli.exec(s, line);
   expect(started.error, line).toBeUndefined();
@@ -158,15 +187,28 @@ function rest(sim: Simulation, line: string): Reply {
     .map((e) => e.text)
     .join('');
   sim.cli.close(s);
+  return text;
+}
+
+interface Reply {
+  readonly text: string;
+  readonly status?: number;
+  /** The printed body (after the blank line that ends the headers). */
+  readonly body: string;
+}
+
+/** Type `line` on a fresh console of PC1 (a `rest` job), run until the job has ended, and read what it printed. */
+function rest(sim: Simulation, line: string): Reply {
+  const text = job(sim, 'PC1', line);
   const m = /^HTTP\/1\.1 (\d{3}) /.exec(text);
   const lines = text.split('\n');
   const body = lines.slice(lines.indexOf('') + 1).join('\n').replace(/\n$/, '');
   return m === null ? { text, body: '' } : { text, status: Number(m[1]), body };
 }
 
-/** Pass flag of each task, by id. */
-function passes(sim: Simulation): Record<string, boolean> {
-  return Object.fromEntries(evaluateLab(sim, LAB).results.map((r) => [r.task, r.pass]));
+/** Pass flag of each task of `lab`, by id. */
+function passes(sim: Simulation, lab: ScenarioInfo = LAB): Record<string, boolean> {
+  return Object.fromEntries(evaluateLab(sim, lab).results.map((r) => [r.task, r.pass]));
 }
 
 const ALL_PASS = { 'read-interfaces': true, 'act-on-note': true, 'vlan-30': true, 'through-the-api': true };
@@ -181,42 +223,116 @@ function vlanName(sim: Simulation, name: string, vlan: number): string | null | 
   return node === undefined ? undefined : node.children.find((c) => c.key === 'name')?.args[0] ?? null;
 }
 
+/** `show restconf` on a switch's console. */
+function showRestconf(sim: Simulation, name: string): string {
+  const s = sim.cli.open(idOf(sim, name), 'console');
+  const out = sim.cli.exec(s, 'show restconf').output;
+  sim.cli.close(s);
+  return out;
+}
+
+/** The lesson of the skeleton that points at `lab`, with the title of its module. */
+const homeOf = (lab: ScenarioInfo): { id?: string; module?: string } => {
+  const home = CCNA3_MODULES.flatMap((m) => m.lessons.map((l) => ({ l, m }))).find((x) => x.l.lab === lab.name);
+  return { ...(home !== undefined ? { id: home.l.id, module: home.m.title } : {}) };
+};
+
+/** The metadata and catalog rules every CCNA 3 lab meets (labs.ccna3.solutions), for one lab. */
+function expectLabMetadata(lab: ScenarioInfo, learnerHosts: readonly string[]): void {
+  expect(lab.category).toBe('ccna3-lab');
+  expect(lab.course).toBe('CCNA 3');
+  expect(lab.topic).toBe(homeOf(lab).module);
+  expect(lab.topic).toBe('Automating the network');
+  expect(lab.seed).toBeTypeOf('number');
+  const meta = scenarioMeta(lab);
+  expect(structuredClone(meta)).toEqual(meta);
+  expect(meta).not.toHaveProperty('solution');
+  const topo = lab.build();
+  expect([...(lab.requires ?? [])].sort()).toEqual([...new Set(topo.devices.map((d) => d.type))].sort());
+  for (const type of lab.requires ?? []) expect(catalog.get(type), type).toBeDefined();
+  const ids = (lab.tasks ?? []).map((t) => t.id);
+  expect(new Set(ids).size).toBe(ids.length);
+  expect((lab.tasks ?? []).reduce((n, t) => n + t.points, 0)).toBe(100);
+  for (const t of lab.tasks ?? []) {
+    expect(t.points).toBeGreaterThan(0);
+    for (const a of t.assertions) expect(LAB_KINDS, `${t.id}: ${a.kind}`).toContain(a.kind);
+    for (const dep of t.dependsOn ?? []) expect(ids).toContain(dep);
+  }
+  const names = topo.devices.map((d) => d.name);
+  expect(Object.keys(lab.solution ?? {}).length).toBeGreaterThan(0);
+  for (const name of Object.keys(lab.solution ?? {})) expect(names).toContain(name);
+  for (const host of learnerHosts) expect(names).toContain(host);
+}
+
+/** The [S37] lab document round trip: JSON text, schema, scenario. */
+function expectRoundTrip(lab: ScenarioInfo): void {
+  const doc = labDocumentOf(lab);
+  const json = JSON.parse(labDocumentToJson(doc)) as unknown;
+  const checked = validateLabDocument(json);
+  expect(checked.ok ? [] : checked.errors).toEqual([]);
+  const back = scenarioOf(labDocumentFromJson(labDocumentToJson(doc)));
+  expect(back.build()).toEqual(lab.build());
+  expect(back.tasks).toEqual(lab.tasks);
+  expect(back.solution).toEqual(lab.solution);
+  expect(back.category).toBe('ccna3-lab');
+}
+
+/** The grader's settle of a copy (sim/lab-checks.ts `settledClone`; no cut cable or err-disabled port here). */
+function cloneSettle(sim: Simulation): { stats: ReturnType<Simulation['runToIdle']>; copy: Simulation } {
+  const copy = createSimulation({ seed: sim.seed, catalog: sim.catalog, journal: false });
+  copy.loadTopology(sim.exportTopology());
+  return { stats: copy.runToIdle(LAB_CLONE_BOOT_EVENTS), copy };
+}
+
 const VLAN_PATH = '/restconf/data/nf-native:native/vlan/vlan-list=30';
 const INTERFACES_PATH = '/restconf/data/ietf-interfaces:interfaces';
 
+describe('the automation lab file', () => {
+  it('holds the two automation labs of the course, lab 38 then lab 40, and joins the catalogue in course order', () => {
+    expect(CCNA3_AUTOMATION_LABS.map((l) => l.name)).toEqual(['ccna3-restconf-change', 'ccna3-script-inventory']);
+    expect(CCNA3_AUTOMATION_LABS[0]).toBe(LAB);
+    expect(CCNA3_AUTOMATION_LABS[1]).toBe(SLAB);
+    expect(ccna3.CCNA3_AUTOMATION_LABS).toBe(CCNA3_AUTOMATION_LABS);
+    expect(ccna3.RESTCONF_LAB_REQUESTS).toBe(RESTCONF_LAB_REQUESTS);
+    expect(ccna3.SCRIPT_LAB_RUNS).toBe(SCRIPT_LAB_RUNS);
+    const order = ccna3.CCNA3_LAB_ORDER;
+    const landed = ccna3.CCNA3_LABS.map((l) => l.name);
+    expect(landed).toEqual(order.filter((n) => landed.includes(n)));
+    // every lab of the approved plan has landed: lab 40 was the last (after the [S32] flip)
+    expect(landed).toEqual([...order]);
+    for (const lab of [LAB, SLAB]) {
+      expect(ccna3.CCNA3_LABS).toContain(lab);
+      expect(SCENARIOS.filter((s) => s.name === lab.name).map((s) => s.category)).toEqual(['ccna3-lab']);
+    }
+    expect(landed.indexOf(LAB.name)).toBeGreaterThan(landed.indexOf('ccna3-troubleshoot-enterprise'));
+    expect(landed.indexOf(SLAB.name)).toBe(landed.indexOf(LAB.name) + 1);
+    expect(landed.at(-1)).toBe(SLAB.name);
+  });
+
+  it('imports only the contracts, the kit and the templates, and exports one array under its fixed name', () => {
+    const file = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'sim', 'scenarios', 'ccna3', 'automation.ts');
+    const text = readFileSync(file, 'utf8');
+    const specifiers = [...text.matchAll(/^import[^;]*?from\s+'([^']+)'/gms)].map((m) => m[1]);
+    for (const s of specifiers) expect(s, s).toMatch(/^\.\.\/\.\.\/\.\.\/contracts\/[a-z-]+\.js$|^\.\.\/kit\.js$|^\.\.\/templates\.js$/);
+    expect(text.match(/export const \w+: readonly ScenarioInfo\[\]/g)).toEqual(['export const CCNA3_AUTOMATION_LABS: readonly ScenarioInfo[]']);
+    // every exported name is prefixed, since ccna3/index.ts re-exports the file with `export *`
+    const exported = [...text.matchAll(/^export (?:const|function) (\w+)/gm)].map((m) => m[1]!);
+    for (const name of exported) expect(name, name).toMatch(/^(RESTCONF_LAB_|restconfLab|ccna3Restconf|SCRIPT_LAB_|ccna3Script|CCNA3_AUTOMATION_)/);
+    // lab 40's names are exactly these
+    expect(exported.filter((n) => /^(SCRIPT_LAB_|ccna3Script)/.test(n)).sort()).toEqual(
+      ['SCRIPT_LAB_ADDRESSES', 'SCRIPT_LAB_FAULTY', 'SCRIPT_LAB_FILE', 'SCRIPT_LAB_INVENTORY', 'SCRIPT_LAB_PATH', 'SCRIPT_LAB_RUNS', 'SCRIPT_LAB_SECRET', 'SCRIPT_LAB_USER', 'ccna3ScriptInventory'].sort(),
+    );
+  });
+});
+
 describe('ccna3-restconf-change: the lab file', () => {
   it('describes itself as lab 38 of the CCNA 3 course, with structured-clone safe metadata and a catalog it uses', () => {
-    expect(CCNA3_AUTOMATION_LABS[0]).toBe(LAB);
-    // lab 40 [S32] joins this array after the NF-DEVHOST flip (§7 W6); nothing else ever does
-    for (const lab of CCNA3_AUTOMATION_LABS) expect(['ccna3-restconf-change', 'ccna3-script-inventory']).toContain(lab.name);
     expect(LAB.name).toBe('ccna3-restconf-change');
-    expect(LAB.category).toBe('ccna3-lab');
-    expect(LAB.course).toBe('CCNA 3');
-    const home = CCNA3_MODULES.flatMap((m) => m.lessons.map((l) => ({ l, m }))).find((x) => x.l.lab === LAB.name);
-    expect(home?.l.id).toBe('ccna3-38-talking-to-devices-through-apis');
-    expect(LAB.topic).toBe(home?.m.title);
-    expect(LAB.topic).toBe('Automating the network');
-    expect(LAB.seed).toBeTypeOf('number');
+    expect(homeOf(LAB).id).toBe('ccna3-38-talking-to-devices-through-apis');
     expect(LAB.instructions).toContain('allow about a minute before the first request');
     expect(LAB.instructions).toContain('trunks forward 30 s after that');
-    const meta = scenarioMeta(LAB);
-    expect(structuredClone(meta)).toEqual(meta);
-    expect(meta).not.toHaveProperty('solution');
-    const topo = LAB.build();
-    expect([...(LAB.requires ?? [])].sort()).toEqual([...new Set(topo.devices.map((d) => d.type))].sort());
-    for (const type of LAB.requires ?? []) expect(catalog.get(type), type).toBeDefined();
-    const ids = (LAB.tasks ?? []).map((t) => t.id);
-    expect(ids).toEqual(['read-interfaces', 'act-on-note', 'vlan-30', 'through-the-api']);
-    expect((LAB.tasks ?? []).reduce((n, t) => n + t.points, 0)).toBe(100);
-    for (const t of LAB.tasks ?? []) {
-      expect(t.points).toBeGreaterThan(0);
-      for (const a of t.assertions) expect(LAB_KINDS, `${t.id}: ${a.kind}`).toContain(a.kind);
-      for (const dep of t.dependsOn ?? []) expect(ids).toContain(dep);
-    }
-    const names = topo.devices.map((d) => d.name);
-    expect(Object.keys(LAB.solution ?? {}).length).toBeGreaterThan(0);
-    for (const name of Object.keys(LAB.solution ?? {})) expect(names).toContain(name);
-    for (const r of RESTCONF_LAB_REQUESTS) expect(names).toContain(r.from);
+    expectLabMetadata(LAB, RESTCONF_LAB_REQUESTS.map((r) => r.from));
+    expect((LAB.tasks ?? []).map((t) => t.id)).toEqual(['read-interfaces', 'act-on-note', 'vlan-30', 'through-the-api']);
   });
 
   it('prints in its instructions the request lines a learner types, exactly', () => {
@@ -238,37 +354,8 @@ describe('ccna3-restconf-change: the lab file', () => {
     for (const t of LAB.tasks ?? []) expect(`${t.title} ${t.description} ${t.hint ?? ''}`, t.id).not.toContain('FINANCE');
   });
 
-  it('imports only the contracts, the kit and the templates, and exports one array under its fixed name', () => {
-    const file = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'sim', 'scenarios', 'ccna3', 'automation.ts');
-    const text = readFileSync(file, 'utf8');
-    const specifiers = [...text.matchAll(/^import[^;]*?from\s+'([^']+)'/gms)].map((m) => m[1]);
-    for (const s of specifiers) expect(s, s).toMatch(/^\.\.\/\.\.\/\.\.\/contracts\/[a-z-]+\.js$|^\.\.\/kit\.js$|^\.\.\/templates\.js$/);
-    expect(text.match(/export const \w+: readonly ScenarioInfo\[\]/g)).toEqual(['export const CCNA3_AUTOMATION_LABS: readonly ScenarioInfo[]']);
-    // every exported name is prefixed, since ccna3/index.ts re-exports the file with `export *`
-    for (const m of text.matchAll(/^export (?:const|function) (\w+)/gm)) expect(m[1], m[1]).toMatch(/^(RESTCONF_LAB_|restconfLab|ccna3Restconf|CCNA3_AUTOMATION_)/);
-  });
-
-  it('joins the CCNA 3 catalogue in course order and SCENARIOS once, as a ccna3-lab', () => {
-    expect(ccna3.CCNA3_AUTOMATION_LABS).toBe(CCNA3_AUTOMATION_LABS);
-    expect(ccna3.RESTCONF_LAB_REQUESTS).toBe(RESTCONF_LAB_REQUESTS);
-    expect(ccna3.CCNA3_LABS).toContain(LAB);
-    const order = ccna3.CCNA3_LAB_ORDER;
-    const landed = ccna3.CCNA3_LABS.map((l) => l.name);
-    expect(landed).toEqual(order.filter((n) => landed.includes(n)));
-    expect(landed.indexOf(LAB.name)).toBeGreaterThan(landed.indexOf('ccna3-troubleshoot-enterprise'));
-    expect(SCENARIOS.filter((s) => s.name === LAB.name).map((s) => s.category)).toEqual(['ccna3-lab']);
-  });
-
   it('survives the lab document round trip ([S37]): JSON text, schema, scenario', () => {
-    const doc = labDocumentOf(LAB);
-    const json = JSON.parse(labDocumentToJson(doc)) as unknown;
-    const checked = validateLabDocument(json);
-    expect(checked.ok ? [] : checked.errors).toEqual([]);
-    const back = scenarioOf(labDocumentFromJson(labDocumentToJson(doc)));
-    expect(back.build()).toEqual(LAB.build());
-    expect(back.tasks).toEqual(LAB.tasks);
-    expect(back.solution).toEqual(LAB.solution);
-    expect(back.category).toBe('ccna3-lab');
+    expectRoundTrip(LAB);
   });
 });
 
@@ -288,9 +375,7 @@ describe('ccna3-restconf-change: the world', () => {
       `description ${RESTCONF_LAB_NOTE}`,
     );
     for (const name of ['SW1', 'SW2', 'SW3']) {
-      const s = sim.cli.open(idOf(sim, name), 'console');
-      const out = sim.cli.exec(s, 'show restconf').output;
-      sim.cli.close(s);
+      const out = showRestconf(sim, name);
       expect(out.split('\n')[0], name).toBe('RESTCONF API: on, answering on TCP port 443 (HTTPS, simulated TLS)');
       expect(out, name).toContain(`(${RESTCONF_LAB_USER})`);
       expect(vlanName(sim, name, 30), name).toBeUndefined();
@@ -330,19 +415,13 @@ describe('ccna3-restconf-change: graded', () => {
   }, LAB_TEST_TIMEOUT_MS);
 
   it('a copy of the unsolved and of the solved world reaches idle within the grader clone\'s event cap', () => {
-    /** The grader's settle of a copy (sim/lab-checks.ts `settledClone`; no cut cable or err-disabled port here). */
-    const cloneSettle = (sim: Simulation): ReturnType<Simulation['runToIdle']> => {
-      const copy = createSimulation({ seed: sim.seed, catalog: sim.catalog, journal: false });
-      copy.loadTopology(sim.exportTopology());
-      return copy.runToIdle(LAB_CLONE_BOOT_EVENTS);
-    };
-    expect(cloneSettle(labWorld()).stopped, 'unsolved').toBeUndefined();
+    expect(cloneSettle(labWorld()).stats.stopped, 'unsolved').toBeUndefined();
     const solved = labWorld();
     applySolution(solved);
     // the API's changes are running configuration: the export carries them to the copy
     const sw1 = solved.exportTopology().devices.find((d) => d.name === 'SW1')!.runningConfig ?? '';
     expect(sw1).toContain('vlan 30\n name VOICE\n');
-    expect(cloneSettle(solved).stopped, 'solved').toBeUndefined();
+    expect(cloneSettle(solved).stats.stopped, 'solved').toBeUndefined();
   }, LAB_TEST_TIMEOUT_MS);
 
   it('the reference solution alone cannot pass the API tasks: the requests are the learner\'s (configure refuses a job)', () => {
@@ -457,6 +536,26 @@ describe('ccna3-restconf-change: wrong answers (one near miss or more per task)'
     expect(api.assertions[0]!.detail).toContain(`path=${VLAN_PATH} `);
   }, LAB_TEST_TIMEOUT_MS);
 
+  it('the API task (R58 (c)): a PUT to VLAN 30\'s entry with a trailing / or a repeated module is that entry, logged canonically and graded', () => {
+    const sim = labWorld();
+    // the same entry written three ways: a trailing slash (SW1), the module repeated on every later step (SW2), as printed (SW3)
+    const trailing = restconfLabPutVlan(A.sw1).replace('/vlan-list=30 ', '/vlan-list=30/ ');
+    const repeated = restconfLabPutVlan(A.sw2).replace('/nf-native:native/vlan/vlan-list=30 ', '/nf-native:native/nf-native:vlan/nf-native:vlan-list=30 ');
+    expect(trailing).toContain(`https://${A.sw1}${VLAN_PATH}/ `);
+    expect(repeated).toContain(`https://${A.sw2}/restconf/data/nf-native:native/nf-native:vlan/nf-native:vlan-list=30 `);
+    applySolution(sim, { requests: requestsOf([restconfLabGetInterfaces(A.sw2), trailing, repeated, restconfLabPutVlan(A.sw3)]) });
+    // every switch accepted its PUT (201) and logged the canonical path of the entry it changed, never the text as typed
+    expect(logOf(sim, 'SW1')).toEqual([['PUT', VLAN_PATH, 201]]);
+    expect(logOf(sim, 'SW2')).toEqual([
+      ['GET', INTERFACES_PATH, 200],
+      ['PUT', VLAN_PATH, 201],
+    ]);
+    expect(logOf(sim, 'SW3')).toEqual([['PUT', VLAN_PATH, 201]]);
+    for (const name of ['SW1', 'SW2', 'SW3']) expect(vlanName(sim, name, 30), name).toBe('VOICE');
+    expect(passes(sim)).toEqual(ALL_PASS);
+    expect(evaluateLab(sim, LAB).score).toBe(100);
+  }, LAB_TEST_TIMEOUT_MS);
+
   it('the API task: a PUT without its Content-Type is refused 415 and changes nothing', () => {
     const sim = labWorld();
     const bare = restconfLabPutVlan(A.sw1).replace(` ${JSON_HEADER}`, '');
@@ -514,6 +613,370 @@ describe('ccna3-restconf-change: determinism (§3.8 step 7)', () => {
     expect(JSON.stringify(replay.sim.snapshot())).toBe(JSON.stringify(live.snapshot()));
     expect(logOf(replay.sim, 'SW2')).toEqual(logOf(live, 'SW2'));
     expect(evaluateLab(replay.sim, LAB).score).toBe(100);
+  }, LAB_TEST_TIMEOUT_MS);
+
+  it('three runs with one seed give byte-identical trace and snapshot JSON', () => {
+    const run = (): string => {
+      const sim = script();
+      return JSON.stringify({ trace: sim.trace(0).events, snapshot: sim.snapshot() });
+    };
+    const a = run();
+    expect(run()).toBe(a);
+    expect(run()).toBe(a);
+  }, LAB_TEST_TIMEOUT_MS);
+});
+
+// ── lab 40 [S32] ─────────────────────────────────────────────────────────────
+
+/** Lab 40's world as `loadScenario` builds it (booted and settled). */
+const scriptWorld = (opts: { traceCapacity?: number } = {}): Simulation => labWorld(opts, SLAB);
+
+/** The fix through `configure` (the reference solution, by default the lab's), then `runs` typed on the hosts' consoles. */
+function solveScript(sim: Simulation, opts: { solution?: Readonly<Record<string, readonly string[]>>; runs?: typeof SCRIPT_LAB_RUNS } = {}): void {
+  for (const [name, lines] of Object.entries(opts.solution ?? SLAB.solution ?? {})) typeOn(sim, name, lines);
+  sim.runToIdle();
+  typeRequests(sim, opts.runs ?? SCRIPT_LAB_RUNS);
+}
+
+/** DEV1's script host StateView (display only; the grader reads the table). */
+const hostView = (sim: Simulation): ScriptHostStateView =>
+  sim.device(idOf(sim, 'DEV1'))!.processes.get('script-host')!.stateSnapshot().state as unknown as ScriptHostStateView;
+/** DEV1's `script-runs` rows: [run, file, state, requests, error?]. */
+const runRows = (sim: Simulation): ScriptRunRow[] => sim.device(idOf(sim, 'DEV1'))!.tables.get<ScriptRunRow>('script-runs')?.rows() ?? [];
+
+/** Start `file` from DEV1's automation workspace (`hostRequest script.run`); returns the run's token (the ticket). */
+function workspaceRun(sim: Simulation, file: string): string {
+  return sim.hostRequest(idOf(sim, 'DEV1'), { app: 'script.run', file }).requestId;
+}
+
+/** The workspace's run with token `token`, once it is no longer running (at most 5 s of simulated time). */
+function finished(sim: Simulation, token: string): ScriptRunView {
+  let run: ScriptRunView | undefined;
+  for (let i = 0; i < 100; i++) {
+    run = hostView(sim).runs.filter((r) => r.token === token).at(-1);
+    if (run !== undefined && run.state !== 'running') break;
+    sim.runFor(SEC / 20);
+  }
+  expect(run, `a run with token ${token}`).toBeDefined();
+  expect(run!.state, `the run ${run!.run} ended`).not.toBe('running');
+  return run!;
+}
+
+/** Save `content` as `path` in DEV1's store through the workspace (`file.write`). */
+function save(sim: Simulation, path: string, content: string): void {
+  sim.hostRequest(idOf(sim, 'DEV1'), { app: 'file.write', path, content });
+  sim.runToIdle();
+}
+
+const SCRIPT_PASS = { 'inventory-completed': true, 'every-switch-read': true };
+const SWITCHES = ['SW1', 'SW2', 'SW3'] as const;
+/** The URL the script GETs on a switch. */
+const scriptUrl = (address: string): string => `https://${address}${SCRIPT_LAB_PATH}`;
+/** The traceback's last line of the run SW3 refuses. */
+const SW3_REFUSAL = `requests.exceptions.HTTPError: 401 Client Error: Unauthorized for url: ${scriptUrl(D.sw3)}`;
+/** What the inventory prints for SW1 and SW2 (each with its described interfaces), and for SW3 once it answers. */
+const INVENTORY_SW1_SW2 = [
+  `${D.sw1} has 28 interfaces`,
+  '  FastEthernet0/1: DEV1 automation host',
+  '  GigabitEthernet0/2: trunk to SW2',
+  `${D.sw2} has 28 interfaces`,
+  '  GigabitEthernet0/1: trunk to SW1',
+  '  GigabitEthernet0/2: trunk to SW3',
+];
+const INVENTORY = [...INVENTORY_SW1_SW2, `${D.sw3} has 28 interfaces`, '  GigabitEthernet0/1: trunk to SW2', 'Inventory complete: 84 interfaces on 3 switches', ''].join('\n');
+
+describe('ccna3-script-inventory: the lab file', () => {
+  it('describes itself as lab 40 of the CCNA 3 course, with structured-clone safe metadata and a catalog it uses', () => {
+    expect(SLAB.name).toBe('ccna3-script-inventory');
+    expect(homeOf(SLAB).id).toBe('ccna3-40-scripting-the-network');
+    expectLabMetadata(SLAB, SCRIPT_LAB_RUNS.map((r) => r.from));
+    expect((SLAB.tasks ?? []).map((t) => t.id)).toEqual(['inventory-completed', 'every-switch-read']);
+    // the developer host is the real NF-DEVHOST of the W6 flip
+    expect(SLAB.requires).toContain(NF_DEVHOST_TYPE);
+    expect(catalog.get(NF_DEVHOST_TYPE)?.model).toBe('NF-DEVHOST');
+    expect(SLAB.instructions).toContain('allow about a minute before the first run');
+    expect(SLAB.instructions).toContain('trunks forward 30 s after that');
+  });
+
+  it('grades what §3.8 step 8 names: the newest run of inventory.py on DEV1, and the GET of the interfaces each switch logged', () => {
+    const [run, read] = SLAB.tasks ?? [];
+    expect(run!.assertions).toEqual([expect.objectContaining({ kind: 'fact', device: 'DEV1', fact: 'automation.lastRun', subject: 'inventory.py', equals: 'completed' })]);
+    expect(read!.assertions.map((a) => (a.kind === 'table' ? [a.device, a.table, a.where, a.exists] : a.kind))).toEqual(
+      SWITCHES.map((sw) => [sw, 'restconf-log', { method: 'GET', path: INTERFACES_PATH, status: 200, client: D.dev1 }, true]),
+    );
+    expect(SCRIPT_LAB_PATH).toBe(INTERFACES_PATH);
+    // the fix is the solution, the run is the learner's (a job, which configure refuses)
+    expect(SLAB.solution).toEqual({ SW3: ['ip http authentication local'] });
+    expect(SCRIPT_LAB_FAULTY).toEqual({ device: 'SW3', line: 'ip http authentication local' });
+    expect(SCRIPT_LAB_RUNS).toEqual([{ from: 'DEV1', lines: ['python inventory.py'] }]);
+  });
+
+  it('prints the run line, the file and the credentials in its instructions, and never names the faulty switch or its fix', () => {
+    expect(SLAB.instructions).toContain(`\`python ${SCRIPT_LAB_FILE}\``);
+    expect(SLAB.instructions).toContain(`\`type ${SCRIPT_LAB_FILE}\``);
+    expect(SLAB.instructions).toContain(SCRIPT_LAB_SECRET);
+    expect(SLAB.instructions).toContain('`show restconf`');
+    // the learner finds the switch in the traceback and its cause on that switch
+    expect(SLAB.instructions).not.toContain('authentication local');
+    expect(SLAB.instructions).not.toMatch(/SW3 (refuses|answers 401|has no)/);
+    for (const t of SLAB.tasks ?? []) expect(`${t.title} ${t.description} ${t.hint ?? ''}`, t.id).not.toContain('authentication local');
+  });
+
+  it('saves the script in DEV1\'s files: store through the lab document (schema 1.3), the switches it loops over in order', () => {
+    const topo = SLAB.build();
+    expect(topo.profile).toBe('P3');
+    expect(topo.schema).toBe(TOPOLOGY_SCHEMA_ID_1_3);
+    expect(topo.schema).toBe(schemaIdFor(topo));
+    const dev1 = topo.devices.find((d) => d.name === 'DEV1')!;
+    expect(dev1.type).toBe(NF_DEVHOST_TYPE);
+    expect(dev1.files).toEqual([{ path: 'inventory.py', content: SCRIPT_LAB_INVENTORY }]);
+    for (const d of topo.devices.filter((x) => x.name !== 'DEV1')) expect(d.files, d.name).toBeUndefined();
+    expect(SCRIPT_LAB_INVENTORY).toContain(`SWITCHES = ["${D.sw1}", "${D.sw2}", "${D.sw3}"]`);
+    expect(SCRIPT_LAB_INVENTORY).toContain(`AUTH = ("${SCRIPT_LAB_USER}", "${SCRIPT_LAB_SECRET}")`);
+    expect(SCRIPT_LAB_INVENTORY).toContain('import requests\n');
+    expect(SCRIPT_LAB_INVENTORY).toContain('    r.raise_for_status()\n');
+    expect(SCRIPT_LAB_INVENTORY.endsWith('\n')).toBe(true);
+    // original wording: no vendor name, the IETF interfaces model only
+    expect(SCRIPT_LAB_INVENTORY).not.toMatch(/cisco|ios|juniper|arista/i);
+  });
+
+  it('survives the lab document round trip ([S37]) with the script in it: JSON text, schema, scenario', () => {
+    expectRoundTrip(SLAB);
+    const back = scenarioOf(labDocumentFromJson(labDocumentToJson(labDocumentOf(SLAB))));
+    expect(back.build().devices.find((d) => d.name === 'DEV1')!.files).toEqual([{ path: SCRIPT_LAB_FILE, content: SCRIPT_LAB_INVENTORY }]);
+  });
+});
+
+describe('ccna3-script-inventory: the world', () => {
+  it('loads DEV1 as an NF-DEVHOST with the script in its store; SW1 and SW2 accept API logins, SW3 accepts none; nothing has run', () => {
+    const sim = scriptWorld();
+    expect(sim.profile).toBe('P3');
+    const dev1 = sim.device(idOf(sim, 'DEV1'))!;
+    expect(dev1.spec.type).toBe(NF_DEVHOST_TYPE);
+    expect(dev1.processes.has('script-host')).toBe(true);
+    expect(dev1.files!('files').map((f) => f.path)).toEqual(['inventory.py']);
+    expect(dev1.readFile!('files', 'inventory.py')?.content).toBe(SCRIPT_LAB_INVENTORY);
+    expect(dev1.port('GigabitEthernet0')?.l3.ipv4?.address).toBe(D.dev1);
+    const shell = sim.cli.open(idOf(sim, 'DEV1'), 'console');
+    expect(sim.cli.exec(shell, 'dir').output).toContain('inventory.py');
+    sim.cli.close(shell);
+    // DEV1's port is an edge port in VLAN 99
+    const devPort = sim.device(idOf(sim, 'SW1'))!.running.render().split('interface FastEthernet0/1\n')[1]?.split('!')[0] ?? '';
+    expect(devPort).toContain('switchport access vlan 99');
+    expect(devPort).toContain('spanning-tree portfast');
+    for (const name of SWITCHES) {
+      const out = showRestconf(sim, name);
+      expect(out.split('\n')[0], name).toBe('RESTCONF API: on, answering on TCP port 443 (HTTPS, simulated TLS)');
+      if (name === 'SW3') expect(out, name).toContain('Logins: none accepted until "ip http authentication local" is configured');
+      else expect(out, name).toContain(`(${SCRIPT_LAB_USER})`);
+      expect(logOf(sim, name), name).toEqual([]);
+    }
+    expect(runRows(sim)).toEqual([]);
+    expect(hostView(sim).runs).toEqual([]);
+  }, LAB_TEST_TIMEOUT_MS);
+});
+
+describe('ccna3-script-inventory: graded', () => {
+  it('fails every task before the student starts, and says why', () => {
+    const status = evaluateLab(scriptWorld(), SLAB);
+    expect(status.results.filter((r) => r.pass).map((r) => r.task)).toEqual([]);
+    expect(status.score).toBe(0);
+    for (const r of status.results) expect(r.assertions.some((a) => !a.pass && (a.detail ?? '') !== ''), r.task).toBe(true);
+    const run = status.results.find((r) => r.task === 'inventory-completed')!;
+    expect(run.assertions[0]!.detail).toContain('DEV1 automation.lastRun of inventory.py is not set, expected completed.');
+  }, LAB_TEST_TIMEOUT_MS);
+
+  it('scores full marks with the fix and the learner\'s run, read-only and repeatably; the grader never runs the script', () => {
+    const sim = scriptWorld();
+    solveScript(sim);
+    expect(runRows(sim).map((r) => [r.run, r.file, r.state, r.requests])).toEqual([['r1', 'inventory.py', 'completed', 3]]);
+    for (const name of SWITCHES) expect(logOf(sim, name), name).toEqual([['GET', INTERFACES_PATH, 200]]);
+    const now = sim.now;
+    const head = sim.trace(0).next;
+    const pdus = sim.snapshot().pduCount;
+    const first = evaluateLab(sim, SLAB);
+    expect(first.results.filter((r) => !r.pass).map((r) => `${r.task}: ${r.assertions.map((a) => a.detail ?? '').join(' ')}`)).toEqual([]);
+    expect(first.score).toBe(first.total);
+    expect(evaluateLab(sim, SLAB)).toEqual(first);
+    expect(sim.now).toBe(now);
+    expect(sim.trace(0).next).toBe(head);
+    expect(sim.snapshot().pduCount).toBe(pdus);
+    // no run and no request came from grading
+    expect(runRows(sim)).toHaveLength(1);
+    for (const name of SWITCHES) expect(logOf(sim, name), name).toHaveLength(1);
+  }, LAB_TEST_TIMEOUT_MS);
+
+  it('the fix alone passes nothing: the run is the learner\'s (configure refuses a job)', () => {
+    const sim = scriptWorld();
+    solveScript(sim, { runs: [] });
+    expect(passes(sim, SLAB)).toEqual({ 'inventory-completed': false, 'every-switch-read': false });
+    const r = sim.configure(idOf(sim, 'DEV1'), [SCRIPT_LAB_RUNS[0]!.lines[0]!]);
+    expect(r.ok).toBe(false);
+    sim.runToIdle();
+    expect(runRows(sim)).toEqual([]);
+  }, LAB_TEST_TIMEOUT_MS);
+
+  it('a copy of the unsolved and of the solved world reaches idle within the grader clone\'s event cap, with the script and no run', () => {
+    const unsolved = cloneSettle(scriptWorld());
+    expect(unsolved.stats.stopped, 'unsolved').toBeUndefined();
+    const solvedWorld = scriptWorld();
+    solveScript(solvedWorld);
+    // the export carries the script (schema 1.3) and the fix; never a run
+    const saved = solvedWorld.exportTopology();
+    expect(saved.devices.find((d) => d.name === 'DEV1')!.files).toEqual([{ path: SCRIPT_LAB_FILE, content: SCRIPT_LAB_INVENTORY }]);
+    expect(saved.devices.find((d) => d.name === 'SW3')!.runningConfig ?? '').toContain('ip http authentication local');
+    const solved = cloneSettle(solvedWorld);
+    expect(solved.stats.stopped, 'solved').toBeUndefined();
+    const copyDev = solved.copy.device(idOf(solved.copy, 'DEV1'))!;
+    expect(copyDev.readFile!('files', SCRIPT_LAB_FILE)?.content).toBe(SCRIPT_LAB_INVENTORY);
+    expect(copyDev.tables.get<ScriptRunRow>('script-runs')?.rows() ?? []).toEqual([]);
+  }, LAB_TEST_TIMEOUT_MS);
+
+  it('the learner path: the first run stops at SW3 with a 401 traceback; show restconf says why; the fix; the second run completes', () => {
+    const sim = scriptWorld();
+    // 1. the first run, from DEV1's command prompt: SW1 and SW2 are read, SW3 refuses the login
+    const printed = job(sim, 'DEV1', `python ${SCRIPT_LAB_FILE}`);
+    expect(printed.startsWith(`${INVENTORY_SW1_SW2.join('\n')}\n`)).toBe(true);
+    expect(printed).toContain('Traceback (most recent call last):');
+    expect(printed.trimEnd().split('\n').at(-1)).toBe(SW3_REFUSAL);
+    expect(runRows(sim).map((r) => [r.run, r.state, r.requests, r.error])).toEqual([['r1', 'failed', 3, SW3_REFUSAL]]);
+    expect(logOf(sim, 'SW1')).toEqual([['GET', INTERFACES_PATH, 200]]);
+    expect(logOf(sim, 'SW2')).toEqual([['GET', INTERFACES_PATH, 200]]);
+    expect(logOf(sim, 'SW3')).toEqual([['GET', INTERFACES_PATH, 401]]);
+    const failed = evaluateLab(sim, SLAB);
+    expect(failed.results.map((r) => [r.task, r.pass])).toEqual([['inventory-completed', false], ['every-switch-read', false]]);
+    expect(failed.results[0]!.assertions[0]!.detail).toContain('DEV1 automation.lastRun of inventory.py is failed, expected completed.');
+    expect(failed.results[1]!.assertions.map((a) => a.pass)).toEqual([true, true, false]);
+    expect(failed.results[1]!.misconception).toBe('refusal-blamed-on-the-script');
+    // 2. why: SW3 checks no login, and its log shows the refused GET
+    const why = showRestconf(sim, 'SW3');
+    expect(why).toContain('Logins: none accepted until "ip http authentication local" is configured');
+    expect(why).toContain(INTERFACES_PATH);
+    // 3. the fix on SW3's console
+    typeConfig(sim, 'SW3', ['ip http authentication local']);
+    expect(showRestconf(sim, 'SW3')).toContain(`(${SCRIPT_LAB_USER})`);
+    // 4. the second run, from the automation workspace: the whole inventory, one GET per switch, one after another
+    const t0 = sim.now;
+    const token = workspaceRun(sim, SCRIPT_LAB_FILE);
+    const run = finished(sim, token);
+    expect(run).toMatchObject({ run: 'r2', file: 'inventory.py', state: 'completed', startedAt: t0 });
+    expect(run).not.toHaveProperty('error');
+    expect(run.output).toBe(INVENTORY);
+    expect(run.requests.map((q) => [q.n, q.method, q.url, q.state, q.status])).toEqual(
+      [D.sw1, D.sw2, D.sw3].map((address, i) => [i + 1, 'GET', scriptUrl(address), 'done', 200]),
+    );
+    for (let k = 1; k < run.requests.length; k++) expect(run.requests[k]!.startedAt).toBeGreaterThanOrEqual(run.requests[k - 1]!.endedAt!);
+    expect(runRows(sim).map((r) => [r.run, r.state, r.requests])).toEqual([
+      ['r1', 'failed', 3],
+      ['r2', 'completed', 3],
+    ]);
+    expect(logOf(sim, 'SW3')).toEqual([
+      ['GET', INTERFACES_PATH, 401],
+      ['GET', INTERFACES_PATH, 200],
+    ]);
+    for (const name of SWITCHES) {
+      const rows = sim.device(idOf(sim, name))!.tables.get<RestconfLogRow>('restconf-log')!.rows();
+      expect(rows.at(-1), name).toMatchObject({ method: 'GET', status: 200, client: D.dev1, user: SCRIPT_LAB_USER });
+    }
+    sim.runToIdle();
+    expect(passes(sim, SLAB)).toEqual(SCRIPT_PASS);
+    expect(evaluateLab(sim, SLAB).score).toBe(100);
+  }, LAB_TEST_TIMEOUT_MS);
+});
+
+describe('ccna3-script-inventory: wrong answers (one near miss or more per task)', () => {
+  it('the run: the script run before the fix only — it fails at SW3, and the newest run is a failure', () => {
+    const sim = scriptWorld();
+    solveScript(sim, { solution: {} });
+    expect(runRows(sim).map((r) => [r.state, r.error])).toEqual([['failed', SW3_REFUSAL]]);
+    expect(passes(sim, SLAB)).toEqual({ 'inventory-completed': false, 'every-switch-read': false });
+    // the fix after that run changes nothing until the script runs again
+    typeOn(sim, 'SW3', ['ip http authentication local']);
+    sim.runToIdle();
+    expect(passes(sim, SLAB)).toEqual({ 'inventory-completed': false, 'every-switch-read': false });
+    typeRequests(sim, SCRIPT_LAB_RUNS);
+    expect(passes(sim, SLAB)).toEqual(SCRIPT_PASS);
+  }, LAB_TEST_TIMEOUT_MS);
+
+  it('the run: a copy of the script run under another name reads every switch, but inventory.py\'s own newest run failed', () => {
+    const sim = scriptWorld();
+    // the learner runs inventory.py (it fails), fixes SW3, then runs a copy instead of the script
+    solveScript(sim, { solution: {} });
+    typeOn(sim, 'SW3', ['ip http authentication local']);
+    save(sim, 'inventory2.py', SCRIPT_LAB_INVENTORY);
+    expect(finished(sim, workspaceRun(sim, 'inventory2.py')).state).toBe('completed');
+    expect(runRows(sim).map((r) => [r.file, r.state])).toEqual([
+      ['inventory.py', 'failed'],
+      ['inventory2.py', 'completed'],
+    ]);
+    sim.runToIdle();
+    expect(passes(sim, SLAB)).toEqual({ 'inventory-completed': false, 'every-switch-read': true });
+    const run = evaluateLab(sim, SLAB).results.find((r) => r.task === 'inventory-completed')!;
+    expect(run.assertions[0]!.detail).toContain('DEV1 automation.lastRun of inventory.py is failed, expected completed.');
+  }, LAB_TEST_TIMEOUT_MS);
+
+  it('the run: a run stopped from the workspace before it ends is no completed run', () => {
+    const sim = scriptWorld();
+    typeOn(sim, 'SW3', ['ip http authentication local']);
+    sim.runToIdle();
+    const token = workspaceRun(sim, SCRIPT_LAB_FILE);
+    // the first GET is on its way: Stop now
+    expect(hostView(sim).runs.at(-1)).toMatchObject({ state: 'running', waiting: 'http' });
+    sim.hostRequest(idOf(sim, 'DEV1'), { app: 'script.stop', run: token });
+    sim.runFor(5 * SEC);
+    sim.runToIdle();
+    expect(runRows(sim).map((r) => [r.file, r.state])).toEqual([['inventory.py', 'stopped']]);
+    expect(passes(sim, SLAB)).toEqual({ 'inventory-completed': false, 'every-switch-read': false });
+    expect(evaluateLab(sim, SLAB).results[0]!.assertions[0]!.detail).toContain('is stopped, expected completed.');
+  }, LAB_TEST_TIMEOUT_MS);
+
+  it('every switch: the script edited to skip the switch that refused completes, but SW3 was never read', () => {
+    const sim = scriptWorld();
+    const skipped = SCRIPT_LAB_INVENTORY.replace(`, "${D.sw3}"]`, ']');
+    expect(skipped).toContain(`SWITCHES = ["${D.sw1}", "${D.sw2}"]`);
+    save(sim, SCRIPT_LAB_FILE, skipped);
+    typeRequests(sim, SCRIPT_LAB_RUNS);
+    expect(runRows(sim).map((r) => [r.file, r.state, r.requests])).toEqual([['inventory.py', 'completed', 2]]);
+    expect(logOf(sim, 'SW3')).toEqual([]);
+    expect(passes(sim, SLAB)).toEqual({ 'inventory-completed': true, 'every-switch-read': false });
+    const read = evaluateLab(sim, SLAB).results.find((r) => r.task === 'every-switch-read')!;
+    expect(read.assertions.map((a) => a.pass)).toEqual([true, true, false]);
+    expect(read.misconception).toBe('refusal-blamed-on-the-script');
+  }, LAB_TEST_TIMEOUT_MS);
+
+  it('every switch: the fix typed on SW2, the switch before the one that refused, leaves SW3 refusing', () => {
+    const sim = scriptWorld();
+    solveScript(sim, { solution: { SW2: ['ip http authentication local'] } });
+    expect(logOf(sim, 'SW3')).toEqual([['GET', INTERFACES_PATH, 401]]);
+    expect(passes(sim, SLAB)).toEqual({ 'inventory-completed': false, 'every-switch-read': false });
+    expect(evaluateLab(sim, SLAB).results[1]!.assertions.map((a) => a.pass)).toEqual([true, true, false]);
+  }, LAB_TEST_TIMEOUT_MS);
+});
+
+describe('ccna3-script-inventory: determinism', () => {
+  /** The lab's script: load, boot, the fix (configure), the learner's run (a journaled cliExec job), some quiet time. */
+  function script(): Simulation {
+    const sim = scriptWorld({ traceCapacity: TRACE_CAPACITY });
+    solveScript(sim);
+    sim.runFor(10 * SEC);
+    return sim;
+  }
+
+  it('the journal replays the fix and the run exactly: byte-identical trace and snapshot JSON', () => {
+    const live = script();
+    const journal = live.journal();
+    expect(journal.entries.filter((e) => e.op.op === 'cliExec' && e.op.line.startsWith('python ')).map((e) => (e.op.op === 'cliExec' ? e.op.line : ''))).toEqual([
+      ...SCRIPT_LAB_RUNS[0]!.lines,
+    ]);
+    const replay = createReplay(journal, { traceCapacity: TRACE_CAPACITY });
+    const r = replay.advance(live.position());
+    expect(r.reached).toBe(true);
+    expect(replay.position()).toEqual(live.position());
+    const head = journal.origin.counters.traceHead;
+    expect(JSON.stringify(replay.sim.trace(head).events)).toBe(JSON.stringify(live.trace(head).events));
+    expect(JSON.stringify(replay.sim.snapshot())).toBe(JSON.stringify(live.snapshot()));
+    expect(runRows(replay.sim)).toEqual(runRows(live));
+    expect(evaluateLab(replay.sim, SLAB).score).toBe(100);
   }, LAB_TEST_TIMEOUT_MS);
 
   it('three runs with one seed give byte-identical trace and snapshot JSON', () => {

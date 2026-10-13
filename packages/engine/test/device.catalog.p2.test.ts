@@ -82,9 +82,13 @@ const P2_ORDER_AFTER_W6: readonly ProcessName[] = [
 const W4_DAEMONS: readonly ProcessName[] = ['vlan', 'dtp', 'etherchannel', 'stp', 'nat', 'hsrp', 'dhcpv6-client', 'dhcpv6-server'];
 /** The daemons the W6 catalog item registered. */
 const W6_DAEMONS: readonly ProcessName[] = ['capwap-wtp', 'capwap-ac'];
-/** ARCHITECTURE-P3 §9.2 W4 item 32: the fifteen daemons the P3 catalog flip registered (seven MUST, eight approved). */
+/**
+ * ARCHITECTURE-P3 §9.2 W4 item 32: the fifteen daemons the P3 catalog flip registered (seven MUST, eight approved);
+ * §9.2 W6 item 40b re-derives the pin by the same rule: the W6 flip's [S32] `script-host` is a P3 daemon too.
+ */
 const P3_DAEMONS: readonly ProcessName[] = [
   'ppp', 'cdp', 'lldp', 'acl', 'gre', 'vty', 'vty-client', 'logger', 'ntp', 'syslog-server', 'ospf', 'eigrp', 'ike', 'restconf', 'traffic',
+  'script-host',
 ];
 /** Every host runs this list since the flip (dhcpv6-client after dhcp-client). */
 const HOST_STACK: readonly ProcessName[] = ['arp', 'ipv4', 'icmpv4', 'host', 'ipv6', 'nd', 'icmpv6', 'udp', 'tcp', 'dhcp-client', 'dhcpv6-client', 'dns-client', 'http-client', 'traceroute'];
@@ -126,8 +130,8 @@ describe('the W4 catalog flip: stage, order and registry', () => {
   it('PROCESS_ORDER holds the eight W4 daemons and the two W6 daemons at their §2.1 positions and nothing unapproved', () => {
     // §9.2 W6 (§0 rule 3): the W6 catalog item inserted capwap-wtp and capwap-ac with their factories; the W4 order
     // is kept exactly around them
-    // ARCHITECTURE-P3 §9.2 W4 item 32: the P3 flip inserted its fifteen daemons; without them the P2 order is kept
-    // exactly (PROCESS_ORDER itself is pinned in device.catalog.p3.test.ts)
+    // ARCHITECTURE-P3 §9.2 W4 item 32: the P3 flip inserted its fifteen daemons (and the W6 flip [S32] script-host,
+    // item 40b); without them the P2 order is kept exactly (PROCESS_ORDER itself is pinned in device.catalog.p3.test.ts)
     expect(PROCESS_ORDER.filter((n) => !P3_DAEMONS.includes(n))).toEqual(P2_ORDER_AFTER_W6);
     expect(PROCESS_ORDER.filter((n) => !P3_DAEMONS.includes(n) && !W6_DAEMONS.includes(n))).toEqual(P2_ORDER_AFTER_W4);
     for (const name of ['vtp', 'radius-server']) expect(PROCESS_ORDER).not.toContain(name);

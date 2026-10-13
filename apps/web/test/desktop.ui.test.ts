@@ -188,6 +188,20 @@ describe('DesktopTab', () => {
     expect(t).not.toContain('PC1 ·');
   });
 
+  it('offers NF-DEVHOST the automation workspace after the traffic app (ARCHITECTURE-P3 §9.2 W6 item 40b)', () => {
+    // the [S32] flip: the real catalog's programmable host, here in a P1-profile world (D2: a profile never gates a feature)
+    const dev = createSimulation({ seed: 1 });
+    dev.addDevice({ id: 'dev1', type: 'pc.nfdevhost', name: 'DEV1', position: { x: 0, y: 0 } });
+    dev.runFor(60 * SEC);
+    const devSnap = dev.snapshot();
+    expect(desktopAppsFor(device(devSnap, 'dev1'))).toEqual(['desktop.ip-config', 'desktop.command-prompt', 'desktop.web-browser', 'desktop.traffic', 'desktop.automation']);
+    expect(desktopAppAvailability('desktop.automation')).toEqual({ ok: true });
+    useSnapshot(devSnap);
+    const html = renderToStaticMarkup(createElement(DesktopTab, { device: device(devSnap, 'dev1') }));
+    expect((html.match(/data-app="/g) ?? []).length).toBe(5);
+    expect(html).toContain('data-app="desktop.automation"');
+  });
+
   it('says when a device has no apps and when it is off', () => {
     useSnapshot(snap);
     expect(text(renderToStaticMarkup(createElement(DesktopTab, { device: device(snap, 'home1') })))).toContain('This device has no desktop apps.');

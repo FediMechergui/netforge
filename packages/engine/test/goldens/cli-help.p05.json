@@ -973,7 +973,6 @@
       "arp",
       "cdp",
       "clock",
-      "controllers",
       "dtp",
       "errdisable",
       "etherchannel",
@@ -1104,7 +1103,6 @@
       "arp",
       "cdp",
       "clock",
-      "controllers",
       "dtp",
       "errdisable",
       "etherchannel",
@@ -1235,7 +1233,6 @@
       "arp",
       "cdp",
       "clock",
-      "controllers",
       "dtp",
       "errdisable",
       "etherchannel",
@@ -1366,7 +1363,6 @@
       "arp",
       "cdp",
       "clock",
-      "controllers",
       "dtp",
       "errdisable",
       "etherchannel",
@@ -1497,7 +1493,6 @@
       "arp",
       "cdp",
       "clock",
-      "controllers",
       "dtp",
       "errdisable",
       "etherchannel",
@@ -2567,7 +2562,6 @@
     ],
     "priv-exec show": [
       "arp",
-      "controllers",
       "history",
       "interfaces",
       "ip",
@@ -2624,7 +2618,6 @@
     ],
     "priv-exec show": [
       "arp",
-      "controllers",
       "history",
       "interfaces",
       "ip",
@@ -2681,7 +2674,6 @@
     ],
     "priv-exec show": [
       "arp",
-      "controllers",
       "history",
       "interfaces",
       "ip",
@@ -2738,7 +2730,6 @@
     ],
     "priv-exec show": [
       "arp",
-      "controllers",
       "history",
       "interfaces",
       "ip",
@@ -2795,7 +2786,6 @@
     ],
     "priv-exec show": [
       "arp",
-      "controllers",
       "history",
       "interfaces",
       "ip",
@@ -2875,7 +2865,6 @@
     ],
     "priv-exec show": [
       "arp",
-      "controllers",
       "history",
       "interfaces",
       "ip",
@@ -3389,7 +3378,6 @@
     ],
     "priv-exec show": [
       "arp",
-      "controllers",
       "history",
       "interfaces",
       "ip",
@@ -3487,7 +3475,6 @@
     "priv-exec show": [
       "arp",
       "capwap",
-      "controllers",
       "history",
       "interfaces",
       "ip",
@@ -3588,7 +3575,6 @@
     ],
     "priv-exec show": [
       "arp",
-      "controllers",
       "history",
       "interfaces",
       "ip",
@@ -3685,7 +3671,6 @@
     ],
     "priv-exec show": [
       "arp",
-      "controllers",
       "history",
       "interfaces",
       "ip",
@@ -3787,7 +3772,6 @@
       "capwap",
       "cdp",
       "clock",
-      "controllers",
       "history",
       "interfaces",
       "ip",
@@ -4340,7 +4324,6 @@
     ],
     "priv-exec show": [
       "arp",
-      "controllers",
       "history",
       "interfaces",
       "ip",
@@ -4424,7 +4407,6 @@
     ],
     "priv-exec show": [
       "arp",
-      "controllers",
       "history",
       "interfaces",
       "ip",
@@ -4508,7 +4490,6 @@
     ],
     "priv-exec show": [
       "arp",
-      "controllers",
       "history",
       "interfaces",
       "ip",
@@ -4587,7 +4568,6 @@
     ],
     "priv-exec show": [
       "arp",
-      "controllers",
       "history",
       "interfaces",
       "ip",
@@ -4664,7 +4644,6 @@
     ],
     "priv-exec show": [
       "arp",
-      "controllers",
       "history",
       "interfaces",
       "ip",
@@ -4741,7 +4720,6 @@
     ],
     "priv-exec show": [
       "arp",
-      "controllers",
       "history",
       "interfaces",
       "ip",
@@ -4818,7 +4796,6 @@
     ],
     "priv-exec show": [
       "arp",
-      "controllers",
       "history",
       "interfaces",
       "ip",
@@ -5056,6 +5033,41 @@
       "running-config",
       "version",
       "wireless"
+    ]
+  },
+  "pc.nfdevhost": {
+    "user-exec": [
+      "adapter",
+      "arp",
+      "del",
+      "dir",
+      "exit",
+      "flow",
+      "ip",
+      "ipconfig",
+      "ipv6",
+      "ipv6config",
+      "netstat",
+      "no",
+      "nslookup",
+      "ping",
+      "python",
+      "python3",
+      "rest",
+      "show",
+      "ssh",
+      "telnet",
+      "tracert",
+      "type"
+    ],
+    "user-exec show": [
+      "arp",
+      "history",
+      "hosts",
+      "interfaces",
+      "ip",
+      "running-config",
+      "version"
     ]
   },
   "server.nfserver": {

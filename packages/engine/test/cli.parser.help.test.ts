@@ -80,6 +80,10 @@ describe('help lists', () => {
     // ARCHITECTURE-P3 §9.2 W6 item 40h (ruling R56): the bare `show controllers` form is listed
     expect(tokens(help(GRAMMAR, priv, 'show '))).toEqual(['access-lists', 'arp', 'cdp', 'class-map', 'clock', 'controllers', 'crypto', 'history', 'hosts', 'interfaces', 'ip', 'ipv6', 'lldp', 'logging', 'ntp', 'policy-map', 'ppp', 'restconf', 'running-config', 'ssh', 'standby', 'startup-config', 'users', 'version']);
     expect(tokens(help(GRAMMAR, sw, 'show '))).toContain('mac');
+    // ARCHITECTURE-P3 §9.2 ruling R58 (d) (W6b cli, item 40n): the bare `show controllers` is listed only on models with
+    // the routing capability and on the Internet cloud, so the layer-2 switch does not offer it (it still runs there,
+    // unlisted)
+    expect(tokens(help(GRAMMAR, sw, 'show '))).not.toContain('controllers');
     expect(tokens(help(GRAMMAR, pc, 'show '))).toEqual(['arp', 'history', 'hosts', 'interfaces', 'ip', 'running-config', 'version']);
   });
 

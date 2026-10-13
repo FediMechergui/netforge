@@ -8,8 +8,9 @@
  * At two points of that world —
  *   • UNSOLVED: as loaded, every scheduled fault landed;
  *   • SOLVED: the reference solution through `configure` as written, then the actions the lab asks the learner to take
- *     before Check (labs 15 and 19: the remote logins; lab 27: the voice burst; lab 38: the RESTCONF requests — the lab
- *     files give them as data, typed here on the hosts' consoles as labs.ccna3.solutions does), settled. There the live
+ *     before Check (labs 15 and 19: the remote logins; lab 27: the voice burst; lab 38: the RESTCONF requests; lab 40:
+ *     the run of the inventory script on DEV1 — the lab files give them as data, typed here on the hosts' consoles as
+ *     labs.ccna3.solutions does), settled. There the live
  *     grader must give every lab with a solution full marks, so a lab whose learner actions are missing from
  *     LEARNER_ACTIONS fails here instead of passing vacuously —
  * the world is saved (`exportTopology`) and three statuses are taken:
@@ -39,7 +40,14 @@ import { MS, SEC } from '../src/contracts/time.js';
 import type { Topology } from '../src/contracts/topology.js';
 import { GRADE_SETTLE_MS, gradeTopology, isDocumentTopology } from '../src/sim/grade.js';
 import { evaluateLab } from '../src/sim/lab-checks.js';
-import { ACL_STANDARD_LOGINS, CCNA3_LABS, QOS_LEARNER_FLOWS, RESTCONF_LAB_REQUESTS, SECURE_ACCESS_LOGINS } from '../src/sim/scenarios/ccna3/index.js';
+import {
+  ACL_STANDARD_LOGINS,
+  CCNA3_LABS,
+  QOS_LEARNER_FLOWS,
+  RESTCONF_LAB_REQUESTS,
+  SCRIPT_LAB_RUNS,
+  SECURE_ACCESS_LOGINS,
+} from '../src/sim/scenarios/ccna3/index.js';
 import { CCNA1_LABS, CCNA2_LABS } from '../src/sim/scenarios.js';
 import { createSimulation } from '../src/sim/simulation.js';
 
@@ -58,6 +66,8 @@ const LEARNER_ACTIONS: Readonly<Record<string, readonly { readonly from: string;
   'ccna3-secure-device-access': SECURE_ACCESS_LOGINS,
   'ccna3-qos-voice-first': QOS_LEARNER_FLOWS,
   'ccna3-restconf-change': RESTCONF_LAB_REQUESTS,
+  // §9.2 item 40m: lab 40's run of inventory.py on DEV1 (§3.8 step 8), once the solution has fixed SW3
+  'ccna3-script-inventory': SCRIPT_LAB_RUNS,
 };
 
 type Point = 'unsolved' | 'solved';
@@ -70,8 +80,8 @@ type ReloadReason =
   | 'access-list renumbered'
   /** Clocks restart unset on a reload (no hardware calendar, §12 R2 (18)): a source the live clock kept is gone. */
   | 'device clock'
-  /** Rows the learner's own actions wrote — remote logins, list hit counts, a generated flow, a syslog line — are
-   *  runtime tables a reload empties. */
+  /** Rows the learner's own actions wrote — remote logins, list hit counts, a generated flow, a syslog line, an API
+   *  request, a script run — are runtime tables a reload empties. */
   | 'learner history';
 
 /** One assertion whose verdict differs between the learner's world and its saved copy, and why. */
@@ -150,6 +160,17 @@ const RELOAD_DIFFERENCES: readonly ReloadDifference[] = [
     lab: 'ccna3-restconf-change',
     point: 'solved' as const,
     task: 'through-the-api',
+    assertion: { kind: 'table', device, table: 'restconf-log' },
+    reason: 'learner history' as const,
+  })),
+  // lab 40 (§9.2 item 40m): the learner's script run — DEV1's `automation.lastRun` fact reads the runtime-only
+  // `script-runs` table, and the run's GET of each switch's interfaces is a `restconf-log` row (R58 (b) turns these into
+  // "not gradable headless" in W7; the `script-runs` half awaits the architect, §9.2 W6b open items)
+  { lab: 'ccna3-script-inventory', point: 'solved', task: 'inventory-completed', assertion: { kind: 'fact', device: 'DEV1', fact: 'automation.lastRun' }, reason: 'learner history' },
+  ...(['SW1', 'SW2', 'SW3'] as const).map((device) => ({
+    lab: 'ccna3-script-inventory',
+    point: 'solved' as const,
+    task: 'every-switch-read',
     assertion: { kind: 'table', device, table: 'restconf-log' },
     reason: 'learner history' as const,
   })),

@@ -11,10 +11,23 @@
  * (every serial port) and the slot form `show controllers serial 0/0/0` (the interface typed as its family word and
  * number, which the parser joins as it does for `interface serial 0/0/0`). Both run the accepted form's handler with
  * the same arguments, so their output is that of `show controllers serial [<iface>]` byte for byte. As R56 says ("the
- * help golden gains them as additions"; W6a integration, §9.2 item 40h), this form is listed by `?`: `show ` offers
- * `controllers` wherever the network OS runs, and `show controllers ` offers the serial ports. The accepted P0.5 form
- * and `debug serial` stay hidden, so every other listing is unchanged.
+ * help golden gains them as additions"; W6a integration, §9.2 item 40h), this form is listed by `?`, and `show
+ * controllers ` offers the serial ports. The accepted P0.5 form and `debug serial` stay hidden, so every other listing
+ * is unchanged.
+ *
+ * P3 (ARCHITECTURE-P3 §9.2 ruling R58 (d); W6b cli): the visible form is offered only where a line controller can
+ * exist — "models with the routing capability or a serial port or slot". Capabilities are the only scope gate a spec
+ * has, so the listing follows `CONTROLLERS_LISTED_ON`: `routing` (routers, layer-3 switches, firewalls, home routers:
+ * every model with a serial module slot, and the serial-port routers) and `cloud` (the Internet cloud, the one `cloud`
+ * model, whose serial ports the ruling's "serial port" clause covers; it has no console, so only `?` sees it). The
+ * CSU/DSU, the one other serial-port model, declares only `modem`, the capability of the modems the ruling names among
+ * those no longer listing it, so no capability gate can list it without listing them: it stays unlisted until the
+ * architect rules on it (W6b review). Elsewhere (layer-2 switches, hubs, access points, modems, bridges) a hidden twin
+ * of the same path keeps the R56 lines executable exactly as before, as the accepted form is there: it prints the same
+ * refusal, but `?` no longer lists it. The two specs never share a scope (`requiresAny` / `excludesAny` on the same
+ * capabilities), so no line is ever ambiguous between them.
  */
+import type { Capability } from '../../contracts/catalog.js';
 import type { CommandSpec, PortRequirement } from '../../contracts/cli.js';
 import {
   choiceArg,
@@ -53,6 +66,27 @@ const CONTROLLER_IFACE = ifaceArg('Limit the output to one serial interface', {
   optional: true,
   portFilter: kindsPort(['serial'], MSG_NO_LINE_CONTROLLER),
 });
+
+/**
+ * @since P3 (ARCHITECTURE-P3 §9.2 ruling R58 (d); W6b cli) The capabilities that offer the visible `show controllers
+ * [<iface>]` form in `?` listings (`requiresAny`): `routing`, and `cloud` for the Internet cloud's serial ports (file
+ * header); models with neither keep the form as a hidden twin (`excludesAny`).
+ */
+export const CONTROLLERS_LISTED_ON: readonly Capability[] = Object.freeze<Capability[]>(['routing', 'cloud']);
+
+/** The R56 form `show controllers [<iface>]` (path, help, args, handler); R58 (d) splits its scope in two specs. */
+const R56_CONTROLLERS: CommandSpec = {
+  path: ['show', 'controllers', '<iface>'],
+  mode: '@exec',
+  privilege: 1,
+  help: 'Cable end, clock and framing of serial interfaces',
+  args: { iface: CONTROLLER_IFACE },
+  handler: H.showControllers,
+  filterable: true,
+  grammars: NFOS_ONLY,
+  since: 'P3',
+  objectives: ['CCNA2.7.1', 'CCNA3.wan.2'],
+};
 
 /** @since P3 Mismatch of `bandwidth` on a port that takes none. */
 export const MSG_BANDWIDTH_PORT = '% Bandwidth applies to serial interfaces, routed Ethernet interfaces, subinterfaces and tunnels.';
@@ -147,17 +181,15 @@ export const SERIAL_GRAMMAR: readonly CommandSpec[] = Object.freeze<CommandSpec[
     // and the slot form `show controllers serial 0/0/0`. Never ambiguous with the accepted form: a line both complete
     // matches the accepted form on one more keyword (`serial`), so `show controllers serial` stays its; a slot number
     // after `serial` is no interface name, so `show controllers serial 0/0/0` is this one's alone. Listed by `?` (R56,
-    // §9.2 item 40h).
-    path: ['show', 'controllers', '<iface>'],
-    mode: '@exec',
-    privilege: 1,
-    help: 'Cable end, clock and framing of serial interfaces',
-    args: { iface: CONTROLLER_IFACE },
-    handler: H.showControllers,
-    filterable: true,
-    grammars: NFOS_ONLY,
-    since: 'P3',
-    objectives: ['CCNA2.7.1', 'CCNA3.wan.2'],
+    // §9.2 item 40h) where R58 (d) offers it: on models with the routing capability, and the Internet cloud.
+    ...R56_CONTROLLERS,
+    requiresAny: CONTROLLERS_LISTED_ON,
+  },
+  {
+    // R58 (d): the same form on every other network-OS model, executable as R56 made it but no longer listed by `?`
+    ...R56_CONTROLLERS,
+    excludesAny: CONTROLLERS_LISTED_ON,
+    hidden: true,
   },
   ...debugSpecs(SERIAL_DEBUG_CATEGORIES, { serial: ['CCNA2.7.1'] }),
 ]);

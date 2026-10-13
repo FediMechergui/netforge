@@ -30,14 +30,30 @@
  * §3.8's; the password is a lab value; all wording is original (§0 rule 6) and the YANG paths use IETF modules and
  * `nf-native` only (§11.3).
  *
- * Lab 40 `ccna3-script-inventory` ([S32]) joins `CCNA3_AUTOMATION_LABS` in the step after the NF-DEVHOST catalog flip
- * (§7 W6, rule 14's order); `ccna3/index.ts` already lists it in `CCNA3_LAB_ORDER`.
+ * Since ruling R58 (c) the API logs the canonical path of the resource it read (protocols/restconf.ts
+ * `restconfLogPath`), so the whole-path match also grades an accepted PUT written `…/vlan-list=30/` or with the module
+ * repeated on a later step (`…/nf-native:native/nf-native:vlan/vlan-list=30`): both are the VLAN 30 entry.
+ *
+ *   • `ccna3-script-inventory` ([S32]) — lesson 40 "Scripting the network" (§3.8 step 8, §11.1): the same line of three
+ *     RESTCONF switches, managed from DEV1, an NF-DEVHOST whose `files:` store holds `inventory.py` (written by the lab
+ *     into `TopologyDevice.files`, schema 1.3): an NF-Py script that loops over the three switches with the
+ *     `requests`-style module, GETs each one's interfaces in the `ietf-interfaces` model, stops at the first refusal
+ *     (`raise_for_status`) and prints an inventory. The learner reads the script, runs it (the automation workspace's
+ *     Run, or `python inventory.py` in DEV1's command prompt), reads the traceback the first run ends with — SW3
+ *     answers `401`: its startup configuration lacks `ip http authentication local`, so its API accepts no login — fixes
+ *     SW3 on its console and runs the script again. Graded live (rule 20; the grader never runs a script, §2.10): `fact
+ *     automation.lastRun {device: 'DEV1', subject: 'inventory.py', equals: 'completed'}` (the newest run of that file,
+ *     from the `script-runs` table) and, on each switch, the `restconf-log` row of a GET of its interfaces from DEV1's
+ *     address answered `200`. The run is the learner's action, a CLI job, so the lab gives it as data,
+ *     `SCRIPT_LAB_RUNS` (the shape of `RESTCONF_LAB_REQUESTS`), and the `solution` holds the console fix on SW3.
  *
  * A lab file imports only the contracts, `../kit.js` and `../templates.js` (rule 12: the catalogue reads the arrays at
  * module scope, so no lab file may import it back). Every exported name carries a `RESTCONF_LAB_`, `restconfLab`,
- * `ccna3Restconf` or `CCNA3_AUTOMATION_` prefix, since `ccna3/index.ts` re-exports every lab file with `export *`.
+ * `ccna3Restconf`, `SCRIPT_LAB_`, `ccna3Script` or `CCNA3_AUTOMATION_` prefix, since `ccna3/index.ts` re-exports every
+ * lab file with `export *`.
  */
 import type { LabAssertion, ScenarioInfo } from '../../../contracts/scenario.js';
+import type { TopologyFile } from '../../../contracts/storage.js';
 import { MASK24, PC, SWITCH, accessPort, configText, device, link, section, topology, trunkPort, vlanSections } from '../kit.js';
 import { pcConfig } from '../templates.js';
 
@@ -71,8 +87,8 @@ export function restconfLabGetInterfaces(address: string): string {
 }
 
 /**
- * The request path of VLAN `id`'s entry in the `nf-native` VLAN list: what the PUT of step 3 names and, the query
- * removed, what a switch's `restconf-log` row keeps as written (automation/yang/path.ts).
+ * The request path of VLAN `id`'s entry in the `nf-native` VLAN list: what the PUT of step 3 names and, being already
+ * canonical, what a switch's `restconf-log` row keeps for every request to that entry (R58 (c), `restconfLogPath`).
  */
 const vlanEntryPath = (id: number): string => `/restconf/data/nf-native:native/vlan/vlan-list=${id}`;
 
@@ -287,5 +303,215 @@ export const ccna3RestconfChange: ScenarioInfo = {
   },
 };
 
-/** The CCNA 3 automation labs: lesson 38 (lab 40 [S32] joins after the NF-DEVHOST flip). */
-export const CCNA3_AUTOMATION_LABS: readonly ScenarioInfo[] = [ccna3RestconfChange];
+// ── lab 40 [S32]: a script inventories the switches through their API ─────────
+
+/** NF-DEVHOST, the developer workstation of the automation lessons (the catalog type of the W6 flip, `pc.nfdevhost`). */
+const DEVHOST = 'pc.nfdevhost';
+
+/** DEV1 and the three management SVIs (Vlan99) of SW1, SW2 and SW3: lab 38's addresses, DEV1 in PC1's place. */
+export const SCRIPT_LAB_ADDRESSES = Object.freeze({ dev1: '10.0.99.10', sw1: '10.0.99.11', sw2: '10.0.99.12', sw3: '10.0.99.13' });
+/** The privilege-15 local user of every switch and its password (a lab value; the script carries it). */
+export const SCRIPT_LAB_USER = 'admin';
+export const SCRIPT_LAB_SECRET = 'Api-Lab40';
+/** The script's file in DEV1's `files:` store. */
+export const SCRIPT_LAB_FILE = 'inventory.py';
+/** The API resource the script reads on each switch, the path every switch's `restconf-log` row records for it. */
+export const SCRIPT_LAB_PATH = '/restconf/data/ietf-interfaces:interfaces';
+/** The switch whose API refuses every login at the start, and the line that makes it check logins. */
+export const SCRIPT_LAB_FAULTY = Object.freeze({ device: 'SW3', line: 'ip http authentication local' });
+
+const S = SCRIPT_LAB_ADDRESSES;
+
+/**
+ * The script the lab saves in DEV1's store (original text): one GET of the interfaces per switch, in order, each
+ * answer checked with `raise_for_status` before it is read, so the first refusal ends the run with a traceback whose
+ * last line names the status and the address; then the inventory, one line per switch and one per described interface.
+ */
+export const SCRIPT_LAB_INVENTORY = [
+  '# inventory.py - read the interfaces of every switch through its RESTCONF API',
+  'import requests',
+  '',
+  `SWITCHES = ["${S.sw1}", "${S.sw2}", "${S.sw3}"]`,
+  `AUTH = ("${SCRIPT_LAB_USER}", "${SCRIPT_LAB_SECRET}")`,
+  '',
+  'total = 0',
+  'for address in SWITCHES:',
+  `    url = "https://" + address + "${SCRIPT_LAB_PATH}"`,
+  '    r = requests.get(url, auth=AUTH)',
+  '    r.raise_for_status()',
+  '    interfaces = r.json()["ietf-interfaces:interfaces"]["interface"]',
+  '    total += len(interfaces)',
+  '    print(address, "has", len(interfaces), "interfaces")',
+  '    for i in interfaces:',
+  '        if "description" in i:',
+  '            print("  " + i["name"] + ": " + i["description"])',
+  'print("Inventory complete:", total, "interfaces on", len(SWITCHES), "switches")',
+  '',
+].join('\n');
+
+/** The script as a file of DEV1's `files:` store (`TopologyDevice.files`, schema 1.3). */
+const scriptLabFile = (): TopologyFile => ({ path: SCRIPT_LAB_FILE, content: SCRIPT_LAB_INVENTORY });
+
+/**
+ * @since P3 [S32] What lab 40 asks the learner to do before Check, beyond the console fix: run the script once SW3 is
+ * fixed, typed here as the line of DEV1's command prompt (the automation workspace's Run is the same `script.run`). A
+ * run is a CLI job (journaled as `cliExec`), which `Simulation.configure` refuses, so the reference solution cannot
+ * hold it (the shape of `RESTCONF_LAB_REQUESTS`).
+ */
+export const SCRIPT_LAB_RUNS: readonly { readonly from: string; readonly lines: readonly string[] }[] = Object.freeze([
+  Object.freeze({ from: 'DEV1', lines: Object.freeze([`python ${SCRIPT_LAB_FILE}`]) }),
+]);
+
+/**
+ * One switch of lab 40: the local user, the HTTPS server and `restconf` (and, unless `checksLogins` is false, `ip http
+ * authentication local`), the management VLAN and SVI, and its ports.
+ */
+function scriptSwitchConfig(name: string, address: string, ports: readonly (readonly string[])[], checksLogins = true): string {
+  return configText([
+    [`hostname ${name}`],
+    [`username ${SCRIPT_LAB_USER} privilege 15 secret ${SCRIPT_LAB_SECRET}`],
+    ['ip http secure-server'],
+    ...(checksLogins ? [[SCRIPT_LAB_FAULTY.line]] : []),
+    ['restconf'],
+    ...vlanSections([{ id: RESTCONF_LAB_MGMT_VLAN, name: 'MGMT' }]),
+    ...ports,
+    section(`interface Vlan${RESTCONF_LAB_MGMT_VLAN}`, [`ip address ${address} ${MASK24}`, 'no shutdown']),
+  ]);
+}
+
+/**
+ * A trunk port carrying the management VLAN, described with the switch at its other end (the descriptions are what the
+ * inventory prints under each switch).
+ */
+const describedTrunk = (port: string, to: string): string[] => section(`interface ${port}`, [`description trunk to ${to}`, 'switchport mode trunk']);
+
+/** DEV1's edge port on SW1, in the management VLAN. */
+const devPort = (): string[] =>
+  section('interface FastEthernet0/1', ['description DEV1 automation host', 'switchport mode access', `switchport access vlan ${RESTCONF_LAB_MGMT_VLAN}`, 'spanning-tree portfast']);
+
+/** The `restconf-log` row a run leaves on `device`: a GET of its interfaces from DEV1, answered 200. */
+function scriptGetLogged(device: string, misconception?: string): LabAssertion {
+  return {
+    kind: 'table',
+    device,
+    table: 'restconf-log',
+    where: { method: 'GET', path: SCRIPT_LAB_PATH, status: 200, client: S.dev1 },
+    exists: true,
+    feedback: `${device} has not answered a GET of its interfaces from DEV1 with 200 OK: the run must reach ${device}, and ${device} must accept the script's login.`,
+    ...(misconception !== undefined ? { misconception } : {}),
+  };
+}
+
+/** Lab 40: run an inventory script on the developer host, read its traceback, fix the switch it names, run it again. */
+export const ccna3ScriptInventory: ScenarioInfo = {
+  name: 'ccna3-script-inventory',
+  category: 'ccna3-lab',
+  labType: 'guided',
+  course: 'CCNA 3',
+  topic: 'Automating the network',
+  title: 'An inventory script over the device API',
+  description:
+    'A Python script on the developer host reads the interfaces of three switches through their RESTCONF API. Run it, read the traceback it stops with, fix the switch it names, and run it again until the inventory is complete.',
+  objectives: [
+    'Read a short Python script that calls a device API in a loop and predict what it prints',
+    'Run a script on a developer host and follow its requests one switch at a time',
+    'Read a traceback: the exception, the status code and the address of the device that refused',
+    'Fix the device a script cannot use, then confirm the run and the requests each device logged',
+  ],
+  tags: ['python', 'script', 'requests', 'restconf', 'traceback', 'http status codes', 'device api', 'automation'],
+  difficulty: 2,
+  estimatedMinutes: 20,
+  requires: [DEVHOST, SWITCH],
+  seed: 3040,
+  instructions: [
+    '## What you have',
+    '',
+    `DEV1 (\`${S.dev1}\`) is a developer workstation on VLAN ${RESTCONF_LAB_MGMT_VLAN}. Three switches in a line, SW1, SW2 and SW3, are joined by trunks and managed on VLAN ${RESTCONF_LAB_MGMT_VLAN} at \`${S.sw1}\`, \`${S.sw2}\` and \`${S.sw3}\`. Each one is meant to answer the RESTCONF API over HTTPS for the local user \`${SCRIPT_LAB_USER}\` (privilege 15), password \`${SCRIPT_LAB_SECRET}\`.`,
+    '',
+    `DEV1's files hold \`${SCRIPT_LAB_FILE}\`, a short Python script. Open DEV1's automation workspace to read it, edit it and run it; or type \`dir\`, \`type ${SCRIPT_LAB_FILE}\` and \`python ${SCRIPT_LAB_FILE}\` in DEV1's command prompt.`,
+    '',
+    '## 1. Read the script before you run it',
+    '',
+    `- For each address in \`SWITCHES\`, the script sends one GET of \`${SCRIPT_LAB_PATH}\` with the user name and password in \`AUTH\`. Each call waits for its answer before the next one starts.`,
+    '- `r.raise_for_status()` stops the script with an exception when the answer is a 4xx or 5xx status, before the script reads a body that holds no interfaces.',
+    '- Predict what it prints for a switch that answers, and what happens when one refuses.',
+    '',
+    '## 2. Run it and read how it ends',
+    '',
+    `- Run the script (Run in the workspace, or \`python ${SCRIPT_LAB_FILE}\`). The output shows the switches it read; the requests list shows every call with its status code.`,
+    '- If the run ends with a traceback, read its last line: the exception, the status code and the address of the switch that refused.',
+    '',
+    '## 3. Fix the switch, not the script',
+    '',
+    '- Find out on that switch\'s console why its API refuses the login: `show restconf` says how it checks logins. Fix the configuration there.',
+    `- Keep the script as it is: removing a switch from \`SWITCHES\` makes the run complete, but the inventory then misses a switch.`,
+    '',
+    '## 4. Run it again',
+    '',
+    '- Run the script again. It completes when every switch answers `200 OK`, and its last line counts the interfaces it found on the three switches.',
+    '- Check reads the newest run of the script on DEV1 and the request log of each switch; it never runs the script itself.',
+    '',
+    '## Timing',
+    '',
+    'The switches take about 30 s to start, and spanning tree lets their trunks forward 30 s after that, so allow about a minute before the first run. After that a run takes well under a second.',
+    '',
+    '*TLS is simulated: no handshake bytes cross the wire, and the capture shows the HTTP of each request decoded under a "Protected (TLS, simulated)" banner.*',
+  ].join('\n'),
+  build: () =>
+    topology(
+      3040,
+      [
+        {
+          ...device('dev1', DEVHOST, 'DEV1', 150, 260, pcConfig('DEV1', S.dev1, MASK24)),
+          files: [scriptLabFile()],
+        },
+        device('sw1', SWITCH, 'SW1', 370, 260, scriptSwitchConfig('SW1', S.sw1, [devPort(), describedTrunk('GigabitEthernet0/2', 'SW2')])),
+        device('sw2', SWITCH, 'SW2', 590, 260, scriptSwitchConfig('SW2', S.sw2, [describedTrunk('GigabitEthernet0/1', 'SW1'), describedTrunk('GigabitEthernet0/2', 'SW3')])),
+        device('sw3', SWITCH, 'SW3', 810, 260, scriptSwitchConfig('SW3', S.sw3, [describedTrunk('GigabitEthernet0/1', 'SW2')], false)),
+      ],
+      [
+        link('l_dev1_sw1', 'dev1', 'GigabitEthernet0', 'sw1', 'FastEthernet0/1'),
+        link('l_sw1_sw2', 'sw1', 'GigabitEthernet0/2', 'sw2', 'GigabitEthernet0/1'),
+        link('l_sw2_sw3', 'sw2', 'GigabitEthernet0/2', 'sw3', 'GigabitEthernet0/1'),
+      ],
+      ['Read a script that calls a device API', 'Run it and read its traceback', 'Fix the switch that refused', 'Run it to the end'],
+      'A script repeats one API call for every device in a list. When a device refuses, the traceback names the status code and the address, and the fix belongs on that device.',
+      { profile: 'P3' },
+    ),
+  tasks: [
+    {
+      id: 'inventory-completed',
+      title: 'The inventory script ran to the end',
+      description: `The newest run of ${SCRIPT_LAB_FILE} on DEV1 completed.`,
+      points: 40,
+      hint: 'Read the last line of the traceback: it names the status code and the address of the switch that refused. Fix that switch, then run the script again.',
+      assertions: [
+        {
+          kind: 'fact',
+          device: 'DEV1',
+          fact: 'automation.lastRun',
+          subject: SCRIPT_LAB_FILE,
+          equals: 'completed',
+          feedback: `Run ${SCRIPT_LAB_FILE} on DEV1 once every switch accepts its login: its newest run must reach the last line of the script.`,
+        },
+      ],
+      feedbackOnFail: 'Check reads the newest run of the script: a run that ended with a traceback, or was stopped, does not count.',
+    },
+    {
+      id: 'every-switch-read',
+      title: 'Every switch answered the script',
+      description: 'SW1, SW2 and SW3 each answered a GET of their interfaces from DEV1 with 200 OK.',
+      points: 60,
+      hint: 'show restconf on a switch lists the requests it answered, with their status codes, and says how it checks logins.',
+      assertions: [scriptGetLogged('SW1'), scriptGetLogged('SW2'), scriptGetLogged('SW3', 'refusal-blamed-on-the-script')],
+      feedbackOnFail: 'A 401 is the switch refusing the login: the fix is on that switch, not in the script.',
+    },
+  ],
+  solution: {
+    // the fix on SW3's console; the run is SCRIPT_LAB_RUNS (module header)
+    [SCRIPT_LAB_FAULTY.device]: [SCRIPT_LAB_FAULTY.line],
+  },
+};
+
+/** The CCNA 3 automation labs, in course order: lesson 38's and lesson 40's ([S32]). */
+export const CCNA3_AUTOMATION_LABS: readonly ScenarioInfo[] = [ccna3RestconfChange, ccna3ScriptInventory];

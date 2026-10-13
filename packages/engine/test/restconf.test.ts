@@ -13,6 +13,11 @@
  * CLI refuses applies nothing and answers 400 with the CLI's own error text; the `restconf-log` bound (50 rows, the
  * oldest deleted with reason 'replaced'); `configChange` carrying the origin {via, user, address}; TLS-protected data
  * segments; silence without both service lines; and the listener closing when a line is removed.
+ *
+ * Ruling R58 (c) (W6b auto): the `restconf-log` row records the canonical path of the resource the API read
+ * (`restconfLogPath`): a trailing `/` dropped, a module prefix a step repeats from its parent collapsed, keys in their
+ * canonical percent-encoding, never the query; a target outside the RESTCONF resources keeps its path as written. Pinned
+ * as a pure function and on the staged world, where every accepted PUT to one entry logs one path.
  */
 import { describe, expect, it } from 'vitest';
 import type { Process, ProcessFactory } from '../src/contracts/process.js';
@@ -35,6 +40,7 @@ import {
   MSG_RESTCONF_NO_AUTH_METHOD,
   RESTCONF_JSON_TYPE,
   RESTCONF_LOG_LIMIT,
+  restconfLogPath,
 } from '../src/protocols/restconf.js';
 import { createConfigAst } from '../src/cli/config-ast.js';
 import { createStagedSimulation, NF_DEVHOST_TYPE } from './staged.world.js';
@@ -186,6 +192,53 @@ describe('restconf: configuration readers', () => {
   });
 });
 
+describe('restconf: the logged path is the canonical path of the resource (R58 (c))', () => {
+  const VLAN30 = '/restconf/data/nf-native:native/vlan/vlan-list=30';
+
+  it('drops a trailing / and the query, and collapses a module prefix a step repeats from its parent', () => {
+    // the canonical form is a fixed point
+    expect(restconfLogPath(VLAN30)).toBe(VLAN30);
+    expect(restconfLogPath(`${VLAN30}/`)).toBe(VLAN30);
+    expect(restconfLogPath(`${VLAN30}?depth=1&fields=name`)).toBe(VLAN30);
+    expect(restconfLogPath(`${VLAN30}/?depth=1`)).toBe(VLAN30);
+    expect(restconfLogPath(`${VLAN30}#top`)).toBe(VLAN30);
+    // the module repeated on one later step, or on every one
+    expect(restconfLogPath('/restconf/data/nf-native:native/nf-native:vlan/vlan-list=30')).toBe(VLAN30);
+    expect(restconfLogPath('/restconf/data/nf-native:native/vlan/nf-native:vlan-list=30')).toBe(VLAN30);
+    expect(restconfLogPath('/restconf/data/nf-native:native/nf-native:vlan/nf-native:vlan-list=30/')).toBe(VLAN30);
+    // a whole URL (scheme and authority skipped)
+    expect(restconfLogPath('https://10.0.99.11/restconf/data/nf-native:native/nf-native:vlan/vlan-list=30/')).toBe(VLAN30);
+    // a step of another module keeps its prefix, and a later step of that module is collapsed against it
+    expect(restconfLogPath('/restconf/data/ietf-interfaces:interfaces/ietf-interfaces:interface=Vlan1/ietf-ip:ipv4/ietf-ip:address')).toBe(
+      '/restconf/data/ietf-interfaces:interfaces/interface=Vlan1/ietf-ip:ipv4/address',
+    );
+    expect(restconfLogPath('/restconf/data/ietf-interfaces:interfaces/interface=Vlan1/ietf-ip:ipv4')).toBe('/restconf/data/ietf-interfaces:interfaces/interface=Vlan1/ietf-ip:ipv4');
+    // the first step always names its module, even when a later step repeats it
+    expect(restconfLogPath('/restconf/data/nf-native:native')).toBe('/restconf/data/nf-native:native');
+  });
+
+  it('writes key values in their canonical percent-encoding', () => {
+    expect(restconfLogPath('/restconf/data/ietf-interfaces:interfaces/interface=GigabitEthernet0%2F1')).toBe('/restconf/data/ietf-interfaces:interfaces/interface=GigabitEthernet0%2F1');
+    expect(restconfLogPath('/restconf/data/ietf-interfaces:interfaces/interface=GigabitEthernet0%2f1/')).toBe('/restconf/data/ietf-interfaces:interfaces/interface=GigabitEthernet0%2F1');
+    expect(restconfLogPath('/restconf/data/ietf-interfaces:interfaces/interface=%56lan99')).toBe('/restconf/data/ietf-interfaces:interfaces/interface=Vlan99');
+  });
+
+  it('gives the API root, the datastore and the operations their one form; anything else keeps its path as written', () => {
+    expect(restconfLogPath('/restconf')).toBe('/restconf');
+    expect(restconfLogPath('/restconf/')).toBe('/restconf');
+    expect(restconfLogPath('/restconf/data')).toBe('/restconf/data');
+    expect(restconfLogPath('/restconf/data/')).toBe('/restconf/data');
+    expect(restconfLogPath('/restconf/operations/')).toBe('/restconf/operations');
+    expect(restconfLogPath('/restconf/operations/nf-native:save-config/')).toBe('/restconf/operations/nf-native:save-config');
+    // outside the RESTCONF resources: the path as written, without the query
+    expect(restconfLogPath('/.well-known/host-meta')).toBe('/.well-known/host-meta');
+    expect(restconfLogPath('/api/v1/vlans/?x=1')).toBe('/api/v1/vlans/');
+    // a target the parser cannot read: the text before its query
+    expect(restconfLogPath('/restconf/data/nf-native:native//vlan?depth=1')).toBe('/restconf/data/nf-native:native//vlan');
+    expect(restconfLogPath('/restconf/data/vlan')).toBe('/restconf/data/vlan');
+  });
+});
+
 describe('restconf on staged.world (§3.8)', () => {
   it('GET answers 200 with RFC 7951 JSON over TLS-protected segments; HEAD has the headers and no body', () => {
     const w = world();
@@ -237,6 +290,32 @@ describe('restconf on staged.world (§3.8)', () => {
       ['PUT', '/restconf/data/nf-native:native/vlan/vlan-list=30', 201, DEV, 'admin'],
       ['PUT', '/restconf/data/nf-native:native/vlan/vlan-list=30', 204, DEV, 'admin'],
       ['PUT', '/restconf/data/nf-native:native/vlan/vlan-list=30', 204, DEV, 'admin'],
+    ]);
+  });
+
+  it('R58 (c): every accepted PUT to one entry logs one path, however it was written; the query is never logged', () => {
+    const w = world();
+    const body = '{"nf-native:vlan-list":[{"id":30,"name":"VOICE"}]}';
+    expect(w.send('PUT', '/data/nf-native:native/vlan/vlan-list=30/', { body }).status).toBe(201);
+    expect(w.send('PUT', '/data/nf-native:native/nf-native:vlan/nf-native:vlan-list=30', { body }).status).toBe(204);
+    expect(w.send('PUT', '/data/nf-native:native/vlan/vlan-list=30', { body }).status).toBe(204);
+    expect(vlanNames(w.sim)['30']).toBe('VOICE');
+    // reads: a query, a lower-case escape, a step of another module, the API root with its slash
+    expect(w.send('GET', '/data/ietf-interfaces:interfaces/interface=FastEthernet0%2f1?depth=1').status).toBe(200);
+    expect(w.send('GET', '/data/ietf-interfaces:interfaces/ietf-interfaces:interface=Vlan1/ietf-ip:ipv4').status).toBe(200);
+    expect(w.send('GET', '/').status).toBe(200);
+    // refused requests log the canonical path too: a 404 under the data resource, and a path outside it as written
+    expect(w.send('GET', '/data/nf-native:native/nf-native:nothing/').status).toBe(404);
+    expect(w.send('GET', '', { url: `https://${SW}/api/v1/vlans/?all=1` }).status).toBe(404);
+    expect(logRows(w.sim).map((r) => [r.method, r.path, r.status])).toEqual([
+      ['PUT', '/restconf/data/nf-native:native/vlan/vlan-list=30', 201],
+      ['PUT', '/restconf/data/nf-native:native/vlan/vlan-list=30', 204],
+      ['PUT', '/restconf/data/nf-native:native/vlan/vlan-list=30', 204],
+      ['GET', '/restconf/data/ietf-interfaces:interfaces/interface=FastEthernet0%2F1', 200],
+      ['GET', '/restconf/data/ietf-interfaces:interfaces/interface=Vlan1/ietf-ip:ipv4', 200],
+      ['GET', '/restconf', 200],
+      ['GET', '/restconf/data/nf-native:native/nothing', 404],
+      ['GET', '/api/v1/vlans/', 404],
     ]);
   });
 

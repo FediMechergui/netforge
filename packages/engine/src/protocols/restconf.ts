@@ -28,7 +28,9 @@
  *  5. refusals carry an `ietf-restconf:errors` body (RFC 8040 §7.1) with the model's or the CLI's original message.
  * Every answered request with an HTTP method is one row of the `restconf-log` table (key = String(seq); seq counts from
  * 1 for the life of the daemon; at most RESTCONF_LOG_LIMIT rows, the oldest deleted with reason 'replaced' first) —
- * the gradeable record (rule 20). `user` is set once the credentials were accepted.
+ * the gradeable record (rule 20). `user` is set once the credentials were accepted. Its `path` is the canonical path of
+ * the resource (ruling R58 (c), `restconfLogPath`: a trailing `/` dropped, a module prefix a step repeats collapsed,
+ * keys in their canonical encoding, no query), so every request the API accepts for one resource logs one path.
  *
  * Debug category 'restconf'. stateSnapshot:
  *   { enabled, authentication: 'local' | 'none', open: ['<listenId>/<n>'], pending, requests, refused }
@@ -48,7 +50,7 @@ import type { ConfigResultEvent, ProcessEvent, SocketId } from '../contracts/tra
 import { configTextLinesOf } from '../cli/config-text.js';
 import { verifySecret } from '../cli/secrets.js';
 import { parseJson, stringifyJson, type DataValue } from '../automation/data/json.js';
-import { parseRestconfTarget } from '../automation/yang/path.js';
+import { RESTCONF_ROOT, formatApiPath, parseRestconfTarget, type ApiSegment } from '../automation/yang/path.js';
 import {
   planYangWrite,
   readYang,
@@ -106,6 +108,45 @@ export const MSG_RESTCONF_REFUSED = 'The device refused the change.';
 /** Reason phrase of a status the API sends. */
 export function restconfReason(status: number): string {
   return EXTRA_REASONS[status] ?? httpReasonPhrase(status);
+}
+
+// ── the logged path (ruling R58 (c)) ─────────────────────────────────────────
+
+/**
+ * An api-path with every module prefix a step repeats from the step before it removed (RFC 8040 §3.5.3: a step names
+ * its module only where it differs from its parent's; the first step always names it).
+ */
+function collapseModules(path: readonly ApiSegment[]): Pick<ApiSegment, 'module' | 'name' | 'keys'>[] {
+  let inherited: string | undefined;
+  return path.map((seg, i) => {
+    const repeated = i > 0 && seg.module !== undefined && seg.module === inherited;
+    inherited = seg.module ?? inherited;
+    return { ...(seg.module !== undefined && !repeated ? { module: seg.module } : {}), name: seg.name, ...(seg.keys !== undefined ? { keys: seg.keys } : {}) };
+  });
+}
+
+/**
+ * @since P3 (ruling R58 (c)) The path a `restconf-log` row records for a request target: the canonical form of the
+ * resource the API read, so one resource is always logged as one path and a lab's whole-path match grades every request
+ * the API accepted for it. For `/restconf`, `/restconf/data[…]` and `/restconf/operations[…]`: a trailing `/` dropped,
+ * a module prefix a step repeats from its parent collapsed (`nf-native:native/nf-native:vlan` → `nf-native:native/vlan`)
+ * and every key value written in its canonical percent-encoding (`%2f` → `%2F`). The query string is never part of the
+ * path. A target outside those resources (`/.well-known/host-meta`, an unknown address) keeps its path as written; one
+ * the parser cannot read keeps the text before its `?`.
+ */
+export function restconfLogPath(target: string): string {
+  const parsed = parseRestconfTarget(target);
+  if (!parsed.ok) return target.split('?')[0] as string;
+  const res = parsed.resource;
+  switch (res.kind) {
+    case 'root':
+      return RESTCONF_ROOT;
+    case 'data':
+    case 'operations':
+      return `${RESTCONF_ROOT}/${res.kind}${formatApiPath(collapseModules(res.path))}`;
+    default:
+      return parsed.path;
+  }
 }
 
 // ── configuration ────────────────────────────────────────────────────────────
@@ -432,7 +473,8 @@ export function createRestconf(): Process {
     const method = m.method ?? '';
     const target = m.target ?? '/';
     const parsed = parseRestconfTarget(target);
-    const path = parsed.ok ? parsed.path : (target.split('?')[0] as string);
+    // the canonical path of the resource (R58 (c)): what the log row records and the debug lines name
+    const path = restconfLogPath(target);
     debug(ctx, `${child.id}: ${method} ${target} from ${child.remote}`, { socket: child.id, method, target });
     if (!isMethod(method)) return respond(ctx, child, refusal(405, 'protocol', 'operation-not-supported', MSG_RESTCONF_METHOD, [`Allow: ${ALLOW_ALL}`]), undefined);
     const log: LogInfo = { method, path };
@@ -510,7 +552,7 @@ export function createRestconf(): Process {
     if (!m.complete) {
       if (child.buf.length <= RESTCONF_REQUEST_MAX) return [];
       const method = m.method ?? '';
-      const log = isMethod(method) ? { method, path: (m.target ?? '/').split('?')[0] as string } : undefined;
+      const log = isMethod(method) ? { method, path: restconfLogPath(m.target ?? '/') } : undefined;
       return respond(ctx, child, refusal(413, 'transport', 'malformed-message', MSG_RESTCONF_TOO_LARGE), log);
     }
     child.state = 'queued';

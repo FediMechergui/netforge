@@ -172,7 +172,7 @@ describe('serial lines', () => {
     expect(tokens(gig, '')).toEqual(['bandwidth', 'cdp', 'delay', 'description', 'do', 'duplex', 'encapsulation', 'end', 'exit', 'fair-queue', 'ip', 'ipv6', 'lldp', 'mac-address', 'no', 'service-policy', 'shutdown', 'speed', 'standby']);
   });
 
-  it('show controllers serial and debug serial run but are not listed; the bare show controllers is (R56, item 40h)', () => {
+  it('show controllers serial and debug serial run but are not listed; the bare show controllers is (R56, item 40h), on routing models and the Internet cloud (R58 (d))', () => {
     const priv = matchContextFor(model, 'priv-exec');
     expect(ok(priv, 'show controllers serial se0/0/0').args.iface).toBe('Serial0/0/0');
     expect(ok(priv, 'show controllers serial').args).toEqual({});
@@ -180,6 +180,15 @@ describe('serial lines', () => {
     // ARCHITECTURE-P3 §9.2 W6 item 40h (ruling R56): the bare form is listed; the accepted form's `serial` keyword is not
     expect(tokens(priv, 'show ')).toContain('controllers');
     expect(tokens(priv, 'show controllers ')).not.toContain('serial');
+    // ARCHITECTURE-P3 §9.2 ruling R58 (d) (W6b cli): listed on models with the routing capability (a layer-3 switch and
+    // a firewall too) or a serial port (the Internet cloud, by its `cloud` capability; W6b review); a layer-2 switch, an
+    // access point, a bridge and a modem run it unlisted
+    for (const type of ['mlswitch.nfc3650-24', 'firewall.nfasa5506', 'cloud.nfinternet']) expect(tokens(on(type, 'priv-exec'), 'show '), type).toContain('controllers');
+    for (const type of ['switch.nfc2960', 'ap.nfap-auto', 'bridge.nfbr2', 'modem.nfdsl']) {
+      const c = on(type, 'priv-exec');
+      expect(tokens(c, 'show '), type).not.toContain('controllers');
+      expect(ok(c, 'show controllers')).toMatchObject({ spec: { handler: HANDLERS.showControllers, hidden: true }, args: {} });
+    }
     expect(ok(priv, 'debug serial').args.category).toBe('serial');
     // ARCHITECTURE-P2 §9.2 W4 item 18: `standby` (hsrp, routing row) joins through the registry
     // ARCHITECTURE-P3 §9.2 W3 item 30e: every §5.8 debug category (the MUST rows and the approved items') joins

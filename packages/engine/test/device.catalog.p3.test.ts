@@ -9,6 +9,11 @@
  * routers, managed switches and the controller (the `cdpDefault` set) and on no other model, while no P1/P2 profile
  * list moves; and the derived summaries of NF-C2960, NF-C3650-24, NF-2911 and NF-WLC-9800 are exactly what the flip
  * makes them. (The P2 layer stays pinned, computed at stage P2, in device.catalog.p2.test.ts.)
+ *
+ * ARCHITECTURE-P3 §9.2 W6 item 40b (the [S32] flip, alone) re-derives the pins of items 31–33 by the same rules:
+ * `PROCESS_ORDER` gains `script-host` last (its §2.1 position), the registry maps it to its factory, `programmable`
+ * gets its one row (`script-host`, since P3; no `tftp`, which is [S29]) and `PROCESS_TABLES['script-host']` is
+ * `['script-runs']`.
  */
 import { describe, expect, it } from 'vitest';
 import {
@@ -43,19 +48,21 @@ import {
 import { validateCatalog } from '../src/device/catalog/validate.js';
 import { PROCESS_FACTORIES, REGISTERED_PROCESSES, processFactory } from '../src/protocols/index.js';
 
-/** The §2.1 final daemon order restricted to the approved names, without the W6 flip's [S32] `script-host`. */
+/** The §2.1 final daemon order restricted to the approved names (§9.2 W6 item 40b: the W6 flip's [S32] `script-host` last). */
 const P3_ORDER: readonly ProcessName[] = [
   'wlan-ap', 'wlan-client', 'capwap-wtp', 'cell-client', 'hdlc', 'ppp',
   'eth-switch', 'vlan', 'dtp', 'etherchannel', 'stp', 'cdp', 'lldp',
   'arp', 'ipv4', 'nat', 'acl', 'gre', 'icmpv4', 'host', 'ipv6', 'nd', 'icmpv6', 'udp', 'tcp',
   'vty', 'vty-client', 'logger', 'ntp', 'syslog-server', 'hsrp', 'ospf', 'eigrp', 'ike',
   'dhcp-client', 'dhcp-server', 'dhcpv6-client', 'dhcpv6-server', 'dns-client', 'dns-server',
-  'http-client', 'http-server', 'restconf', 'traceroute', 'traffic', 'capwap-ac',
+  'http-client', 'http-server', 'restconf', 'traceroute', 'traffic', 'capwap-ac', 'script-host',
 ];
 /** The fifteen daemons the flip registers: the seven MUST ones, then the approved items' ones (§7 W4 step 2). */
 const MUST_DAEMONS: readonly ProcessName[] = ['ospf', 'acl', 'cdp', 'lldp', 'ntp', 'restconf', 'traffic'];
 const APPROVED_DAEMONS: readonly ProcessName[] = ['ppp', 'gre', 'vty', 'vty-client', 'logger', 'syslog-server', 'eigrp', 'ike'];
 const FLIP_DAEMONS: readonly ProcessName[] = [...MUST_DAEMONS, ...APPROVED_DAEMONS];
+/** §9.2 W6 item 40b: the daemon the second flip registers ([S32], with NF-DEVHOST). */
+const W6_FLIP_DAEMONS: readonly ProcessName[] = ['script-host'];
 
 /** The two [S24] lines (D2). */
 const TIMESTAMPS = ['service timestamps debug datetime msec', 'service timestamps log datetime msec'];
@@ -84,13 +91,14 @@ describe('the P3 catalog flip: stage, order, registry and contract rows', () => 
     ALL_MODELS.forEach((m, i) => expect(m).toEqual(defineModel(ALL_MODEL_INPUTS[i]!, 'P3')));
   });
 
-  it('PROCESS_ORDER is the §2.1 final order of the approved names, the flip inserting its fifteen daemons only', () => {
+  it('PROCESS_ORDER is the §2.1 final order of the approved names, the flips inserting their sixteen daemons only', () => {
     // §9.2 W4 item 32: PROCESS_ORDER itself is pinned here
     expect(PROCESS_ORDER).toEqual(P3_ORDER);
     expect(Object.isFrozen(PROCESS_ORDER)).toBe(true);
-    for (const n of FLIP_DAEMONS) expect(PROCESS_ORDER, n).toContain(n);
-    // never inserted in P3a: the unapproved items' daemons; [S32] script-host waits for the W6 flip
-    for (const n of ['ospfv3', 'tftp', 'snmp-agent', 'snmp-manager', 'script-host']) expect(PROCESS_ORDER).not.toContain(n);
+    for (const n of [...FLIP_DAEMONS, ...W6_FLIP_DAEMONS]) expect(PROCESS_ORDER, n).toContain(n);
+    // never inserted in P3a: the unapproved items' daemons; §9.2 W6 item 40b: [S32] script-host is in, last
+    for (const n of ['ospfv3', 'tftp', 'snmp-agent', 'snmp-manager']) expect(PROCESS_ORDER).not.toContain(n);
+    expect(PROCESS_ORDER.at(-1)).toBe('script-host');
     // the constraints §2.1 relies upon
     const at = (n: ProcessName): number => PROCESS_ORDER.indexOf(n);
     expect(at('ppp')).toBeGreaterThan(at('hdlc'));
@@ -102,9 +110,9 @@ describe('the P3 catalog flip: stage, order, registry and contract rows', () => 
     for (const n of ['cdp', 'lldp']) expect(L2_PROCESSES).not.toContain(n);
   });
 
-  it('the registry maps the fifteen daemons to their factories, in PROCESS_ORDER', () => {
+  it('the registry maps the fifteen daemons (and the W6 script-host) to their factories, in PROCESS_ORDER', () => {
     expect(REGISTERED_PROCESSES).toEqual(PROCESS_ORDER);
-    for (const name of FLIP_DAEMONS) {
+    for (const name of [...FLIP_DAEMONS, ...W6_FLIP_DAEMONS]) {
       const factory = processFactory(name);
       expect(factory, name).toBeDefined();
       expect(PROCESS_FACTORIES[name], name).toBe(factory);
@@ -124,14 +132,15 @@ describe('the P3 catalog flip: stage, order, registry and contract rows', () => 
     expect(p3Rows('wireless-controller')).toEqual([p3('cdp'), p3('logger'), p3('ntp')]);
     expect(p3Rows('server')).toEqual([p3('ntp'), p3('syslog-server')]);
     expect(p3Rows('host')).toEqual([p3('vty-client'), p3('traffic')]);
-    // every other capability has no P3 row: the lightweight AP none (no receive path, D2, D18); [S32] programmable gets
-    // script-host at the W6 flip only
-    const withRows: readonly Capability[] = ['host', 'server', 'routing', 'managed-switch', 'wireless-controller'];
+    // §9.2 W6 item 40b: [S32] programmable's one row, script-host (the W6 flip; no tftp, which is [S29])
+    expect(p3Rows('programmable')).toEqual([p3('script-host')]);
+    expect(CAPABILITY_PROCESSES.programmable).toEqual([p3('script-host')]);
+    // every other capability has no P3 row: the lightweight AP none (no receive path, D2, D18)
+    const withRows: readonly Capability[] = ['host', 'server', 'routing', 'managed-switch', 'wireless-controller', 'programmable'];
     for (const cap of CAPABILITIES) if (!withRows.includes(cap)) expect([cap, p3Rows(cap)]).toEqual([cap, []]);
-    expect(CAPABILITY_PROCESSES.programmable).toEqual([]);
     // every row naming a flip daemon is since P3, so no P1/P2-stage model derives one
     for (const cap of CAPABILITIES) {
-      for (const row of CAPABILITY_PROCESSES[cap]) if (FLIP_DAEMONS.includes(row.process)) expect([cap, row.process, row.since]).toEqual([cap, row.process, 'P3']);
+      for (const row of CAPABILITY_PROCESSES[cap]) if ([...FLIP_DAEMONS, ...W6_FLIP_DAEMONS].includes(row.process)) expect([cap, row.process, row.since]).toEqual([cap, row.process, 'P3']);
     }
   });
 
@@ -154,7 +163,8 @@ describe('the P3 catalog flip: stage, order, registry and contract rows', () => 
       eigrp: ['eigrp-neighbors', 'eigrp-topology'],
       ike: ['ipsec-sa'],
     });
-    expect(PROCESS_TABLES['script-host']).toBeUndefined();
+    // §9.2 W6 item 40b: the W6 flip's [S32] row
+    expect(PROCESS_TABLES['script-host']).toEqual(['script-runs']);
     // the P2 vlan row is unchanged: the snooping tables are never plain vlan rows
     expect(PROCESS_TABLES.vlan).toEqual(['vlans', 'port-security']);
     expect(STAGED_PROCESS_TABLES).toEqual([{ process: 'vlan', tables: ['dhcp-snooping', 'arp-inspection'], since: 'P3', requires: 'managed-switch' }]);

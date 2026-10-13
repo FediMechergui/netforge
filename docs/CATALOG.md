@@ -32,6 +32,7 @@ Port naming follows the conventional long/short scheme already used in P0
 | `dhcp-server` | Hands out addresses on its LAN (home routers, servers; P1) | dhcp-server |
 | `poe-source` / `poe-powered` | PoE budget and powered devices (behaviour P2+) | — |
 | `modular` | Has slots; modules add ports; hot-swap requires power off | — |
+| `programmable` | `host` + the NF-Py script host and the automation workspace; scripts live in the host's `files:` store (P3) | host daemons + script-host |
 
 ## Network devices
 
@@ -84,6 +85,7 @@ Port naming follows the conventional long/short scheme already used in P0
 | pc.nfpc | NF-PC | Computers | Gi0 | host |
 | pc.nfpc-wifi | NF-PC-WIFI | Computers | Gi0, Wl0 | host, wifi-client |
 | laptop.nflaptop | NF-LAPTOP | Computers | Gi0, Wl0, Usb0 (USB-A, console terminal) | host, wifi-client |
+| pc.nfdevhost | NF-DEVHOST | Computers | Gi0 | host, programmable |
 | server.nfserver | NF-SERVER | Servers | Gi0, Gi1 | server |
 | server.nfrack | NF-SERVER-RACK | Servers | Gi0–Gi3, Te0–Te1 | server |
 | phone.nfsmartphone | NF-SMARTPHONE | Mobile | Wl0, Ce0 | host, wifi-client, cellular-client |
@@ -97,6 +99,14 @@ Port naming follows the conventional long/short scheme already used in P0
 | iot.nfthermostat | NF-THERMOSTAT | IoT | Wl0 | host, wifi-client |
 | iot.nfplug | NF-SMART-PLUG | IoT | Wl0 | host, wifi-client |
 | iot.nfgateway | NF-IOT-GATEWAY | IoT | Gi0, Wl0 | host, wifi-client |
+
+NF-DEVHOST (P3, the second catalog flip) is the developer workstation of the automation lessons: a host with one
+gigabit adapter whose `programmable` capability adds the NF-Py script host (`python <file>`, `type`, `del`, `dir` in
+its shell; the `script-runs` table) and the Automation desktop app. Its scripts are kept in the host's `files:` store,
+which is saved with the topology. It runs no TFTP. Like every model listed here (NF-WLC-9800 included), it is in the
+model inputs of every build stage; `programmable` brings the script host and the Automation app from P3 only, so a
+catalog derived at an earlier stage (the P1 and P2 test catalogs) lists NF-DEVHOST as a plain host, with the daemons,
+tables and desktop apps NF-PC has at that stage.
 
 ## Modules (slots on `modular` routers)
 

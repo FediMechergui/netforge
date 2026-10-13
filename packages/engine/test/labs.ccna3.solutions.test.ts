@@ -14,8 +14,9 @@
  *   • SOLVED: `configure` accepts every line of the reference solution as written (a refused line is a defect in the
  *     lab and is reported in full), the world runs to idle, the logins the lab asks the learner to make before Check
  *     (labs 15 and 19 grade the learner's own remote logins live, §11.2, lab 27 the learner's voice burst, §3.5 step
- *     8, and lab 38 the learner's RESTCONF requests, §3.8 step 7; their lab files give them as data, typed here on the
- *     hosts' consoles) are typed, and every task passes — full marks;
+ *     8, lab 38 the learner's RESTCONF requests, §3.8 step 7, and lab 40 the learner's run of the inventory script on
+ *     DEV1, §3.8 step 8; their lab files give them as data, typed here on the hosts' consoles) are typed, and every
+ *     task passes — full marks;
  *   • grading is read-only (same clock, trace head and PDU count) and repeatable (two evaluations are equal).
  *
  * Static cases: the lab names come from `CCNA3_LAB_ORDER` — every lab of the eleven lab files (the ten W5 area files and
@@ -56,6 +57,7 @@ import {
   CCNA3_WAN_LABS,
   QOS_LEARNER_FLOWS,
   RESTCONF_LAB_REQUESTS,
+  SCRIPT_LAB_RUNS,
   SECURE_ACCESS_LOGINS,
 } from '../src/sim/scenarios/ccna3/index.js';
 import { PC, SWITCH, device, link, topology } from '../src/sim/scenarios/kit.js';
@@ -74,8 +76,8 @@ const catalog = createCatalog(PROCESS_FACTORIES);
 
 /**
  * The eleven lab files (§11.2: each owned by the area that knows the feature), with the labs their lessons give them:
- * the ten W5 area files and W6's automation.ts (§9.2 item 40g). Lab 40 (`ccna3-script-inventory`) is named there but
- * lands only after the [S32] flip step, so until then that file's array holds lab 38 alone.
+ * the ten W5 area files and W6's automation.ts (§9.2 item 40g). Since the [S32] flip step (W6b, §9.2 item 40m) that
+ * file's array holds both automation labs, 38 and 40 (`ccna3-script-inventory`).
  */
 const FILES: readonly { file: string; labs: readonly ScenarioInfo[]; names: readonly string[] }[] = [
   {
@@ -98,14 +100,17 @@ const FILES: readonly { file: string; labs: readonly ScenarioInfo[]; names: read
 /**
  * The actions a lab asks the learner to take before Check, as the lab files give them: the console lines typed on each
  * host after the solution — the remote logins of labs 15 and 19 (§11.2 "graded live through the remote terminal"),
- * lab 27's bounded voice burst (§3.5 step 8: the live EF row at PC-S; W5 fix #16) and lab 38's RESTCONF requests (§3.8
- * step 7: the GET and the PUTs its `restconf-log` tasks read; each answer takes 50 ms, so `LOGIN_LINE_NS` is ample).
+ * lab 27's bounded voice burst (§3.5 step 8: the live EF row at PC-S; W5 fix #16), lab 38's RESTCONF requests (§3.8
+ * step 7: the GET and the PUTs its `restconf-log` tasks read; each answer takes 50 ms, so `LOGIN_LINE_NS` is ample) and
+ * lab 40's script run (§3.8 step 8: `python inventory.py` on DEV1 once SW3 checks logins, the run its
+ * `automation.lastRun` fact and its three GET rows read; it ends well within `LOGIN_LINE_NS`; §9.2 item 40m).
  */
 const LEARNER_LOGINS: Readonly<Record<string, readonly { readonly from: string; readonly lines: readonly string[] }[]>> = {
   'ccna3-acl-standard': ACL_STANDARD_LOGINS,
   'ccna3-secure-device-access': SECURE_ACCESS_LOGINS,
   'ccna3-qos-voice-first': QOS_LEARNER_FLOWS,
   'ccna3-restconf-change': RESTCONF_LAB_REQUESTS,
+  'ccna3-script-inventory': SCRIPT_LAB_RUNS,
 };
 
 /** Every lab of the eleven files, in file order. */

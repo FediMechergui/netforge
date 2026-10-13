@@ -1,11 +1,16 @@
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { NF_PC } from '../src/device/catalog.js';
-import { defineModule, modulePortSpecs } from '../src/device/catalog/define.js';
+import { defineModel, defineModule, modulePortSpecs } from '../src/device/catalog/define.js';
 import { findBannedWords, jsonCloneProblem, validateCatalog } from '../src/device/catalog/validate.js';
 import {
   CELLULAR_UE_RADIO,
   COMPUTER_MODELS,
   END_DEVICE_STAGE,
+  NF_DEVHOST_MODEL_INPUT,
+  NF_PC_MODEL_INPUT,
   WIFI4_IOT_RADIO,
   WIFI5_COMPUTER_RADIO,
   WIFI6_HANDHELD_RADIO,
@@ -20,6 +25,9 @@ import { IOT_MODELS } from '../src/device/catalog/iot.js';
 import { DEVICE_CATEGORIES, HOST_IP_DEFAULTS, type ModuleModel } from '../src/contracts/catalog.js';
 import type { DeviceModel } from '../src/contracts/device.js';
 import { SPEED_100M, SPEED_10G, SPEED_10M, SPEED_1G } from '../src/contracts/port.js';
+
+/** docs/CATALOG.md, read by the NF-DEVHOST stage case. */
+const CATALOG_MD = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'docs', 'CATALOG.md');
 
 const ALL: readonly DeviceModel[] = [
   ...COMPUTER_MODELS,
@@ -46,6 +54,8 @@ const CATALOG_TABLE: Record<string, [string, string[], string[]]> = {
   'pc.nfpc': ['computers', ['host'], ['Gi0']],
   'pc.nfpc-wifi': ['computers', ['host', 'wifi-client'], ['Gi0', 'Wl0']],
   'laptop.nflaptop': ['computers', ['host', 'wifi-client'], ['Gi0', 'Wl0', 'Usb0']],
+  // ARCHITECTURE-P3 §9.2 W6 item 40b: [S32] the developer host joins the Computers category (the second flip)
+  'pc.nfdevhost': ['computers', ['host', 'programmable'], ['Gi0']],
   'server.nfserver': ['servers', ['host', 'server'], ['Gi0', 'Gi1']],
   'server.nfrack': ['servers', ['host', 'server'], ['Gi0', 'Gi1', 'Gi2', 'Gi3', 'Te0', 'Te1']],
   'phone.nfsmartphone': ['mobile', ['host', 'wifi-client', 'cellular-client'], ['Wl0', 'Ce0']],
@@ -148,6 +158,45 @@ describe('end-device catalog data', () => {
     expect(laptop.processes).toEqual(['wlan-client', ...HOST_STACK_P3]);
     expect(laptop.hostPorts).toEqual(['GigabitEthernet0', 'Wlan0']);
     expect(laptop.gui).toEqual(['physical', 'desktop.ip-config', 'desktop.wifi', 'desktop.command-prompt', 'desktop.web-browser', 'desktop.traffic']);
+  });
+
+  it('the developer host runs the host stack and the script host, with the automation workspace (§9.2 W6 item 40b)', () => {
+    const dev = byType('pc.nfdevhost');
+    expect([dev.model, dev.kind, dev.icon]).toEqual(['NF-DEVHOST', 'pc', 'pc']);
+    // [S32] `programmable` adds `script-host` only (no tftp, [S29]), last in PROCESS_ORDER, and its `script-runs` table
+    expect(dev.processes).toEqual([...HOST_STACK_P3, 'script-host']);
+    expect(dev.tables).toEqual(['cam', 'arp', 'rib', 'rib6', 'nd', 'sockets', 'dns-cache', 'flows', 'script-runs']);
+    expect(dev.hostPorts).toEqual(['GigabitEthernet0']);
+    expect(dev.gui).toEqual(['physical', 'desktop.ip-config', 'desktop.command-prompt', 'desktop.web-browser', 'desktop.traffic', 'desktop.automation']);
+    // the Computers category in palette order: NF-DEVHOST last
+    expect(COMPUTER_MODELS.map((m) => m.type)).toEqual(['pc.nfpc', 'pc.nfpc-wifi', 'laptop.nflaptop', 'pc.nfdevhost']);
+    expect(ALL.filter((m) => m.processes.includes('script-host')).map((m) => m.type)).toEqual(['pc.nfdevhost']);
+  });
+
+  it('NF-DEVHOST is in every stage\'s model inputs: a plain host before P3, as docs/CATALOG.md states (§9.2 W6 item 40b)', () => {
+    // like every real model (NF-WLC-9800 included), the input is defined at every stage; `programmable` brings its row
+    // (`script-host`) and `desktop.automation` from P3 only, so before P3 it derives exactly NF-PC's plain host
+    for (const stage of ['P1', 'P2'] as const) {
+      const dev = defineModel(NF_DEVHOST_MODEL_INPUT, stage);
+      const pc = defineModel(NF_PC_MODEL_INPUT, stage);
+      expect([stage, dev.capabilities]).toEqual([stage, ['host', 'programmable']]);
+      expect([stage, dev.processes, dev.tables, dev.gui, dev.cli]).toEqual([stage, pc.processes, pc.tables, pc.gui, pc.cli]);
+      expect([stage, dev.processes.includes('script-host'), (dev.gui ?? []).includes('desktop.automation')]).toEqual([stage, false, false]);
+    }
+    // at P3 it is NF-PC plus exactly the script host, its table and the automation workspace
+    const dev3 = defineModel(NF_DEVHOST_MODEL_INPUT, 'P3');
+    const pc3 = defineModel(NF_PC_MODEL_INPUT, 'P3');
+    expect(dev3.processes).toEqual([...pc3.processes, 'script-host']);
+    expect(dev3.tables).toEqual([...pc3.tables, 'script-runs']);
+    expect(dev3.gui).toEqual([...(pc3.gui ?? []), 'desktop.automation']);
+    // the catalog document records it (review finding: the stage-P1/P2 catalogs hold the model as a plain host)
+    const text = readFileSync(CATALOG_MD, 'utf8').replace(/\r\n/g, '\n');
+    const para = text.split('\n\n').find((p) => p.startsWith('NF-DEVHOST '));
+    expect(para).toBeDefined();
+    const flat = para!.replace(/\s+/g, ' ');
+    expect(flat).toContain('NF-WLC-9800');
+    expect(flat).toContain('in the model inputs of every build stage');
+    expect(flat).toContain('lists NF-DEVHOST as a plain host, with the daemons, tables and desktop apps NF-PC has at that stage');
   });
 
   it('the IP phone bridges its two ports and addresses its auto Vlan1', () => {
