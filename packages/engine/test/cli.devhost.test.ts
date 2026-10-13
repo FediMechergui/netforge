@@ -2,7 +2,10 @@
  * cli.devhost — [S32] the developer host's shell (ARCHITECTURE-P3 §5.7, §5.9, D21; §7 W2 cli, approved items):
  * `python|python3 <file> [<args>]` as a `script-host` job (`script.run`, ^C → `script.stop`), `type`, `del` (the
  * `storage` action) and `dir` over the host's `files:` store as the runtime exposes it, and `restBodyFromFile` for
- * `rest … -f <file>`. Scope: the `programmable` capability (the test-only NF-DEVHOST of staged.world).
+ * `rest … -f <file>`. Scope: the `programmable` capability (the test-only NF-DEVHOST of staged.world) and, since
+ * ruling R59 (c), a running script host (`CommandSpec.requiresAnyProcess`): a stage-P2 NF-DEVHOST, or one whose
+ * registry lacks the daemon, lists and matches none of the five (help, the parser and a real session), and each handler
+ * still refuses there with MSG_NO_SCRIPT_HOST when called without the scope (§9.2 item 44h).
  */
 import { describe, expect, it } from 'vitest';
 import type { DeviceModel } from '../src/contracts/device.js';
@@ -19,12 +22,37 @@ import {
   restBodyFromFile,
   restBodyOf,
 } from '../src/cli/handlers/devhost.js';
-import { matchCommand } from '../src/cli/parser.js';
+import { BUILTIN_GRAMMAR } from '../src/cli/grammar/index.js';
+import { help, matchCommand } from '../src/cli/parser.js';
+import type { DeviceId } from '../src/contracts/ids.js';
+import { SEC } from '../src/contracts/time.js';
+import { NF_DEVHOST_TYPE, createStagedSimulation } from './staged.world.js';
 import { defineStagedModel, nfDevhostTestInput, stagedRegistry } from './staged.world.js';
 import { APPROVED_GRAMMAR, APPROVED_HANDLERS, approvedHarness, withProcesses } from './cli.p3-approved.fixture.js';
 import { catalogModel, commandCtxFor, matchContextFor, type RecordingCtx } from './cli.p05.fixture.js';
 
 const INVENTORY = 'import requests\nprint("ok")\n';
+
+/** The developer host's five shell commands (R59 (c)), as `?` lists them in user-exec. */
+const SHELL_COMMANDS = ['del', 'dir', 'python', 'python3', 'type'];
+/** One line of each, as a learner types them. */
+const SHELL_LINES = ['dir', 'type inventory.py', 'del inventory.py', 'python inventory.py', 'python3 inventory.py'];
+
+/** The two NF-DEVHOSTs that run no script host: the P3 model on a registry without it, and the stage-P2 model. */
+function hostsWithoutScriptHost(): readonly [string, DeviceModel][] {
+  return [
+    ['P3, no script-host in the registry', defineStagedModel(nfDevhostTestInput(), 'P3', stagedRegistry({ 'script-host': undefined }))],
+    ['stage P2', defineStagedModel(nfDevhostTestInput(), 'P2')],
+  ];
+}
+
+/** The shell commands `?` lists in user-exec on `model` (the real command table, as the runtime scopes it). */
+function listedShellCommands(model: DeviceModel): string[] {
+  return help(BUILTIN_GRAMMAR, matchContextFor(model, 'user-exec'), '')
+    .items.map((i) => i.token)
+    .filter((t) => SHELL_COMMANDS.includes(t))
+    .sort();
+}
 
 /**
  * NF-DEVHOST with the script host among its daemons: the real model since the W6 flip registered `script-host`
@@ -77,6 +105,20 @@ describe('cli.devhost grammar', () => {
     expect(m.ok && m.spec.job).toBe(true);
     expect(matchCommand(APPROVED_GRAMMAR, matchContextFor(catalogModel('pc.nfpc'), 'user-exec'), 'dir').ok).toBe(false);
   });
+
+  it('lists and matches the five only where the script host runs (ruling R59 (c), listing)', () => {
+    const shipped = devhostModel();
+    expect(shipped.processes).toContain('script-host');
+    expect(listedShellCommands(shipped)).toEqual(SHELL_COMMANDS);
+    for (const line of SHELL_LINES) expect(matchCommand(BUILTIN_GRAMMAR, matchContextFor(shipped, 'user-exec'), line).ok, line).toBe(true);
+    for (const [what, model] of hostsWithoutScriptHost()) {
+      // the same capabilities as the shipped host: only the process gate can tell them apart
+      expect(model.capabilities, what).toEqual(shipped.capabilities);
+      expect(model.processes, what).not.toContain('script-host');
+      expect(listedShellCommands(model), what).toEqual([]);
+      for (const line of SHELL_LINES) expect(matchCommand(BUILTIN_GRAMMAR, matchContextFor(model, 'user-exec'), line).ok, `${what}: ${line}`).toBe(false);
+    }
+  });
 });
 
 describe('cli.devhost handlers', () => {
@@ -106,6 +148,23 @@ describe('cli.devhost handlers', () => {
     // a hand-built context without the runtime's store
     const bare = commandCtxFor(devhostModel(), { mode: 'user-exec' });
     expect(run(bare, H.hostDir)).toEqual({ error: MSG_NO_FILE_STORE });
+  });
+
+  it('refuses every shell command on an NF-DEVHOST that runs no script host (ruling R59 (c), execution)', () => {
+    const noScriptHost: readonly DeviceModel[] = [
+      defineStagedModel(nfDevhostTestInput(), 'P3', stagedRegistry({ 'script-host': undefined })),
+      defineStagedModel(nfDevhostTestInput(), 'P2'),
+    ];
+    for (const model of noScriptHost) {
+      expect(model.processes).not.toContain('script-host');
+      const rec = devCtx({ 'inventory.py': INVENTORY }, model);
+      expect(run(rec, H.hostPython, { file: 'inventory.py' })).toEqual({ error: MSG_NO_SCRIPT_HOST });
+      expect(run(rec, H.hostType, { file: 'inventory.py' })).toEqual({ error: MSG_NO_SCRIPT_HOST });
+      expect(run(rec, H.hostDel, { file: 'inventory.py' })).toEqual({ error: MSG_NO_SCRIPT_HOST });
+      expect(run(rec, H.hostDir)).toEqual({ error: MSG_NO_SCRIPT_HOST });
+      expect(rec.acts).toEqual([]);
+      expect(rec.requests).toEqual([]);
+    }
   });
 
   it('rest -f reads the body from the store', () => {
@@ -142,5 +201,47 @@ describe('cli.devhost through the runtime', () => {
       { kind: 'script.run', token: `py:${s}@42`, file: 'inventory.py', argv: [], session: s },
       { kind: 'script.stop', token: `py:${s}@42` },
     ]);
+  });
+
+  it('does not offer the shell on a programmable host without the script host (ruling R59 (c))', () => {
+    const h = approvedHarness();
+    const pc = h.add('d_dev', 'pc', 'DEV1');
+    Object.assign(pc, store({ 'inventory.py': INVENTORY }));
+    Object.defineProperty(pc, 'capabilities', { value: [...pc.capabilities, 'programmable'] });
+    const s = h.cli.open('d_dev', 'console');
+    for (const line of SHELL_LINES) {
+      const r = h.cli.exec(s, line);
+      // not in scope (the process gate), so the shell does not recognise the line: no listing, no file text, no job
+      expect(r.error, line).toBeDefined();
+      expect(r.error?.message, line).not.toBe(MSG_NO_SCRIPT_HOST);
+      expect(r.output ?? '', line).not.toContain('inventory.py');
+      expect(r.output ?? '', line).not.toContain('import requests');
+      expect(r.busy, line).toBe(false);
+    }
+    expect(h.cli.help(s, '').items.map((i) => i.token).filter((t) => SHELL_COMMANDS.includes(t))).toEqual([]);
+    expect(pc.actionCalls).toEqual([]);
+  });
+
+  it('a real NF-DEVHOST session lists the five only where the script host runs (ruling R59 (c))', () => {
+    const worlds: readonly [string, ReturnType<typeof createStagedSimulation>, boolean][] = [
+      ['stage P3', createStagedSimulation({ seed: 5, stage: 'P3' }), true],
+      ['stage P3, no script-host', createStagedSimulation({ seed: 5, stage: 'P3', factories: { 'script-host': undefined } }), false],
+      ['stage P2', createStagedSimulation({ seed: 5, stage: 'P2' }), false],
+    ];
+    for (const [what, sim, runs] of worlds) {
+      const dev = 'dev1' as DeviceId;
+      sim.addDevice({ id: dev, type: NF_DEVHOST_TYPE, name: 'DEV1' });
+      sim.runFor(30 * SEC);
+      const s = sim.cli.open(dev, 'console');
+      const listed = sim.cli.help(s, '').items.map((i) => i.token).filter((t) => SHELL_COMMANDS.includes(t)).sort();
+      expect(listed, what).toEqual(runs ? SHELL_COMMANDS : []);
+      const dir = sim.cli.exec(s, 'dir');
+      if (runs) {
+        expect(dir.error, `${what}: dir`).toBeUndefined();
+      } else {
+        expect(dir.error, `${what}: dir`).toBeDefined();
+        expect(dir.error?.message, `${what}: dir`).not.toBe(MSG_NO_SCRIPT_HOST);
+      }
+    }
   });
 });

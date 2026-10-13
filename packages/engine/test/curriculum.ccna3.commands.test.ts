@@ -4,9 +4,9 @@
  * lab accepts; and it keeps the content rules every course body keeps (ARCHITECTURE-P3 §7 W6 course, §11.3).
  *
  * GENERIC over every lesson of `ccna3/lessons.ts` that has a body in `CCNA3_THEORY`, whoever wrote it (theory-a, -b,
- * -c in W6, -d in W7): a lesson that gains a body is checked from that moment on, with no edit here. The skeleton is
- * DETACHED from `curriculum/index.ts` until the W7 course flip (§11.3), so the bodies are read from `CCNA3_THEORY`
- * directly. This is the CCNA 2 commands test (`curriculum.ccna2.commands.test.ts`) generalised as §11.3 asks.
+ * -c in W6, -d in W7): a lesson that gains a body is checked from that moment on; only the part-disjointness case names
+ * the parts, and gained theory-d in W7 (§9.2 item 44d). The skeleton was DETACHED from `curriculum/index.ts` until the
+ * W7 course flip (§11.3), so the bodies are read from `CCNA3_THEORY` directly. This is the CCNA 2 commands test (`curriculum.ccna2.commands.test.ts`) generalised as §11.3 asks.
  *
  * HOW A LESSON NAMES ITS MODELS (as in CCNA 2). The models a lesson's commands are typed on are the union of:
  *   1. with a lab (`Lesson.lab`): the devices of that lab's topology (`ScenarioInfo.build()`) — catalog type AND the
@@ -60,6 +60,7 @@ import { CCNA3_THEORY } from '../src/curriculum/ccna3/theory.js';
 import { CCNA3_THEORY_A } from '../src/curriculum/ccna3/theory-a.js';
 import { CCNA3_THEORY_B } from '../src/curriculum/ccna3/theory-b.js';
 import { CCNA3_THEORY_C } from '../src/curriculum/ccna3/theory-c.js';
+import { CCNA3_THEORY_D } from '../src/curriculum/ccna3/theory-d.js';
 import { SCENARIOS } from '../src/sim/scenarios/index.js';
 import { MLSWITCH, PC, ROUTER, SERVER, SWITCH } from '../src/sim/scenarios/kit.js';
 import { GRAMMAR } from '../src/cli/grammar/index.js';
@@ -539,7 +540,7 @@ describe('CCNA 3 lesson code agrees with the engine and the attached lab (§11.3
   it('has a body only for lessons of the skeleton, and the parts never write the same lesson', () => {
     const ids = new Set(lessons().map((l) => l.id));
     expect(Object.keys(CCNA3_THEORY).filter((id) => !ids.has(id))).toEqual([]);
-    const parts = [CCNA3_THEORY_A, CCNA3_THEORY_B, CCNA3_THEORY_C].map((p) => Object.keys(p));
+    const parts = [CCNA3_THEORY_A, CCNA3_THEORY_B, CCNA3_THEORY_C, CCNA3_THEORY_D].map((p) => Object.keys(p));
     const all = parts.flat();
     expect(all.filter((id, i) => all.indexOf(id) !== i), 'a lesson written in two parts').toEqual([]);
     expect(Object.keys(CCNA3_THEORY).sort()).toEqual([...all].sort());

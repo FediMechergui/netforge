@@ -1,7 +1,7 @@
 /**
  * W4 catalog — the P3 flip (ARCHITECTURE-P3 §7 W4 step 2, §0 rules 3 and 14, §2.1, §2.6, D2, D22; §9.2 W4 items 31–36):
- * `CATALOG_STAGE` is 'P3' while `LATEST_DEFAULTS_PROFILE` stays 'P2' (W7); `PROCESS_ORDER` is the §2.1 final order
- * restricted to the approved names, with the fifteen daemons of the flip (seven MUST, eight approved) registered with
+ * `CATALOG_STAGE` is 'P3' (`LATEST_DEFAULTS_PROFILE` flipped to 'P3' with the course in W7, not here, §9.2 item 44b);
+ * `PROCESS_ORDER` is the §2.1 final order restricted to the approved names, with the fifteen daemons of the flip (seven MUST, eight approved) registered with
  * their factories; the `CAPABILITY_PROCESSES` rows of the flip are exactly the §2.1 rows, every one `since: 'P3'` (the
  * dormant udp and tcp on `managed-switch`, D22); `PROCESS_TABLES` gains the tables of the flip's daemons and
  * `STAGED_PROCESS_TABLES` the stage-filtered snooping tables, which `deriveTables` applies only at stage P3 and only to
@@ -82,10 +82,10 @@ const NF_2911 = byType('router.nf2911');
 const NF_WLC_9800 = byType('wlc.nfwlc9800');
 
 describe('the P3 catalog flip: stage, order, registry and contract rows', () => {
-  it('CATALOG_STAGE is P3, LATEST_DEFAULTS_PROFILE stays P2, and the built-in catalog validates against the registry', () => {
+  it('CATALOG_STAGE is P3, LATEST_DEFAULTS_PROFILE is P3 since the W7 course flip, and the built-in catalog validates against the registry', () => {
     expect(CATALOG_STAGE).toBe('P3');
-    // §7 W4: the defaults profile flips with the course (W7), never here
-    expect(LATEST_DEFAULTS_PROFILE).toBe('P2');
+    // §7 W4: the defaults profile flipped with the course in W7, not at the W4 catalog flip
+    expect(LATEST_DEFAULTS_PROFILE).toBe('P3');
     expect(builtInCatalogIssues()).toEqual([]);
     expect(validateCatalog(ALL_MODELS, ALL_MODULES, { stage: 'P3', processNames: REGISTERED_PROCESSES })).toEqual([]);
     ALL_MODELS.forEach((m, i) => expect(m).toEqual(defineModel(ALL_MODEL_INPUTS[i]!, 'P3')));

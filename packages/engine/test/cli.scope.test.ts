@@ -1,6 +1,7 @@
 /**
  * cli/scope.ts and the P0.5 scope surface of cli/parser.ts (ARCHITECTURE-P1 D2, §3.13): mode class selectors,
- * grammars, capability gates, the legacy kinds gate, the scope cache key and eviction, per-port requirements
+ * grammars, capability gates, (P3, ruling R59 (c)) the process gate `requiresAnyProcess`, the legacy kinds gate, the
+ * scope cache key and eviction, per-port requirements
  * (hidden from `?`/Tab, mismatch message at the first literal), hidden specs, `do` refusal by session effect,
  * interface resolution through `resolvePort` (virtual only for mode-entering specs, `interface vlan 1` joining),
  * and the arg constraints `pattern` / `maxLength` / `portFilter` / `completion`.
@@ -32,6 +33,7 @@ import {
   effectiveRole,
   portMismatchMessage,
   portRequirementMet,
+  processesAllow,
   SCOPE_CACHE_LIMIT,
   scopedSpecs,
   scopeKey,
@@ -117,6 +119,19 @@ describe('specInScope', () => {
     expect('kinds' in s).toBe(false);
   });
 
+  it('(P3, ruling R59 (c)) requires one `requiresAnyProcess` daemon in the process list; no list skips the gate', () => {
+    const gated = spec({ path: ['python'], requiresAnyProcess: ['script-host'] });
+    expect(specInScope(gated, input({ processes: ['udp', 'script-host'] }))).toBe(true);
+    expect(specInScope(gated, input({ processes: ['udp', 'tcp'] }))).toBe(false);
+    expect(specInScope(gated, input({ processes: [] }))).toBe(false);
+    expect(specInScope(gated, input())).toBe(true);
+    expect(specInScope(spec({ path: ['none'], requiresAnyProcess: [] }), input({ processes: ['script-host'] }))).toBe(false);
+    // the other gates still apply first
+    expect(specInScope({ ...gated, requiresAny: ['programmable'] }, input({ processes: ['script-host'] }))).toBe(false);
+    expect(processesAllow({}, ['tcp'])).toBe(true);
+    expect(processesAllow(gated, undefined)).toBe(true);
+  });
+
   it('scopedSpecs keeps table order', () => {
     const table = [spec({ path: ['b'] }), spec({ path: ['a'], privilege: 1 }), spec({ path: ['c'], requires: ['modem'] }), spec({ path: ['d'] })];
     expect(scopedSpecs(table, input()).map((s) => s.path[0])).toEqual(['b', 'a', 'd']);
@@ -133,6 +148,21 @@ describe('scope cache', () => {
     }
     expect(scopeKey(input({ portsVersion: 0 }))).toBe(base);
     expect(scopeKey(input()).split('|')).toHaveLength(5);
+  });
+
+  it('(P3, ruling R59 (c)) keys on the process list only when the input has one, sorted and without repeats', () => {
+    const base = scopeKey(input());
+    expect(scopeKey(input({ processes: undefined }))).toBe(base);
+    const withHost = scopeKey(input({ processes: ['script-host', 'tcp'] }));
+    expect(withHost).toBe(`${base}|script-host,tcp`);
+    expect(scopeKey(input({ processes: ['tcp', 'script-host', 'tcp'] }))).toBe(withHost);
+    expect(scopeKey(input({ processes: ['tcp'] }))).not.toBe(withHost);
+    expect(scopeKey(input({ processes: [] }))).toBe(`${base}|`);
+    // a cache shared by two devices that differ only in their daemons keeps their scopes apart
+    const cache = createScopeCache();
+    const table = [spec({ path: ['run'], requiresAnyProcess: ['script-host'] }), spec({ path: ['b'] })];
+    expect(cache.scopedSpecs(table, input({ processes: ['script-host'] })).map((s) => s.path[0])).toEqual(['run', 'b']);
+    expect(cache.scopedSpecs(table, input({ processes: ['tcp'] })).map((s) => s.path[0])).toEqual(['b']);
   });
 
   it('returns the same frozen array on a hit and recomputes when portsVersion changes', () => {

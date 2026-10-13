@@ -3,7 +3,8 @@
  *
  * The first block carries the cases of the worker's pure `withCurrentDefaults` suite (apps/web
  * `worker.profile.test.ts:195-264`) as engine cases, with the same inputs and assertions (the worker delegates to this
- * file from W2, §9.2 item 25; the suite's `classicDefaultsChip` case is a web component's and stays there). The second
+ * file from W2, §9.2 item 25; the suite's `classicDefaultsChip` case is a web component's and stays there). Since the
+ * W7 flip the move climbs to `LATEST_DEFAULTS_PROFILE`, 'P3', as the web twins do (§9.2 W7 item 44c). The second
  * block pins the ladder: the step to P2 keeps P2's `ip routing` preservation, the step to P3 rewrites no line, every
  * step sets the profile and `schemaIdFor`'s schema in the same step, the input is never mutated, the ladder never
  * lowers a profile, and an unknown profile is refused.
@@ -49,7 +50,7 @@ describe('withCurrentDefaults (the pure move; the worker suite as engine cases)'
     expect(configOf(out, 'MLS')).toBe('hostname MLS\nip routing\n');
     expect(configOf(out, 'MLS2')).toBe('hostname MLS2\nip routing\n');
     expect(configOf(out, 'MLS3')).toBe('ip routing\n');
-    expect(out.profile).toBe('P2');
+    expect(out.profile).toBe('P3');
     expect(out.schema).toBe(schemaIdFor(out));
     expect(out.schema).not.toBe('1.1');
   });
@@ -77,7 +78,7 @@ describe('withCurrentDefaults (the pure move; the worker suite as engine cases)'
     const out = withCurrentDefaults(input, modelOf);
     expect(out.devices.map((d) => d.runningConfig ?? d.config)).toEqual(input.devices.map((d) => d.runningConfig ?? d.config));
     expect(out.devices[0]).toBe(input.devices[0]);
-    expect(out.profile).toBe('P2');
+    expect(out.profile).toBe('P3');
     // The input is not mutated.
     expect(input.profile).toBeUndefined();
     expect(input.schema).toBe('1.1');

@@ -28,6 +28,7 @@ import { eigrpPrefixesOf } from '../canvas/overlays/eigrp-model';
 import { ospfAreasOf } from '../canvas/overlays/ospf-model';
 import { CONCEPT_TOOLS, isConceptToolBuilt } from '../concept/ConceptView';
 import { DOCK_MIN_HEIGHT, DOCK_OPEN_HEIGHT, DOCK_TABS, INSPECTOR_HIDDEN_BELOW, INSPECTOR_OPEN_WIDTH } from '../dock/registry';
+import { profileForCourse } from '../learn/course-profile';
 import { showDockTab } from '../shared/openDeviceSurface';
 import { store, useStore } from '../store/store';
 import type { ConceptTool, TopoOverlayState, WirelessOverlayState } from '../store/types';
@@ -263,9 +264,14 @@ function CoursesButton() {
   );
 }
 
-async function resetWithNewSeed(): Promise<void> {
+/**
+ * Simulate → "Reset with a new seed": an empty world with a fresh seed. W7 fix (review finding #3): like File → New,
+ * it takes the profile of the course context (ARCHITECTURE-P2 D2, ARCHITECTURE-P3 §8.5 P15); with none passed the
+ * worker would build a classic P1 world.
+ */
+export async function resetWithNewSeed(): Promise<void> {
   try {
-    await engine.reset(defaultSeed());
+    await engine.reset(defaultSeed(), profileForCourse(store.getState().learn.lastCourse));
     store.getState().select(null);
     store.getState().toast('Workspace reset with a fresh seed.');
   } catch (err) {

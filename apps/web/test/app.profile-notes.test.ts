@@ -1,7 +1,7 @@
-// The defaults profile in the web at P3 W1 (ARCHITECTURE-P3 D2, §6, §7 W1 web-shell): `profileOfSnapshot` accepts 'P3';
+// The defaults profile in the web (ARCHITECTURE-P3 D2, §6, §7 W1 and W7 web-shell): `profileOfSnapshot` accepts 'P3';
 // the "Classic defaults" chip stays P1-only; File → "Use current defaults" is enabled whenever the profile is below
-// `LATEST_DEFAULTS_PROFILE` (still 'P2', so for P1 worlds only) with a hint from the `PROFILE_NOTES` data record; and
-// `profileForCourse` keeps its rule until the W7 course flip (learn.course-profile.test.ts is unchanged).
+// `LATEST_DEFAULTS_PROFILE` ('P3' since the W7 flip, so for P1 and P2 worlds) with a hint from the `PROFILE_NOTES` data
+// record; and since the W7 course flip `profileForCourse` reads the course's own profile, the latest with no course.
 import { describe, expect, it, vi } from 'vitest';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -44,10 +44,10 @@ describe('the profile a snapshot reports', () => {
     expect(profileOfSnapshot({ profile: 'P4' as 'P3' })).toBe('P1');
   });
 
-  it('keeps profileForCourse as it was until the course flip (D2)', () => {
+  it('reads the course profile since the course flip (D2)', () => {
     expect(profileForCourse('ccna1')).toBe('P1');
-    expect(profileForCourse('ccna3')).toBe('P2');
-    expect(profileForCourse(null)).toBe('P2');
+    expect(profileForCourse('ccna3')).toBe('P3');
+    expect(profileForCourse(null)).toBe('P3');
   });
 });
 
@@ -123,7 +123,7 @@ describe('File → "Use current defaults"', () => {
       expect(isBelowLatest(p), p).toBe(below);
       expect(currentDefaultsItem(p).enabled, p).toBe(below);
     }
-    // Before the W7 flip LATEST_DEFAULTS_PROFILE is 'P2', so only a P1 world is offered the move, as in P2.
+    // With an explicit latest of 'P2' (the rule before the W7 flip) only a P1 world is offered the move, as in P2.
     expect(currentDefaultsItem('P1', 'P2')).toEqual({
       enabled: true,
       hint: 'Keeps every device and setting. Adds: spanning tree on the switches; proxy ARP on router interfaces; controller discovery on lightweight access points.',

@@ -5,7 +5,9 @@
  *
  * `python` is a job of the `script-host` daemon (`script.run`; Ctrl+C sends `script.stop`); `type` and `dir` read the
  * store; `del` removes a file through the `storage` action. A file name is one token or a quoted name, with or without
- * the `files:` prefix. Scope: the `programmable` capability (NF-DEVHOST). Help strings are original wording (spec §1.6).
+ * the `files:` prefix. Scope: the `programmable` capability (NF-DEVHOST) and, since ruling R59 (c), a running script host
+ * (`requiresAnyProcess`), so an NF-DEVHOST without the daemon lists and matches none of the five; the handlers still
+ * refuse there (`MSG_NO_SCRIPT_HOST`) for a context without a process list. Help strings are original wording (spec §1.6).
  */
 import type { ArgSpec, CommandSpec } from '../../contracts/cli.js';
 import type { Capability } from '../../contracts/catalog.js';
@@ -38,6 +40,8 @@ const SHELL_LINE = {
   privilege: 15,
   grammars: HOST_ONLY,
   requiresAny: DEVHOST_CAPABILITIES,
+  // ruling R59 (c): offered only where the script host runs (a stage-P1/P2 or stripped NF-DEVHOST lists none of them)
+  requiresAnyProcess: [SCRIPT_HOST_PROCESS],
   since: 'P3',
   objectives: ['CCNA3.automation.7'],
 } as const;

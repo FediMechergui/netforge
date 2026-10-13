@@ -756,6 +756,8 @@ export function createCliRuntime(deps: CliRuntimeDepsP3, handlers?: Record<strin
       privilege: s.privilege,
       capabilities: capabilitiesOf(dev),
       portsVersion: dev.portsVersion,
+      // P3 (ruling R59 (c)): the model's daemons, for `CommandSpec.requiresAnyProcess`
+      processes: model.processes,
       scope,
       resolveInterface: (name) => existingPort(dev, name),
       portView: (id) => dev.portView(id),

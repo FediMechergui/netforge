@@ -4,10 +4,15 @@
  * world only; LearnShell's `enterSandbox` calls the engine with exactly that, and `sandboxEntryCourse` names the
  * course the learner is in. The app-start choice (`startupProfile`) reads the persisted `learn.lastCourse`.
  *
+ * P3 W7, the course and profile flip (ARCHITECTURE-P3 D2, §8.5 P15, §9.2 item 41, §10.2): `profileForCourse(id) =
+ * courseById(id)?.profile ?? LATEST_DEFAULTS_PROFILE`, now 'P3': CCNA 1 → P1, CCNA 2 → P2, CCNA 3 → P3, no course or an
+ * unknown one → P3. The pins of the P2 rule moved exactly as item 41 lists (the no-lesson pin of "app start and File →
+ * New" with them: it is the same null case); the last describe block holds the flip's added cases.
+ *
  * Pure throughout: the engine client is a recorder, the store a plain object.
  */
 import { describe, expect, it, vi } from 'vitest';
-import { COURSES, lessonsOf } from '@netforge/engine';
+import { COURSES, LATEST_DEFAULTS_PROFILE, courseById, lessonsOf } from '@netforge/engine';
 import type { Course, DefaultsProfile, Lesson, SimSnapshot } from '@netforge/engine';
 
 const api = vi.hoisted(() => ({ reset: vi.fn(), listScenarios: vi.fn(), loadScenario: vi.fn(), checkLab: vi.fn() }));
@@ -23,7 +28,15 @@ vi.mock('../src/store/store', () => {
 });
 
 import { useStore } from '../src/store/store';
-import { CLASSIC_COURSE_ID, profileForCourse, profileOfSnapshot, sandboxEntryProfile } from '../src/learn/course-profile';
+import {
+  CLASSIC_COURSE_ID,
+  CURRENT_DEFAULTS_IN_USE,
+  currentDefaultsItem,
+  profileForCourse,
+  profileOfSnapshot,
+  sandboxEntryProfile,
+} from '../src/learn/course-profile';
+import { classicDefaultsChip } from '../src/app/StatusBar';
 import { enterSandbox, sandboxEntryCourse, type SandboxEntryDeps } from '../src/learn/LearnShell';
 
 const setState = (useStore as unknown as { setState(p: Record<string, unknown>): void }).setState;
@@ -31,20 +44,20 @@ const setState = (useStore as unknown as { setState(p: Record<string, unknown>):
 const CCNA1 = COURSES[0]!;
 const CCNA2 = COURSES.find((c) => c.id === 'ccna2')!;
 
-function world(devices: number, profile?: 'P2'): Pick<SimSnapshot, 'devices' | 'profile'> {
+function world(devices: number, profile?: 'P2' | 'P3'): Pick<SimSnapshot, 'devices' | 'profile'> {
   const list = Array.from({ length: devices }, (_, i) => ({ id: `d${i}` })) as unknown as SimSnapshot['devices'];
   return profile === undefined ? { devices: list } : { devices: list, profile };
 }
 
 describe('the profile of the course context (D2)', () => {
-  it('is the classic profile for the CCNA 1 course and the current one for any other course or none', () => {
+  it('is the profile each course names (classic for CCNA 1) and the latest one for no course or an unknown one', () => {
     expect(profileForCourse('ccna1')).toBe('P1');
     expect(profileForCourse('ccna2')).toBe('P2');
-    expect(profileForCourse('ccna3')).toBe('P2');
-    expect(profileForCourse(null)).toBe('P2');
-    expect(profileForCourse(undefined)).toBe('P2');
-    expect(profileForCourse('')).toBe('P2');
-    expect(profileForCourse('a-course-nobody-wrote')).toBe('P2');
+    expect(profileForCourse('ccna3')).toBe('P3');
+    expect(profileForCourse(null)).toBe('P3');
+    expect(profileForCourse(undefined)).toBe('P3');
+    expect(profileForCourse('')).toBe('P3');
+    expect(profileForCourse('a-course-nobody-wrote')).toBe('P3');
   });
 
   it('names the first course of the catalogue as the classic one, and no other', () => {
@@ -62,10 +75,10 @@ describe('the profile of the course context (D2)', () => {
 });
 
 describe('app start and File → New', () => {
-  it('take the classic profile after a CCNA 1 lesson, the current one after a CCNA 2 lesson or with no lesson', () => {
+  it('take the classic profile after a CCNA 1 lesson, P2 after a CCNA 2 lesson and the latest with no lesson', () => {
     // §10.2: the last lesson opened decides; the store's persisted `learn.lastCourse` is that course.
     const after = (lastCourse: string | null): DefaultsProfile => profileForCourse(lastCourse);
-    expect(after(null)).toBe('P2');
+    expect(after(null)).toBe('P3');
     expect(after(CCNA1.id)).toBe('P1');
     expect(after(CCNA2.id)).toBe('P2');
   });
@@ -171,6 +184,86 @@ describe("LearnShell's sandbox door", () => {
   });
 
   it('covers every course of the catalogue with a profile', () => {
-    for (const c of COURSES as readonly Course[]) expect(['P1', 'P2']).toContain(profileForCourse(c.id));
+    for (const c of COURSES as readonly Course[]) expect(['P1', 'P2', 'P3']).toContain(profileForCourse(c.id));
+  });
+});
+
+/**
+ * P3 W7, the course and profile flip (ARCHITECTURE-P3 D2, §7 W7 web-shell, §8.5 P11 and P15, §10.2): the profile is
+ * read from the course, and the defaults a world with no course takes are the latest, 'P3'.
+ */
+describe('the course and profile flip (P3 W7)', () => {
+  const CCNA3 = courseById('ccna3') as Course;
+
+  it('makes P3 the latest defaults, and reads every course of the catalogue from its own profile', () => {
+    expect(LATEST_DEFAULTS_PROFILE).toBe('P3');
+    for (const c of COURSES as readonly Course[]) expect(profileForCourse(c.id), c.id).toBe(c.profile ?? LATEST_DEFAULTS_PROFILE);
+    expect(COURSES.map((c) => [c.id, profileForCourse(c.id)])).toEqual([
+      ['ccna1', 'P1'],
+      ['ccna2', 'P2'],
+      ['ccna3', 'P3'],
+      ['security', 'P3'],
+    ]);
+  });
+
+  it('opens a CCNA 3 lesson world with the P3 defaults, and leaves a placed P2 world alone', () => {
+    expect(CCNA3.status).toBe('available');
+    expect(sandboxEntryProfile({ courseId: CCNA3.id, snapshot: world(0, 'P2') })).toBe('P3');
+    expect(sandboxEntryProfile({ courseId: CCNA3.id, snapshot: world(0) })).toBe('P3');
+    expect(sandboxEntryProfile({ courseId: CCNA3.id, snapshot: world(0, 'P3') })).toBeNull();
+    expect(sandboxEntryProfile({ courseId: CCNA3.id, snapshot: world(2, 'P2') })).toBeNull();
+    // a CCNA 2 lesson still rebuilds an empty P3 world with the P2 defaults its text is written against
+    expect(sandboxEntryProfile({ courseId: CCNA2.id, snapshot: world(0, 'P3') })).toBe('P2');
+  });
+
+  it('resets an empty P2 world to P3 when the sandbox is entered from a CCNA 3 lesson', async () => {
+    const calls: [number, DefaultsProfile][] = [];
+    const d: SandboxEntryDeps = {
+      snapshot: () => world(0, 'P2'),
+      seed: () => 5,
+      reset: async (seed, profile) => {
+        calls.push([seed, profile]);
+      },
+    };
+    await expect(enterSandbox(CCNA3.id, d)).resolves.toBe('P3');
+    expect(calls).toEqual([[5, 'P3']]);
+  });
+
+  // W7 fix (review finding #3): Simulate → "Reset with a new seed" builds an empty world like File → New, so it takes
+  // the course context's profile too (D2, §8.5 P15); it used to pass none, which the worker reads as the classic P1.
+  it('builds the "Reset with a new seed" world with the course context profile, as File → New does', async () => {
+    const { resetWithNewSeed } = await import('../src/app/TopBar');
+    const toast = vi.fn();
+    setState({ select: vi.fn(), toast });
+    try {
+      for (const [lastCourse, profile] of [
+        [null, 'P3'],
+        ['ccna1', 'P1'],
+        ['ccna2', 'P2'],
+        ['ccna3', 'P3'],
+      ] as const) {
+        api.reset.mockReset();
+        api.reset.mockResolvedValue(world(0, 'P3'));
+        setState({ learn: { courseId: null, lessonId: null, lastCourse } });
+        await resetWithNewSeed();
+        expect(api.reset, String(lastCourse)).toHaveBeenCalledTimes(1);
+        expect(api.reset, String(lastCourse)).toHaveBeenCalledWith(4242, profile);
+      }
+      expect(toast).not.toHaveBeenCalledWith(expect.anything(), 'error');
+    } finally {
+      setState({ learn: { courseId: null, lessonId: null, lastCourse: null }, select: undefined, toast: undefined });
+    }
+  });
+
+  it('keeps a P2 file a P2 world with "Use current defaults" offered, and a template a classic world with its chip', () => {
+    // a saved P2 file: no chip, the move to P3 enabled
+    expect(classicDefaultsChip({ profile: 'P2' } as SimSnapshot)).toBeNull();
+    expect(currentDefaultsItem(profileOfSnapshot(world(3, 'P2'))).enabled).toBe(true);
+    // a P1 template: the "Classic defaults" chip, the move enabled too
+    expect(classicDefaultsChip({} as SimSnapshot)?.label).toBe('Classic defaults');
+    expect(currentDefaultsItem(profileOfSnapshot(world(3))).enabled).toBe(true);
+    // a P3 world already has the current defaults
+    expect(classicDefaultsChip({ profile: 'P3' } as SimSnapshot)).toBeNull();
+    expect(currentDefaultsItem(profileOfSnapshot(world(3, 'P3')))).toEqual({ enabled: false, hint: CURRENT_DEFAULTS_IN_USE });
   });
 });

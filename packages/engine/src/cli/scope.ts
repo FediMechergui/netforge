@@ -8,17 +8,20 @@
  *   • the device grammar is in `spec.grammars ?? DEFAULT_GRAMMARS`;
  *   • every `requires` capability and at least one `requiresAny` capability is in the device's EFFECTIVE
  *     capabilities (`DeviceRuntime.capabilities`), and (P2) no `excludesAny` capability is;
+ *   • (P3, ruling R59 (c)) at least one `requiresAnyProcess` daemon is in the device's process list
+ *     (`DeviceModel.processes`); an input without `processes` (a fixture without a model) skips this gate;
  *
  * `portRequires` is NOT part of the cached scope: it is evaluated per call against the session's selected
  * interface (`portRequirementMet`). A spec failing it is hidden from `?` and Tab; a line typed in full gets
  * `portMismatchMessage(spec)` at the column of the spec's first literal (the parser does that).
  *
- * Scope results are cached per (spec table identity, grammar, mode, privilege, capability set, portsVersion,
- * legacy kind) by `createScopeCache`. Every iteration runs over the spec array in table order, so the result
+ * Scope results are cached per (spec table identity, grammar, mode, privilege, capability set, portsVersion, and
+ * since P3 the process list when the input has one) by `createScopeCache`. Every iteration runs over the spec array in table order, so the result
  * keeps table order and is deterministic. Pure: no clocks, no randomness, no I/O.
  */
 import { CAPABILITIES } from '../contracts/catalog.js';
 import type { Capability, CliGrammar, PortRole } from '../contracts/catalog.js';
+import type { ProcessName } from '../contracts/ids.js';
 import { CLI_MESSAGES, DEFAULT_GRAMMARS } from '../contracts/cli.js';
 import type { CliMode, CommandSpec, PortRequirement, PrivilegeLevel } from '../contracts/cli.js';
 import type { PortView } from '../contracts/port.js';
@@ -37,6 +40,11 @@ export interface ScopeInput {
   readonly capabilities?: CapabilityInput;
   /** `DeviceRuntime.portsVersion`; part of the cache key. Undefined counts as 0. */
   readonly portsVersion?: number;
+  /**
+   * @since P3 (ruling R59 (c)) The device's daemons (`DeviceModel.processes`), for `CommandSpec.requiresAnyProcess`.
+   * Undefined (a fixture without a model) skips the process gate, as an undefined grammar skips the grammar gate.
+   */
+  readonly processes?: readonly ProcessName[];
 }
 
 /** Default number of scope results a cache keeps per spec table before evicting the oldest. */
@@ -62,13 +70,10 @@ export function capabilityKey(caps: CapabilityInput | undefined): string {
 
 /** Cache key of a scope input (the spec table identity is handled by the cache itself). */
 export function scopeKey(input: ScopeInput): string {
-  return [
-    input.grammar ?? '*',
-    input.mode,
-    String(input.privilege),
-    capabilityKey(input.capabilities),
-    String(input.portsVersion ?? 0),
-  ].join('|');
+  const key = [input.grammar ?? '*', input.mode, String(input.privilege), capabilityKey(input.capabilities), String(input.portsVersion ?? 0)];
+  // P3 (R59 (c)): the process list, sorted, only when the input has one (an input without it keys as before)
+  if (input.processes !== undefined) key.push([...new Set(input.processes)].sort().join(','));
+  return key.join('|');
 }
 
 /** Whether the device grammar admits the spec (`grammars ?? DEFAULT_GRAMMARS`); an undefined grammar always does. */
@@ -98,8 +103,17 @@ export function capabilitiesAllow(spec: Pick<CommandSpec, 'requires' | 'requires
 }
 
 /**
+ * @since P3 (ruling R59 (c)) Whether the process gate passes: no `requiresAnyProcess`, no process list in the input, or
+ * at least one of the named daemons in it.
+ */
+export function processesAllow(spec: Pick<CommandSpec, 'requiresAnyProcess'>, processes: readonly ProcessName[] | undefined): boolean {
+  if (spec.requiresAnyProcess === undefined || processes === undefined) return true;
+  return spec.requiresAnyProcess.some((p) => processes.includes(p));
+}
+
+/**
  * Device-level scope test for one spec (everything except `portRequires`): mode (names and class selectors),
- * mode-in-grammar, privilege, grammar and capabilities.
+ * mode-in-grammar, privilege, grammar, capabilities and (P3) processes.
  */
 export function specInScope(spec: CommandSpec, input: ScopeInput): boolean {
   if (!specModeAllows(spec.mode, input.mode)) return false;
@@ -107,6 +121,7 @@ export function specInScope(spec: CommandSpec, input: ScopeInput): boolean {
   if (spec.privilege > input.privilege) return false;
   if (!grammarAllows(spec, input.grammar)) return false;
   if (!capabilitiesAllow(spec, input.capabilities)) return false;
+  if (!processesAllow(spec, input.processes)) return false;
   return true;
 }
 

@@ -29,14 +29,25 @@
  * certification (most titles in this syllabus say so, and nearly every candidate for the lesson on files and images)
  * was turned away rather than edited, as were channels whose name carries a certification.
  *
- * Scope: modules 1-13, lessons 01-36 (W6). The automation lessons 37-40 are W7's, with the same three calls. Expected
- * hazard (§11.3): automation, SDN and QoS videos mostly come from vendor channels; theory-only is allowed, and a
- * lesson with no entry renders without a video.
+ * Scope: all 14 modules. Modules 1-13 (lessons 01-36) were checked in W6; module 14 (lessons 37-40, automation) in
+ * W7, with the same three calls on the date written above the map. Expected hazard (§11.3): automation, SDN and QoS
+ * videos mostly come from vendor channels; theory-only is allowed, and a lesson with no entry renders without a video.
+ *
+ * Module 14 (W7): the candidates came from the results pages of fourteen searches (data formats, REST and HTTP verbs,
+ * RESTCONF and YANG, configuration management, infrastructure as code, agent and push models, Python requests).
+ * Turned away there: nearly every RESTCONF, YANG and NETCONF video (a vendor, a vendor's certification or its
+ * developer programme in the title or the channel, or longer than the lesson), the one RESTCONF tutorial from a
+ * network-automation software maker's own channel (a product channel credited on screen), every video whose title
+ * names a configuration-management tool, one whose description points to a site that copies a course's module 14
+ * material, numbered uploads of course series, one whose chapters advertise books, one that is not embeddable
+ * (oEmbed 401), three in French or Korean, and two whose titles end with an emoji a screen reader would read out.
+ * Lesson 38's video teaches REST itself (verbs, CRUD, status codes) and lesson 40's calls a public web API rather than
+ * a device; the lessons carry RESTCONF, YANG and the device side.
  *
  * Length: the shortest video runs 3:49 (lesson 31) and the longest 13:14 (lesson 16). Each lesson's minutes cover
  * its video plus its theory read at 238 words a minute, and none passes the 45-minute cap of §11.1 (pinned by
- * `curriculum.ccna3.videos.test.ts`, which counts the bodies of `theory-c.ts` and gives every other lesson the
- * longest body a lesson may carry, since lessons 01-22 were written alongside these entries).
+ * `curriculum.ccna3.videos.test.ts`, which counts the bodies of `theory-c.ts` and `theory-d.ts` and gives every other
+ * lesson the longest body a lesson may carry, since lessons 01-22 were written alongside these entries).
  *
  * The titles are UI text — the lesson view shows one as the caption and gives it to the player as its accessible
  * name — so the no-vendor rule reaches them, and a title that names a vendor disqualifies the video rather than
@@ -46,9 +57,10 @@
  */
 import type { LessonVideoMap } from '../../contracts/curriculum.js';
 
-/** Checked on 2026-10-12 (W6 course, lessons 01-36): every entry answered oEmbed 200 with the title and channel
- * recorded below, reported `playableInEmbed` true on its watch page, had no sponsor or self-promotion segment on
- * record (404), and carried no sponsor in its description or chapters. 36 of the 36 lessons of modules 1-13 have one. */
+/** Checked on 2026-10-12 (W6 course, lessons 01-36) and on 2026-10-13 (W7 course, lessons 37-40): every entry answered
+ * oEmbed 200 with the title and channel recorded below, reported `playableInEmbed` true on its watch page, had no
+ * sponsor or self-promotion segment on record (404), and carried no sponsor in its description or chapters. 36 of the
+ * 36 lessons of modules 1-13 have one, and 4 of the 4 lessons of module 14. */
 export const CCNA3_VIDEOS: LessonVideoMap = {
   'ccna3-01-why-routers-share-routes': {
     youtubeId: 'htweWjG8Ny4',
@@ -273,5 +285,36 @@ export const CCNA3_VIDEOS: LessonVideoMap = {
     title: 'SDN Explained | Traditional Networking vs SDN | Northbound & Southbound Interface Made Simple',
     channel: 'Cyber connect',
     url: 'https://www.youtube.com/watch?v=wSMKEKh17Bw',
+  },
+  // Module 14 (W7). Lesson 37 is theory with the data-formats playground; the video compares the three formats side by
+  // side. Its description links the channel's own course, which is not a sponsor read.
+  'ccna3-37-data-a-machine-can-read': {
+    youtubeId: 'dx4jItJQRPM',
+    title: 'Network Automation for Beginners: XML, JSON & YAML Explained',
+    channel: 'IT Boost by Formip',
+    url: 'https://www.youtube.com/watch?v=dx4jItJQRPM',
+  },
+  // Lesson 38: REST itself (what an API is, the verbs and CRUD, status codes); the lesson carries RESTCONF and YANG.
+  'ccna3-38-talking-to-devices-through-apis': {
+    youtubeId: '-mN3VyJuCjM',
+    title: 'What Is REST API? Examples And How To Use It: Crash Course System Design #3',
+    channel: 'ByteByteGo',
+    url: 'https://www.youtube.com/watch?v=-mN3VyJuCjM',
+  },
+  // Lesson 39 is theory-only ([C22] not approved): playbooks, automation use cases and source control, the lesson's
+  // pieces, from a vendor-neutral certification course that names no tool in its title.
+  'ccna3-39-configuration-as-code': {
+    youtubeId: 'n6jIaKWixF4',
+    title: 'Infrastructure as Code - CompTIA Network+ N10-009 - 1.8',
+    channel: 'Professor Messer',
+    url: 'https://www.youtube.com/watch?v=n6jIaKWixF4',
+  },
+  // Lesson 40: a Python script that calls a web API and reads its JSON as dictionaries; the lesson's script and lab
+  // call a device's RESTCONF API the same way.
+  'ccna3-40-scripting-the-network': {
+    youtubeId: 'hpc5jyVpUpw',
+    title: 'Working with APIs in Python - Code in 10 Minutes',
+    channel: 'VideoLab',
+    url: 'https://www.youtube.com/watch?v=hpc5jyVpUpw',
   },
 };

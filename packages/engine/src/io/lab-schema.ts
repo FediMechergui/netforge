@@ -20,6 +20,10 @@
  * Failures are readable, path-qualified lines (`tasks[1].assertions[0].device: unknown device "R9"`) formatted by
  * io/schema.ts's `formatIssue`. The `MAX_LAB_*` limits bound what a hostile document can make the engine hold.
  *
+ * @since P3 W7 (ruling R58 (b)) `parseSavedLabState` checks the lab state a save of a P3 world records for headless
+ * grading (`Topology.lab.pendingFaults`, `Topology.lab.errDisabled`), with this file's scheduled-fault schema, before
+ * sim/grade.ts replays it.
+ *
  * ponytail: §0 rule 12 — the schema is built on first use (`labDocumentSchema` is a lazy zod schema over a memoised
  * builder), so nothing here reads another module at module scope.
  */
@@ -27,14 +31,15 @@ import { z } from 'zod';
 import type { FaultKind } from '../contracts/events.js';
 import type { LabDocument } from '../contracts/lab-document.js';
 import type { DropReason, MediaType } from '../contracts/link.js';
-import type { PortCounters, SwitchportMode } from '../contracts/port.js';
+import type { ErrDisableCause, PortCounters, SwitchportMode } from '../contracts/port.js';
 import type { FsmMachine, TrafficFlowSpec } from '../contracts/process.js';
 import type { RfBand } from '../contracts/rf.js';
 import type { ConceptToolId, LabAssertion, LabFactName, LabFault, LabTask, NeighborProtocol } from '../contracts/scenario.js';
 import type { TraceFilter } from '../contracts/simulation.js';
 import type { HsrpRow, PortSecurityRow, StpRole, StpState } from '../contracts/tables.js';
+import type { Topology, TopologyErrDisabledPort, TopologyPendingFault } from '../contracts/topology.js';
 import type { TraceKind } from '../contracts/trace.js';
-import { MAX_ID_CHARS, MAX_LAB_NAME_CHARS, MAX_LAB_VERSION, MEDIA_TYPES, formatIssues, topologySchema } from './schema.js';
+import { MAX_ID_CHARS, MAX_LAB_NAME_CHARS, MAX_LAB_VERSION, MEDIA_TYPES, formatIssues, topologyLoadError, topologySchema } from './schema.js';
 
 // ── format and limits ─────────────────────────────────────────────────────
 
@@ -228,6 +233,16 @@ const FAULT_KINDS: Record<FaultKind, true> = {
 };
 
 const RF_BANDS: Record<RfBand, true> = { '2.4': true, '5': true, '6': true, '60': true, cell: true };
+
+/** @since P3 (ruling R58 (b)) The causes a saved lab world's err-disabled port may carry (`Topology.lab.errDisabled`). */
+const ERR_DISABLE_CAUSE_NAMES: Record<ErrDisableCause, true> = {
+  'psecure-violation': true,
+  bpduguard: true,
+  'channel-misconfig': true,
+  fault: true,
+  'dhcp-rate-limit': true,
+  'arp-inspection': true,
+};
 
 const COUNTERS: Record<keyof PortCounters, true> = {
   inPackets: true,
@@ -780,7 +795,17 @@ function buildLabSchemas() {
   });
   const document = documentObject.superRefine(checkReferences);
 
-  return { kinds, labFault, traceFilter, flow, task, meta, faultSpec, documentObject, document };
+  // R58 (b): the lab state a save of a P3 world records (`Topology.lab.pendingFaults` / `.errDisabled`). The `lab`
+  // section's name and version belong to the topology schema (io/schema.ts), so this object reads its two members and
+  // leaves the others alone (not strict).
+  const errDisabledPort = obj({ device, port, cause: oneOf(ERR_DISABLE_CAUSE_NAMES) });
+  const savedLabState = z.object(
+    { pendingFaults: list(scheduledFault, MAX_LAB_FAULTS).optional(), errDisabled: list(errDisabledPort).optional() },
+    OBJECT,
+  );
+  const savedLab = z.object({ lab: savedLabState.optional() }, OBJECT);
+
+  return { kinds, labFault, traceFilter, flow, task, meta, faultSpec, documentObject, document, errDisabledPort, savedLabState, savedLab };
 }
 
 type LabSchemas = ReturnType<typeof buildLabSchemas>;
@@ -796,6 +821,9 @@ type _LabObjectsMatch = Assert<
     fault: SameKeys<z.output<LabSchemas['faultSpec']>, NonNullable<LabDocument['faults']>[number]['fault']>;
     traceFilter: SameKeys<z.output<LabSchemas['traceFilter']>, TraceFilter>;
     flow: SameKeys<z.output<LabSchemas['flow']>, Member<'traffic', 'flows'>[number]>;
+    errDisabledPort: SameKeys<z.output<LabSchemas['errDisabledPort']>, TopologyErrDisabledPort>;
+    pendingFault: SameKeys<NonNullable<z.output<LabSchemas['savedLabState']>['pendingFaults']>[number], TopologyPendingFault>;
+    savedLabState: SameKeys<z.output<LabSchemas['savedLabState']>, Pick<NonNullable<Topology['lab']>, 'pendingFaults' | 'errDisabled'>>;
   }>
 >;
 
@@ -962,6 +990,31 @@ export function parseLabDocument(json: unknown): LabDocument {
 /** Pretty JSON text of a lab document (two-space indent, final newline): the `activity.json` text. */
 export function labDocumentToJson(doc: LabDocument): string {
   return JSON.stringify(doc, null, 2) + '\n';
+}
+
+/**
+ * @since P3 (ruling R58 (b)) The lab state a saved world records for headless grading: `topology.lab.pendingFaults`
+ * (the scheduled faults that had not landed) and `topology.lab.errDisabled` (the err-disabled ports and their causes),
+ * each an empty list when absent (a world without a lab stamp, a P1 or P2 save, a P3 save with nothing pending).
+ */
+export interface SavedLabState {
+  readonly pendingFaults: readonly TopologyPendingFault[];
+  readonly errDisabled: readonly TopologyErrDisabledPort[];
+}
+
+/**
+ * @since P3 (ruling R58 (b)) Read and check the saved lab state of `topology`, an untrusted submission (only its `lab`
+ * section is read; its name and version, and everything else, are the topology schema's). Each scheduled fault is
+ * checked as a lab document's scheduled fault is (at most MAX_LAB_FAULTS, an integer instant >= 0, a fault of a known
+ * kind with JSON parameters), each port as a device id, a port name and one of the err-disable causes. Throws a
+ * `TopologyLoadError` whose problems are path-qualified lines (`lab.pendingFaults[0].at: must be >= 0`); returns
+ * plain copies. Pure.
+ */
+export function parseSavedLabState(topology: unknown): SavedLabState {
+  const result = schemas().savedLab.safeParse(topology);
+  if (!result.success) throw topologyLoadError(formatIssues(result.error).map((message) => ({ message })));
+  const lab = result.data.lab;
+  return { pendingFaults: lab?.pendingFaults ?? [], errDisabled: lab?.errDisabled ?? [] };
 }
 
 /** Parse and validate lab-document JSON text; throws a readable `Error` on bad syntax or a wrong document. */

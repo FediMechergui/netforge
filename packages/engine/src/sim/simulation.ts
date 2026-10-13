@@ -95,6 +95,12 @@
  * P3 W3 sim [S25] (D20): the trace sink forwards every `log` event to the CLI's `onLogEvent` (the facade `cli` gains
  * that member), exactly as it forwards `debug`; the CLI prints it on consoles (P3 worlds, or after a typed `logging
  * console`) and `terminal monitor` sessions, so P1/P2 typed transcripts are unchanged.
+ * P3 W7 (ruling R58 (b), [S37]): every scheduled `fault` event (`injectFault` and a fault's own follow-ups) is noted by
+ * its scheduler seq until it is dispatched (`World.pendingFaults`, bookkeeping only). `exportTopology` of a P3 world
+ * with a lab stamp writes `lab.pendingFaults` (the faults that have not landed, in landing order) and `lab.errDisabled`
+ * (the err-disabled ports and their causes), each only when non-empty, for sim/grade.ts to replay; a P1 or P2 world
+ * writes neither, so its exports keep their bytes. `loadTopology` keeps only the stamp's name and version (the topology
+ * schema does not read the two members), so a reopened file schedules no fault, as before.
  *
  * [S1] Time travel (D18, §2.13, §3.13; the `// [S1]` block below): the facade journals every OUTERMOST mutating call
  * through sim/journal.ts — `{at: position(), op, traceHead}`, the op deep-copied at record time — and nothing reached
@@ -164,7 +170,9 @@ import {
   type Topology,
   type TopologyDevice,
   type TopologyDeviceUi,
+  type TopologyErrDisabledPort,
   type TopologyLink,
+  type TopologyPendingFault,
 } from '../contracts/topology.js';
 import type { TraceEvent, TraceSink } from '../contracts/trace.js';
 import { createRng } from '../core/prng.js';
@@ -307,6 +315,12 @@ interface World {
   pendingVersionBumps: number;
   /** @since P2 The world's defaults profile (D2); every device built into this world gets it as `DeviceSpec.profile`. */
   readonly profile: DefaultsProfile;
+  /**
+   * @since P3 (ruling R58 (b)) Every `fault` event scheduled and not dispatched yet, by its scheduler seq: what
+   * `exportTopology` writes as `lab.pendingFaults`. Bookkeeping only — set when a fault is scheduled, deleted when it is
+   * dispatched, read in full only by the export (sorted by instant and seq) — so it changes no behaviour.
+   */
+  readonly pendingFaults: Map<number, TopologyPendingFault>;
 }
 
 /** Read a finite number parameter. */
@@ -544,6 +558,7 @@ export function createSimulation(opts: SimulationOptions): Simulation {
       retained: {},
       pendingVersionBumps: 0,
       profile,
+      pendingFaults: new Map(),
     };
   }
 
@@ -876,7 +891,8 @@ export function createSimulation(opts: SimulationOptions): Simulation {
     if (w.retained.objectives !== undefined) topo.objectives = [...w.retained.objectives];
     if (w.retained.notes !== undefined) topo.notes = w.retained.notes;
     if (w.metresPerUnit !== DEFAULT_METRES_PER_UNIT) topo.canvas = { metresPerUnit: w.metresPerUnit };
-    if (w.retained.lab !== undefined) topo.lab = { ...w.retained.lab };
+    // P3 (ruling R58 (b)): a P3 lab world also records its pending faults and err-disabled ports (labRuntimeState)
+    if (w.retained.lab !== undefined) topo.lab = { ...w.retained.lab, ...labRuntimeState(w) };
     // P2 (D2, §2.9): `profile` only for a world of profile P2 or later, and then the schema that can express it
     // (`schemaIdFor`: 1.2 for P2, 1.3 for P3), in the same step; a P1 world writes neither (P3 §9.2 item 16).
     if (w.profile !== 'P1') {
@@ -887,6 +903,29 @@ export function createSimulation(opts: SimulationOptions): Simulation {
       topo.schema = schemaIdFor(topo);
     }
     return topo;
+  }
+
+  /**
+   * @since P3 (ruling R58 (b)) The lab state a save of a P3 world records for headless grading (`Topology.lab`): the
+   * scheduled faults that have not landed, in the order they would land (instant, then scheduling order), each a
+   * plain-data copy; and the err-disabled ports with their causes, in device then port order (a cause outside
+   * ERR_DISABLE_CAUSES is written as the one an `err-disable` fault applies for it, DEFAULT_ERR_DISABLE_CAUSE). Each
+   * member only when non-empty, and nothing at all for a P1 or P2 world, whose exports keep their bytes.
+   */
+  function labRuntimeState(w: World): { pendingFaults?: TopologyPendingFault[]; errDisabled?: TopologyErrDisabledPort[] } {
+    const out: { pendingFaults?: TopologyPendingFault[]; errDisabled?: TopologyErrDisabledPort[] } = {};
+    if (w.profile === 'P1' || w.profile === 'P2') return out;
+    const pending = [...w.pendingFaults.entries()].sort(([sa, a], [sb, b]) => a.at - b.at || sa - sb);
+    if (pending.length > 0) out.pendingFaults = pending.map(([, f]) => ({ at: f.at, fault: JSON.parse(JSON.stringify(f.fault)) as FaultSpec }));
+    const disabled: TopologyErrDisabledPort[] = [];
+    for (const dev of w.devices.values()) {
+      for (const p of dev.ports.values()) {
+        if (p.errDisabled === undefined) continue;
+        disabled.push({ device: dev.id, port: p.id, cause: isErrDisableCause(p.errDisabled) ? p.errDisabled : DEFAULT_ERR_DISABLE_CAUSE });
+      }
+    }
+    if (disabled.length > 0) out.errDisabled = disabled;
+    return out;
   }
 
   // ── configuration and hardware ────────────────────────────────────────────
@@ -921,7 +960,13 @@ export function createSimulation(opts: SimulationOptions): Simulation {
   // ── faults ────────────────────────────────────────────────────────────────
 
   function followUp(fault: FaultSpec, at: SimTime, params: Record<string, unknown>): void {
-    world.scheduler.schedule(at, { kind: 'fault', fault: { ...fault, params: { ...(fault.params ?? {}), ...params } } });
+    scheduleFault(world, at, { ...fault, params: { ...(fault.params ?? {}), ...params } });
+  }
+
+  /** Schedule a `fault` event in `w`, noted as pending until it is dispatched (R58 (b): `lab.pendingFaults`). */
+  function scheduleFault(w: World, at: SimTime, fault: FaultSpec): void {
+    const seq = w.scheduler.schedule(at, { kind: 'fault', fault });
+    w.pendingFaults.set(seq, { at, fault });
   }
 
   function faultLink(w: World, fault: FaultSpec): LinkId | undefined {
@@ -1191,6 +1236,7 @@ export function createSimulation(opts: SimulationOptions): Simulation {
         cli.exec(ev.session, ev.line);
         return;
       case 'fault':
+        w.pendingFaults.delete(ev.seq);
         handleFault(ev.fault, at);
         return;
       case 'deviceConfigure':
@@ -1291,7 +1337,7 @@ export function createSimulation(opts: SimulationOptions): Simulation {
     injectFault: (at: SimTime, fault: FaultSpec): void =>
       apply({ op: 'injectFault', at, fault }, () => {
         assertSimTime(at, 'injectFault(at)');
-        world.scheduler.schedule(at, { kind: 'fault', fault });
+        scheduleFault(world, at, fault);
       }),
 
     // time: never journaled (a replay reaches positions by event count), but nested so no dispatch records

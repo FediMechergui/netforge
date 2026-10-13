@@ -82,7 +82,7 @@ import type {
 import type { CliGrammar } from '../contracts/catalog.js';
 import { PORT_FAMILIES } from '../contracts/catalog.js';
 import type { PortResolution } from '../contracts/device.js';
-import type { PortId } from '../contracts/ids.js';
+import type { PortId, ProcessName } from '../contracts/ids.js';
 import type { PortView } from '../contracts/port.js';
 import { maskToPrefixLen, normalizeMac, parseCidr, parseIpv4, u32ToIpv4 } from '../contracts/addr.js';
 import { normalizeIpv6 } from '../core/addr6.js';
@@ -126,6 +126,8 @@ export interface MatchContext {
   iface?: PortView;
   /** `DeviceRuntime.portsVersion`, part of the scope cache key. */
   portsVersion?: number;
+  /** @since P3 (ruling R59 (c)) The device's daemons (`DeviceModel.processes`); undefined skips the process gate. */
+  processes?: readonly ProcessName[];
   /** Scope cache shared across calls (the runtime keeps one); without it the scope is computed per call. */
   scope?: ScopeCache;
   /** Resolve a short or long port name to its canonical id; undefined when unknown. Used when `resolvePort` is absent. */
@@ -300,6 +302,7 @@ export function scopeInputOf(ctx: MatchContext, mode: CliMode = ctx.mode): Scope
     privilege: ctx.privilege,
     capabilities: ctx.capabilities,
     portsVersion: ctx.portsVersion,
+    processes: ctx.processes,
   };
 }
 

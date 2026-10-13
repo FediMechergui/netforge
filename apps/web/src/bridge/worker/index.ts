@@ -25,6 +25,9 @@
  * P2 (ARCHITECTURE-P2 D2, §2.14; W2 web-shell): a world has a defaults profile. `init` and `reset` build the empty
  * simulation with the profile the CALLER chose from the course context (default 'P1'). `useCurrentDefaults` moves a
  * classic world to the current defaults: export, `withCurrentDefaults` (P3: the engine ladder, below), load, epoch++.
+ * P3 W7 (the course and profile flip, ARCHITECTURE-P3 §8.5 P15, §9.2 item 42): the current defaults are 'P3', so the
+ * move takes a P1 or a P2 world to P3; the caller's course context now gives P3 for a CCNA 3 lesson or none. The move
+ * is refused while the active lab schedules faults (`CURRENT_DEFAULTS_LAB_FAULTS`): a reload would lose them.
  *
  * P2 [SHOULD S1] time travel (ARCHITECTURE-P2 §2.14, §3.13; W4 web-shell): two more modules hang off this one.
  * `lanes.ts` indexes every event the live world emits (through the trace listener, so before the batch cap) into the
@@ -332,6 +335,14 @@ function buildSim(seed: number, profile: DefaultsProfile | undefined): Simulatio
  * alone. Re-exported here so the worker and its tests name one function.
  */
 export { withCurrentDefaults };
+
+/**
+ * @since P3 W7 fix (review finding #0) Why `useCurrentDefaults` refuses while the active lab schedules faults (a
+ * troubleshooting lab): the move reloads the world, and a reload keeps neither the scheduled faults nor the ports they
+ * err-disabled. The File menu shows it as the refusal's message.
+ */
+export const CURRENT_DEFAULTS_LAB_FAULTS =
+  'Not offered in a troubleshooting lab: moving it to the current defaults would reload the world and lose its hidden faults.';
 
 /** Frames on media after anything that resets time or cancels legs (load, removals, power). */
 function resyncInflight(s: Simulation): void {
@@ -845,6 +856,9 @@ const api: EngineApi = {
     return postFull();
   },
   async useCurrentDefaults() {
+    // W7 fix (review finding #0): the move reloads the world, which would drop the faults the active lab scheduled and
+    // the ports they err-disabled (a troubleshooting lab graded as repaired). Refused before anything changes.
+    if ((labs.active?.faults?.length ?? 0) > 0) throw new Error(CURRENT_DEFAULTS_LAB_FAULTS);
     const s = mutable();
     pauseInternal();
     const t = withCurrentDefaults(s.exportTopology(), (type) => s.catalog.get(type));

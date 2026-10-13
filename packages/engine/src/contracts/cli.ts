@@ -189,6 +189,14 @@ export interface CommandSpec {
    * controller (§2.2 `CONTROLLER_PORT_SWITCHPORT`: "the grammar accepts no switchport line there") only this way.
    */
   excludesAny?: readonly Capability[];
+  /**
+   * @since P3 (optional by meaning; ruling R59 (c), W7 integration, §9.2 item 44h) Absent = no process gate. At least
+   * one of these daemons must be in the device's process list (`DeviceModel.processes`, what the model runs at its
+   * catalog stage with its registry). The developer host's shell (`cli/grammar/devhost.ts`) is offered only where the
+   * script host runs; no capability gate can say so, because a stage-P1/P2 NF-DEVHOST, or one whose registry lacks the
+   * daemon, has the shipped model's capabilities (`programmable`'s only process row is `since: 'P3'`).
+   */
+  requiresAnyProcess?: readonly ProcessName[];
   /** @since P0.5 Selected-interface requirement (config-if family). */
   portRequires?: PortRequirement;
   /** @since P0.5 Starts a blocking job (ping, tracert, nslookup, renew); refused in headless configure. */

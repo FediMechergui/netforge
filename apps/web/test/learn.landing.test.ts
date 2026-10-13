@@ -1,6 +1,8 @@
 // Course layer entry (P2 learn/): the landing page that lists the levels, the course view that lists the modules
 // and their lessons in order with the non-colour markers, and the store side of it — the view a visit starts on,
 // the ids a learn surface carries, and the escape into the sandbox.
+// P3 W7 (ARCHITECTURE-P3 §9.2 items 43-44): CCNA 3 is available ("Start CCNA 3"), and the planned card is the next
+// level (§8.5 P11), so the planned-course pins hold for it.
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -48,6 +50,13 @@ const FIXTURE: Course = {
 
 const CCNA1 = courseById('ccna1') as Course;
 
+/** The id of the planned card that follows CCNA 3 (ARCHITECTURE-P3 §8.5 P11, the security track). */
+const NEXT_PLANNED_ID = 'security';
+
+/** The CCNA 3 description written at the W7 course flip (§9.2 item 44: the placeholder rewritten). */
+const CCNA3_DESCRIPTION =
+  'Run the network of a whole organisation: let OSPF and EIGRP find the routes for you, decide who may reach what with access lists, lock down device logins and the access ports, join distant sites over serial links, tunnels and IPsec, put voice ahead of bulk traffic, keep every clock and log in step, and change devices through their API and a short script. Every idea is explained in plain language, and most come with a short video and a lab that grades itself.';
+
 describe('the landing page', () => {
   it('lists every level, with the counts of the one that is available', () => {
     const html = renderToStaticMarkup(createElement(Landing, { onOpenCourse: noop, onOpenSandbox: noop }));
@@ -63,13 +72,13 @@ describe('the landing page', () => {
     const t = text(renderToStaticMarkup(createElement(Landing, { onOpenCourse: noop, onOpenSandbox: noop })));
     expect(t).toContain('Start CCNA 1');
     expect(t).toContain('Start CCNA 2');
-    expect(t).not.toContain('Start CCNA 3');
+    expect(t).toContain('Start CCNA 3');
     expect(t).toContain('Not available yet');
     // The state is a word, not a colour, and the glyph is decoration beside it.
     expect(t).toContain('available');
     expect(t).toContain('planned');
     expect(courseMark(CCNA1)).toEqual({ glyph: '▣', label: 'available' });
-    expect(courseMark(courseById('ccna3') as Course).label).toBe('planned');
+    expect(courseMark(courseById('ccna3') as Course).label).toBe('available');
   });
 
   // P2 W7 (ARCHITECTURE-P2 §11.3): the CCNA 2 course is attached, so the landing page counts it like CCNA 1.
@@ -85,6 +94,8 @@ describe('the landing page', () => {
   it('offers no control at all for a level that has nothing to open', () => {
     const planned = COURSES.filter((c) => c.status === 'planned');
     expect(planned.length).toBeGreaterThan(0);
+    // P3 W7 (§8.5 P11): CCNA 3 is available, and the planned card is the next level, the security track
+    expect(planned.map((c) => c.id)).toEqual([NEXT_PLANNED_ID]);
     const html = renderToStaticMarkup(createElement(Landing, { courses: planned, onOpenCourse: noop, onOpenSandbox: noop }));
     // The only button on a page of planned levels is the way into the sandbox.
     expect(html.match(/<button/g) ?? []).toHaveLength(1);
@@ -103,6 +114,40 @@ describe('the landing page', () => {
     expect(courseFacts(FIXTURE)).toEqual({ modules: 2, lessons: 3, labs: 1, minutes: 40 });
     expect(courseFactsText(FIXTURE)).toContain('2 modules · 3 lessons · 1 of them with a lab');
     expect(courseFactsText(COURSES.find((c) => c.status === 'planned') as Course)).toBe('No lessons in this release.');
+  });
+
+  // P3 W7, the course flip (ARCHITECTURE-P3 §7 W7 web-learn, §8.5 P11, §9.2 items 43-44): CCNA 3 is attached and
+  // available with the counts of its lessons, its description is the rewritten one, and the next planned card keeps
+  // "at least one planned course" true, with its own title and no lessons.
+  it('lists CCNA 3 as available with the counts of its lessons and its rewritten description', () => {
+    const ccna3 = courseById('ccna3') as Course;
+    expect(courseMark(ccna3)).toEqual({ glyph: '▣', label: 'available' });
+    expect(courseFacts(ccna3)).toEqual({ modules: 14, lessons: 40, labs: 21, minutes: 610 });
+    expect(courseFactsText(ccna3)).toBe('14 modules · 40 lessons · 21 of them with a lab · about 10 h of reading and watching');
+    expect(ccna3.description).toBe(CCNA3_DESCRIPTION);
+    const t = text(renderToStaticMarkup(createElement(Landing, { onOpenCourse: noop, onOpenSandbox: noop })));
+    expect(t).toContain(courseFactsText(ccna3));
+    expect(t).toContain(ccna3.description);
+  });
+
+  it('announces the next level as one planned card with its exact title and no lessons', () => {
+    const next = courseById(NEXT_PLANNED_ID) as Course;
+    expect(next).toBeDefined();
+    expect(COURSES[COURSES.length - 1]).toBe(next);
+    expect(next.status).toBe('planned');
+    expect(next.profile).toBe('P3');
+    expect(next.modules).toEqual([]);
+    expect(next.level).toBe('Security');
+    expect(next.title).toBe('Defending the network');
+    expect(courseMark(next)).toEqual({ glyph: '◷', label: 'planned' });
+    expect(courseFactsText(next)).toBe('No lessons in this release.');
+    const html = renderToStaticMarkup(createElement(Landing, { courses: [next], onOpenCourse: noop, onOpenSandbox: noop }));
+    const t = text(html);
+    expect(t).toContain('Defending the network');
+    expect(t).toContain('No lessons in this release.');
+    expect(t).toContain('Not available yet');
+    expect(t).not.toContain('Start Security');
+    expect(html.match(/<button/g) ?? []).toHaveLength(1);
   });
 });
 
@@ -135,7 +180,16 @@ describe('the course view', () => {
 
   it('says so when a level has no lessons yet', () => {
     const planned = COURSES.find((c) => c.status === 'planned') as Course;
+    expect(planned.id).toBe(NEXT_PLANNED_ID);
     expect(text(renderToStaticMarkup(createElement(CourseView, { course: planned, onOpenLesson: noop })))).toContain('no lessons in this release');
+  });
+
+  it('shows the real CCNA 3 course as its 14 modules of lessons', () => {
+    const ccna3 = courseById('ccna3') as Course;
+    const html = renderToStaticMarkup(createElement(CourseView, { course: ccna3, onOpenLesson: noop }));
+    expect(ccna3.modules).toHaveLength(14);
+    expect(html.match(/<button type="button"/g) ?? []).toHaveLength(40);
+    for (const module of ccna3.modules) expect(text(html)).toContain(module.title);
   });
 
   it('shows the real CCNA 1 course as modules of lessons', () => {

@@ -25,6 +25,10 @@
  * P3 (ARCHITECTURE-P3 §6, §11.2, §7 W5 web-shell, §9.2 item 39): the CCNA 3 labs (`ccna3-lab`) join `SCENARIOS` in W5
  * and get their own fixed group, "Labs: CCNA 3", after the CCNA 2 labs (without a fixed place the group would sort
  * among the other categories).
+ *
+ * P3 W7 (the course and profile flip, §8.5 P15): "New (empty)" reads the course's own profile (`profileForCourse`:
+ * P1 after a CCNA 1 lesson, P2 after a CCNA 2 lesson, P3 after a CCNA 3 lesson or with none), and "Use current
+ * defaults" is offered to P1 and P2 worlds, since the current defaults are now 'P3'.
  */
 import { useRef, useState } from 'react';
 import {
@@ -197,7 +201,8 @@ export const USE_CURRENT_DEFAULTS_LABEL = 'Use current defaults';
 /**
  * @since P2 Move the world to the current defaults (D2): the worker exports it, keeps a multilayer switch routing,
  * marks it a current-defaults world and reloads it. Devices, cables and configurations stay; the epoch changes. P3: the
- * toast lists what the move switched on (`PROFILE_NOTES` between the profile before and the one after).
+ * toast lists what the move switched on (`PROFILE_NOTES` between the profile before and the one after). W7 fix (review
+ * finding #0): the worker refuses the move while the active lab schedules faults; the refusal shows as an error toast.
  */
 export async function useCurrentDefaults(): Promise<void> {
   if (!store.getState().ready) return;

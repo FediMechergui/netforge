@@ -112,6 +112,8 @@ export function matchContextFor(model: DeviceModel, mode: CliMode, opts: MatchCo
     privilege,
     grammar,
     capabilities: effectiveCapabilities(model, opts.modules),
+    // P3 (ruling R59 (c)): the model's daemons, as the runtime passes them
+    processes: model.processes,
     resolveInterface: (name) => {
       const r = resolvePortName(source, name);
       return r.kind === 'existing' ? r.port : undefined;

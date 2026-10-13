@@ -106,7 +106,8 @@ its shell; the `script-runs` table) and the Automation desktop app. Its scripts 
 which is saved with the topology. It runs no TFTP. Like every model listed here (NF-WLC-9800 included), it is in the
 model inputs of every build stage; `programmable` brings the script host and the Automation app from P3 only, so a
 catalog derived at an earlier stage (the P1 and P2 test catalogs) lists NF-DEVHOST as a plain host, with the daemons,
-tables and desktop apps NF-PC has at that stage.
+tables and desktop apps NF-PC has at that stage. Its shell offers `python`, `python3`, `type`, `del` and `dir` only
+where the script host runs, so such a host lists none of them, like NF-PC.
 
 ## Modules (slots on `modular` routers)
 

@@ -45,10 +45,10 @@ export type DefaultsProfile = 'P1' | 'P2' | 'P3';
 export const DEFAULTS_PROFILES: readonly DefaultsProfile[] = ['P1', 'P2', 'P3'];
 /**
  * @since P3 The profile a new world takes when no course names one (web `profileForCourse`, "Use current defaults").
- * 'P2' until the W7 course flip; that change sets 'P3' together with the course (ARCHITECTURE-P3 §7 W7, §9 W7,
- * §8.5 P15).
+ * 'P2' until the W7 course flip; that change set 'P3' together with the course (ARCHITECTURE-P3 §7 W7, §9 W7,
+ * §8.5 P15). Every P1 template, saved P1/P2 file and CCNA 1/2 lab keeps the profile it names.
  */
-export const LATEST_DEFAULTS_PROFILE: DefaultsProfile = 'P2';
+export const LATEST_DEFAULTS_PROFILE: DefaultsProfile = 'P3';
 /** @since P2 True when the defaults introduced by `since` apply in a world whose profile is `profile`. */
 export function profileIncludes(profile: DefaultsProfile, since: DefaultsProfile): boolean {
   return DEFAULTS_PROFILES.indexOf(since) <= DEFAULTS_PROFILES.indexOf(profile);

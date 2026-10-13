@@ -5293,6 +5293,89 @@ is now graded as the API change in W6's own `labs.ccna3.automation.test.ts`.
     with its exact title and "No lessons in this release." text.
 44. The CCNA 2 description pin stays; the CCNA 3 description placeholder is rewritten (its pin gets the new exact text).
 
+The W7 integration step (2026-10-13: the course and profile flip with module 14, the remaining acceptance, then the
+review findings) recorded these migrations; each is a changed pin of the same strength or an addition:
+
+44b. (The flip of §8.5 P15 reaches the engine's own pins of `LATEST_DEFAULTS_PROFILE`; integration findings #0, #4)
+    `accept.p3.profile.test.ts:109` `expect(LATEST_DEFAULTS_PROFILE).toBe('P2')` becomes `toBe('P3')`, its comment
+    `:108` "the course and "Use current defaults" default to P3 since the W7 flip" and the header `:21-22` reworded to
+    match. `device.catalog.p3.test.ts:88` becomes `toBe('P3')`; the case title (`:85`, "… LATEST_DEFAULTS_PROFILE is P3
+    since the W7 course flip …"), its comment `:87` and the header `:3` say the profile flipped with the course in W7,
+    not at the W4 catalog flip. The `CATALOG_STAGE` pin and the validation lines are unchanged.
+44c. (Item 42's engine twins: the worker's pure move runs on `sim/defaults-upgrade.ts`; integration findings #1, #5)
+    `sim.defaults-upgrade.test.ts:52` and `:80` `expect(out.profile).toBe('P2')` after `withCurrentDefaults(...)` become
+    `toBe('P3')`, exactly as the web twins `worker.profile.test.ts` old `:225`/`:255` (44f); every configuration-line
+    assertion is unchanged (the P3 step rewrites no line); the header names the flip.
+44d. (Module 14 joins `CCNA3_THEORY`; integration finding #2) `curriculum.ccna3.commands.test.ts:542`, the part-
+    disjointness case, imports `CCNA3_THEORY_D` and its parts list becomes `[CCNA3_THEORY_A, CCNA3_THEORY_B,
+    CCNA3_THEORY_C, CCNA3_THEORY_D]` (it compared 40 keys with 36); the header no longer says "with no edit here".
+    `curriculum.ccna3.videos.test.ts` (W6's file, theory-d owner): the minutes rule counts a theory-d body as written,
+    as it counts a theory-c body (`CCNA3_THEORY_C[id] ?? CCNA3_THEORY_D[id]`), instead of the 540-word allowance kept
+    for an unwritten lesson; lessons 37-40 run 669-785 words, so the rule is stricter for them; the measured-length
+    table gains the four videos and a "what lessons 37-40 say" block is added (cases only).
+44e. (Item 41, completed: the pins of the P2 rule the item did not list; course-flip finding #1, web-qa findings #0,
+    #1) `learn.course-profile.test.ts` old `:68` (`after(null)` in "app start and File → New", the same null case as
+    `:44`) becomes `'P3'`, its title (old `:65`) and the `:40` title reworded; the W7 describe block and the "Reset with
+    a new seed" case (TopBar's `resetWithNewSeed` takes `profileForCourse(lastCourse)`, course-flip finding #3) are
+    added. `app.profile-notes.test.ts:47-50`: the case becomes "reads the course profile since the course flip (D2)";
+    `:49` (`profileForCourse('ccna3')`) and `:50` (`profileForCourse(null)`) become `'P3'`; `:48` (ccna1 → P1)
+    unchanged; the header `:1-4` and the `:126` comment reworded; the explicit-latest pins `:127-132` unchanged.
+44f. (Item 42, completed; course-flip findings #0, #1) `worker.profile.test.ts` old `:117` and `:123`
+    (`startupProfile()` with no lesson) become `'P3'`, a CCNA 3 line is added between them, and the title is
+    reworded; the pure move's old `:225` and `:255` become `'P3'` (inside W2's `:195-264`, the web twins of 44c);
+    old `:192` ("keeps the lab of a CCNA 1 lab world") is within item 42's range. Added: the "Use current defaults" in a
+    lab that schedules faults block — the worker refuses the move while the active lab declares faults
+    (`CURRENT_DEFAULTS_LAB_FAULTS`), which would reload the world without them; one refusal case each for
+    `ccna2-troubleshoot-routing`, `ccna2-troubleshoot-vlans` and `ccna2-stp-guards`, a grading case and a coverage case.
+44g. (Ruling R58 (b) as built: the allow-list becomes the rule; course-flip finding #2, qa-labdoc) The W6 file
+    `sim.grade.parity.test.ts` is restructured over the new shared `test/sim.grade.harness.ts` (`learnerWorld`,
+    `solve`, `LEARNER_ACTIONS`, `LABS`, `LAB_TEST_TIMEOUT_MS` and the boot and line times move there unchanged):
+    - the 18 `RELOAD_DIFFERENCES` entries with reason `'learner history'` (labs 15, 19, 27, 29, 38 and 40, 40m's four
+      among them) leave the allow-list and become the harness's `NOT_GRADABLE_HEADLESS_ASSERTIONS`, which
+      `expectRuleNamesTheList` requires `runtimeTableOf` to name exactly and `expectHeadlessShape` requires `gradeTopology`
+      to report with the third status at both points (counted in neither `score` nor `total`); the `'err-disabled
+      port'`, `'access-list renumbered'` and `'device clock'` entries stay;
+    - assertion 1, H equals R "exactly", becomes "for every assertion gradable headless, `checkedAt` included, and
+      exactly (the whole status) for a lab with none of them"; assertion 2 is unchanged but for the moved entries.
+    `sim.grade.test.ts:7-8`: the header says "the document's scheduled faults are not injected" (a save's recorded
+    ones are replayed); the R58 (b) cases are added, and `EARLY_SAVE_NS`, `savedAt`, `withoutRecord` and
+    `landingOrder` live in the harness (shared with `accept.p3.lab-document`). In the W7-added `RUNTIME_ONLY_TABLES`
+    loop the `acl` case reads a hit member (`where: {lastIface: 'vty'}`), since an `acl` table assertion is runtime-only
+    only when its `where`/`whereOps` names one of `ACL_HIT_MEMBERS` (qa-labdoc finding #1).
+44h. (Ruling R59 (c), the listing half; cli finding #0; an additive contract member for the architect to confirm at W8)
+    R59 (c)'s "`requiresAny` on `script-host`" cannot be a capability gate: a stage-P1/P2 NF-DEVHOST, or one whose
+    registry lacks the daemon, has the shipped model's capabilities (`host`, `programmable`). The gate is the additive,
+    optional-by-meaning `CommandSpec.requiresAnyProcess?: readonly ProcessName[]` (absent = no gate; `@since P3`, to be
+    listed with §2.15's rows by W8 item 45): `cli/scope.ts` `ScopeInput.processes?` (undefined skips the gate, as an
+    undefined grammar does), `processesAllow`, `specInScope`, and `scopeKey` appending the sorted process list only when
+    the input has one (so `cli.scope.test.ts:135`'s five-part key is unchanged); `cli/parser.ts` `MatchContext.processes?`
+    through `scopeInputOf`; `cli/runtime.ts` passes `dev.model.processes`; `test/cli.p05.fixture.ts` `matchContextFor`
+    passes `model.processes`. `cli/grammar/devhost.ts` `SHELL_LINE` gains `requiresAnyProcess: ['script-host']`; the
+    handlers keep their `MSG_NO_SCRIPT_HOST` refusal (the execution half, for a context without a process list).
+    `cli.devhost.test.ts`: the W7 runtime case "refuses the shell … (execution)" becomes "does not offer the shell …"
+    (through the runtime the five are now unrecognised, never `MSG_NO_SCRIPT_HOST`); cases added (help and the parser
+    on the stripped and the stage-P2 model list and match none of the five, the shipped model all five; a real session
+    per stage); `cli.scope.test.ts` gains the gate and key cases. `goldens/cli-help.p05.json` does not move (the only
+    `programmable` model in the catalog runs `script-host`); 40j's "its shell still lists the five `programmable`
+    commands" no longer holds, and `docs/CATALOG.md` says so.
+
+R58 (b)'s record in a saved FILE (integration finding #3) needed no migration: `io/netforge-file.ts`'s
+`canonicalTopology` writes `lab.pendingFaults` and `lab.errDisabled` after the stamp's name and version (fixed key
+order, empty lists dropped), and the 1.3 readers (`topologyFromJson`, `readNetforge`, and `writeNetforge`'s own
+re-validation) re-attach them, checked by `parseSavedLabState`; the topology schema itself still does not read them
+(the `Topology.lab` contract sentence holds), a 1.0–1.2 document never carries them, and every P1/P2 byte is unchanged.
+Cases only: `io.netforge-file.lab-state.test.ts` (new) and `accept.p3.lab-document` part 4 (each P3 lab save and the
+err-disabled save, written as plain JSON and as a `.netforge` archive and read back, keeps its `lab` section and grades
+exactly as the export).
+
+**W7 ruling (architect, 2026-10-13)**
+
+- **R60.** Accepted: the additive, optional `CommandSpec.requiresAnyProcess?: readonly ProcessName[]`
+  (`contracts/cli.ts`, `@since P3`). It is the only way to scope a command to the processes a model runs, and R59(c)'s
+  dev-host commands need it; W8 lists it among the §2.15 rows. Also accepted: the W7 integration's save path for R58(b)
+  (`io/netforge-file.ts` keeps `lab.pendingFaults` / `lab.errDisabled` in 1.3 documents, no contract change), and the
+  worker's refusal of "Use current defaults" in a lab world with scheduled faults.
+
 **W8**
 
 45. `contracts.optional-by-meaning.test.ts` gains the §2.15 rows; `Course.profile` becomes required (web course
@@ -5422,7 +5505,7 @@ stay listed as the designs of their stage and must not exist as files in P3a.
 | `accept.p3.ipsec-failure.test.ts` [C13] | §3.13 step 10: a wrong key gives `AUTHENTICATION_FAILED`, `ike-failed` rows, logs, Tunnel0 down and the ping falling back to the default route; the periodic retry count under `runFor(60 s)`; the corrected key comes up on the next retry; an unknown peer gives `NO_PROPOSAL_CHOSEN`; a silent peer gives three retransmissions (1, 2, 4 s) then `ike-no-response`; a peer reload with the old SPI in flight drops `ipsec-no-sa` until the new SA; `tunnel protection` on a GRE-mode tunnel refused; `runToIdle` returns in every case. |
 | `accept.p3.snmp.test.ts` [S33] | As the management map's acceptance row, unchanged. |
 | `accept.p3.span.test.ts` [S34] | As the management map's acceptance row, unchanged. |
-| `accept.p3.lab-document.test.ts` [S37] | Every built-in lab round-trips JSON → schema → scenario with `build()` deep-equal; headless `gradeTopology` equals live grading for every lab (unsolved and solved); `lab-versions.json` fails an edited lab without a version bump. |
+| `accept.p3.lab-document.test.ts` [S37] | Every built-in lab round-trips JSON → schema → scenario with `build()` deep-equal; for every lab (unsolved and solved), headless `gradeTopology` of the saved world, graded from the document's JSON text, equals live grading for every assertion gradable headless, and names the others (as amended by ruling R58 (b), with R59 (a)): an assertion that reads a runtime-only table (`vty-logins`, `acl` hit rows, `flows`, `syslog-messages`, `restconf-log`, `script-runs`, a `fact` whose reader's source is one; labs 15, 19, 27, 29, 38 and 40) is reported as not gradable headless, a third status counted neither as a pass nor as a fail; a save of a P3 lab world records its pending faults and err-disabled ports (`Topology.lab.pendingFaults?`, `Topology.lab.errDisabled?`), which `gradeTopology` replays; the remaining differences, each named, are what no save records (a P2 world's err-disabled ports, renumbered access-list entries, device clocks); `lab-versions.json` fails an edited lab without a version bump. |
 
 ### 10.2 Web acceptance (`apps/web/test/`)
 

@@ -71,8 +71,10 @@ const CCNA1_ORDER = [
 ];
 
 describe('curriculum catalogue', () => {
-  it('lists CCNA 1 and CCNA 2 as available with modules, and CCNA 3 as planned with none', () => {
-    expect(COURSES.map((c) => c.id)).toEqual(['ccna1', 'ccna2', 'ccna3']);
+  // P3 W7 (ARCHITECTURE-P3 §9.2 item 43): CCNA 3 is attached and available; the planned card is now the next level,
+  // the security track (§8.5 P11), so the planned-course pins below hold for it.
+  it('lists CCNA 1, CCNA 2 and CCNA 3 as available with modules, and the next level as planned with none', () => {
+    expect(COURSES.map((c) => c.id)).toEqual(['ccna1', 'ccna2', 'ccna3', 'security']);
     for (const course of COURSES) {
       expect(course.level.length).toBeGreaterThan(0);
       expect(course.title.length).toBeGreaterThan(0);
@@ -87,7 +89,8 @@ describe('curriculum catalogue', () => {
     }
     expect(ccna1().status).toBe('available');
     expect(courseById('ccna2')?.status).toBe('available');
-    expect(courseById('ccna3')?.status).toBe('planned');
+    expect(courseById('ccna3')?.status).toBe('available');
+    expect(courseById('security')?.status).toBe('planned');
   });
 
   it('keeps ids unique and kebab-case', () => {

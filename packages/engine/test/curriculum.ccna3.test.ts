@@ -5,15 +5,25 @@
  * with one row whose `handsOn` is a §11.4 value. The rows that are not `'lab'` are printed as the spec §2.8
  * `coverage-gap` warning.
  *
- * The skeleton is DETACHED from `curriculum/index.ts` until the W7 course flip, so it is imported directly here. Lab
- * names are not looked up in `SCENARIOS` yet: the CCNA 3 labs join it in W5 (the automation labs in W6, §11.3). The
- * CCNA 2 labs two objective rows point at exist already and are checked.
+ * The skeleton was DETACHED from `curriculum/index.ts` until the W7 course flip, so it is imported directly here and
+ * these blocks still check it on its own. The CCNA 2 labs two objective rows point at exist already and are checked.
+ *
+ * P3 W7, the course flip (§7 W7 course, §8.5 P11 and P15, §9.2 items 43-44, §11.3): `curriculum/index.ts` attaches the
+ * skeleton with its theory (`ccna3/theory.ts`, modules 1-14) and videos, marks CCNA 3 `available` with profile 'P3' and
+ * its rewritten description, and announces the next level as one planned card. The last describe block pins what
+ * reaches the reader: the order, a written body for every lesson, the videos, every lab in `SCENARIOS` as a CCNA 3 lab
+ * (W5 and W6 put them there), the course text and the planned card.
  */
 import { describe, expect, it } from 'vitest';
-import type { Lesson } from '../src/contracts/curriculum.js';
+import type { Course, Lesson } from '../src/contracts/curriculum.js';
+import { labLessonMap, lessonsOf } from '../src/contracts/curriculum.js';
+import { LATEST_DEFAULTS_PROFILE } from '../src/contracts/catalog.js';
+import { COURSES, courseById, lessonById } from '../src/curriculum/index.js';
 import { CCNA1_MODULES } from '../src/curriculum/ccna1/lessons.js';
 import { CCNA2_MODULES } from '../src/curriculum/ccna2/lessons.js';
 import { CCNA3_MODULES } from '../src/curriculum/ccna3/lessons.js';
+import { CCNA3_THEORY } from '../src/curriculum/ccna3/theory.js';
+import { CCNA3_VIDEOS } from '../src/curriculum/ccna3/videos.js';
 import {
   CCNA3_OBJECTIVE_CLUSTERS,
   CCNA3_OBJECTIVES,
@@ -447,5 +457,97 @@ describe('CCNA 3 objectives as data (§11.4)', () => {
         ...gaps.map((o) => `  ${o.id} [${o.handsOn}] ${o.text} (${o.lesson})`),
       ].join('\n'),
     );
+  });
+});
+
+/**
+ * P3 W7, the course flip (§7 W7 course, §8.5 P11 and P15, §9.2 items 43-44, §11.3): what reaches the reader once
+ * `curriculum/index.ts` joins the skeleton, the theory and the videos.
+ */
+describe('the CCNA 3 course, attached (W7)', () => {
+  const ccna3 = (): Course => {
+    const course = courseById('ccna3');
+    if (course === undefined) throw new Error('no ccna3 course in COURSES');
+    return course;
+  };
+
+  /** The description written at the flip (§9.2 item 44: the placeholder rewritten). */
+  const DESCRIPTION =
+    'Run the network of a whole organisation: let OSPF and EIGRP find the routes for you, decide who may reach what with access lists, lock down device logins and the access ports, join distant sites over serial links, tunnels and IPsec, put voice ahead of bulk traffic, keep every clock and log in step, and change devices through their API and a short script. Every idea is explained in plain language, and most come with a short video and a lab that grades itself.';
+
+  it('is available with the P3 profile, and the defaults profile flipped with it (§8.5 P15)', () => {
+    const course = ccna3();
+    expect(course.status).toBe('available');
+    expect(course.level).toBe('CCNA 3');
+    expect(course.profile).toBe('P3');
+    expect(LATEST_DEFAULTS_PROFILE).toBe('P3');
+    expect(COURSES.map((c) => c.id).indexOf('ccna3')).toBe(2);
+  });
+
+  it('is the skeleton in teaching order: 14 modules and 40 lessons, the skeleton itself untouched', () => {
+    const course = ccna3();
+    expect(course.modules.map((m) => m.id)).toEqual(CCNA3_MODULES.map((m) => m.id));
+    expect(course.modules.map((m) => m.title)).toEqual(MODULES.map(([title]) => title));
+    expect(lessonsOf(course).map((l) => l.id)).toEqual(CCNA3_ORDER);
+    expect(lessonsOf(course).map((l) => l.estimatedMinutes)).toEqual(MINUTES);
+    lessonsOf(course).forEach((l, i) => {
+      const skeleton = lessons()[i]!;
+      expect({ ...l, theory: '', video: undefined }, l.id).toEqual({ ...skeleton, video: undefined });
+    });
+    for (const l of lessons()) expect(l.theory, `${l.id}: the skeleton was mutated`).toBe('');
+  });
+
+  it('gives every lesson its written body from ccna3/theory.ts, modules 1-14', () => {
+    const empty = lessonsOf(ccna3())
+      .filter((l) => l.theory.trim() === '')
+      .map((l) => l.id);
+    expect(empty, `lessons reaching the reader with no theory: ${empty.join(', ')}`).toEqual([]);
+    for (const l of lessonsOf(ccna3())) {
+      expect(l.theory, l.id).toBe(CCNA3_THEORY[l.id]);
+      expect(lessonById(l.id)?.theory, l.id).toBe(CCNA3_THEORY[l.id]);
+    }
+    expect(Object.keys(CCNA3_THEORY).filter((id) => !CCNA3_ORDER.includes(id)), 'theory keyed by no lesson').toEqual([]);
+  });
+
+  it('carries the video recorded for each lesson, and no other', () => {
+    for (const l of lessonsOf(ccna3())) expect(l.video, l.id).toEqual(CCNA3_VIDEOS[l.id]);
+  });
+
+  it('opens each of the 21 labs from exactly one lesson, every one a CCNA 3 lab of SCENARIOS filed under its module', () => {
+    const placed = labLessonMap(ccna3());
+    expect(placed.size).toBe(21);
+    expect([...placed.keys()].sort()).toEqual(Object.values(LAB_BY_LESSON).map(([lab]) => lab).sort());
+    for (const [name, lesson] of placed) {
+      const lab = SCENARIOS.find((s) => s.name === name);
+      expect(lab, `${lesson.id} points at ${name}, which is not in SCENARIOS`).toBeDefined();
+      expect(lab?.category, name).toBe('ccna3-lab');
+      expect(lab?.course, name).toBe('CCNA 3');
+      expect(lab?.topic, `${name} files under its lesson's module`).toBe(lesson.topic);
+    }
+    const ccna3Labs = SCENARIOS.filter((s) => s.category === 'ccna3-lab').map((s) => s.name);
+    expect([...ccna3Labs].sort(), 'a CCNA 3 lab that no lesson opens').toEqual([...placed.keys()].sort());
+  });
+
+  it('describes itself in its rewritten words, with no vendor names', () => {
+    const course = ccna3();
+    expect(course.description).toBe(DESCRIPTION);
+    for (const text of [course.title, course.subtitle, course.description]) {
+      expect(text, text).not.toMatch(VENDORS);
+      expect(text, text).not.toMatch(/not written yet/i);
+    }
+  });
+
+  it('announces the next level, the security track, as the one planned card: no lessons, profile P3 (§8.5 P11)', () => {
+    const planned = COURSES.filter((c) => c.status === 'planned');
+    expect(planned.map((c) => c.id)).toEqual(['security']);
+    const next = planned[0]!;
+    expect(COURSES.at(-1)).toBe(next);
+    expect(next.level).toBe('Security');
+    expect(next.title).toBe('Defending the network');
+    expect(next.subtitle).toBe('Firewalls, intrusion prevention, remote-access VPNs and incident response');
+    expect(next.modules).toEqual([]);
+    expect(lessonsOf(next)).toEqual([]);
+    expect(next.profile).toBe('P3');
+    for (const text of [next.level, next.title, next.subtitle, next.description]) expect(text, text).not.toMatch(VENDORS);
   });
 });

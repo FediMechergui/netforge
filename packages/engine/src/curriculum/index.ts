@@ -1,20 +1,23 @@
 /**
  * curriculum/index.ts — the course catalogue the landing page lists (P2 course layer).
  *
- * The lessons of each course arrive as a skeleton (`ccna1/lessons.ts`, `ccna2/lessons.ts`: order, titles, outcomes,
- * lab links), the prose as a map of bodies (`ccna1/theory.ts`, `ccna2/theory.ts`) and the videos as a map of
- * verified links (`ccna1/videos.ts`, `ccna2/videos.ts`), all three keyed by lesson id. `withContent` joins them, so
- * a missing body or a lesson with no video degrades to an empty theory and no video instead of breaking the
- * catalogue. CCNA 2 is attached since P2 W7 (ARCHITECTURE-P2 §11.3), when every lesson had its theory and every lab
- * of the approved scope existed.
+ * The lessons of each course arrive as a skeleton (`ccnaN/lessons.ts`: order, titles, outcomes, lab links), the prose
+ * as a map of bodies (`ccnaN/theory.ts`) and the videos as a map of verified links (`ccnaN/videos.ts`), all three
+ * keyed by lesson id. `withContent` joins them, so a missing body or a lesson with no video degrades to an empty
+ * theory and no video instead of breaking the catalogue. CCNA 2 is attached since P2 W7 (ARCHITECTURE-P2 §11.3), when
+ * every lesson had its theory and every lab of the approved scope existed; CCNA 3 since P3 W7 (ARCHITECTURE-P3 §7 W7
+ * course, §11.3), when its 40 lessons had their theory and the 21 labs of the approved plan existed. That change is
+ * also the profile flip (§8.5 P15): `LATEST_DEFAULTS_PROFILE` became 'P3' with it, and the web's `profileForCourse`
+ * reads `Course.profile` from then on. The next level, the security track, is announced as a planned card with no
+ * lessons (§8.5 P11).
  *
  * `COURSES` is plain data all the way down and can be posted from the worker as is.
  *
  * ponytail: one flat exported list, like `SCENARIOS` — the landing page groups by `status` and `level` itself, and
  * a lookup only ever needs an id. Planned levels are listed with no modules rather than with invented lessons.
- * The content maps are joined at module scope, for CCNA 2 exactly as for CCNA 1: that is safe (ARCHITECTURE-P2 §0
- * rule 12 guards against import cycles) because every `ccnaN/*` file imports only contract types and its own siblings,
- * so none of them can reach back into this module.
+ * The content maps are joined at module scope, for CCNA 2 and CCNA 3 exactly as for CCNA 1: that is safe
+ * (ARCHITECTURE-P2 §0 rule 12 guards against import cycles) because every `ccnaN/*` file imports only contract types
+ * and its own siblings, so none of them can reach back into this module.
  */
 import type { Course, CourseModule, Lesson, LessonTheoryMap, LessonVideoMap } from '../contracts/curriculum.js';
 import { lessonsOf } from '../contracts/curriculum.js';
@@ -24,6 +27,9 @@ import { CCNA1_VIDEOS } from './ccna1/videos.js';
 import { CCNA2_MODULES } from './ccna2/lessons.js';
 import { CCNA2_THEORY } from './ccna2/theory.js';
 import { CCNA2_VIDEOS } from './ccna2/videos.js';
+import { CCNA3_MODULES } from './ccna3/lessons.js';
+import { CCNA3_THEORY } from './ccna3/theory.js';
+import { CCNA3_VIDEOS } from './ccna3/videos.js';
 
 export { CCNA1_MODULES } from './ccna1/lessons.js';
 
@@ -56,7 +62,8 @@ const CCNA1: Course = {
     'Start with nothing and finish able to build a small routed network, hand out addresses, publish a name and a page, and find a fault instead of guessing at it. Every idea is explained in plain language, shown in a short video and then practised in a lab that grades itself.',
   status: 'available',
   modules: withContent(CCNA1_MODULES, CCNA1_THEORY, CCNA1_VIDEOS),
-  // P3 (ARCHITECTURE-P3 D2, §7 W0 course, §9.2 W0 item 12): data only; nothing reads it until the W7 course flip.
+  // P3 (ARCHITECTURE-P3 D2, §7 W0 course, §9.2 W0 item 12): data since W0; read by the web's profileForCourse since the
+  // W7 course flip, so a CCNA 1 lesson keeps opening classic worlds.
   profile: 'P1',
 };
 
@@ -78,15 +85,31 @@ const CCNA3: Course = {
   title: 'Wide area networks and automation',
   subtitle: 'Links between sites, access control and scripted configuration',
   description:
-    'The last level: joining sites over long links, controlling who may reach what, and letting a script do the configuration you would otherwise type. Not written yet.',
+    'Run the network of a whole organisation: let OSPF and EIGRP find the routes for you, decide who may reach what with access lists, lock down device logins and the access ports, join distant sites over serial links, tunnels and IPsec, put voice ahead of bulk traffic, keep every clock and log in step, and change devices through their API and a short script. Every idea is explained in plain language, and most come with a short video and a lab that grades itself.',
+  status: 'available',
+  modules: withContent(CCNA3_MODULES, CCNA3_THEORY, CCNA3_VIDEOS),
+  // P3 W7: read by the web's profileForCourse from this change on, so a CCNA 3 lesson opens a P3 world
+  profile: 'P3',
+};
+
+/**
+ * The next level (ARCHITECTURE-P3 §8.5 P11): the security track planned for P4, announced with no lessons so the
+ * landing page keeps one planned card. Its worlds would take the newest defaults; required at W8 ('P3').
+ */
+const SECURITY: Course = {
+  id: 'security',
+  level: 'Security',
+  title: 'Defending the network',
+  subtitle: 'Firewalls, intrusion prevention, remote-access VPNs and incident response',
+  description:
+    'The next level: watch attacks unfold on a practice range and learn to stop them with firewalls, intrusion prevention, remote-access VPNs and logs gathered in one place, then follow a calm method when something gets through. Not written yet.',
   status: 'planned',
   modules: [],
-  // still planned: the profile its worlds will take once the course opens (W7)
   profile: 'P3',
 };
 
 /** Every course, in level order: the ones you can take, then the one that is coming. */
-export const COURSES: readonly Course[] = [CCNA1, CCNA2, CCNA3];
+export const COURSES: readonly Course[] = [CCNA1, CCNA2, CCNA3, SECURITY];
 
 export function courseById(id: string): Course | undefined {
   return COURSES.find((c) => c.id === id);

@@ -21,10 +21,13 @@
  * `files:` store). 1.2 → 1.3 is identity + schema rewrite; a 1.2 document keeps its `'P2'`-only profile field set (a 1.2
  * document carrying `'P3'` is refused), and a 1.0–1.2 document never carries `files` (its field set strips it).
  */
-import type { DeviceId, LinkId, PortRef } from './ids.js';
+import type { DeviceId, LinkId, PortId, PortRef } from './ids.js';
+import type { FaultSpec } from './events.js';
 import type { Impairments, LinkKind, MediaType } from './link.js';
 import type { ModuleInstall } from './catalog.js';
+import type { ErrDisableCause } from './port.js';
 import type { TopologyFile } from './storage.js';
+import type { SimTime } from './time.js';
 
 export const TOPOLOGY_SCHEMA_ID_1_0 = 'netforge.topology/1.0';
 export const TOPOLOGY_SCHEMA_ID_1_1 = 'netforge.topology/1.1';
@@ -107,6 +110,22 @@ export interface TopologyDevice {
   files?: readonly TopologyFile[];
 }
 
+/**
+ * @since P3 (ruling R58 (b)) A scheduled fault of a saved lab world that had not landed yet (`Topology.lab.pendingFaults`):
+ * the shape of `ScenarioInfo.faults` and `LabDocument.faults` entries.
+ */
+export interface TopologyPendingFault {
+  readonly at: SimTime;
+  readonly fault: FaultSpec;
+}
+
+/** @since P3 (ruling R58 (b)) An err-disabled port of a saved lab world and its cause (`Topology.lab.errDisabled`). */
+export interface TopologyErrDisabledPort {
+  readonly device: DeviceId;
+  readonly port: PortId;
+  readonly cause: ErrDisableCause;
+}
+
 export interface TopologyLink {
   id: LinkId;
   a: PortRef;
@@ -133,9 +152,30 @@ export interface Topology {
   canvas?: { metresPerUnit: number };
   /**
    * @since P1 (1.1) Loaded lab reference: reopening a saved lab restores its panel by name. Round-tripped like
-   * objectives/notes: loadTopology retains t.lab verbatim and exportTopology writes it back; there is no other setter.
+   * objectives/notes: loadTopology retains t.lab's name and version and exportTopology writes them back; there is no
+   * other setter.
+   * @since P3 (ruling R58 (b)) the two optional-by-meaning members below, the lab state a save of a P3 world records
+   * for headless grading (sim/grade.ts `gradeTopology` replays them in its world).
    */
-  lab?: { name: string; version: number };
+  lab?: {
+    name: string;
+    version: number;
+    /**
+     * @since P3 (optional by meaning; ruling R58 (b)) The scheduled faults that had not landed when the world was saved,
+     * at the instants they were scheduled for (a reloaded world restarts at t = 0, so each keeps its own `at`), in the
+     * order they would land. Written by `exportTopology` only for a P3 world with a lab stamp and at least one such
+     * fault; absent otherwise, so every P1 and P2 export keeps its bytes. `loadTopology` does not schedule them (the
+     * topology schema does not read the member); `gradeTopology` does.
+     */
+    pendingFaults?: readonly TopologyPendingFault[];
+    /**
+     * @since P3 (optional by meaning; ruling R58 (b)) The ports that were err-disabled when the world was saved, with
+     * their causes, in device then port order: runtime port state a configuration cannot carry. Written by
+     * `exportTopology` only for a P3 world with a lab stamp and at least one such port; absent otherwise.
+     * `gradeTopology` err-disables them again, as the live grader's clone does (sim/lab-checks.ts `settledClone`).
+     */
+    errDisabled?: readonly TopologyErrDisabledPort[];
+  };
   /**
    * @since P2 (optional by meaning; 1.2) The world's defaults profile when it is 'P2'; absent = 'P1' (D2). `profile`
    * belongs ONLY to the 1.2 field set: a 1.1 document carrying it is read with the 1.1 field set, which strips it, so

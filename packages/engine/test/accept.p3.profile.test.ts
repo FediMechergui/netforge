@@ -18,8 +18,8 @@
  *  • Proxy ARP is still on for a routed interface of a P3 router (the `arp.ts:178` trap: "P2 or later"), and off in a
  *    P1 world on the same catalog.
  *  • The pure ladder `sim/defaults-upgrade.ts` taken to P3 on a P2 world gives profile P3 and schema 1.3 and rewrites
- *    no configuration line; loaded, the world has CDP rows after boot. (`useCurrentDefaults` reaches P3 only after the
- *    W7 flip, §10.2; `LATEST_DEFAULTS_PROFILE` is still 'P2'.)
+ *    no configuration line; loaded, the world has CDP rows after boot. (`useCurrentDefaults` reaches P3 since the W7
+ *    flip, §10.2: `LATEST_DEFAULTS_PROFILE` is 'P3'.)
  */
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
@@ -105,8 +105,8 @@ describe('accept P3 profile: the profile and the P3 document', () => {
     expect(createSimulation({ seed: 1, profile: 'P3' }).profile).toBe('P3');
     expect(createSimulation({ seed: 1 }).profile).toBe('P1');
     expect(createP3Simulation({ seed: 1 }).profile).toBe('P3');
-    // the course and "Use current defaults" still default to P2 until the W7 flip
-    expect(LATEST_DEFAULTS_PROFILE).toBe('P2');
+    // the course and "Use current defaults" default to P3 since the W7 flip
+    expect(LATEST_DEFAULTS_PROFILE).toBe('P3');
   });
 
   it(`a P3 world exports profile P3 and schema 1.3, and reloads to an identical snapshot (the real catalog)`, () => {

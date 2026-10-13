@@ -8,6 +8,9 @@
  *   host.del      `del <file>`: the `storage` delete action (the runtime applies it; R20's limits are the writer's)
  *   host.dir      `dir`: the store's files, by name
  *
+ * Each of the four refuses with `MSG_NO_SCRIPT_HOST` on a device that runs no `script-host` (ruling R59 (c)): the shell
+ * is the script host's, so a host without it neither runs scripts nor reads or deletes its files from this shell.
+ *
  * `rest … -f <file>` (the body of a request read from the same store): `restBodyOf` below gives the body from the split
  * options (the `-d` text, or the `-f` file through `restBodyFromFile`; both is refused). The MUST `rest` job
  * (cli/handlers/api.ts, another owner) calls it once its splitter reads `-f <file>` (reported in the W2 wave report).
@@ -21,9 +24,17 @@ import type { StoredFile } from '../../contracts/storage.js';
 import { DEVHOST_HANDLERS, FILES_PREFIX, SCRIPT_HOST_PROCESS } from '../grammar/devhost.js';
 import { ctxP3 } from '../command-ctx-p3.js';
 
+/**
+ * @since P3 [S32] Whether the device runs the script host. Ruling R59 (c): the shell's commands (python, python3, type,
+ * del, dir) work only where it runs; elsewhere each refuses with MSG_NO_SCRIPT_HOST before it reads or changes a file.
+ */
+export function scriptHostRuns(ctx: CommandCtx): boolean {
+  return ctx.model.processes.includes(SCRIPT_HOST_PROCESS);
+}
+
 /** @since P3 [S32] The one file system of a host. */
 export const HOST_FILES_FS = 'files' as const;
-/** @since P3 [S32] A host that runs no script host. */
+/** @since P3 [S32] A host that runs no script host: every command of its shell refuses with this (ruling R59 (c)). */
 export const MSG_NO_SCRIPT_HOST = '% This host cannot run scripts.';
 /** @since P3 [S32] A device whose file store cannot be read here. */
 export const MSG_NO_FILE_STORE = '% This device keeps no files.';
@@ -78,7 +89,7 @@ export function restBodyOf(ctx: CommandCtx, opts: { readonly body?: string; read
 
 /** `python <file> [<args>]`. */
 const python: CommandHandler = (ctx, args) => {
-  if (!ctx.model.processes.includes(SCRIPT_HOST_PROCESS)) return { error: MSG_NO_SCRIPT_HOST };
+  if (!scriptHostRuns(ctx)) return { error: MSG_NO_SCRIPT_HOST };
   const name = fileNameOf(args['file']);
   if (name === '') return { error: '% Give the script file name.' };
   // a store the runtime can read is checked here, so a typo answers at once; the script host checks again
@@ -94,6 +105,7 @@ const python: CommandHandler = (ctx, args) => {
 
 /** `type <file>`. */
 const type: CommandHandler = (ctx, args) => {
+  if (!scriptHostRuns(ctx)) return { error: MSG_NO_SCRIPT_HOST };
   const file = readStoredFile(ctx, args['file']);
   if ('error' in file) return file;
   return { output: file.content.endsWith('\n') ? file.content.slice(0, -1) : file.content };
@@ -101,6 +113,7 @@ const type: CommandHandler = (ctx, args) => {
 
 /** `del <file>`. */
 const del: CommandHandler = (ctx, args) => {
+  if (!scriptHostRuns(ctx)) return { error: MSG_NO_SCRIPT_HOST };
   const file = readStoredFile(ctx, args['file']);
   if ('error' in file) return file;
   ctx.act([{ type: 'storage', op: 'delete', fs: HOST_FILES_FS, path: file.path }]);
@@ -109,6 +122,7 @@ const del: CommandHandler = (ctx, args) => {
 
 /** `dir`. */
 const dir: CommandHandler = (ctx) => {
+  if (!scriptHostRuns(ctx)) return { error: MSG_NO_SCRIPT_HOST };
   const list = ctxP3(ctx).files;
   if (list === undefined) return { error: MSG_NO_FILE_STORE };
   const files = list(HOST_FILES_FS);

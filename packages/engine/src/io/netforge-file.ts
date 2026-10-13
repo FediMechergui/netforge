@@ -18,6 +18,13 @@
  * manifest and topology go through the zod schemas, and JSON syntax errors
  * are turned into readable messages.
  *
+ * @since P3 W7 (ruling R58 (b)) The lab state a save of a P3 lab world records for headless grading
+ * (`Topology.lab.pendingFaults`, `Topology.lab.errDisabled`) travels through both save formats: `canonicalTopology`
+ * writes it after the stamp's name and version, and the 1.3 readers (`topologyFromJson`, `readNetforge`, and
+ * `writeNetforge`'s own re-validation) keep it, checked by io/lab-schema.ts `parseSavedLabState`. The topology schema
+ * itself does not read the two members (a 1.0–1.2 document never carries them; `loadTopology` keeps only the name and
+ * version), so a saved file grades on the network it was saved with, and every P1/P2 document keeps its bytes.
+ *
  * Determinism: nothing here touches the wall clock. fflate would stamp each
  * entry with `Date.now()` if no `mtime` were given, so a fixed timestamp is
  * passed; `manifest.created`/`modified` are supplied by the caller (UI).
@@ -28,14 +35,19 @@
  * without a signature anyway.
  */
 import { strFromU8, strToU8, unzipSync, zipSync, type UnzipFileInfo, type Unzipped, type Zippable } from 'fflate';
+import type { FaultSpec } from '../contracts/events.js';
 import {
   NETFORGE_FORMAT_VERSION,
+  TOPOLOGY_SCHEMA_ID_1_3,
   type NetforgeProject,
   type Topology,
   type TopologyDevice,
   type TopologyDeviceUi,
+  type TopologyErrDisabledPort,
   type TopologyLink,
+  type TopologyPendingFault,
 } from '../contracts/topology.js';
+import { parseSavedLabState } from './lab-schema.js';
 import { MAX_NETFORGE_BYTES, parseManifest, parseTopology, validateManifest } from './schema.js';
 
 // ── constants ─────────────────────────────────────────────────────────────
@@ -159,6 +171,7 @@ function canonicalLink(l: TopologyLink): TopologyLink {
  *   device  id, type, name, position, power, config, runningConfig, modules, hardware (macSalt), ui, files
  *   file    path, content
  *   link    id, a, b, media, length_m, impairments, kind, dce_end, distance_m
+ *   lab     name, version, pendingFaults, errDisabled (the last two @since P3, ruling R58 (b); `canonicalLab`)
  * The 1.1 keys come after every P0 key, the 1.2 key `profile` (@since P2) after every 1.1 key, and the 1.3 device key
  * `files` (@since P3, [S32]) after every 1.1 device key, so a document without them serialises exactly as before (a P1
  * document is byte-identical, and so is a P2 one). A `hardware` block without `macSalt` is dropped, and so is an empty
@@ -178,9 +191,53 @@ export function canonicalTopology(t: Topology, withConfig = true): Topology {
   if (t.objectives !== undefined) out.objectives = [...t.objectives];
   if (t.notes !== undefined) out.notes = t.notes;
   if (t.canvas !== undefined) out.canvas = { metresPerUnit: t.canvas.metresPerUnit };
-  if (t.lab !== undefined) out.lab = { name: t.lab.name, version: t.lab.version };
+  if (t.lab !== undefined) out.lab = canonicalLab(t.lab);
   if (t.profile !== undefined) out.profile = t.profile;
   return out;
+}
+
+/**
+ * @since P3 (ruling R58 (b)) The lab stamp in canonical form: name and version, then the recorded lab state when it is
+ * not empty (`pendingFaults`, then `errDisabled`; each entry a plain-data copy with a fixed key order). Only a P3 lab
+ * world's export carries the two members, so every P1/P2 stamp keeps its bytes.
+ */
+function canonicalLab(lab: NonNullable<Topology['lab']>): NonNullable<Topology['lab']> {
+  const out: NonNullable<Topology['lab']> = { name: lab.name, version: lab.version };
+  if (lab.pendingFaults !== undefined && lab.pendingFaults.length > 0) out.pendingFaults = lab.pendingFaults.map(canonicalPendingFault);
+  if (lab.errDisabled !== undefined && lab.errDisabled.length > 0) {
+    out.errDisabled = lab.errDisabled.map((p): TopologyErrDisabledPort => ({ device: p.device, port: p.port, cause: p.cause }));
+  }
+  return out;
+}
+
+/** A scheduled fault with its keys in `FaultSpec` order (`params` copied as plain JSON data). */
+function canonicalPendingFault(f: TopologyPendingFault): TopologyPendingFault {
+  const t = f.fault.target;
+  const target: FaultSpec['target'] = {};
+  if (t.device !== undefined) target.device = t.device;
+  if (t.port !== undefined) target.port = t.port;
+  if (t.link !== undefined) target.link = t.link;
+  if (t.medium !== undefined) target.medium = t.medium;
+  if (t.band !== undefined) target.band = t.band;
+  if (t.channel !== undefined) target.channel = t.channel;
+  const fault: FaultSpec = { id: f.fault.id, kind: f.fault.kind, target };
+  if (f.fault.params !== undefined) fault.params = JSON.parse(JSON.stringify(f.fault.params)) as Record<string, unknown>;
+  if (f.fault.hiddenFromStudent !== undefined) fault.hiddenFromStudent = f.fault.hiddenFromStudent;
+  return { at: f.at, fault };
+}
+
+/**
+ * @since P3 (ruling R58 (b)) `parsed` (the topology schema's output for `raw`, which strips the recorded lab state)
+ * with the lab state of `raw` re-attached, checked by `parseSavedLabState` (a malformed one throws a
+ * `TopologyLoadError` with its path): only for a 1.3 document with a lab stamp, and each member only when not empty.
+ * A 1.0–1.2 document never carries the members (its field set strips them), as it never carries host `files`.
+ */
+function withSavedLabState(parsed: Topology, raw: unknown): Topology {
+  if (parsed.schema !== TOPOLOGY_SCHEMA_ID_1_3 || parsed.lab === undefined) return parsed;
+  const saved = parseSavedLabState(raw);
+  if (saved.pendingFaults.length > 0) parsed.lab.pendingFaults = saved.pendingFaults;
+  if (saved.errDisabled.length > 0) parsed.lab.errDisabled = saved.errDisabled;
+  return parsed;
 }
 
 /** Pretty, canonically ordered JSON text of a topology (inline configs kept) — the plain-JSON save format. */
@@ -188,9 +245,13 @@ export function topologyToJson(t: Topology): string {
   return JSON.stringify(canonicalTopology(t, true), null, 2) + '\n';
 }
 
-/** Parse and validate plain-JSON topology text; throws a readable `Error` on bad syntax or schema. */
+/**
+ * Parse and validate plain-JSON topology text; throws a readable `Error` on bad syntax or schema. @since P3 a 1.3
+ * document keeps its recorded lab state (`withSavedLabState`, ruling R58 (b)).
+ */
 export function topologyFromJson(s: string): Topology {
-  return parseTopology(parseJsonText(s, NETFORGE_ENTRY.topology));
+  const raw = parseJsonText(s, NETFORGE_ENTRY.topology);
+  return withSavedLabState(parseTopology(raw), raw);
 }
 
 function parseJsonText(text: string, what: string): unknown {
@@ -299,7 +360,9 @@ export function writeNetforge(project: NetforgeProject): Uint8Array {
   if (!manifestCheck.ok) {
     throw new Error(`Cannot write project: invalid manifest\n${manifestCheck.errors.map((e) => `  - ${e}`).join('\n')}`);
   }
-  const topology = parseTopology(canonicalTopology(project.topology, true));
+  const canonical = canonicalTopology(project.topology, true);
+  // R58 (b): the schema strips a P3 save's recorded lab state, so it is re-attached (checked) before the bytes are made
+  const topology = withSavedLabState(parseTopology(canonical), canonical);
 
   const topologyBytes = strToU8(JSON.stringify(canonicalTopology(topology, false), null, 2) + '\n');
   const manifest = {
@@ -408,7 +471,8 @@ export function readNetforge(bytes: Uint8Array, options: ReadNetforgeOptions = {
     }
   }
 
-  const topology = parseTopology(parseJsonText(strFromU8(topologyBytes), NETFORGE_ENTRY.topology));
+  const rawTopology = parseJsonText(strFromU8(topologyBytes), NETFORGE_ENTRY.topology);
+  const topology = withSavedLabState(parseTopology(rawTopology), rawTopology);
 
   // Collect config entries (only for devices that exist), then attach.
   const fromArchive = new Map<string, string>();

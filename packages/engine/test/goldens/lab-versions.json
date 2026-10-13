@@ -1,0 +1,229 @@
+{
+  "about": "Lab versions ([S37], ARCHITECTURE-P3 §10.1 accept.p3.lab-document), recorded in W7: per built-in lab, in course order, its version and the SHA-256 of its lab document text (labDocumentToJson(labDocumentOf(lab))). Editing a lab without bumping its version fails; after a bump, re-record the lab with NF_RECORD_LAB_VERSIONS=<lab>.",
+  "labs": {
+    "ccna1-switched-lan": {
+      "version": 1,
+      "sha256": "da6e193d15c445cb997fba293d50895e0d1b7fa8801710a76112a3b6696cbba6"
+    },
+    "ccna1-default-gateway": {
+      "version": 1,
+      "sha256": "311a5cf968e4e165d4fe511dc9720d16d91f19a5b870db085d68498f22b161ea"
+    },
+    "ccna1-device-hardening": {
+      "version": 1,
+      "sha256": "f0e82e7b0387a7affeea2d51bc5a333d5917ef3f8622250f5398d9997087d795"
+    },
+    "ccna1-subnetting-plan": {
+      "version": 1,
+      "sha256": "8ddde0493eef376d5aff7bfcad0e27645c1c304112725f1c5866eed6dda57a9e"
+    },
+    "ccna1-two-subnets": {
+      "version": 1,
+      "sha256": "a71d9fe302b5f195037cf89fa9e524d1977801f4e2af5102abb41550aad70a17"
+    },
+    "ccna1-static-routes": {
+      "version": 1,
+      "sha256": "32f6aa3d4a7d6d6f0e425fd95050dd616a628656ed1202cb48e862aa5a76aa28"
+    },
+    "ccna1-traceroute-path": {
+      "version": 1,
+      "sha256": "893ba184dcf6e05ce5a5c579c0019c6e8f5440daad890d637333b78de01ef833"
+    },
+    "ccna1-dhcpv4-server": {
+      "version": 1,
+      "sha256": "84f12897326d31e6317cef7a4b1d303674bd940b26f28d7b84a4a7734ab65418"
+    },
+    "ccna1-dhcp-relay": {
+      "version": 1,
+      "sha256": "3638ab66c14d3321f4f378b7308a8cd685eac745c491cffa57a642b0c97b3e7b"
+    },
+    "ccna1-dns-records": {
+      "version": 1,
+      "sha256": "e1722413d510815673d8fb329f263eab406454a26ed197a568d8fd7a979e76d5"
+    },
+    "ccna1-web-server": {
+      "version": 1,
+      "sha256": "fb281ab5955743f04f52f1a6158407e451d6042008412ba3a9ad0b4c19037ec8"
+    },
+    "ccna1-ipv6-slaac": {
+      "version": 1,
+      "sha256": "e2fa77af66301956f432609c48d011c3f8bdfbd490b9a359f9578faee55c6745"
+    },
+    "ccna1-home-wifi": {
+      "version": 1,
+      "sha256": "e746bacfde840dca5c4f0d3875899578841e4e57f6ee7bd91d2027c791a77751"
+    },
+    "ccna1-troubleshoot-addressing": {
+      "version": 1,
+      "sha256": "e72b3e5c1027ae76b1dbd51bf4c81de5839719565592b6191f674ce7a8e34230"
+    },
+    "ccna1-troubleshoot-ports": {
+      "version": 1,
+      "sha256": "9ea5bd6c23eb7085233511a15e2780cca81b2484c887ea216da3a88605ddbf2e"
+    },
+    "ccna2-switch-management": {
+      "version": 1,
+      "sha256": "6593f55d410dc8341c31737981292b0c33fce1974cd5ea55252bb51df9debbf9"
+    },
+    "ccna2-vlan-access-ports": {
+      "version": 1,
+      "sha256": "2b83a5ba288181fea937cc58cf33921b4f4244d808fd77a1405f49e7b3b5c24b"
+    },
+    "ccna2-trunk-native-allowed": {
+      "version": 1,
+      "sha256": "e3869b327fa18f41353d8fdcc3a6d3dee192b0de5aff6c142e6f42639a6336d8"
+    },
+    "ccna2-dtp-modes": {
+      "version": 1,
+      "sha256": "d06010fbdd169c0d915653cbcada7e7df9d3451eb4325891103e166d29d23730"
+    },
+    "ccna2-router-on-a-stick": {
+      "version": 1,
+      "sha256": "c0bb578e4f2f9b25ab4dac8f5d71dccd3229f8754b15ff48af2876af02b5ce17"
+    },
+    "ccna2-l3-switch-svis": {
+      "version": 1,
+      "sha256": "fabbe42cb25957260c4f0748f1ff25db64a09f77efd631e9d16a66063f08db1d"
+    },
+    "ccna2-troubleshoot-vlans": {
+      "version": 1,
+      "sha256": "d7a3c8eeb6325fb336dbdeb5104aee8e164c1e8ac22abcbacfcd5b186669b672"
+    },
+    "ccna2-stp-root-placement": {
+      "version": 1,
+      "sha256": "06f3a50cfac56c805b8e37972c82781671ebeafd2c3487cfa26b4cd8622cdf0f"
+    },
+    "ccna2-rapid-stp": {
+      "version": 1,
+      "sha256": "5da4bc15dacec016f2cf60cc63c5c56027bb22d14a3615dab02d760637831c33"
+    },
+    "ccna2-stp-guards": {
+      "version": 1,
+      "sha256": "d61fefb6cda0de49066c2808d8857ca66b8d5ddd1e0af316e01c5d4eb3a04bf9"
+    },
+    "ccna2-etherchannel-lacp": {
+      "version": 1,
+      "sha256": "789bde7a0a920af4d3e4aaa8fdd6386cded636b5260bc2d9372a8afa478e6924"
+    },
+    "ccna2-dhcpv6": {
+      "version": 1,
+      "sha256": "9ae52e77542dab5f5b021eaf471832401332101b4fc1c685961f81a4d33701bc"
+    },
+    "ccna2-hsrp-gateway": {
+      "version": 1,
+      "sha256": "d68c723786d22791967976b0dce9aee8ebce3bc9f246121399ae489e336e3e6a"
+    },
+    "ccna2-port-security": {
+      "version": 1,
+      "sha256": "51d44f01002ad2a91d94aac39b89ec9960e0e272be505fa754e395d3434e1f33"
+    },
+    "ccna2-wlc-wlan": {
+      "version": 1,
+      "sha256": "7ec643329395c76712dc4b71566c6b1e96069df8eae8b49064501af192b3dfda"
+    },
+    "ccna2-static-routes": {
+      "version": 1,
+      "sha256": "c7c98c677f012247c6875f312cc803631d0cdae2ca24b854ef05d31849305b43"
+    },
+    "ccna2-floating-static": {
+      "version": 1,
+      "sha256": "452f1ac6ccdde359ad65fae3d3fc28a594129e86f88d4c29591d4f82b7c42a29"
+    },
+    "ccna2-ipv6-static": {
+      "version": 1,
+      "sha256": "82e5582d0931c11a481a1ea78d72f1b38d1577b76ece5758b5b04a6af0f70f0d"
+    },
+    "ccna2-nat-pat": {
+      "version": 1,
+      "sha256": "3dbd2063674630240685881b9ddbfac4f772b95862619f22b122026709bb2b40"
+    },
+    "ccna2-troubleshoot-routing": {
+      "version": 1,
+      "sha256": "e395f42c993a1087ee2f014bf51281ce34239bb5daebd468cb84a92e87efcefc"
+    },
+    "ccna3-ospf-dr-election": {
+      "version": 1,
+      "sha256": "fdf846fbbf90216a8006a0fbb7390e47effab553229bd0783a9c0739b076155c"
+    },
+    "ccna3-ospf-single-area": {
+      "version": 1,
+      "sha256": "d20c31e10805806f4b5ce0d96872668bd737c272290ca8de724550afee433705"
+    },
+    "ccna3-ospf-cost": {
+      "version": 1,
+      "sha256": "84bc282e7e07d8de0d047aa7c6c51d7a79ed6480cf6ee97161c7dabccf6ff5e3"
+    },
+    "ccna3-ospf-default-route": {
+      "version": 1,
+      "sha256": "c3728fe778db66da6c2de41827c3044d976b52ad076643a82c730cb1fdcb34f0"
+    },
+    "ccna3-troubleshoot-ospf": {
+      "version": 1,
+      "sha256": "687e5d015882678041f28ae257eb43f84c3023105500c8edad50f961775a3042"
+    },
+    "ccna3-eigrp-feasible-successor": {
+      "version": 1,
+      "sha256": "5d5f693bec8760ca3448ae4bf99f86d059bbac5f239435419cd119532a5fd370"
+    },
+    "ccna3-acl-standard": {
+      "version": 1,
+      "sha256": "d8e7e0dc35c5a80b732692ebdb0248daca14549b3afff0294d4ce29da4a6d145"
+    },
+    "ccna3-acl-extended": {
+      "version": 1,
+      "sha256": "f5a131ce06590d5efaa15e3fd2640a373c2f465e11b711014365497b8aa88113"
+    },
+    "ccna3-acl-edit-verify": {
+      "version": 1,
+      "sha256": "dc34d41ca36b8faa076f56eed86ff6172857adb7d556c8e4ce6d94d02307e08f"
+    },
+    "ccna3-secure-device-access": {
+      "version": 1,
+      "sha256": "eda89231c4e8416134972534a7d6bd0a5213a55279c49fb9b6f8d1af464bb39c"
+    },
+    "ccna3-dhcp-snooping-dai": {
+      "version": 1,
+      "sha256": "3e9ba125499d33ec6c57374a1d0fac61763b8d63472e6e1ebf3bbadd40adc2a2"
+    },
+    "ccna3-serial-links": {
+      "version": 1,
+      "sha256": "acd2f42eaaddb8086d93865a96c8bab5e18eee2ac9c3a3badc1d68f4a6f00518"
+    },
+    "ccna3-gre-tunnel": {
+      "version": 1,
+      "sha256": "2da968a61e06b5370222e1feede5c35ec44ce9ae688ad963854cb867a0ae4bb4"
+    },
+    "ccna3-ipsec-site-to-site": {
+      "version": 1,
+      "sha256": "c2e38560355d6cedd8ba890348248ee2c2aa3e4c613d8ca06e2fc8011e550da3"
+    },
+    "ccna3-qos-voice-first": {
+      "version": 1,
+      "sha256": "4a7f0717ccf007fdaef6c8a5fa1af4d9dbb5b4ec1cb614f88f7819e418104917"
+    },
+    "ccna3-discover-neighbours": {
+      "version": 1,
+      "sha256": "6bdf16b180415b1328d2570e09d277cc27db6136ec811abb394ed46b69258f47"
+    },
+    "ccna3-time-and-logs": {
+      "version": 1,
+      "sha256": "f53fb5b91c7d8e1e684ce8077de7ea8806ef62604931f2a93d35708ffb391faf"
+    },
+    "ccna3-troubleshoot-eigrp": {
+      "version": 1,
+      "sha256": "e97f72df1dff7c8fe6c79418ed1eee735eba4024179bc8e6d81a3015ae511b9f"
+    },
+    "ccna3-troubleshoot-enterprise": {
+      "version": 1,
+      "sha256": "0e2bc4fa46e691b53884da4109279befe0e87aeff62ffbc75d0d3c6f057ecdb8"
+    },
+    "ccna3-restconf-change": {
+      "version": 1,
+      "sha256": "f12a7ba1c02865d3c521ce8cf36ded07b73a693ee41381782b38e7ef73af4c4a"
+    },
+    "ccna3-script-inventory": {
+      "version": 1,
+      "sha256": "ae561ab596deb8ba123151d6bfaeef09d01b16e61eab7f35e72e7c3707c3a3d8"
+    }
+  }
+}

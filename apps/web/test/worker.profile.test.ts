@@ -8,6 +8,11 @@
  * kept, a multilayer switch that routed keeps routing, the schema raised with the profile, the lab kept, a new
  * epoch — and the chip goes away.
  *
+ * P3 W7, the course and profile flip (ARCHITECTURE-P3 §8.5 P15, §9.2 item 42, §10.2): the current defaults are 'P3'.
+ * "Use current defaults" gives P3 (and is a no-op on a P3 world); a P2 world is moved to P3 as well, every
+ * configuration line kept; with no lesson the app starts a P3 world. The pure move's profile pins follow the same
+ * ladder end (P3), and the CCNA 3 course gives P3.
+ *
  * The worker module is imported with Comlink mocked and wall timers faked, as in worker.delta.test.ts.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -16,7 +21,7 @@ import type { DefaultsProfile, DeviceModel, SimSnapshot, Topology } from '@netfo
 import { classicDefaultsChip } from '../src/app/StatusBar';
 import { startupProfile } from '../src/bridge/client';
 import type { EngineApi, EngineBatch } from '../src/bridge/protocol';
-import { profileForCourse, profileOfSnapshot } from '../src/learn/course-profile';
+import { CURRENT_DEFAULTS_IN_USE, currentDefaultsItem, profileForCourse, profileOfSnapshot } from '../src/learn/course-profile';
 import { store } from '../src/store/store';
 
 let exposed: EngineApi | undefined;
@@ -113,14 +118,16 @@ describe('init and reset take the profile the caller chose (D2)', () => {
 });
 
 describe('app start and File → New read the course context', () => {
-  it('startupProfile is the classic profile after a CCNA 1 lesson and the current one otherwise', () => {
-    expect(startupProfile()).toBe('P2');
+  it('startupProfile follows the course of the last lesson, and is the latest profile with no lesson', () => {
+    expect(startupProfile()).toBe('P3');
     store.getState().setLastCourse('ccna1');
     expect(startupProfile()).toBe('P1');
     store.getState().setLastCourse('ccna2');
     expect(startupProfile()).toBe('P2');
+    store.getState().setLastCourse('ccna3');
+    expect(startupProfile()).toBe('P3');
     store.getState().setLastCourse(null);
-    expect(startupProfile()).toBe('P2');
+    expect(startupProfile()).toBe('P3');
     expect(startupProfile()).toBe(profileForCourse(store.getState().learn.lastCourse));
   });
 
@@ -155,30 +162,63 @@ describe('"Use current defaults" (EngineApi.useCurrentDefaults)', () => {
     batches.length = 0;
 
     const after = await api.useCurrentDefaults();
-    expect(after.profile).toBe('P2');
+    expect(after.profile).toBe('P3');
     expect(classicDefaultsChip(after)).toBeNull();
     expect(after.devices.map((d) => d.name).sort()).toEqual(before.devices.map((d) => d.name).sort());
     expect(after.links).toHaveLength(before.links.length);
 
     const posted = last(batches);
-    expect(posted.snapshot?.profile).toBe('P2');
+    expect(posted.snapshot?.profile).toBe('P3');
     expect(posted.epoch).not.toBe(epochBefore);
 
     const afterTopo = await api.exportTopology();
-    expect(afterTopo.profile).toBe('P2');
+    expect(afterTopo.profile).toBe('P3');
     expect(afterTopo.schema).toBe(schemaIdFor(afterTopo));
     // Nothing in a plain PC-and-switch world needs a routing line: every configuration is byte-identical.
     for (const d of beforeTopo.devices) expect(configOf(afterTopo, d.name)).toBe(configOf(beforeTopo, d.name));
   });
 
   it('is a no-op on a world already at the current defaults', async () => {
-    const { api } = await freshWorker({ seed: 7, profile: 'P2' });
+    const { api } = await freshWorker({ seed: 7, profile: 'P3' });
     await api.addDevice({ type: 'pc.nfpc', position: { x: 0, y: 0 } });
     const before = await api.exportTopology();
     const snap = await api.useCurrentDefaults();
-    expect(snap.profile).toBe('P2');
+    expect(snap.profile).toBe('P3');
     const after = await api.exportTopology();
     expect(after.devices.map((d) => d.runningConfig ?? d.config)).toEqual(before.devices.map((d) => d.runningConfig ?? d.config));
+  });
+
+  // P3 W7 (§9.2 item 42): the current defaults are P3, so a P2 world (a saved P2 file, a CCNA 2 lesson's sandbox) is
+  // offered the move too, and the move keeps every device and every configuration line (the P3 step rewrites none).
+  it('moves a P2 world to P3 in place: devices and configurations kept, schema 1.3, a new epoch', async () => {
+    const { api, batches } = await freshWorker({ seed: 7, profile: 'P2' });
+    for (const [i, type] of ['router.nf2911', 'switch.nfc2960', 'pc.nfpc'].entries()) {
+      await api.addDevice({ type, position: { x: 100 * i, y: 0 } });
+    }
+    const before = await api.snapshot();
+    const beforeTopo = await api.exportTopology();
+    expect(beforeTopo.profile).toBe('P2');
+    expect(beforeTopo.schema).toBe('netforge.topology/1.2');
+    expect(classicDefaultsChip(before)).toBeNull();
+    expect(currentDefaultsItem(profileOfSnapshot(before)).enabled).toBe(true);
+    const epochBefore = last(batches).epoch;
+    batches.length = 0;
+
+    const after = await api.useCurrentDefaults();
+    expect(after.profile).toBe('P3');
+    expect(classicDefaultsChip(after)).toBeNull();
+    expect(currentDefaultsItem(profileOfSnapshot(after))).toEqual({ enabled: false, hint: CURRENT_DEFAULTS_IN_USE });
+    expect(after.devices.map((d) => d.name)).toEqual(before.devices.map((d) => d.name));
+    const posted = last(batches);
+    expect(posted.snapshot?.profile).toBe('P3');
+    expect(posted.epoch).not.toBe(epochBefore);
+
+    const afterTopo = await api.exportTopology();
+    expect(afterTopo.profile).toBe('P3');
+    expect(afterTopo.schema).toBe('netforge.topology/1.3');
+    expect(afterTopo.schema).toBe(schemaIdFor(afterTopo));
+    expect(afterTopo.devices.map((d) => d.type)).toEqual(['router.nf2911', 'switch.nfc2960', 'pc.nfpc']);
+    for (const d of beforeTopo.devices) expect(configOf(afterTopo, d.name)).toBe(configOf(beforeTopo, d.name));
   });
 
   it('keeps the lab of a CCNA 1 lab world', async () => {
@@ -189,12 +229,64 @@ describe('"Use current defaults" (EngineApi.useCurrentDefaults)', () => {
     expect(classicDefaultsChip(await api.snapshot())?.label).toBe('Classic defaults');
     batches.length = 0;
     const snap = await api.useCurrentDefaults();
-    expect(snap.profile).toBe('P2');
+    expect(snap.profile).toBe('P3');
     const status = await api.checkLab();
     expect(status?.lab).toBe('ccna1-switched-lan');
     expect((await api.exportTopology()).lab?.name).toBe('ccna1-switched-lan');
   });
 });
+
+// W7 fix (review finding #0): since the flip the move is offered to P2 worlds, and a CCNA 2 troubleshooting lab is one.
+// The move reloads the world, which drops the faults the lab scheduled (`applyFaults` runs on loadScenario only) and
+// the ports they err-disabled, so a Check right after it gave full marks for troubleshooting nothing. The worker now
+// refuses the move while the active lab schedules faults, and leaves the world, its epoch and its lab untouched.
+describe('"Use current defaults" in a lab that schedules faults (W7 fix, review finding #0)', () => {
+  const SEC = 1_000_000_000;
+  type RefusalModule = WorkerModule & { CURRENT_DEFAULTS_LAB_FAULTS: string };
+  const FAULT_LABS = ['ccna2-troubleshoot-routing', 'ccna2-troubleshoot-vlans', 'ccna2-stp-guards'] as const;
+
+  it('names every P1 or P2 lab that schedules faults, so the cases below cover them all', () => {
+    const below = SCENARIOS.filter((sc) => (sc.faults?.length ?? 0) > 0 && profileOfTopology(sc.build()) !== 'P3').map((sc) => sc.name);
+    expect([...below].sort()).toEqual([...FAULT_LABS].sort());
+  });
+
+  for (const name of FAULT_LABS) {
+    it(`refuses the move in ${name}: the world, its epoch, its profile and its lab are untouched`, async () => {
+      const { api, batches, mod } = await freshWorker({ seed: 7 });
+      await api.loadScenario(name);
+      await api.stepTime(10 * SEC);
+      const before = await api.exportTopology();
+      expect(before.profile).toBe('P2');
+      const epochBefore = last(batches).epoch;
+      const posted = batches.length;
+
+      await expect(api.useCurrentDefaults()).rejects.toThrow((mod as RefusalModule).CURRENT_DEFAULTS_LAB_FAULTS);
+      expect((mod as RefusalModule).CURRENT_DEFAULTS_LAB_FAULTS).toMatch(/hidden faults/);
+      expect(batches.length).toBe(posted);
+      expect(last(batches).epoch).toBe(epochBefore);
+      expect((await api.snapshot()).profile).toBe('P2');
+      expect(await api.exportTopology()).toEqual(before);
+      expect((await api.checkLab())?.lab).toBe(name);
+    });
+  }
+
+  it('keeps the troubleshooting: the routing lab still has its faults and its err-disabled port after the refusal', async () => {
+    const { api } = await freshWorker({ seed: 7 });
+    await api.loadScenario('ccna2-troubleshoot-routing');
+    await api.stepTime(10 * SEC);
+    await expect(api.useCurrentDefaults()).rejects.toThrow();
+    await api.stepTime(90 * SEC);
+    const status = await api.checkLab();
+    expect(status?.lab).toBe('ccna2-troubleshoot-routing');
+    // Nothing was repaired, so no task passes (the move used to make all four pass).
+    expect(status?.results.filter((r) => r.pass).map((r) => r.task)).toEqual([]);
+    expect(status?.results.find((r) => r.task === 'server-port')?.pass).toBe(false);
+  });
+});
+
+function profileOfTopology(t: Topology): DefaultsProfile {
+  return t.profile ?? 'P1';
+}
 
 describe('withCurrentDefaults (the pure move)', () => {
   const model = (lines: string[]): Pick<DeviceModel, 'profileConfig'> => ({ profileConfig: { P2: lines } });
@@ -222,7 +314,7 @@ describe('withCurrentDefaults (the pure move)', () => {
     expect(configOf(out, 'MLS')).toBe('hostname MLS\nip routing\n');
     expect(configOf(out, 'MLS2')).toBe('hostname MLS2\nip routing\n');
     expect(configOf(out, 'MLS3')).toBe('ip routing\n');
-    expect(out.profile).toBe('P2');
+    expect(out.profile).toBe('P3');
     expect(out.schema).toBe(schemaIdFor(out));
     expect(out.schema).not.toBe('1.1');
   });
@@ -252,7 +344,7 @@ describe('withCurrentDefaults (the pure move)', () => {
     const out = mod.withCurrentDefaults(input, modelOf);
     expect(out.devices.map((d) => d.runningConfig ?? d.config)).toEqual(input.devices.map((d) => d.runningConfig ?? d.config));
     expect(out.devices[0]).toBe(input.devices[0]);
-    expect(out.profile).toBe('P2');
+    expect(out.profile).toBe('P3');
     // The input is not mutated.
     expect(input.profile).toBeUndefined();
     expect(input.schema).toBe('1.1');

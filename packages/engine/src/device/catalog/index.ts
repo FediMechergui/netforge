@@ -45,7 +45,7 @@ import { MODULE_MODELS } from './modules.js';
  * the CDP default (D2), the Tunnel family [S18] and the two [S24] `service timestamps` lines in `profileConfig.P3`.
  * Every daemon added is silent without configuration (§4.3) and the managed switches' new transport is dormant (D22),
  * so every P1- and P2-profile world keeps byte-identical traffic (§9.3 (a), §9.4 (a): no change).
- * `LATEST_DEFAULTS_PROFILE` stays 'P2' until the W7 course flip.
+ * `LATEST_DEFAULTS_PROFILE` stayed 'P2' until the W7 course flip, which set it to 'P3' with the course (§8.5 P15).
  */
 export const CATALOG_STAGE: BuildStage = 'P3';
 
