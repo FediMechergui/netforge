@@ -1,0 +1,5012 @@
+{
+  "about": "Lab status of every CCNA 3 lab of cad4ac9 (ARCHITECTURE-P3C D3, §9.5, §10.1 accept.p3c.lab-status-p3), recorded from the unchanged engine at commit cad4ac9 before any P3c code: the evaluateLab status, with every detail string, unsolved at 60 s and solved at 710 s (the reference solution applied at 60 s, no learner action). The labs are the keys of this file, frozen by lab id. Change it only as P3C §9.5 allows, entry by entry, by re-recording with NF_RECORD_LAB_STATUS_P3.",
+  "script": {
+    "unsolvedAtS": 60,
+    "solvedAtS": 710
+  },
+  "labs": {
+    "ccna3-ospf-dr-election": {
+      "unsolved": {
+        "lab": "ccna3-ospf-dr-election",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 100,
+        "results": [
+          {
+            "task": "priorities",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 ospf.ifacePriority of GigabitEthernet0/0 is 1, expected 200."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R2 ospf.ifacePriority of GigabitEthernet0/0 is 1, expected 100."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "R3 ospf.ifacePriority of GigabitEthernet0/0 is 1, expected 0. Only priority 0 keeps a router out of both roles; a low priority still lets it become the backup."
+              }
+            ]
+          },
+          {
+            "task": "elected",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 ospf.ifaceState of GigabitEthernet0/0 is down, expected dr."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R2 ospf.ifaceState of GigabitEthernet0/0 is down, expected backup."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "R3 ospf.ifaceState of GigabitEthernet0/0 is down, expected drother."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "R3 has no OSPF neighbour R1 on GigabitEthernet0/0 in state full, as dr."
+              },
+              {
+                "index": 4,
+                "pass": false,
+                "detail": "R3 has no OSPF neighbour R2 on GigabitEthernet0/0 in state full, as bdr."
+              },
+              {
+                "index": 5,
+                "pass": false,
+                "detail": "R1 has no OSPF neighbour R3 on GigabitEthernet0/0 in state full, as drother."
+              }
+            ]
+          },
+          {
+            "task": "point-to-point",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R3 ospf.ifaceNetworkType of GigabitEthernet0/1 is broadcast, expected point-to-point."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R4 ospf.ifaceNetworkType of GigabitEthernet0/0 is broadcast, expected point-to-point."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "R3 ospf.ifaceState of GigabitEthernet0/1 is waiting, expected point-to-point."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "R3 sees OSPF neighbour 4.4.4.4 on Gi0/1 in state 2way, expected in state full."
+              },
+              {
+                "index": 4,
+                "pass": false,
+                "detail": "R4 sees OSPF neighbour 3.3.3.3 on Gi0/0 in state 2way, expected in state full."
+              }
+            ]
+          },
+          {
+            "task": "end-to-end",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 has no route to 10.4.0.10."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "PC1 got no reply from 10.4.0.10 (2 echo requests sent)."
+              }
+            ]
+          },
+          {
+            "task": "dr-fails",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R2 got no reply from 10.4.0.10 (0 echo requests sent)."
+              }
+            ]
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna3-ospf-dr-election",
+        "checkedAt": 710000000000,
+        "score": 100,
+        "total": 100,
+        "results": [
+          {
+            "task": "priorities",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "elected",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              },
+              {
+                "index": 4,
+                "pass": true
+              },
+              {
+                "index": 5,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "point-to-point",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              },
+              {
+                "index": 4,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "end-to-end",
+            "pass": true,
+            "points": 15,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "dr-fails",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "ccna3-ospf-single-area": {
+      "unsolved": {
+        "lab": "ccna3-ospf-single-area",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 100,
+        "results": [
+          {
+            "task": "r1-network-statements",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 has no configuration line at router.ospf.network."
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "R1 ospf.ifaceArea of GigabitEthernet0/0 is not set, expected 0.0.0.0."
+              },
+              {
+                "index": 4,
+                "pass": false,
+                "detail": "R1 ospf.ifaceArea of GigabitEthernet0/1 is not set, expected 0.0.0.0."
+              },
+              {
+                "index": 5,
+                "pass": false,
+                "detail": "R1 has no OSPF neighbour R2 on GigabitEthernet0/1 in state full."
+              }
+            ]
+          },
+          {
+            "task": "r3-interface-lines",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R3 has no configuration line at router.ospf."
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "R3 ospf.ifaceArea of Serial0/0/0 is not set, expected 0.0.0.0."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "R3 ospf.ifaceArea of GigabitEthernet0/0 is not set, expected 0.0.0.0."
+              },
+              {
+                "index": 4,
+                "pass": false,
+                "detail": "R3 has no OSPF neighbour R2 on Serial0/0/0 in state full."
+              }
+            ]
+          },
+          {
+            "task": "router-ids",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 ospf.routerId is not set, expected 1.1.1.1."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R3 ospf.routerId is not set, expected 3.3.3.3."
+              }
+            ],
+            "misconception": "router-id-applies-at-once"
+          },
+          {
+            "task": "passive-lans",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 ospf.passive of GigabitEthernet0/0 is not set, expected true."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R3 ospf.passive of GigabitEthernet0/0 is not set, expected true."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "R1 has no route to 192.168.3.10."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "R3 has no route to 192.168.1.11."
+              }
+            ]
+          },
+          {
+            "task": "one-map",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 ospf.lsdbSynced of 0.0.0.0 is not set, expected true."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "The ospf-lsdb table of R1 has no row with type=1."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "The ospf-lsdb table of R1 has no row with type=2."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "PC1 got no reply from 192.168.3.10 (2 echo requests sent)."
+              },
+              {
+                "index": 4,
+                "pass": false,
+                "detail": "PC2 got no reply from 192.168.3.10 (2 echo requests sent)."
+              }
+            ]
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna3-ospf-single-area",
+        "checkedAt": 710000000000,
+        "score": 100,
+        "total": 100,
+        "results": [
+          {
+            "task": "r1-network-statements",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              },
+              {
+                "index": 4,
+                "pass": true
+              },
+              {
+                "index": 5,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "r3-interface-lines",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              },
+              {
+                "index": 4,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "router-ids",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "passive-lans",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "one-map",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              },
+              {
+                "index": 4,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "ccna3-ospf-cost": {
+      "unsolved": {
+        "lab": "ccna3-ospf-cost",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 100,
+        "results": [
+          {
+            "task": "reference-bandwidth",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 ospf.referenceBandwidthMbps is 100, expected 1000."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R2 ospf.referenceBandwidthMbps is 100, expected 1000."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "R3 ospf.referenceBandwidthMbps is 100, expected 1000. The reference must be the same on every router of the area."
+              },
+              {
+                "index": 3,
+                "pass": true
+              },
+              {
+                "index": 4,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "circuit-bandwidth",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R2 has no configuration line at interface.GigabitEthernet0/1.bandwidth."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R3 has no configuration line at interface.GigabitEthernet0/0.bandwidth."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "R2 ospf.ifaceCost of GigabitEthernet0/1 is 1, expected 10."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "R3 ospf.ifaceCost of GigabitEthernet0/0 is 1, expected 10."
+              }
+            ]
+          },
+          {
+            "task": "equal-cost",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 ospf.ifaceCost of Serial0/0/0 is 64, expected 11."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R3 ospf.ifaceCost of Serial0/0/0 is 64, expected 11."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "R1 reaches 10.3.0.10 through 10.3.0.0/24 (O, distance 110, via 10.0.12.2, out GigabitEthernet0/0); expected metric 12 (it has 3), at least 2 equal-cost paths (it has 1)."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "R3 reaches 10.1.0.10 through 10.1.0.0/24 (O, distance 110, via 10.0.23.1, out GigabitEthernet0/0); expected metric 12 (it has 3), at least 2 equal-cost paths (it has 1)."
+              },
+              {
+                "index": 4,
+                "pass": true
+              }
+            ],
+            "misconception": "cost-counted-on-one-end"
+          },
+          {
+            "task": "lose-a-path",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 reaches 10.3.0.10 through 10.3.0.0/24 (O, distance 110, via 10.0.12.2, out GigabitEthernet0/0); expected metric 12 (it has 3), at least 2 equal-cost paths (it has 1). Before the cut, R1 must already hold both equal-cost paths to PC3."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "After the ping from PC1: R1 reaches 10.3.0.10 through 10.3.0.0/24 (O, distance 110, via 10.0.13.2, out Serial0/0/0); expected metric 12 (it has 65)."
+              }
+            ]
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna3-ospf-cost",
+        "checkedAt": 710000000000,
+        "score": 100,
+        "total": 100,
+        "results": [
+          {
+            "task": "reference-bandwidth",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              },
+              {
+                "index": 4,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "circuit-bandwidth",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "equal-cost",
+            "pass": true,
+            "points": 30,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              },
+              {
+                "index": 4,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "lose-a-path",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "ccna3-ospf-default-route": {
+      "unsolved": {
+        "lab": "ccna3-ospf-default-route",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 100,
+        "results": [
+          {
+            "task": "matching-timers",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "The ospf-interfaces table of R2 has no row with port=GigabitEthernet0/0 helloS=5 deadS=20."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "R1 has no OSPF neighbour R2 on GigabitEthernet0/1 in state full."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "R2 has no OSPF neighbour R1 on GigabitEthernet0/0 in state full."
+              }
+            ]
+          },
+          {
+            "task": "originate-default",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 ospf.defaultOriginate is off, expected on. Advertise the default only while R1 has one: no `always`."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "The ospf-lsdb table of R1 has no row with type=5 lsid=0.0.0.0 advRouter=1.1.1.1."
+              }
+            ]
+          },
+          {
+            "task": "default-everywhere",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R2 has no route to 203.0.113.10."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R3 has no route to 203.0.113.10."
+              }
+            ],
+            "misconception": "e2-adds-path-cost"
+          },
+          {
+            "task": "reach-the-server",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "PC2 got no reply from 203.0.113.10 (2 echo requests sent)."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "PC3 got no reply from 203.0.113.10 (2 echo requests sent)."
+              }
+            ]
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna3-ospf-default-route",
+        "checkedAt": 710000000000,
+        "score": 100,
+        "total": 100,
+        "results": [
+          {
+            "task": "matching-timers",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "originate-default",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "default-everywhere",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "reach-the-server",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "ccna3-troubleshoot-ospf": {
+      "unsolved": {
+        "lab": "ccna3-troubleshoot-ospf",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 100,
+        "results": [
+          {
+            "task": "neighbours",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R2 ospf.ifaceArea of GigabitEthernet0/0 is 0.0.0.1, expected 0.0.0.0."
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "R2 has no OSPF neighbour R1 on GigabitEthernet0/0 in state full."
+              }
+            ]
+          },
+          {
+            "task": "lan-advertised",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 ospf.ifaceArea of GigabitEthernet0/0 is not set, expected 0.0.0.0."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R1 ospf.passive of GigabitEthernet0/0 is not set, expected true."
+              }
+            ]
+          },
+          {
+            "task": "router-ids",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R3 ospf.routerId is 2.2.2.2, expected 3.3.3.3."
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "R2 has no OSPF neighbour 3.3.3.3 on GigabitEthernet0/1 in state full."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "R3 has no OSPF neighbour R2 on GigabitEthernet0/0 in state full."
+              }
+            ],
+            "misconception": "router-id-applies-at-once"
+          },
+          {
+            "task": "end-to-end",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 ospf.lsdbSynced of 0.0.0.0 is false, expected true."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R1 has no route to 10.3.0.10."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "R3 has no route to 10.1.0.10."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "PC1 got no reply from 10.3.0.10 (2 echo requests sent)."
+              }
+            ]
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna3-troubleshoot-ospf",
+        "checkedAt": 710000000000,
+        "score": 100,
+        "total": 100,
+        "results": [
+          {
+            "task": "neighbours",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "lan-advertised",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "router-ids",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "end-to-end",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "ccna3-eigrp-feasible-successor": {
+      "unsolved": {
+        "lab": "ccna3-eigrp-feasible-successor",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 100,
+        "results": [
+          {
+            "task": "neighbours",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 has no configuration line at router.eigrp."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R2 has no configuration line at router.eigrp."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "R3 has no configuration line at router.eigrp."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "R4 has no configuration line at router.eigrp."
+              },
+              {
+                "index": 4,
+                "pass": false,
+                "detail": "R1 has no EIGRP neighbour R2 in state up."
+              },
+              {
+                "index": 5,
+                "pass": false,
+                "detail": "R1 has no EIGRP neighbour R3 in state up."
+              },
+              {
+                "index": 6,
+                "pass": false,
+                "detail": "R4 has no EIGRP neighbour R2 in state up."
+              },
+              {
+                "index": 7,
+                "pass": false,
+                "detail": "R4 has no EIGRP neighbour R3 in state up."
+              }
+            ]
+          },
+          {
+            "task": "slow-circuit",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 has no configuration line at interface.GigabitEthernet0/1.bandwidth."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R1 has no configuration line at interface.GigabitEthernet0/1.delay."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "R3 has no configuration line at interface.GigabitEthernet0/0.bandwidth."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "R3 has no configuration line at interface.GigabitEthernet0/0.delay."
+              }
+            ]
+          },
+          {
+            "task": "successor",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 has no route to 10.4.0.10."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R1 eigrp.successor of 10.4.0.0/24 is not set, expected R2."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "R1 eigrp.fd of 10.4.0.0/24 is not set, expected 3328."
+              }
+            ]
+          },
+          {
+            "task": "feasible-successor",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 eigrp.feasibleSuccessor of 10.4.0.0/24 is not set, expected R3. While both paths cost the same, R3 is a second successor, not a feasible successor."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R1 got no reply from 10.4.0.10 (0 echo requests sent)."
+              }
+            ],
+            "misconception": "eigrp-fs-needs-unequal-metric"
+          },
+          {
+            "task": "no-feasible-successor",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 eigrp.successor of 10.0.24.0/24 is not set, expected R2."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R1 eigrp.fd of 10.0.24.0/24 is not set, expected 3072."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "R1 got no reply from 10.0.24.4 (0 echo requests sent)."
+              }
+            ]
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna3-eigrp-feasible-successor",
+        "checkedAt": 710000000000,
+        "score": 100,
+        "total": 100,
+        "results": [
+          {
+            "task": "neighbours",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              },
+              {
+                "index": 4,
+                "pass": true
+              },
+              {
+                "index": 5,
+                "pass": true
+              },
+              {
+                "index": 6,
+                "pass": true
+              },
+              {
+                "index": 7,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "slow-circuit",
+            "pass": true,
+            "points": 15,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "successor",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "feasible-successor",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "no-feasible-successor",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "ccna3-acl-standard": {
+      "unsolved": {
+        "lab": "ccna3-acl-standard",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 100,
+        "results": [
+          {
+            "task": "server-list",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R2 has no access list 30."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R2 has no access list 30."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "R2 has no access list 30."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "R2 has no access list 30. Only the staff LAN may reach SRV: every other source falls to the implicit deny."
+              },
+              {
+                "index": 4,
+                "pass": false,
+                "detail": "R2 has no access list 30. Permit the whole staff LAN with a wildcard mask, not single hosts."
+              },
+              {
+                "index": 5,
+                "pass": true
+              },
+              {
+                "index": 6,
+                "pass": false,
+                "detail": "GUEST reached 192.168.30.100 (2 of 2 replied), which this task expects to fail. The guest packets must die at R2, by the list that guards the server LAN."
+              },
+              {
+                "index": 7,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "staff-list",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 has no access list NO-GUESTS."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R1 has no access list NO-GUESTS."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "R1 has no access list NO-GUESTS. Deny the whole guest LAN, not only the one guest host."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "R1 has no access list NO-GUESTS. Every list ends with an implicit deny: permit everything that is not a guest."
+              },
+              {
+                "index": 4,
+                "pass": false,
+                "detail": "GUEST reached 192.168.10.11 (2 of 2 replied), which this task expects to fail."
+              },
+              {
+                "index": 5,
+                "pass": true
+              },
+              {
+                "index": 6,
+                "pass": true
+              }
+            ],
+            "misconception": "implicit-deny-forgotten"
+          },
+          {
+            "task": "vty-list",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 has no access list 10."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R1 has no access list 10."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "R1 has no access list 10."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "R1 has no access list 10. Permit PC1 alone and let the implicit deny refuse every other host."
+              },
+              {
+                "index": 4,
+                "pass": false,
+                "detail": "R1 has no access list 10. Permit PC1 alone and let the implicit deny refuse every other host."
+              },
+              {
+                "index": 5,
+                "pass": false,
+                "detail": "R1 has no access list 10. Permit PC1 alone and let the implicit deny refuse every other host."
+              },
+              {
+                "index": 6,
+                "pass": true
+              },
+              {
+                "index": 7,
+                "pass": false,
+                "detail": "PC2's SSH login to R1 (192.168.10.1) succeeded; this task expects it to be refused."
+              }
+            ],
+            "misconception": "deny-one-permit-the-rest"
+          },
+          {
+            "task": "vty-logins",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "The vty-logins table of R1 has no row with proto=ssh result=success peer=192.168.10.10."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "The vty-logins table of R1 has no row with proto=ssh result=refused reason=access-class 10."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "R1 has no access list 10."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "The acl table of R1 has no row with list=10 action=permit lastIface=vty matches >= 1. List 10 has not yet counted PC1's login on the remote lines."
+              },
+              {
+                "index": 4,
+                "pass": false,
+                "detail": "The acl table of R1 has no row with list=10 action=deny lastIface=vty matches >= 1. List 10 has not yet refused a login on the remote lines."
+              }
+            ]
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna3-acl-standard",
+        "checkedAt": 710000000000,
+        "score": 70,
+        "total": 100,
+        "results": [
+          {
+            "task": "server-list",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              },
+              {
+                "index": 4,
+                "pass": true
+              },
+              {
+                "index": 5,
+                "pass": true
+              },
+              {
+                "index": 6,
+                "pass": true
+              },
+              {
+                "index": 7,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "staff-list",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              },
+              {
+                "index": 4,
+                "pass": true
+              },
+              {
+                "index": 5,
+                "pass": true
+              },
+              {
+                "index": 6,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "vty-list",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              },
+              {
+                "index": 4,
+                "pass": true
+              },
+              {
+                "index": 5,
+                "pass": true
+              },
+              {
+                "index": 6,
+                "pass": true
+              },
+              {
+                "index": 7,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "vty-logins",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "The vty-logins table of R1 has no row with proto=ssh result=success peer=192.168.10.10."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "The vty-logins table of R1 has no row with proto=ssh result=refused reason=access-class 10."
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "The acl table of R1 has no row with list=10 action=permit lastIface=vty matches >= 1. List 10 has not yet counted PC1's login on the remote lines."
+              },
+              {
+                "index": 4,
+                "pass": false,
+                "detail": "The acl table of R1 has no row with list=10 action=deny lastIface=vty matches >= 1. List 10 has not yet refused a login on the remote lines."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "ccna3-acl-extended": {
+      "unsolved": {
+        "lab": "ccna3-acl-extended",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 100,
+        "results": [
+          {
+            "task": "no-web-for-pc1",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 has no access list NO-WEB-PC1."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R1 has no access list NO-WEB-PC1."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "R1 has no access list NO-WEB-PC1."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "R1 has no access list NO-WEB-PC1. Name the port: only the web flow is denied."
+              },
+              {
+                "index": 4,
+                "pass": false,
+                "detail": "R1 has no access list NO-WEB-PC1. Deny only the web flow: PC1 may still ping SRV."
+              },
+              {
+                "index": 5,
+                "pass": false,
+                "detail": "PC1 opened TCP port 80 on 192.168.20.100, which this task expects to fail. The first segment of PC1 toward port 80 must be denied as it enters R1."
+              }
+            ]
+          },
+          {
+            "task": "replies-only",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 has no access list FROM-SERVERS."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R1 has no access list FROM-SERVERS."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "R1 has no access list FROM-SERVERS."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "R1 has no access list FROM-SERVERS. A segment from port 80 can still open a connection: only established admits nothing but replies."
+              },
+              {
+                "index": 4,
+                "pass": true
+              },
+              {
+                "index": 5,
+                "pass": false,
+                "detail": "SRV's probe to 192.168.10.11 was dropped at PC2 (unsupported-protocol); expected a drop at R1 (acl-deny). A connection opened from the server LAN must stop at R1."
+              }
+            ],
+            "misconception": "established-allows-new"
+          },
+          {
+            "task": "echo-replies",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "SRV reached 192.168.10.10 (2 of 2 replied), which this task expects to fail. Permit the echo replies only: an echo request from SRV must be denied at R1."
+              }
+            ]
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna3-acl-extended",
+        "checkedAt": 710000000000,
+        "score": 100,
+        "total": 100,
+        "results": [
+          {
+            "task": "no-web-for-pc1",
+            "pass": true,
+            "points": 40,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              },
+              {
+                "index": 4,
+                "pass": true
+              },
+              {
+                "index": 5,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "replies-only",
+            "pass": true,
+            "points": 35,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              },
+              {
+                "index": 4,
+                "pass": true
+              },
+              {
+                "index": 5,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "echo-replies",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "ccna3-acl-edit-verify": {
+      "unsolved": {
+        "lab": "ccna3-acl-edit-verify",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 100,
+        "results": [
+          {
+            "task": "kiosk-first",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "Access list SERVERS-IN on R1 permits a TCP segment from 192.168.10.12 port 49152 to 192.168.20.100 port 80 by entry 10 (permit tcp 192.168.10.0 0.0.0.255 host 192.168.20.100 eq www); expected deny by entry 5."
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "KIOSK opened TCP port 80 on 192.168.20.100, which this task expects to fail. The first entry that matches decides: a deny below a permit that matches the same packets never counts."
+              },
+              {
+                "index": 3,
+                "pass": true
+              }
+            ],
+            "misconception": "acl-order-ignored"
+          },
+          {
+            "task": "log-kiosk",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "Access list SERVERS-IN on R1 has no entry \"deny tcp host 192.168.10.12 host 192.168.20.100 eq www log\"."
+              }
+            ]
+          },
+          {
+            "task": "ping-servers",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "Access list SERVERS-IN on R1 denies an ICMP echo request from 192.168.10.11 to 192.168.20.100 by its implicit deny; expected permit by entry 20."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "Access list SERVERS-IN on R1 denies an ICMP echo request from 192.168.10.12 to 192.168.20.100 by its implicit deny; expected permit by entry 20."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "PC2 got no reply from 192.168.20.100 (2 echo requests sent). Read the wildcard of entry 20 bit by bit: which host addresses does it leave out?"
+              }
+            ],
+            "misconception": "wildcard-misread"
+          },
+          {
+            "task": "remark",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 has no configuration line at ip.access-list.extended.SERVERS-IN.remark."
+              }
+            ]
+          },
+          {
+            "task": "no-dead-entries",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "Entry 1 of access list SERVERS-IN on R1 is \"permit tcp 192.168.10.0 0.0.0.255 host 192.168.20.100 eq www\", expected \"deny tcp host 192.168.10.12 host 192.168.20.100 eq www log\"."
+              }
+            ]
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna3-acl-edit-verify",
+        "checkedAt": 710000000000,
+        "score": 100,
+        "total": 100,
+        "results": [
+          {
+            "task": "kiosk-first",
+            "pass": true,
+            "points": 30,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "log-kiosk",
+            "pass": true,
+            "points": 10,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "ping-servers",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "remark",
+            "pass": true,
+            "points": 10,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "no-dead-entries",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "ccna3-secure-device-access": {
+      "unsolved": {
+        "lab": "ccna3-secure-device-access",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 100,
+        "results": [
+          {
+            "task": "ssh-ready",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 has no configuration line at ip.domain-name."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R1 ssh.enabled is false, expected true. R1 has no RSA key yet."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "R1 ssh.keyBits is not set, expected at least 1024."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "R1 ssh.version is not set, expected 2."
+              }
+            ]
+          },
+          {
+            "task": "local-users",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 has no configuration line at username.admin."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R1 vty.loginLocal is false, expected true."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "PC1's SSH login to R1 (192.168.10.1) was refused with a reset before any login: R1 does not accept SSH there; this task expects it to succeed."
+              }
+            ],
+            "misconception": "line-password-is-enough"
+          },
+          {
+            "task": "ssh-only",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 vty.transport is ssh telnet, expected ssh."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "PC1's Telnet login to R1 (192.168.10.1) failed on the user name or password (bad password); this task expects it to be refused. Telnet still reaches the remote lines."
+              }
+            ],
+            "misconception": "transport-defaults-to-ssh"
+          },
+          {
+            "task": "admin-pc-only",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 has no access list 10."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R1 vty.accessClass is not set, expected 10."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "R1 has no access list 10."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "R1 has no access list 10."
+              },
+              {
+                "index": 4,
+                "pass": false,
+                "detail": "R1 has no access list 10. Permit PC1 alone: every other source must fall to the implicit deny."
+              },
+              {
+                "index": 5,
+                "pass": true
+              }
+            ],
+            "misconception": "permit-the-whole-subnet"
+          },
+          {
+            "task": "own-logins",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "The vty-logins table of R1 has no row with proto=ssh peer=192.168.10.10 user=admin result=success. R1 has not seen an SSH login from PC1 yet."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "The vty-logins table of R1 has no row with proto=ssh peer=192.168.10.11 result=refused. R1 has not refused an SSH attempt from PC2 yet."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "R1 has no access list 10."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "The acl table of R1 has no row with list=10 action=deny lastIface=vty matches >= 1. List 10 has not yet refused a login on the remote lines."
+              }
+            ]
+          },
+          {
+            "task": "unused-ports",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "SW1 FastEthernet0/3 adminUp is true, expected false."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "SW1 FastEthernet0/4 adminUp is true, expected false."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "SW1 FastEthernet0/5 adminUp is true, expected false."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "SW1 FastEthernet0/6 adminUp is true, expected false."
+              },
+              {
+                "index": 4,
+                "pass": false,
+                "detail": "SW1 FastEthernet0/7 adminUp is true, expected false."
+              },
+              {
+                "index": 5,
+                "pass": false,
+                "detail": "SW1 FastEthernet0/8 adminUp is true, expected false."
+              },
+              {
+                "index": 6,
+                "pass": false,
+                "detail": "SW1 FastEthernet0/9 adminUp is true, expected false."
+              },
+              {
+                "index": 7,
+                "pass": false,
+                "detail": "SW1 FastEthernet0/10 adminUp is true, expected false."
+              },
+              {
+                "index": 8,
+                "pass": false,
+                "detail": "SW1 FastEthernet0/11 adminUp is true, expected false."
+              },
+              {
+                "index": 9,
+                "pass": false,
+                "detail": "SW1 FastEthernet0/12 adminUp is true, expected false."
+              },
+              {
+                "index": 10,
+                "pass": false,
+                "detail": "SW1 FastEthernet0/13 adminUp is true, expected false."
+              },
+              {
+                "index": 11,
+                "pass": false,
+                "detail": "SW1 FastEthernet0/14 adminUp is true, expected false."
+              },
+              {
+                "index": 12,
+                "pass": false,
+                "detail": "SW1 FastEthernet0/15 adminUp is true, expected false."
+              },
+              {
+                "index": 13,
+                "pass": false,
+                "detail": "SW1 FastEthernet0/16 adminUp is true, expected false."
+              },
+              {
+                "index": 14,
+                "pass": false,
+                "detail": "SW1 FastEthernet0/17 adminUp is true, expected false."
+              },
+              {
+                "index": 15,
+                "pass": false,
+                "detail": "SW1 FastEthernet0/18 adminUp is true, expected false."
+              },
+              {
+                "index": 16,
+                "pass": false,
+                "detail": "SW1 FastEthernet0/19 adminUp is true, expected false."
+              },
+              {
+                "index": 17,
+                "pass": false,
+                "detail": "SW1 FastEthernet0/20 adminUp is true, expected false."
+              },
+              {
+                "index": 18,
+                "pass": false,
+                "detail": "SW1 FastEthernet0/21 adminUp is true, expected false."
+              },
+              {
+                "index": 19,
+                "pass": false,
+                "detail": "SW1 FastEthernet0/22 adminUp is true, expected false."
+              },
+              {
+                "index": 20,
+                "pass": false,
+                "detail": "SW1 FastEthernet0/23 adminUp is true, expected false."
+              },
+              {
+                "index": 21,
+                "pass": false,
+                "detail": "SW1 FastEthernet0/24 adminUp is true, expected false."
+              },
+              {
+                "index": 22,
+                "pass": false,
+                "detail": "SW1 GigabitEthernet0/2 adminUp is true, expected false."
+              }
+            ]
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna3-secure-device-access",
+        "checkedAt": 710000000000,
+        "score": 80,
+        "total": 100,
+        "results": [
+          {
+            "task": "ssh-ready",
+            "pass": true,
+            "points": 15,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "local-users",
+            "pass": true,
+            "points": 15,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "ssh-only",
+            "pass": true,
+            "points": 15,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "admin-pc-only",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              },
+              {
+                "index": 4,
+                "pass": true
+              },
+              {
+                "index": 5,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "own-logins",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "The vty-logins table of R1 has no row with proto=ssh peer=192.168.10.10 user=admin result=success. R1 has not seen an SSH login from PC1 yet."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "The vty-logins table of R1 has no row with proto=ssh peer=192.168.10.11 result=refused. R1 has not refused an SSH attempt from PC2 yet."
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "The acl table of R1 has no row with list=10 action=deny lastIface=vty matches >= 1. List 10 has not yet refused a login on the remote lines."
+              }
+            ]
+          },
+          {
+            "task": "unused-ports",
+            "pass": true,
+            "points": 15,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              },
+              {
+                "index": 4,
+                "pass": true
+              },
+              {
+                "index": 5,
+                "pass": true
+              },
+              {
+                "index": 6,
+                "pass": true
+              },
+              {
+                "index": 7,
+                "pass": true
+              },
+              {
+                "index": 8,
+                "pass": true
+              },
+              {
+                "index": 9,
+                "pass": true
+              },
+              {
+                "index": 10,
+                "pass": true
+              },
+              {
+                "index": 11,
+                "pass": true
+              },
+              {
+                "index": 12,
+                "pass": true
+              },
+              {
+                "index": 13,
+                "pass": true
+              },
+              {
+                "index": 14,
+                "pass": true
+              },
+              {
+                "index": 15,
+                "pass": true
+              },
+              {
+                "index": 16,
+                "pass": true
+              },
+              {
+                "index": 17,
+                "pass": true
+              },
+              {
+                "index": 18,
+                "pass": true
+              },
+              {
+                "index": 19,
+                "pass": true
+              },
+              {
+                "index": 20,
+                "pass": true
+              },
+              {
+                "index": 21,
+                "pass": true
+              },
+              {
+                "index": 22,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "ccna3-dhcp-snooping-dai": {
+      "unsolved": {
+        "lab": "ccna3-dhcp-snooping-dai",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 100,
+        "results": [
+          {
+            "task": "snooping-on",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "SW1 snooping.enabled of 10 is false, expected true."
+              }
+            ],
+            "misconception": "snooping-global-line-only"
+          },
+          {
+            "task": "trust-uplink",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "SW1 snooping.trusted of GigabitEthernet0/1 is false, expected true. R1's answers arrive on the trunk."
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              },
+              {
+                "index": 4,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "pc1-bound",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "SW1 snooping.bindingPort of PC1 is not set, expected FastEthernet0/1. SW1 has no binding for PC1 yet."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "PC1 got no reply from 192.168.10.1 (2 echo requests sent)."
+              }
+            ]
+          },
+          {
+            "task": "dai-on",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "SW1 dai.enabled of 10 is false, expected true."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "SW1 dai.trusted of GigabitEthernet0/1 is false, expected true. R1's ARP messages arrive on the trunk, where no binding can match them."
+              }
+            ]
+          },
+          {
+            "task": "static-server",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "SW1 dai.enabled of 10 is false, expected true."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "The dhcp-snooping table of SW1 has no row with kind=static ip=192.168.10.5 port=FastEthernet0/2 vlan=10."
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "spoof-dropped",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "ATTACKER GigabitEthernet0 has 10.66.0.3/24, expected 192.168.10.1. ATTACKER has not claimed R1's address yet."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "SW1 dai.dropped of 10 is 0, expected at least 1. SW1 has not dropped an ARP message on VLAN 10 yet."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "PC1 got no reply from 192.168.10.1 (2 echo requests sent)."
+              }
+            ]
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna3-dhcp-snooping-dai",
+        "checkedAt": 710000000000,
+        "score": 100,
+        "total": 100,
+        "results": [
+          {
+            "task": "snooping-on",
+            "pass": true,
+            "points": 15,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "trust-uplink",
+            "pass": true,
+            "points": 15,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              },
+              {
+                "index": 4,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "pc1-bound",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "dai-on",
+            "pass": true,
+            "points": 15,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "static-server",
+            "pass": true,
+            "points": 15,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "spoof-dropped",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "ccna3-serial-links": {
+      "unsolved": {
+        "lab": "ccna3-serial-links",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 100,
+        "results": [
+          {
+            "task": "clock-the-line",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 Serial0/0/0 has no IPv4 address."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R1 has no configuration line at interface.Serial0/0/0.clock. R1 holds the DCE end of the cable, so the clock has to come from R1."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "R1 Serial0/0/0 adminUp is false, expected true."
+              }
+            ],
+            "misconception": "serial-clock-on-dte"
+          },
+          {
+            "task": "hdlc-link",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "PC1 got no reply from 10.2.0.10 (2 echo requests sent). The grader put both serial interfaces back on HDLC and PC1 still could not reach PC2: check the clock, the addresses and that both interfaces are enabled."
+              }
+            ]
+          },
+          {
+            "task": "ppp-framing",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 has no configuration line at interface.Serial0/0/0.encapsulation."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R2 has no configuration line at interface.Serial0/0/0.encapsulation."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "R1 has no PPP neighbour R2 on Serial0/0/0 in state opened."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "R2 has no PPP neighbour R1 on Serial0/0/0 in state opened."
+              }
+            ]
+          },
+          {
+            "task": "chap",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 ppp.auth of Serial0/0/0 is not set, expected chap. R1 does not require CHAP on its serial interface."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R2 ppp.auth of Serial0/0/0 is not set, expected chap. R2 does not require CHAP on its serial interface."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "R1 has no configuration line at username.R2."
+              },
+              {
+                "index": 3,
+                "pass": true
+              },
+              {
+                "index": 4,
+                "pass": false,
+                "detail": "The ppp table of R1 has no row with authLocal=chap authLocalState=success. R1 has not accepted the CHAP answer of R2: the secrets of the two users do not match."
+              },
+              {
+                "index": 5,
+                "pass": false,
+                "detail": "The ppp table of R2 has no row with authLocal=chap authLocalState=success. R2 has not accepted the CHAP answer of R1: the secrets of the two users do not match."
+              }
+            ],
+            "misconception": "chap-secret-mismatch"
+          },
+          {
+            "task": "ipcp",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 ppp.ipcp of Serial0/0/0 is not set, expected opened."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R2 ppp.ipcp of Serial0/0/0 is not set, expected opened."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "PC1 got no reply from 10.2.0.10 (2 echo requests sent)."
+              }
+            ]
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna3-serial-links",
+        "checkedAt": 710000000000,
+        "score": 100,
+        "total": 100,
+        "results": [
+          {
+            "task": "clock-the-line",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "hdlc-link",
+            "pass": true,
+            "points": 15,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "ppp-framing",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "chap",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              },
+              {
+                "index": 4,
+                "pass": true
+              },
+              {
+                "index": 5,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "ipcp",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "ccna3-gre-tunnel": {
+      "unsolved": {
+        "lab": "ccna3-gre-tunnel",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 100,
+        "results": [
+          {
+            "task": "build-tunnel",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 has no interface called Tunnel0."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R2 has no interface called Tunnel0."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "R1 has no configuration line at interface.Tunnel0.tunnel.destination."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "R2 has no configuration line at interface.Tunnel0.tunnel.destination."
+              },
+              {
+                "index": 4,
+                "pass": false,
+                "detail": "The tunnels table of R1 has no row with port=Tunnel0 source=209.165.200.225 destination=209.165.200.230. The tunnel must leave from the serial link to the provider and aim at the other router's public address."
+              },
+              {
+                "index": 5,
+                "pass": false,
+                "detail": "The tunnels table of R2 has no row with port=Tunnel0 source=209.165.200.230 destination=209.165.200.225. The tunnel must leave from the serial link to the provider and aim at the other router's public address."
+              },
+              {
+                "index": 6,
+                "pass": false,
+                "detail": "R1 has no interface called Tunnel0. Check the source interface and the destination address: the router must reach the destination without the tunnel."
+              },
+              {
+                "index": 7,
+                "pass": false,
+                "detail": "R2 has no interface called Tunnel0. Check the source interface and the destination address: the router must reach the destination without the tunnel."
+              }
+            ]
+          },
+          {
+            "task": "route-through-tunnel",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 has no interface called Tunnel0."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R2 has no interface called Tunnel0."
+              }
+            ]
+          },
+          {
+            "task": "site-to-site",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "PC1 got no reply from 192.168.2.10 (2 echo requests sent)."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "PC1's probe to PC2 (192.168.2.10) never reached PC2: it was dropped at ISP (no-route). The ISP must see only tunnelled packets between the two public addresses."
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna3-gre-tunnel",
+        "checkedAt": 710000000000,
+        "score": 100,
+        "total": 100,
+        "results": [
+          {
+            "task": "build-tunnel",
+            "pass": true,
+            "points": 30,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              },
+              {
+                "index": 4,
+                "pass": true
+              },
+              {
+                "index": 5,
+                "pass": true
+              },
+              {
+                "index": 6,
+                "pass": true
+              },
+              {
+                "index": 7,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "route-through-tunnel",
+            "pass": true,
+            "points": 30,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "site-to-site",
+            "pass": true,
+            "points": 40,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "ccna3-ipsec-site-to-site": {
+      "unsolved": {
+        "lab": "ccna3-ipsec-site-to-site",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 100,
+        "results": [
+          {
+            "task": "ike-setup",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 has no configuration line at crypto.ikev2.keyring.SITE-KEYS.peer.address."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R1 has no configuration line at crypto.ikev2.keyring.SITE-KEYS.peer.pre-shared-key."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "R1 has no configuration line at crypto.ikev2.profile.SITE-IKE.keyring.local."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "R1 has no configuration line at crypto.ikev2.profile.SITE-IKE.match.identity.remote.address. R1's profile must match R2's public address as the remote identity."
+              },
+              {
+                "index": 4,
+                "pass": false,
+                "detail": "R1 has no configuration line at crypto.ikev2.profile.SITE-IKE.authentication.local."
+              },
+              {
+                "index": 5,
+                "pass": false,
+                "detail": "R1 has no configuration line at crypto.ikev2.profile.SITE-IKE.authentication.remote."
+              },
+              {
+                "index": 6,
+                "pass": false,
+                "detail": "R1 has no configuration line at crypto.ipsec.profile.SITE-VPN.set.ikev2-profile."
+              },
+              {
+                "index": 7,
+                "pass": false,
+                "detail": "R2 has no configuration line at crypto.ikev2.keyring.SITE-KEYS.peer.address."
+              },
+              {
+                "index": 8,
+                "pass": false,
+                "detail": "R2 has no configuration line at crypto.ikev2.keyring.SITE-KEYS.peer.pre-shared-key."
+              },
+              {
+                "index": 9,
+                "pass": false,
+                "detail": "R2 has no configuration line at crypto.ikev2.profile.SITE-IKE.keyring.local."
+              },
+              {
+                "index": 10,
+                "pass": false,
+                "detail": "R2 has no configuration line at crypto.ikev2.profile.SITE-IKE.match.identity.remote.address. R2's profile must match R1's public address as the remote identity."
+              },
+              {
+                "index": 11,
+                "pass": false,
+                "detail": "R2 has no configuration line at crypto.ikev2.profile.SITE-IKE.authentication.local."
+              },
+              {
+                "index": 12,
+                "pass": false,
+                "detail": "R2 has no configuration line at crypto.ikev2.profile.SITE-IKE.authentication.remote."
+              },
+              {
+                "index": 13,
+                "pass": false,
+                "detail": "R2 has no configuration line at crypto.ipsec.profile.SITE-VPN.set.ikev2-profile."
+              }
+            ]
+          },
+          {
+            "task": "protect-tunnel",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 has no configuration line at interface.Tunnel0.tunnel.mode.ipsec.ipv4."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R1 has no configuration line at interface.Tunnel0.tunnel.protection.ipsec.profile.SITE-VPN."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "R2 has no configuration line at interface.Tunnel0.tunnel.mode.ipsec.ipv4."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "R2 has no configuration line at interface.Tunnel0.tunnel.protection.ipsec.profile.SITE-VPN."
+              }
+            ]
+          },
+          {
+            "task": "sa-established",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 ipsec.sa of Tunnel0 is not set, expected established. Compare the keys and peer addresses on the two routers."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R2 ipsec.sa of Tunnel0 is not set, expected established. Compare the keys and peer addresses on the two routers."
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "only-esp",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "ISP received 2 of 2 frames of PC1's probe to PC2 (192.168.2.10) inside a GRE tunnel, not inside an IPsec (ESP) tunnel. Every packet between the sites must reach the ISP as ESP: check that both ends protect the tunnel."
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna3-ipsec-site-to-site",
+        "checkedAt": 710000000000,
+        "score": 100,
+        "total": 100,
+        "results": [
+          {
+            "task": "ike-setup",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              },
+              {
+                "index": 4,
+                "pass": true
+              },
+              {
+                "index": 5,
+                "pass": true
+              },
+              {
+                "index": 6,
+                "pass": true
+              },
+              {
+                "index": 7,
+                "pass": true
+              },
+              {
+                "index": 8,
+                "pass": true
+              },
+              {
+                "index": 9,
+                "pass": true
+              },
+              {
+                "index": 10,
+                "pass": true
+              },
+              {
+                "index": 11,
+                "pass": true
+              },
+              {
+                "index": 12,
+                "pass": true
+              },
+              {
+                "index": 13,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "protect-tunnel",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "sa-established",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "only-esp",
+            "pass": true,
+            "points": 35,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "ccna3-qos-voice-first": {
+      "unsolved": {
+        "lab": "ccna3-qos-voice-first",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 100,
+        "results": [
+          {
+            "task": "mark-voice",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 has no access list VOICE-PORTS."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R1 has no access list VOICE-PORTS. VOICE-PORTS must permit UDP to port 16384, the first voice port."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "R1 has no access list VOICE-PORTS. VOICE-PORTS must permit UDP to port 32767, the last voice port."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "R1 has no access list VOICE-PORTS. The bulk data (UDP port 9) must not match VOICE-PORTS, or it would be marked as voice too."
+              },
+              {
+                "index": 4,
+                "pass": false,
+                "detail": "R1 has no access list VOICE-PORTS. VOICE-PORTS must match only the voice ports 16384-32767."
+              },
+              {
+                "index": 5,
+                "pass": false,
+                "detail": "R1 has no access list VOICE-PORTS. VOICE-PORTS must match only the voice ports 16384-32767."
+              },
+              {
+                "index": 6,
+                "pass": false,
+                "detail": "R1 has no configuration line at class-map.match-all.VOIP.match."
+              },
+              {
+                "index": 7,
+                "pass": false,
+                "detail": "R1 has no configuration line at policy-map.MARK.class.VOIP.set. Voice is marked EF (DSCP 46). CS6 (48) and the AF classes mean something else to every queue on the way."
+              },
+              {
+                "index": 8,
+                "pass": false,
+                "detail": "R1 qos.inputPolicy of GigabitEthernet0/0 is not set, expected MARK. Mark where the traffic enters the network you trust: inbound on the LAN interface, before any routing decision."
+              },
+              {
+                "index": 9,
+                "pass": false,
+                "detail": "The flows table of PC-S has no row with src=192.168.1.10 flow=f1 dscp=46. Send the voice burst from PC-V after MARK is attached (step 2): PC-S must see it arrive as EF (46)."
+              }
+            ]
+          },
+          {
+            "task": "voice-first",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 has no configuration line at policy-map.MARK.class.VOIP.set. The priority class matches EF, so the voice must be marked EF at the edge."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R1 qos.inputPolicy of GigabitEthernet0/0 is not set, expected MARK."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "The flows table of PC-S has no row with src=192.168.1.10 flow=f1 dscp=46. Send the voice burst from PC-V after MARK is attached (step 2): PC-S must see it arrive as EF (46)."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "R1 has no configuration line at class-map.match-all.VOICE.match."
+              },
+              {
+                "index": 4,
+                "pass": false,
+                "detail": "R1 has no configuration line at class-map.match-all.VOICE.match, expected exactly 1. VOICE needs exactly one match line, DSCP EF: under match-all a packet must pass every match line, so an extra one can leave the priority queue empty."
+              },
+              {
+                "index": 5,
+                "pass": false,
+                "detail": "R1 has no configuration line at policy-map.WAN-EDGE.class.VOICE.priority."
+              },
+              {
+                "index": 6,
+                "pass": false,
+                "detail": "R1 has no configuration line at interface.Serial0/0/0.bandwidth. The bandwidth line tells the router how fast the line really is; the clock rate alone does not."
+              },
+              {
+                "index": 7,
+                "pass": false,
+                "detail": "R1 qos.outputPolicy of Serial0/0/0 is not set, expected WAN-EDGE. A queuing policy works only in the output direction, on the interface where the queue forms."
+              },
+              {
+                "index": 8,
+                "pass": false,
+                "detail": "R1 qos.admitted of Serial0/0/0 is not set, expected true. The router reserves at most 75 % of the interface bandwidth for priority and bandwidth classes."
+              },
+              {
+                "index": 9,
+                "pass": false,
+                "detail": "PC-S lost 46 of 499 datagrams of flow voice from PC-V (9.2 %), more than 0 %; flow voice from PC-V took up to 6080.8 ms to reach PC-S, more than 100 ms. While the line is congested, voice keeps its delay only in a priority queue big enough for it."
+              }
+            ]
+          },
+          {
+            "task": "police-bulk",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 has no configuration line at policy-map.MARK.class.class-default.police.64000. Police class-default of MARK at 64000 b/s and transmit what conforms."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R1 has no configuration line at policy-map.MARK.class.class-default.police.64000. A policer drops what exceeds the rate; a shaper would hold it back and send it later."
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "Flow edge-bulk from PC-D took up to 6117.8 ms to reach PC-S, more than 300 ms; PC-S lost 47 of 499 datagrams of flow edge-voice from PC-V (9.4 %), more than 0 %. Dropped at the edge, the excess bulk data never reaches the serial queue, so what is left of it crosses quickly."
+              }
+            ]
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna3-qos-voice-first",
+        "checkedAt": 710000000000,
+        "score": 30,
+        "total": 100,
+        "results": [
+          {
+            "task": "mark-voice",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              },
+              {
+                "index": 4,
+                "pass": true
+              },
+              {
+                "index": 5,
+                "pass": true
+              },
+              {
+                "index": 6,
+                "pass": true
+              },
+              {
+                "index": 7,
+                "pass": true
+              },
+              {
+                "index": 8,
+                "pass": true
+              },
+              {
+                "index": 9,
+                "pass": false,
+                "detail": "The flows table of PC-S has no row with src=192.168.1.10 flow=f1 dscp=46. Send the voice burst from PC-V after MARK is attached (step 2): PC-S must see it arrive as EF (46)."
+              }
+            ]
+          },
+          {
+            "task": "voice-first",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "The flows table of PC-S has no row with src=192.168.1.10 flow=f1 dscp=46. Send the voice burst from PC-V after MARK is attached (step 2): PC-S must see it arrive as EF (46)."
+              },
+              {
+                "index": 3,
+                "pass": true
+              },
+              {
+                "index": 4,
+                "pass": true
+              },
+              {
+                "index": 5,
+                "pass": true
+              },
+              {
+                "index": 6,
+                "pass": true
+              },
+              {
+                "index": 7,
+                "pass": true
+              },
+              {
+                "index": 8,
+                "pass": true
+              },
+              {
+                "index": 9,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "police-bulk",
+            "pass": true,
+            "points": 30,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "ccna3-discover-neighbours": {
+      "unsolved": {
+        "lab": "ccna3-discover-neighbours",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 100,
+        "results": [
+          {
+            "task": "cdp-map",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "R1 has no configuration line at interface.GigabitEthernet0/0.description. R1 GigabitEthernet0/0 needs a description naming SW1, the neighbour CDP reports there."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "R1 has no configuration line at interface.GigabitEthernet0/1.description. R1 GigabitEthernet0/1 needs a description naming ISP."
+              },
+              {
+                "index": 4,
+                "pass": false,
+                "detail": "SW1 has no configuration line at interface.GigabitEthernet0/1.description. SW1 GigabitEthernet0/1 needs a description naming R1."
+              }
+            ],
+            "misconception": "description-on-wrong-port"
+          },
+          {
+            "task": "lldp-map",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "SW1 lldp.enabled is false, expected true. SW1 does not run LLDP yet."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "SW2 has no LLDP neighbour SW1 on GigabitEthernet0/1."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "SW1 has no configuration line at interface.GigabitEthernet0/2.description. SW1 GigabitEthernet0/2 needs a description naming SW2."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "SW2 has no configuration line at interface.GigabitEthernet0/1.description. SW2 GigabitEthernet0/1 needs a description naming SW1."
+              }
+            ],
+            "misconception": "cdp-sees-every-device"
+          },
+          {
+            "task": "quiet-edge",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 cdp.enabled of GigabitEthernet0/1 is true, expected false. R1 still announces itself to ISP on GigabitEthernet0/1."
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              },
+              {
+                "index": 4,
+                "pass": false,
+                "detail": "R1 still has CDP neighbour on GigabitEthernet0/1 (ISP on Gi0/1)."
+              }
+            ]
+          },
+          {
+            "task": "quiet-users",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "SW1 cdp.enabled of FastEthernet0/1 is true, expected false. SW1 FastEthernet0/1 still sends CDP to PC1."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "SW1 cdp.enabled of FastEthernet0/2 is true, expected false. SW1 FastEthernet0/2 still sends CDP to PC2."
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              },
+              {
+                "index": 4,
+                "pass": false,
+                "detail": "SW2 lldp.enabled of FastEthernet0/1 is true, expected false. LLDP still runs on SW2 FastEthernet0/1 (transmit, receive or both)."
+              },
+              {
+                "index": 5,
+                "pass": true
+              },
+              {
+                "index": 6,
+                "pass": false,
+                "detail": "SW1 lldp.enabled of GigabitEthernet0/2 is false, expected true. LLDP no longer runs on the link between the switches."
+              },
+              {
+                "index": 7,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna3-discover-neighbours",
+        "checkedAt": 710000000000,
+        "score": 100,
+        "total": 100,
+        "results": [
+          {
+            "task": "cdp-map",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              },
+              {
+                "index": 4,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "lldp-map",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "quiet-edge",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              },
+              {
+                "index": 4,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "quiet-users",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              },
+              {
+                "index": 4,
+                "pass": true
+              },
+              {
+                "index": 5,
+                "pass": true
+              },
+              {
+                "index": 6,
+                "pass": true
+              },
+              {
+                "index": 7,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "ccna3-time-and-logs": {
+      "unsolved": {
+        "lab": "ccna3-time-and-logs",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 100,
+        "results": [
+          {
+            "task": "r1-time",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 ntp.synced is false, expected true. R1 follows no time server yet."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R1 ntp.peer is not set, expected SRV1. R1 follows another source than SRV1."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "R1 ntp.stratum is not set, expected 2."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "R1 clock.source is unset, expected ntp."
+              }
+            ],
+            "misconception": "ntp-server-not-serving"
+          },
+          {
+            "task": "sw1-time",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "SW1 ntp.synced is false, expected true. SW1 follows no time server yet."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "SW1 ntp.peer is not set, expected R1. SW1 follows another source than R1."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "SW1 ntp.stratum is not set, expected 3."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "SW1 clock.source is unset, expected ntp."
+              }
+            ],
+            "misconception": "every-device-to-the-reference"
+          },
+          {
+            "task": "local-logs",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 logging.buffered is debugging, expected informational. R1's buffer keeps a different level than informational."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R1 has no configuration line at clock.timezone. R1 has no clock timezone line for this zone."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "R1 service.timestamps.log is \"timestamps log datetime msec\", expected \"timestamps log datetime msec localtime show-timezone\". R1 stamps log lines without the local time and the zone."
+              }
+            ]
+          },
+          {
+            "task": "syslog",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R1 logging.trap is informational, expected warnings. R1 sends up to another level than warnings."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "The syslog-messages table of SRV1 has no row with hostname=R1 message contains %LINK-3-UPDOWN. SRV1 has not received a %LINK-3-UPDOWN line from R1 yet: is its receiver on, does R1 send to 10.0.0.10, and did a link of R1 change after that?"
+              }
+            ],
+            "misconception": "trap-level-reversed"
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna3-time-and-logs",
+        "checkedAt": 710000000000,
+        "score": 100,
+        "total": 100,
+        "results": [
+          {
+            "task": "r1-time",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "sw1-time",
+            "pass": true,
+            "points": 25,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "local-logs",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "syslog",
+            "pass": true,
+            "points": 30,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "ccna3-troubleshoot-eigrp": {
+      "unsolved": {
+        "lab": "ccna3-troubleshoot-eigrp",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 100,
+        "results": [
+          {
+            "task": "autonomous-system",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R2 router.eigrp is \"eigrp 200\", expected \"eigrp 100\"."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R1 has no EIGRP neighbour R2 in state up."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "R1 got no reply from 10.2.0.10 (0 echo requests sent)."
+              }
+            ]
+          },
+          {
+            "task": "k-values",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R3 eigrp.kValues is 1 1 1 0 0, expected 1 0 1 0 0."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R1 has no EIGRP neighbour R3 in state up."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "R1 got no reply from 10.3.0.10 (0 echo requests sent)."
+              }
+            ]
+          },
+          {
+            "task": "passive-uplink",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R4 has no EIGRP neighbour R1 on GigabitEthernet0/0 in state up."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R1 has no EIGRP neighbour R4 in state up."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "R1 got no reply from 10.4.0.10 (0 echo requests sent)."
+              }
+            ]
+          },
+          {
+            "task": "hq-network",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "The eigrp-topology table of R1 has no row with prefix=192.168.1.0/24 connected=GigabitEthernet0/1/1."
+              }
+            ]
+          },
+          {
+            "task": "end-to-end",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "PC2 got no reply from 192.168.1.20 (2 echo requests sent)."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "PC3 got no reply from 192.168.1.20 (2 echo requests sent)."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "PC4 got no reply from 192.168.1.20 (2 echo requests sent)."
+              }
+            ]
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna3-troubleshoot-eigrp",
+        "checkedAt": 710000000000,
+        "score": 100,
+        "total": 100,
+        "results": [
+          {
+            "task": "autonomous-system",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "k-values",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "passive-uplink",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "hq-network",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "end-to-end",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "ccna3-troubleshoot-enterprise": {
+      "unsolved": {
+        "lab": "ccna3-troubleshoot-enterprise",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 100,
+        "results": [
+          {
+            "task": "routing",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R2 has no OSPF neighbour R1 in state full."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "R2 ospf.passive of Serial0/0/0 is true, expected false. R2 sends no hello on Serial0/0/0, so R1 can never become its neighbour there."
+              },
+              {
+                "index": 3,
+                "pass": true
+              },
+              {
+                "index": 4,
+                "pass": true
+              },
+              {
+                "index": 5,
+                "pass": false,
+                "detail": "R2 has no route to 198.51.100.10."
+              },
+              {
+                "index": 6,
+                "pass": false,
+                "detail": "PC1 got no reply from 192.168.20.21 (2 echo requests sent)."
+              }
+            ],
+            "misconception": "ospf-passive-wan"
+          },
+          {
+            "task": "branch-policy",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "Entry 1 of access list BRANCH-POLICY on R2 is \"deny ip 192.168.20.0 0.0.0.255 host 192.168.10.100\", expected \"permit tcp 192.168.20.0 0.0.0.255 host 192.168.10.100 eq www\"."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "Access list BRANCH-POLICY on R2 denies a TCP segment from 192.168.20.21 port 49152 to 192.168.10.100 port 80 by entry 30 (deny ip 192.168.20.0 0.0.0.255 host 192.168.10.100); expected permit."
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "PC2 could not open TCP port 80 on 192.168.10.100: an ICMP unreachable came back (type 3, code 13)."
+              },
+              {
+                "index": 4,
+                "pass": true
+              }
+            ],
+            "misconception": "acl-order"
+          },
+          {
+            "task": "translation",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "Access list NAT-LANS on R1 has no entry \"permit 192.168.10.0 0.0.0.255\"."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "Access list NAT-LANS on R1 permits an IP packet from 192.168.1.10 to 198.51.100.10 by entry 10 (permit 192.168.1.0 0.0.0.255); expected deny. The list still matches a network the plan does not have."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "PC1 got no reply from 198.51.100.10 (2 echo requests sent)."
+              }
+            ]
+          },
+          {
+            "task": "time",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "R2 ntp.synced is false, expected true."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "R2 ntp.peer is not set, expected R1."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "R2 ntp.stratum is not set, expected 3."
+              },
+              {
+                "index": 3,
+                "pass": false,
+                "detail": "R2 clock.source is user, expected ntp. R2 runs on its own clock and follows no time server (a clock keeps its time when its server is removed; `clock set` does not synchronise it either)."
+              },
+              {
+                "index": 4,
+                "pass": false,
+                "detail": "The ntp-peers table of R2 still has a row with address=10.0.21.1. R2 still asks 10.0.21.1 for the time."
+              }
+            ]
+          },
+          {
+            "task": "end-to-end",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "PC2 got no reply from 198.51.100.10 (2 echo requests sent)."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "PC2 could not open TCP port 80 on 192.168.10.100: an ICMP unreachable came back (type 3, code 13)."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "PC2 got no reply from 192.168.10.11 (2 echo requests sent)."
+              }
+            ]
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna3-troubleshoot-enterprise",
+        "checkedAt": 710000000000,
+        "score": 100,
+        "total": 100,
+        "results": [
+          {
+            "task": "routing",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              },
+              {
+                "index": 4,
+                "pass": true
+              },
+              {
+                "index": 5,
+                "pass": true
+              },
+              {
+                "index": 6,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "branch-policy",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              },
+              {
+                "index": 4,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "translation",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "time",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              },
+              {
+                "index": 3,
+                "pass": true
+              },
+              {
+                "index": 4,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "end-to-end",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              },
+              {
+                "index": 1,
+                "pass": true
+              },
+              {
+                "index": 2,
+                "pass": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "ccna3-restconf-change": {
+      "unsolved": {
+        "lab": "ccna3-restconf-change",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 100,
+        "results": [
+          {
+            "task": "read-interfaces",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "The restconf-log table of SW2 has no row with method=GET status=200 path contains ietf-interfaces. SW2 has not answered a GET of its interfaces with 200 OK yet: send the GET of step 1 to SW2, with -u."
+              }
+            ]
+          },
+          {
+            "task": "act-on-note",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "VLAN 40 does not exist on SW3. Read the description of each of SW2's interfaces in the JSON: the note names a VLAN, its name and the switch that needs it."
+              }
+            ],
+            "misconception": "note-applied-where-it-was-read"
+          },
+          {
+            "task": "vlan-30",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "VLAN 30 does not exist on SW1. SW1 needs VLAN 30 named VOICE, exactly as written (names are case-sensitive)."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "VLAN 30 does not exist on SW2. SW2 needs VLAN 30 named VOICE, exactly as written (names are case-sensitive)."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "VLAN 30 does not exist on SW3. SW3 needs VLAN 30 named VOICE, exactly as written (names are case-sensitive)."
+              }
+            ]
+          },
+          {
+            "task": "through-the-api",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "The restconf-log table of SW1 has no row with method=PUT path=/restconf/data/nf-native:native/vlan/vlan-list=30 status <= 204. SW1 has answered no PUT to vlan-list=30 with 201 or 204: send the PUT of step 3 to its address and read the status line it prints."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "The restconf-log table of SW2 has no row with method=PUT path=/restconf/data/nf-native:native/vlan/vlan-list=30 status <= 204. SW2 has answered no PUT to vlan-list=30 with 201 or 204: send the PUT of step 3 to its address and read the status line it prints."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "The restconf-log table of SW3 has no row with method=PUT path=/restconf/data/nf-native:native/vlan/vlan-list=30 status <= 204. SW3 has answered no PUT to vlan-list=30 with 201 or 204: send the PUT of step 3 to its address and read the status line it prints."
+              }
+            ],
+            "misconception": "console-change-counted-as-api"
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna3-restconf-change",
+        "checkedAt": 710000000000,
+        "score": 20,
+        "total": 100,
+        "results": [
+          {
+            "task": "read-interfaces",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "The restconf-log table of SW2 has no row with method=GET status=200 path contains ietf-interfaces. SW2 has not answered a GET of its interfaces with 200 OK yet: send the GET of step 1 to SW2, with -u."
+              }
+            ]
+          },
+          {
+            "task": "act-on-note",
+            "pass": true,
+            "points": 20,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": true
+              }
+            ]
+          },
+          {
+            "task": "vlan-30",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "VLAN 30 does not exist on SW1. SW1 needs VLAN 30 named VOICE, exactly as written (names are case-sensitive)."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "VLAN 30 does not exist on SW2. SW2 needs VLAN 30 named VOICE, exactly as written (names are case-sensitive)."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "VLAN 30 does not exist on SW3. SW3 needs VLAN 30 named VOICE, exactly as written (names are case-sensitive)."
+              }
+            ]
+          },
+          {
+            "task": "through-the-api",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "The restconf-log table of SW1 has no row with method=PUT path=/restconf/data/nf-native:native/vlan/vlan-list=30 status <= 204. SW1 has answered no PUT to vlan-list=30 with 201 or 204: send the PUT of step 3 to its address and read the status line it prints."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "The restconf-log table of SW2 has no row with method=PUT path=/restconf/data/nf-native:native/vlan/vlan-list=30 status <= 204. SW2 has answered no PUT to vlan-list=30 with 201 or 204: send the PUT of step 3 to its address and read the status line it prints."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "The restconf-log table of SW3 has no row with method=PUT path=/restconf/data/nf-native:native/vlan/vlan-list=30 status <= 204. SW3 has answered no PUT to vlan-list=30 with 201 or 204: send the PUT of step 3 to its address and read the status line it prints."
+              }
+            ],
+            "misconception": "console-change-counted-as-api"
+          }
+        ]
+      }
+    },
+    "ccna3-script-inventory": {
+      "unsolved": {
+        "lab": "ccna3-script-inventory",
+        "checkedAt": 60000000000,
+        "score": 0,
+        "total": 100,
+        "results": [
+          {
+            "task": "inventory-completed",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "DEV1 automation.lastRun of inventory.py is not set, expected completed. Run inventory.py on DEV1 once every switch accepts its login: its newest run must reach the last line of the script."
+              }
+            ]
+          },
+          {
+            "task": "every-switch-read",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "The restconf-log table of SW1 has no row with method=GET path=/restconf/data/ietf-interfaces:interfaces status=200 client=10.0.99.10. SW1 has not answered a GET of its interfaces from DEV1 with 200 OK: the run must reach SW1, and SW1 must accept the script's login."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "The restconf-log table of SW2 has no row with method=GET path=/restconf/data/ietf-interfaces:interfaces status=200 client=10.0.99.10. SW2 has not answered a GET of its interfaces from DEV1 with 200 OK: the run must reach SW2, and SW2 must accept the script's login."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "The restconf-log table of SW3 has no row with method=GET path=/restconf/data/ietf-interfaces:interfaces status=200 client=10.0.99.10. SW3 has not answered a GET of its interfaces from DEV1 with 200 OK: the run must reach SW3, and SW3 must accept the script's login."
+              }
+            ],
+            "misconception": "refusal-blamed-on-the-script"
+          }
+        ]
+      },
+      "solved": {
+        "lab": "ccna3-script-inventory",
+        "checkedAt": 710000000000,
+        "score": 0,
+        "total": 100,
+        "results": [
+          {
+            "task": "inventory-completed",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "DEV1 automation.lastRun of inventory.py is not set, expected completed. Run inventory.py on DEV1 once every switch accepts its login: its newest run must reach the last line of the script."
+              }
+            ]
+          },
+          {
+            "task": "every-switch-read",
+            "pass": false,
+            "points": 0,
+            "assertions": [
+              {
+                "index": 0,
+                "pass": false,
+                "detail": "The restconf-log table of SW1 has no row with method=GET path=/restconf/data/ietf-interfaces:interfaces status=200 client=10.0.99.10. SW1 has not answered a GET of its interfaces from DEV1 with 200 OK: the run must reach SW1, and SW1 must accept the script's login."
+              },
+              {
+                "index": 1,
+                "pass": false,
+                "detail": "The restconf-log table of SW2 has no row with method=GET path=/restconf/data/ietf-interfaces:interfaces status=200 client=10.0.99.10. SW2 has not answered a GET of its interfaces from DEV1 with 200 OK: the run must reach SW2, and SW2 must accept the script's login."
+              },
+              {
+                "index": 2,
+                "pass": false,
+                "detail": "The restconf-log table of SW3 has no row with method=GET path=/restconf/data/ietf-interfaces:interfaces status=200 client=10.0.99.10. SW3 has not answered a GET of its interfaces from DEV1 with 200 OK: the run must reach SW3, and SW3 must accept the script's login."
+              }
+            ],
+            "misconception": "refusal-blamed-on-the-script"
+          }
+        ]
+      }
+    }
+  }
+}

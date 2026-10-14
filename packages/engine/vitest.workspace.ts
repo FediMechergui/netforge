@@ -31,6 +31,9 @@ const SLOW_TESTS = [
   'test/accept.*-digests*.test.ts',
   'test/accept.p3.silence.test.ts',
   'test/accept.p3.ospf-scale.test.ts',
+  // ARCHITECTURE-P3C W0 (D3): the loop-storm 100 ms window of [S40] (the P3c digest shards `accept.p3c.p3-digests-*`
+  // are already caught by the digest glob above)
+  'test/accept.p3c.hot-path.test.ts',
 ];
 
 /** The engine's test options since P0: node environment, 20 s per test. */

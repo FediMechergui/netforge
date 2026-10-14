@@ -1,0 +1,39 @@
+{
+  "about": "The loop-storm 100 ms window (ARCHITECTURE-P3C D3, §7 W0 and W0h, §10.1 accept.p3c.hot-path), recorded from the unchanged engine at commit cad4ac9 before any P3c code: the P1-profile storm world of accept.p2.loop-storm-bounded (two NF-C2960 on the stage-P2 catalog, three parallel cables at 40 s, PC1 pings at 41 s), runFor(100 ms) from the ping. The scheduler events dispatched, the trace events per kind, the SHA-256 of every event line and per-10 ms digests. The byte proof of [S40]: a hot-path change must leave it exactly. Re-record only with NF_RECORD_P3C_STORM_WINDOW=1 (the architect).",
+  "world": {
+    "seed": 7,
+    "profile": "P1",
+    "stage": "P2",
+    "cableAtS": 40,
+    "pingAtS": 41,
+    "windowMs": 100,
+    "sliceMs": 10
+  },
+  "dispatched": 267802,
+  "eventCount": 814784,
+  "kinds": {
+    "cliOutput": 1,
+    "cliPrompt": 2,
+    "debug": 246396,
+    "drop": 149754,
+    "frameRx": 133901,
+    "frameTx": 135947,
+    "pduConsumed": 14878,
+    "pduCreated": 14880,
+    "tableWrite": 119025
+  },
+  "eventsDigest": "339aca1c317fa42319c9d58351aa886427e8f6b62939109f5debd49971413286",
+  "windows": [
+    "81029:2e067966eef87125",
+    "81505:239715e4e84480e5",
+    "81521:52461d4769c9eb19",
+    "81546:95b98fcc1a7f6691",
+    "81537:16a7ffb4c80c9076",
+    "81534:295e53396e639e1a",
+    "81533:4c0cd6b00d213c51",
+    "81506:c3b507feeb4500e6",
+    "81537:a9e373ec091108d3",
+    "81536:745953ead3195de5",
+    "0:e3b0c44298fc1c14"
+  ]
+}
