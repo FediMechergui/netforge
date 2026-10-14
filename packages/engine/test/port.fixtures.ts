@@ -26,6 +26,8 @@ import type { FileSystemId, StoredFile, StoredFileMeta } from '../src/contracts/
 import type { SimTime } from '../src/contracts/time.js';
 import type { ArpRow, CamRow, DeviceTables, Lpm6Result, RouteRow, Table, TableName, TableRow } from '../src/contracts/tables.js';
 import { deriveCliSpec, deriveTables } from '../src/device/catalog/define.js';
+import type { Pdu, PduMeta } from '../src/contracts/pdu.js';
+import { withProtection, type ProtectChannel } from '../src/device/process-ctx.js';
 
 /** A port spec whose derived members may be omitted (as catalog data authors them). */
 export type TestPortInput = Omit<PortSpec, PortSpecDerived> & Partial<Pick<PortSpec, PortSpecDerived>>;
@@ -168,10 +170,12 @@ export const UNSET_CLOCK_VIEW: DeviceClockView = Object.freeze({
 
 /**
  * The P3 `ProcessCtx` members (§0 rule 2; each required from the item that implements it) for a hand-built fake: a
- * `clock()` that returns the unset clock view, and the [S32] `files()` / `readFile()` over an empty store. Spread it
- * FIRST so a harness's own member wins. P0–P2 daemons never call them, so spreading this in changes no behaviour.
+ * `clock()` that returns the unset clock view, the [S32] `files()` / `readFile()` over an empty store, and (W8 item
+ * 45, required at the exit gate) `protect()`, which marks the PDU exactly as the runtime ctx does
+ * (`withProtection`, device/process-ctx.ts). Spread it FIRST so a harness's own member wins. P0–P2 daemons never call
+ * them, so spreading this in changes no behaviour.
  */
-export const P3_CTX: Required<Pick<ProcessCtx, 'clock' | 'files' | 'readFile'>> = Object.freeze({
+export const P3_CTX: Required<Pick<ProcessCtx, 'clock' | 'files' | 'readFile' | 'protect'>> = Object.freeze({
   clock(): DeviceClockView {
     return UNSET_CLOCK_VIEW;
   },
@@ -180,6 +184,9 @@ export const P3_CTX: Required<Pick<ProcessCtx, 'clock' | 'files' | 'readFile'>> 
   },
   readFile(_fs: FileSystemId, _path: string): StoredFile | undefined {
     return undefined;
+  },
+  protect(pdu: Pdu, by: ProtectChannel | null): void {
+    (pdu as { meta: PduMeta }).meta = withProtection(pdu.meta, by);
   },
 });
 

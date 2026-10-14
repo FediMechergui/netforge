@@ -73,10 +73,10 @@ export interface CapturePort {
   importCapture(bytes: Uint8Array, name: string): Promise<CaptureId>;
   /**
    * @since P3 (ruling R57(b); optional by meaning) The meta of a live frame's PDU (`CaptureRow.pdu`) as the engine holds
-   * it now — `protected` / `protectedBy` mark a TLS, SSH or IKE segment end to end, except that a segment which crossed an
-   * IPsec tunnel has lost its TLS/SSH mark (the tunnel tail clears the single mark slot, D27; open for the architect).
-   * Undefined when the engine no longer holds that PDU or the bridge cannot read PDUs; a port without it shows no TLS,
-   * SSH or IKE banner.
+   * it now — `protected` / `protectedBy` mark a TLS, SSH or IKE segment end to end, through an IPsec tunnel too (W8
+   * item 47, R58(a)): inside the tunnel the mark is 'esp' and `innerProtectedBy` keeps the segment's own, which the
+   * tunnel's tail restores. Undefined when the engine no longer holds that PDU or the bridge cannot read PDUs; a port
+   * without it shows no TLS, SSH or IKE banner.
    */
   pduMeta?(id: PduId): Promise<PduMeta | undefined>;
 }

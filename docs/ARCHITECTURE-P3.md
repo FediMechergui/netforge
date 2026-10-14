@@ -1207,6 +1207,10 @@ Nothing else changes in `port.ts`: OSPF, snooping, tunnel and PPP state live in 
 
 // PduMeta += protectedBy?: 'tls'   (OBM) with `protected: true`, names the simulated channel (RESTCONF). Absent
 //   together with `protected` keeps P2's DTLS meaning.   [S13] widens it with 'ssh'; [C13] with 'esp' | 'ike'.
+// PduMeta += [C13] innerProtectedBy?: 'dtls' | 'tls' | 'ssh' | 'esp' | 'ike'   (OBM; W8 item 47, R58(a), R61(a),
+//   R62(b)): the mark a PDU carried before a tunnel protected it again (a TLS or SSH segment inside ESP), kept while
+//   ESP wraps it and restored at the tail by ProcessCtx.protect(pdu, null) (§2.4); 'dtls' names P2's mark (`protected`
+//   without `protectedBy`). One level only. Absent on every PDU no tunnel re-protected, so no P1/P2 PDU carries it.
 // PduMeta += [S34] mirror?: true (OBM; a SPAN copy)   [S17] parent?: PduId is reused for non-initial fragments
 // MutationReason: append 'QosMark'   [S17] 'FragmentReassemble'   ('FragmentSplit', 'Encrypt', 'Decrypt' exist)
 // [S17] Pdu.fragmentAt(ctx, ipLayer, offset, length, more, cause) and PduFactory.fragment: the first fragment keeps
@@ -1287,6 +1291,13 @@ first fragment's transport checksum as unknown, not wrong. `IPV4_UPPER` (`protoc
 //                                      implemented (P3_CTX spread, §0 rule 2).
 //   [S32] files(fs: FileSystemId): readonly StoredFileMeta[];  readFile(fs: FileSystemId, path: string): StoredFile | undefined
 //         (hosts' `files:` only in P3a; [S29] would widen FileSystemId, D21)
+//   [C13] protect(pdu: Pdu, by: NonNullable<PduMeta['protectedBy']> | null): void
+//         (W8 item 47; R36, R58(a), R61(a); required since the exit gate, R62(b)) marks `pdu` protected by the
+//         simulated channel `by`, or clears its mark (`null`), in place: same PduId, no provenance record and no trace
+//         event of its own (the [C13] `Encrypt` at a tunnel's head and `Decrypt` at its tail tell the change). A PDU
+//         that already carries a mark keeps it in PduMeta.innerProtectedBy (§2.3), and `null` restores that inner
+//         mark instead of clearing everything. Implemented by device/process-ctx.ts; [C13] gre calls it (D27), which
+//         replaces setEspProtection's `meta` cast. Hand-built typed fakes spread P3_CTX (test/port.fixtures.ts).
 
 /** @since P3 Why a policy dropped a packet (D12, D13): the sentence, and where the rule lives. */
 export interface DropRule {
@@ -1384,6 +1395,16 @@ export interface ConfigOrigin {
 // [C1]  | { kind: 'eigrp.clear'; neighbor?: IpAddress; session? }                   (cli → eigrp, §2.16)
 // [C13] | { kind: 'ike.connect'; port; local; peer; profile } | { kind: 'ike.disconnect'; port }   (gre → ike)
 //       | { kind: 'tunnel.sa'; port; op: 'up' | 'down'; spiIn?; spiOut?; keyId?; reason? }         (ike → gre, §2.17)
+// The `ext.*` slot ({ kind: `ext.${string}`; [k: string]: unknown }) keeps its form: no named member is added for the
+// P3 requests that use it. Its sanctioned P3 users (R38, R61(a), R62(c)) are exactly SANCTIONED_EXT_REQUESTS:
+//   'ext.tcp.protect' {socket, protectedBy: 'ssh'}   vty and vty-client → tcp ([S13]): every byte queued on the
+//       connection from then on travels in segments marked `protected` + protectedBy 'ssh' (protocols/tcp.ts)
+//   'ext.ipv4.transportHold' {owner, key, hold}     vty-client and a grader clone's probe → ipv4 ([S13]; R17, R27): an
+//       outbound session keeps a dormant switch transport awake while it lasts (protocols/ip-upper.ts)
+//   'ext.logging.clear'                            cli → logger ([S24]): `clear logging` empties the buffer's lines
+//       and used bytes and keeps the counters (protocols/logger.ts)
+// P2's `ext.stp.clear-detected-protocols` is unchanged. A new extension request joins the list in the item that adds it.
+export const SANCTIONED_EXT_REQUESTS = Object.freeze(['ext.tcp.protect', 'ext.ipv4.transportHold', 'ext.logging.clear'] as const);
 
 export type HttpMethod = 'GET' | 'HEAD' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 /** @since P3 One generated flow (M13). Caps: ≤ 8 flows per device; per flow ≤ 2 Mb/s and ≤ 1000 pps; every flow
@@ -1914,12 +1935,15 @@ configuration fault in the clone.
   (`(ipsec-profile)#`, `'crypto ipsec profile'`). Not approved, never added in P3a: [S6] `'config-rtr'`, [S11]
   `'config-ipv6-acl'`, [S14] `'config-arp-nacl'`, [S31] `'rommon'`, [C10] `'config-tr'`.
 - `ConfigNode += seq?: number` (OBM, never rendered); `ConfigLineRule += sequenced?: { list: 'section' | { token: number } }`
-  (OBM); `ConfigAst.apply(…, opts)` opts `+= seq?: number`.
+  (OBM); `ConfigAst.apply(…, opts)` opts `+= seq?: number` (OBM: the entry's sequence number for a line of a sequenced
+  rule that gives none itself, a leading number typed in a list section winning; absent, the line takes the list's
+  highest + 10, so every P2 apply is unchanged).
 - `ConfigureOptions += origin?: ConfigOrigin` (OBM).
 - [S24] `CliRuntime += onLogEvent(ev)`; [S25] `CliSessionView += monitor?: boolean` (OBM); [S13] `CliRuntime +=
   openRemote / execRemote / closeRemote / setRemote` (called only by the Simulation's `remoteCli` event dispatch, D14),
-  `CliSessionView += remote?: string` (OBM: "R1 via SSH", the terminal's chip), `FacadeCounters += remote?` (OBM). Not
-  approved, never added in P3a: [S31] `CliRuntime += sendBreak(session)`; [S29] `ArgType += 'url'`.
+  `CliSessionView += remote?: string` (OBM: "R1 via SSH", the terminal's chip), `FacadeCounters += remote?` (OBM;
+  declared in `contracts/journal.ts`). Not approved, never added in P3a: [S31] `CliRuntime += sendBreak(session)`;
+  [S29] `ArgType += 'url'`.
 - `CLI_MESSAGES` additions (original wording):
 
 ```ts
@@ -2056,18 +2080,23 @@ goldens. The source tags each `@since P3 (optional by meaning)`; the W8 extensio
 |---|---|
 | catalog.ts / device.ts | `DeviceModel.cdpDefault`, [S18] `VirtualFamilySpec.encap` |
 | port.ts | `PortCounters.aclDenies` |
-| pdu.ts | `PduMeta.protectedBy` (its [S13] 'ssh' and [C13] 'esp', 'ike' values too) |
-| process.ts | drop action `rule`, `ipv4.resume.after`, `nat.outbound.filterOut`, `acl.filter.inPort`, `acl.filter.natted`, [S13] `tcp.listen.service`, [S18] `icmp.error.param`, `udp.send.dscp` (R24; W6a integration) |
-| transport.ts | `tcp.listen.tls`, `tcp.connect.tls` |
+| pdu.ts | `PduMeta.protectedBy` (its [S13] 'ssh' and [C13] 'esp', 'ike' values too), [C13] `PduMeta.innerProtectedBy` (R58 (a), R61 (a): the inner TLS/SSH mark kept while ESP wraps the packet and restored at the tail; W8 item 47) |
+| process.ts | drop action `rule`, `ipv4.resume.after`, `nat.outbound.filterOut`, `acl.filter.inPort`, `acl.filter.natted`, [S13] `tcp.listen.service`, [S18] `icmp.error.param`, `udp.send.dscp` (R24; W6a integration), [S25] `LoggerStateView.syslog` (R25, R62 (a): present only with a `logging host`) |
+| transport.ts (declared in process.ts) | `tcp.listen.tls`, `tcp.connect.tls`: the `tls` flags of the `tcp.listen` and `tcp.connect` arms of `ProcessRequest` in `contracts/process.ts` |
 | tables.ts | `RouteRow.routeType` |
-| trace.ts | drop `rule`, log `mnemonic`, configChange `origin` |
-| snapshot.ts | `SimSnapshot.profile` ('P3' value), `DeviceSnapshot.clock`, `PortSnapshot.qos`, `PortSnapshot.txBacklog`, [S32] `DeviceSnapshot.storage`, [S21] `PortQosView` class `police` counts (R26), `DeviceClockSnapshot.tzName` (R42; both W6a integration) |
-| device.ts | the `origin` parameter of `DeviceRuntime.applyConfigLine`, [S25] `DeviceRuntime.configSession` (R53, W5 integration) |
+| trace.ts | drop `rule`, log `mnemonic`, configChange `origin`, the P3 values [S18] 'gre' and [C13] 'ipsec' of the P2 member `PduSummary.tunnel` (R62 (a): a value set, not a new member) |
+| snapshot.ts | `SimSnapshot.profile` ('P3' value), `DeviceSnapshot.clock`, `PortSnapshot.qos`, `PortSnapshot.txBacklog`, [S32] `DeviceSnapshot.storage`, [S20] `PortQosView.queue` (R32), [S21] `PortQosView` class `police` counts (R26), `DeviceClockSnapshot.tzName` (R42; both W6a integration), the `dscp` of a `PortTxQueueView` frame entry (R15, R62 (a)) |
+| device.ts | the `origin` parameter of `DeviceRuntime.applyConfigLine`, [S32] `DeviceRuntime.files` and `DeviceRuntime.readFile` (R23, W2 fix), [S25] `DeviceRuntime.configSession` (R53, W5 integration) |
 | StateViews | the tcp and udp `probes` member |
-| topology.ts | `Topology.profile` ('P3' value), [S32] `TopologyDevice.files` |
-| cli.ts / config.ts | `ConfigNode.seq`, `ConfigLineRule.sequenced`, `ConfigureOptions.origin`, [S25] `CliSessionView.monitor`, [S13] `CliSessionView.remote`, [S13] `FacadeCounters.remote`, [S20] `CliRuntimeDeps.egressQueues` (R32; W6a integration) |
-| scenario.ts | `LabAssertionNotes.feedback` / `.misconception`, the widened `connectivity`, `route`, `table`, `cut` members, [C13] `path.tunnelAt`, the `config` kind's `count` (R56; W6a integration) |
+| topology.ts | `Topology.profile` ('P3' value), [S32] `TopologyDevice.files`, [S37] `Topology.lab.pendingFaults` and `Topology.lab.errDisabled` (R58 (b), W7) |
+| cli.ts / config.ts | `ConfigNode.seq`, `ConfigLineRule.sequenced`, the `opts.seq` of `ConfigAst.apply` (§2.11, D12; W8 review), `ConfigureOptions.origin`, [S25] `CliSessionView.monitor`, [S13] `CliSessionView.remote`, [S20] `CliRuntimeDeps.egressQueues` (R32; W6a integration), `CommandCtx.profile`, [S25] `CommandCtx.setMonitor`, [S32] `CommandCtx.files` and `CommandCtx.readFile` (R23, W2 fix), [S32] `CommandSpec.requiresAnyProcess` (R60, W7) |
+| journal.ts | [S13] `FacadeCounters.remote` (R62 (c): declared in `contracts/journal.ts`) |
+| scenario.ts | `LabAssertionNotes.feedback` / `.misconception`, `LabCheckResult.misconception` (R18, R62 (a): absent keeps every P1/P2 lab status's bytes), the widened `connectivity`, `route`, `table`, `cut` members, [C13] `path.tunnelAt`, the `config` kind's `count` (R56; W6a integration) |
 | link.ts | [S20] `TransmitOptions`, `LinkModelDeps.egressPolicy`, `LinkModel.egressQueues`, [S21] `PolicerSpec.conform` / `.exceed` (R26; W6a integration) |
+| web `store/types.ts`, `bridge/protocol.ts` | `DropMarker.rule` (R42, W4 web-shell), `RunToIdleSnapshot.runStopped` (R31, accepted in R42) |
+
+(R23 also accepted the `remoteOutput` SimEvent and the `ppp` branch of `macFilterApplies`: a union variant and a
+function, not members, so neither is a row.)
 
 (The OBM members of items that are not approved — [S29] `DeviceModel.storage`, [S34] `PduMeta.mirror`, [S6]
 `Route6Row.routeType`, [S10] `TraceFilter.reasons`, [S31] `TopologyDevice.nvram` — are never added in P3a.)
@@ -2075,8 +2104,9 @@ goldens. The source tags each `@since P3 (optional by meaning)`; the W8 extensio
 Members that DO become required at the exit gate (or earlier, in the item that implements them): `ProcessCtx.clock`,
 `CommandCtx.clock`, `DeviceRuntime.clockView`, `DeviceRuntime.setClock`, `DeviceRuntime.qosCounters`,
 `Course.profile`, [S24] `DeviceRuntime.emitLog`, [S20] `DeviceRuntime.egressPolicy`, [S32] `ProcessCtx.files` and
-`ProcessCtx.readFile`, [S13] the four CliRuntime remote-session methods, and every table-row field above not marked
-`?`. No `DeviceRuntimeDeps` member is added (D14, D21), so the five `createDevice` harnesses (`device.harness.ts:191`,
+`ProcessCtx.readFile`, [C13] `ProcessCtx.protect` (W8 item 47, R62 (b)), `CommandCtx.qosCounters`, [S20]
+`CommandCtx.egressQueues`, [S24] `CliRuntime.onLogEvent`, [S13] the four CliRuntime remote-session methods, and every
+table-row field above not marked `?`. No `DeviceRuntimeDeps` member is added (D14, D21), so the five `createDevice` harnesses (`device.harness.ts:191`,
 `device.p2.harness.ts:75`, `device.radio-profile.test.ts:75`, `device.ctx.test.ts:211`, `ip6.harness.ts:199`) need no
 new dep.
 
@@ -5384,6 +5414,135 @@ exactly as the export).
 47. (R36, R38) `setEspProtection`'s `meta` cast is replaced by an additive `ProcessCtx.protect(pdu, by | null)`; the
     `ext.tcp.protect`, `ext.ipv4.transportHold` and `ext.logging.clear` requests either become named contract members
     or are recorded as the `ext.*` slot's sanctioned users; no test pins the change of form.
+47b. (Item 45 as built, rulings R61 (e), R62 (a)–(c); contracts-tidy, its review finding #0) `contracts.optional-by-
+    meaning.test.ts` keeps every P2 row and its checks; the source-reading helpers are folded into one parser (no
+    assertion removed). It gains `MEMBERS_P3` (the 70 §2.15 members: tag, `?` and a type-level `OptionalIn` line each;
+    `FacadeCounters.remote` under the label `journal.ts [S13] (R62 (c))`), `REQUIRED_P3` (the 18 members that lost
+    their transition `?`, `ProcessCtx.protect` among them, each a type-level "required" line), the parameter rows
+    (`applyConfigLine`'s `origin`, `TransmitFn`'s `opts`, and `PARAM_MEMBERS_P3`: `ConfigAst.apply`'s `opts.seq`),
+    the declaration and value rows ('P3' of the two `profile` members, 'gre' / 'ipsec' of `PduSummary.tunnel`), and
+    the closure checks: no `@since P3` member keeps a `?` unless listed, every member tagged optional by meaning keeps
+    its `?`, and no optional member of an inline parameter type escapes `PARAM_MEMBERS_P3` and the eight pre-P3
+    `EARLIER_PARAM_MEMBERS`. `apps/web/test/protocol.optional-by-meaning.test.ts`
+    gains the web P3 rows `DropMarker.rule` (R42) and `RunToIdleSnapshot.runStopped` (R31) (cases and header only).
+    `learn.landing.test.ts` and `learn.lesson.test.ts`: the hand-built course fixtures gain `profile: 'P1'` (item 45).
+47c. (Item 45 forces it: `CommandCtx.qosCounters` and [S20] `CommandCtx.egressQueues` are required since the gate)
+    `cli.p05.fixture.ts` `commandCtxFor` and `cli.show.fixture.ts` `fakeCtx` supply both as `() => undefined`, which
+    is what every show read while the members were absent (no service policy, no held queue on a fixture port); no
+    case changes.
+47d. (Item 47, R62 (b): the test fakes supply the required `ProcessCtx.protect`) `port.fixtures.ts` `P3_CTX` gains
+    `protect`, which marks the PDU exactly as the runtime ctx does (`withProtection`, `device/process-ctx.ts`); every
+    hand-built typed fake that spreads `P3_CTX` gets it, and no P0–P2 daemon calls it. Cases only:
+    `wan.ipsec-inner-mark.test.ts` (engine) and `inspector.packet-inner-mark.test.ts` (web).
+47e. (§7 W8 "reduce `staged.world` to a thin wrapper where the catalog now equals it") `staged.world.ts` derives its
+    P3 data from the contracts (`PROCESS_ORDER`, the `since: 'P3'` rows of `CAPABILITY_PROCESSES`, `PROCESS_TABLES`,
+    `STAGED_PROCESS_TABLES`) and `defineStagedModel` uses `moduleReachableProcesses`; at stage `CATALOG_STAGE` with no
+    overlay (or only the real factories under their own names) `createStagedCatalog` is `createCatalog(PROCESS_FACTORIES)`
+    and `createStagedSimulation` is `createSimulation`. Its exports and `createStagedSimulation`'s signature are
+    unchanged. `p3-flip.world.ts` `createP3Simulation(opts)` becomes `createStagedSimulation({…opts, stage: 'P3'})` (the
+    stage-P3 wrapper, as `p2.world.ts` is the stage-P2 one); `p2.world.ts` header only. No test file changes.
+47f. (Ruling R61 (c)) `accept.p2.loop-storm-bounded.test.ts`: the one-line comment on the P1-profile case's
+    `}, 300_000);` becomes a comment block above it (the timeout is advisory; vitest 2.1 arms its timer after a
+    synchronous body returns; the deterministic bounds are the proof; §14 records the run time). No assertion, bound
+    or timeout value changes; the file stays in the slow project.
+47g. (W8 integration; the W8 review's README and scope-docs findings, R62 (c)–(e)) Cases only: `docs.w8-scope.test.ts`
+    (new, read-only) checks README.md's stage, briefs, model and module counts, category table and course and lab
+    counts against the catalog and curriculum, and checks `docs/CATALOG.md`'s fidelity "Lesson" cells and P0.5
+    capability daemons, this document's §2.3, §2.4, §2.11, §2.15 and §10.2 and `docs/W8-SCOPE-AUDIT.md` against the
+    sources they describe. Lessons 19 and 27 gain one NetForge-notes sentence each (R62 (e));
+    `curriculum.ccna3.commands.test.ts` is unchanged and passes.
+47h. (Ruling R63 (e); the R63 fix) Cases only: `cli.console-lines.test.ts` (new) renders one console session's
+    `cliOutput` / `cliPrompt` events the way the web terminal does (`renderTerminal`; its header names the
+    `ConsoleController` functions of `TerminalTab.tsx` and the `remote-session.ts` / `line-editor.ts` helpers it
+    mirrors) and pins exact transcripts in lab 19: SW1's `interface range FastEthernet0/3 - 24` + `shutdown` (22
+    `%LINK-3` lines, one per line, then the prompt), PC2's `ssh` refused by `access-class 10`, PC1's `ssh` that logs in
+    (`R1>` on the line right after `Connecting to … ...`, no blank line) and its `exit`; a telnet login with a remote
+    ping (marks TCP coalesced, printed `!!!!!`) and a remote `show running-config` longer than one segment (exactly R1's
+    own text); `terminal monitor` over telnet (log lines coalesced into one segment) and over SSH (a refused login's log,
+    a nested telnet); the stamped debug lines of a ping (R63 (d)'s known case shown: a debug line after a `!` mark);
+    three wrong SSH and telnet passwords; ^C while an ssh connects.
+47i. (Ruling R63 (a): the P3 producers end their lines) `CliRuntime.onLogEvent`'s console and `terminal monitor` lines
+    and `onDebugEvent`'s [S24] stamped line end with `\n` (P1's unstamped debug line keeps its bytes, R63 (d)); every
+    line the [S13] vty client prints itself (its status texts, an SSH DISCONNECT reason) ends with `\n`; the vty
+    server sends its own messages as whole lines (the same bytes on the wire as before). The pins change by the line
+    end only: `cli.logging.test.ts` (the onLogEvent cases' `text: `${line}\n``, the P2 `logging console` line, the
+    stamped debug line; one header sentence), `sim.log-branch.test.ts` (the P3 case: `${renderLogLine(…)}\n`),
+    `accept.p3.syslog.test.ts` (the console's two lines), and `app.vty.test.ts`, `accept.p3.vty.test.ts` and
+    `accept.p3.device-access.test.ts` (each pinned `Connecting to …`, `Connected to …`, `% Connection refused by …`,
+    `% Connection to … closed[ by the remote device].`, `% Cannot reach …`, `VTY_CLIENT_DENIED`,
+    `VTY_MSG_LOGIN_FAILED` and the no-password message gains `\n`). `labs.ccna3.hardening.test.ts` (`toContain`) is
+    unchanged. No web file changes (R63 (c)).
+47j. (Ruling R63 (b): the relay prints the far end as it was sent) `protocols/vty.ts` `vtyTermOutput` no longer
+    appends CR LF to every non-empty text: the text is sent exactly (CR LF line ends), and a text that ends mid-line is
+    closed by `IAC EOR` (RFC 885; the two bytes the CR LF took, so such a piece keeps its length, while a text that
+    already ended with `\n` loses the doubled CR LF); `createVtyTermReader` hands that partial line over as a new
+    `partial` event; the vty client prints each received segment or packet as its lines with their `\n` plus the
+    partial, so TCP's cuts and Nagle's coalescing no longer split, join or double a line. The telnet codec names
+    command 239 `EOR`. `app.vty.test.ts` "round-trips output, masked and plain prompts": `line two` becomes a
+    `partial` event and the empty line that `ok\n`'s doubled line end produced is gone (one comment added). No
+    golden moves; the §0 rule 9 digest, export, silence and replay guards pass unchanged.
+
+**W8 decisions (architect, 2026-10-13, before the exit gate; binding on it)**
+
+- **R61.**
+  - (a) Item 47's `ext.tcp.protect`, `ext.ipv4.transportHold` and `ext.logging.clear` stay in the contract's `ext.*`
+    slot, recorded as its sanctioned users (a list in `contracts/process.ts` and in §2), with no change of form.
+    `ProcessCtx.protect(pdu, by | null)` is added as item 47 and R58(a) say: `PduMeta.innerProtectedBy?` keeps the
+    inner TLS/SSH mark through an IPsec tunnel and restores it at the tail.
+  - (b) R19: `CourseObjective` / `ObjectiveHandsOn` stay in `curriculum/ccna3/objectives.ts`.
+  - (c) R29: `accept.p2.loop-storm-bounded` stays in the slow project. Its deterministic event bounds are the proof;
+    the `300_000` literal is a vitest timeout that a synchronous test cannot trip, so it is documented as advisory, and
+    §14 records the measured run time.
+  - (d) R47's optional caching of `compareLsdbRows`' numeric keys is not done in P3a.
+  - (e) The §2.15 optional-by-meaning rows gain every member the rulings name (R23, R24, R26, R32, R42, R53, R56,
+    R58(b), R60, and R61(a)'s `innerProtectedBy`). W8 removes the transition `?` of every other implemented
+    `@since P3` member, and the test checks both lists.
+
+- **R62. The scope audit's open items (architect, 2026-10-13).**
+  - (a) §2.15 (R61(e)) also lists, as optional by meaning, the four members the source already tags so:
+    `LabCheckResult.misconception` (R18), `LoggerStateView.syslog` (R25), the `dscp` of a `PortTxQueueView` frame
+    entry (R15), and the P3 values `'gre'` / `'ipsec'` of the P2 member `PduSummary.tunnel` (a value set, not a new
+    member). W8 keeps their `?`.
+  - (b) `ProcessCtx.protect` becomes required, like every other implemented member. Its implementation and the test
+    fakes supply it. `innerProtectedBy`'s extra `'dtls'` value is accepted.
+  - (c) The §2 half of R61(a)'s sanctioned `ext.*` list is written by the W8 integration step, matching
+    `SANCTIONED_EXT_REQUESTS`. The same step moves `FacadeCounters.remote`'s §2.15 row under `contracts/journal.ts`.
+  - (d) `terminal.remote-session.test.ts` and `line-editor.secret.test.ts` stand for §10.2's `terminal.remote.test.ts`
+    (the row is amended). `show cdp traffic` / `show cdp interface` count as MUST (§5.8, R39); S41's mismatch logs
+    stay unbuilt.
+  - (e) Each listed deviation a learner could notice is stated in a lesson. The W8 integration step adds one plain
+    sentence each, and the commands test must still pass:
+    - R2 (15), the traffic generator's UDP 9 discard sink, to lesson 27;
+    - R2 (28), a console-opened vty session using the first `line vty` section, to lesson 19.
+
+    R2 (11), the RSA key stored as a configuration line, is already stated in lesson 19's NetForge notes (since W7),
+    so no sentence is added for it (amended at the W8 review; the architect confirmed it). R2 (27) is a P2 behaviour and stays recorded in §12 and
+    `docs/CATALOG.md` only.
+
+- **R63. Gate G finding: console lines that run together (architect, 2026-10-14).** Gate G (§10.3 W7/W8, the built
+  bundle) found console output running together while a command or job runs:
+  - `interface range FastEthernet0/3 - 24` then `shutdown` on lab 19's SW1 printed the 22 `%LINK-3` lines as one
+    run (`…administratively down*Jan  1 00:01:29.356: %LINK-3: …`);
+  - PC2's refused `ssh` printed `Connecting to 192.168.10.1 port 22 ...% Connection refused by 192.168.10.1`.
+
+  The cause: the web terminal writes a busy session's `cliOutput` exactly as received, so a ping's `!` marks share a
+  line. P1's job lines therefore end with their own line end (`Ping aborted.\n`, `No route to … from
+  this device.\n`). The P3 producers of whole lines do not. The ruling:
+  - (a) A `cliOutput` that completes a line ends with `\n`. This holds for the [S24]/[S25] log lines
+    `CliRuntime.onLogEvent` prints on a console or `terminal monitor` session, and for every P3 producer whose line further output can follow
+    in the same busy session: the [S13] vty client's status lines, and any other P3 job (the traffic generator, the
+    `rest` client, the [S32] script host and others an audit finds).
+  - (b) What the far end sends through the vty relay is printed as it arrives. No line gains a blank line before or
+    after it, and a session that logs in still shows the remote prompt on the line after `Connecting to … ...`.
+  - (c) The idle path of the terminal is unchanged: it already adds a missing line end. The web code does not change.
+  - (d) P1's debug lines (`onDebugEvent` without a `service timestamps debug` line) keep their bytes, so no P1/P2
+    transcript or digest moves. The [S24] stamped debug line, the default in every P3 world, ends with its line end
+    like a log line (as built, 47i). A debug line printed inside a running ping can still share the line of its `!` marks;
+    §14 records this as known.
+  - (e) No golden moves. Acceptance tests that pin these texts change only by the line end, and each such change is
+    recorded as a §9.2 W8 entry. An engine test renders a busy session's events the way `TerminalTab` does and pins the
+    lab 19 transcripts above.
+
 
 ### 9.3 P1-profile digest changes (the only ones allowed)
 
@@ -5527,12 +5686,12 @@ stay listed as the designs of their stage and must not exist as files in P3a.
 - The approved items: [S1] `overlays.ospf-model.test.ts` (chips, DR/BDR letters, the draining bar at 0.5 in the middle
   of Waiting); [S2]/[S3] `routing.lsdb-model.test.ts`, `routing.spf-parity.test.ts` (the last frame equals the
   StateView tree), `dock.routing.test.ts` (from W4: the `routing` tab and hotkey 9); [S9] `concept.wildcard.test.ts`
-  (count, contiguous and non-contiguous, range → ACEs); [S13] `terminal.remote.test.ts` (the chip from
-  `CliSessionView.remote`, masked input); [S18]/[S19]/[C13] `overlays.wan-model.test.ts` (the D·E·A·N rail from `ppp`
-  rows, the tube from `tunnels` rows, the IPsec label and SA state word, the pulse static under reduced motion); [S20]
-  `inspector.policy-section.test.ts`; [C1] `overlays.eigrp-model.test.ts` (S and FS chips from `eigrp-topology`
-  rows, the `RD 3072 < FD 3328` text); [C13] the ESP and IKE banners in `inspector.packet-protected.test.ts`; [S32]
-  editor highlight and error marker.
+  (count, contiguous and non-contiguous, range → ACEs); [S13] `terminal.remote-session.test.ts` (the chip from
+  `CliSessionView.remote`, the relay, the dock strip) and `line-editor.secret.test.ts` (masked input) (R62 (d));
+  [S18]/[S19]/[C13] `overlays.wan-model.test.ts` (the D·E·A·N rail from `ppp` rows, the tube from `tunnels` rows,
+  the IPsec label and SA state word, the pulse static under reduced motion); [S20] `inspector.policy-section.test.ts`;
+  [C1] `overlays.eigrp-model.test.ts` (S and FS chips from `eigrp-topology` rows, the `RD 3072 < FD 3328` text);
+  [C13] the ESP and IKE banners in `inspector.packet-protected.test.ts`; [S32] editor highlight and error marker.
 
 ### 10.3 Gate G per wave (built bundle, real browser; rule 10)
 
@@ -6089,3 +6248,122 @@ changed in this brief:
 - **Course.** 21 labs (16 MUST, 24 and 40 for S18 and S32, 10, 25 and 33 for C1 and C13), and approved tasks in labs
   15, 19, 22, 27 and 29; lessons of unapproved items are theory with `later:P3c`; §11.4's `handsOn` values, §10.3's gate
   scripts and §12.1's deferred table follow.
+
+
+---
+
+## 14. P3a exit gate record (W8, 2026-10-14)
+
+**Checks, run one at a time after the gate.** The lead ran these on AC power, on the final tree after R63:
+- Engine `tsc` is clean. Engine `vitest`, both projects: 544 files / 7622 tests, none skipped
+  (880 s).
+- Web `tsc`, and `tsc -p tsconfig.test.json` (check 3b), are clean. Web `vitest`: 125 files / 1663 tests
+  (204 s).
+- `vite build` is green. The only warning is the usual one about chunks over 500 kB.
+- Every byte guard passes with no golden moved:
+  - `accept.p2.p1-digests` 27/27;
+  - `accept.p3.p2-digests-templates` 13/13, `-labs-a` 14/14, `-labs-b` 15/15, `-guards` 8/8;
+  - `accept.p3.p2-exports` 21/21;
+  - `accept.p3.lab-status` 36/36;
+  - `accept.p05.determinism` 2/2;
+  - `accept.p1.silence` 11/11, `accept.p2.silence` 28/28, `accept.p3.silence` 97/97.
+
+  `test/goldens/` is unchanged since W7, and `cli-help.p05.json` has had only the additions and removals the rulings
+  allowed.
+- There is no `skip`, `only`, `todo`, `skipIf` or `runIf` in either suite, and no `zz-*` file is left.
+- Every row of the §10.1 table exists and passes: 55 `accept.p3.*` files, checked by `accept.p3.coverage`.
+
+**Scope list (§8.5 P13), item by item.** `docs/W8-SCOPE-AUDIT.md` holds the table. Each row there gives the source
+files, the acceptance files and the lab or lesson behind it.
+- **Shipped: 34 of 34 approved rows.**
+  - M1–M19.
+  - S1 the OSPF overlay, S2 the LSDB browser, S3 the SPF stepper, S9 the wildcard visualizer.
+  - S13 the remote terminal, S18 GRE, S19 PPP, S20 the full QoS scheduler, S21 WFQ, policing and shaping.
+  - S24 local logging, S25 syslog and extended logging, S32 NF-Py with the automation workspace, NF-DEVHOST and
+    lab 40, S37 the P3b seams.
+  - C1 the classic EIGRP core and C13 site-to-site IPsec.
+- **Not built, as approved.** Every other SHOULD and COULD item, each recorded with its stage in §12.1. A search of
+  both source trees found nothing of them built.
+  - Two partial overlaps are explained in the audit: `show cdp traffic` / `show cdp interface` count as MUST (R62 (d)),
+    and the GRE recursive-routing down reason belongs to [S18].
+  - None of the 11 acceptance files of unapproved items exists.
+- **Course.** 40 lessons with theory and 40 videos; 21 labs (16 MUST, plus 24, 40, 10, 33 and 25); 81 objectives
+  traced as §11.4 says. CCNA 3 is `available` with `profile: 'P3'`.
+
+**`?` removed and kept.**
+- **Removed.** The gate removed the transition `?` from the 18 members that were still optional only because they
+  were not yet implemented:
+  - `ProcessCtx.clock`, `.files`, `.readFile` and `.protect` (R62 (b));
+  - `CommandCtx.clock`, `.qosCounters` and `.egressQueues`;
+  - `DeviceRuntime.clockView`, `.setClock`, `.qosCounters`, `.emitLog` and `.egressPolicy`;
+  - `Course.profile`;
+  - `CliRuntime.onLogEvent`, `.openRemote`, `.execRemote`, `.closeRemote` and `.setRemote`.
+
+  The test fakes supply them (47c, 47d).
+- **Kept on purpose**, tagged "@since P3 (optional by meaning)": the 70 members of §2.15 (R61 (e), R62 (a)) and the
+  parameter rows (`opts.seq` of `ConfigAst.apply`).
+- **Guarded.** `contracts.optional-by-meaning.test.ts` (297 checks) fails in three cases:
+  - a listed member loses its `?` or its tag;
+  - an untagged optional P3 member appears;
+  - an optional member of an inline parameter type escapes the parameter lists.
+
+  The web `protocol.optional-by-meaning.test.ts` gains `DropMarker.rule` and `RunToIdleSnapshot.runStopped`.
+- `ScenarioInfo.customChecks` is removed (item 46).
+
+**Reconciled.**
+- **`packages/engine/src/index.ts`.** Every public P3 module is exported once. The gate added the six lines the waves
+  had left out: `protocols/restconf`, `link/control-frame`, `automation/py/compiler`, `vm` and `lib`, and
+  `cli/log-render`. Each of these modules was already loaded through an earlier export, so the order in which
+  modules load is unchanged. Nothing test-only is exported.
+- **`test/staged.world.ts`.** Cut from 510 to 394 lines: it now reads its P3 data from the contracts (47e).
+- **`ext.*` requests.** The three requests are recorded as the slot's sanctioned users, in
+  `SANCTIONED_EXT_REQUESTS` and §2.4 (R61 (a), R62 (c)).
+- **Docs.**
+  - `docs/CATALOG.md`: capabilities by stage, "P3 per model", and the fidelity table of P2 and P3a deviations.
+  - `README.md`: status P3a, 56 models, the three courses.
+  - §2.15, §2.4 and §2.11, and the §10.2 terminal row.
+  - `docs.w8-scope.test.ts` (25 tests) keeps them true to the sources.
+- **Lessons.** Lesson 27 now states R2 (15), and lesson 19 states R2 (28) next to its R2 (11) note (R62 (e)).
+
+**Gate G (§10.3 W7/W8), built bundle, 2026-10-14.**
+- Landing → "Start CCNA 3" (14 modules · 40 lessons · 21 labs) → lesson 19 "Locking down device access", which shows
+  both R2 notes → "Open the lab" (R1, SW1, PC1, PC2) → "Check my work": 0 of 100.
+- The solution was typed on R1's and SW1's consoles. PC1 logged in over SSH and out; PC2 was refused. "Check my work":
+  100 of 100.
+- File → New gives a world on the current defaults: the File menu reports them "already in use" (P3).
+- Every overlay of the View menu was toggled on and off once (14).
+- Every CCNA 3 lab was opened from the Labs tab and graded: 21 labs, 0 of 100 each when unsolved.
+- No console error.
+- **Finding, fixed before the gate closed.** While a command or job runs, console lines ran together: a burst of
+  `%LINK-3` lines, and `Connecting to … ...% Connection refused by …`. Ruling R63 ended every P3 whole line with its
+  line end (log lines and stamped P3 debug lines, the vty client's status lines, and a telnet relay that marks a line left open with IAC EOR instead of adding CR LF; 47h-47j; the review's six claims were all refuted by its three-vote check). The lead then repeated the lab 19 steps on the rebuilt bundle, and each line printed on its
+  own.
+
+**Loop-storm runtime (R61 (c)).** `accept.p2.loop-storm-bounded` has two cases:
+- **The P1 storm case.** It took:
+  - 153 s on AC with the Performance plan, and 375 s in the final run with a virtual machine busy beside it (the
+    lead's runs);
+  - 375 s on AC with another project's vitest running (the loopstorm builder);
+  - 386 s on battery with the "Silent" plan (the W8 integration).
+
+  Its body is synchronous, so the 300 000 ms literal cannot interrupt it. The literal is advisory; the deterministic
+  bounds are the proof.
+- **The P2 case.** Under 1 s.
+
+**Known and accepted, for later stages.**
+- A P1 debug line printed while a ping is running can share the line of its `!` marks (R63 (d): P1 bytes are kept).
+- Home routers derive the routing capability's P3 daemons and tables, though they have no CLI (audit gap 8). They stay
+  silent, and `docs/CATALOG.md` records this.
+- S41's mismatch logs and every unapproved item are deferred with their stages in §12.1.
+- The engine suite takes 5½ minutes on an idle machine on AC, and about 15 minutes when the machine is loaded. The slow project is dominated by the loop-storm case.
+- The web bundle keeps its chunk-size warning.
+
+**Process.** Session ends stopped running workflows six times (W3, W4b, W5, R57 (a), W6b, W8).
+- Each time, the lead snapshotted the tree to a local `refs/wip/*` ref, then relaunched with the finished agents'
+  results carried in as data.
+- One check run stalled at 10 % battery. Long runs now wait for AC power.
+- No agent ran git. The lead alone committed and pushed, and only to `p3`. `origin/master` and `origin/p2` stayed at
+  5263f16 throughout P3a, which the lead checked after every run.
+
+P3a (CCNA 3) is complete. Merging `p3` into `master` makes it live (rule 21), and waits for the product owner's
+approval.

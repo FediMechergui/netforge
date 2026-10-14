@@ -207,8 +207,12 @@ export const REMOTE_CLI_UNAVAILABLE_TEXT = '% Remote sessions are not available 
 export interface RemoteCliEnv {
   /** Live device lookup in the current world. */
   device(id: DeviceId): DeviceRuntime | undefined;
-  /** The CLI core's remote-session methods — the CLI core itself, never the journaled facade wrapper. */
-  readonly cli: Pick<CliRuntime, 'openRemote' | 'execRemote' | 'closeRemote' | 'setRemote'>;
+  /**
+   * The CLI core's remote-session methods — the CLI core itself, never the journaled facade wrapper. Each may be
+   * absent (a test core without remote sessions): `open` and `line` then answer `REMOTE_CLI_UNAVAILABLE_TEXT`. The
+   * contract members are required since the W8 exit gate, so the Simulation's core always has all four.
+   */
+  readonly cli: Partial<Pick<CliRuntime, 'openRemote' | 'execRemote' | 'closeRemote' | 'setRemote'>>;
   /** Bring the device's own clock to the event's time. */
   syncClock(dev: DeviceRuntime): void;
   /** The process name the facade applies its own actions as (`SIM_PROCESS_NAME`). */

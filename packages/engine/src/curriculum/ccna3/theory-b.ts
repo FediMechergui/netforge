@@ -23,8 +23,9 @@
  *   their commands, which the P3a grammar does not have. Lesson 20 does the same for IP source guard and storm control
  *   ([S15], [S16]). Lesson 21 says the provider network is one cloud (no MPLS or metro Ethernet, [S22] not approved).
  * - Lesson 19 says the SSH cryptography is simulated (§11.3), that the exec timeout is stored but never enforced and
- *   that there is no login lockout (the vty daemon's own notes), and that a switch answers remote logins only once a P3
- *   line wakes its transport (D14, D22).
+ *   that there is no login lockout (the vty daemon's own notes), that a switch answers remote logins only once a P3
+ *   line wakes its transport (D14, D22), and that a vty session opened directly on the device takes the login rule of
+ *   the first line vty section that sets one (R2 (28), ruling R62 (e)).
  * - The listed deviations a learner can notice are named where they show: the access-class reset (lesson 15), the
  *   NAT list without counters and the missing ICMP after translation (lesson 18), the fixed 5-minute log summary (17),
  *   no option 82 and the binding port match (20), and PPP's direct-cable rule, deterministic numbers and 10 s retry (22).
@@ -419,6 +420,7 @@ export const CCNA3_THEORY_B: LessonTheoryMap = {
     '- After the change, `ssh -l admin 192.168.10.1` from PC1 logs in; `show users`, `show ssh` and `show ip ssh` on R1 describe the session.',
     '- The SSH cryptography is simulated: the headers are real, and the protected payload is shown decoded under a banner in NetScope and the packet inspector.',
     '- NetForge stores the exec timeout but never ends an idle session, has no login lockout, and keeps the RSA key as a line of the configuration. A switch answers remote logins only once a transport line or a key is configured on it.',
+    '- Logins over the network follow the settings of the remote line they land on, but a vty session NetForge opens directly on the device, with no connection behind it, takes its login rule from the first line vty section that sets one.',
   ),
 
   'ccna3-20-guarding-the-access-layer': md(

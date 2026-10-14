@@ -94,7 +94,8 @@ const CCNA3: Course = {
 
 /**
  * The next level (ARCHITECTURE-P3 §8.5 P11): the security track planned for P4, announced with no lessons so the
- * landing page keeps one planned card. Its worlds would take the newest defaults; required at W8 ('P3').
+ * landing page keeps one planned card. Its worlds would take the newest defaults ('P3'; `Course.profile` is required
+ * since the W8 exit gate, item 45).
  */
 const SECURITY: Course = {
   id: 'security',

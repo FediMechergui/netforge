@@ -278,6 +278,10 @@ export function commandCtxFor(model: DeviceModel, opts: CommandCtxOptions = {}):
     secrets: secretsFor('d_1'),
     // P3 (§9.2 W1 item 19): the required CommandCtx.clock, the unset clock view of P3_CTX
     clock: P3_CTX.clock,
+    // P3 (W8 item 45, required at the exit gate): no service policy and no held queue on any port here, which is what
+    // the shows read when the members were absent
+    qosCounters: () => undefined,
+    egressQueues: () => undefined,
   };
   if (opts.iface !== undefined) (ctx as { iface?: PortView }).iface = ports.get(opts.iface);
   const table = <R extends TableRow = TableRow>(name: TableName): Table<R> => {

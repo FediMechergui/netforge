@@ -193,7 +193,7 @@ describe('accept.p3.vty [S13]: §3.14 SSH-only access with a vty ACL', () => {
     // step 2: PC1 telnet — the SYN finds no listener: a RST, "connection refused", no login row
     const pc1 = sim.cli.open('pc1', 'console');
     const telnet = type(sim, pc1, `telnet ${R1}`);
-    expect(telnet.text).toEqual([`Connecting to ${R1} port 23 ...`, `% Connection refused by ${R1}`]);
+    expect(telnet.text).toEqual([`Connecting to ${R1} port 23 ...\n`, `% Connection refused by ${R1}\n`]);
     expect(lastPrompt(telnet)).toMatchObject({ prompt: 'PC1>', busy: false });
     expect(telnet.events.some((e) => e.kind === 'drop' && e.device === 'r1' && e.detail === 'tcp port 23 closed')).toBe(true);
     expect(segments(sim, telnet.events, 'r1').map(flags).some((f) => f.includes('R'))).toBe(true);
@@ -205,7 +205,7 @@ describe('accept.p3.vty [S13]: §3.14 SSH-only access with a vty ACL', () => {
     expect(lastPrompt(ask)).toMatchObject({ prompt: VTY_PROMPT_PASSWORD, busy: false, input: { kind: 'secret', prompt: VTY_PROMPT_PASSWORD } });
     expect(ask.events.some((e) => e.kind === 'pduCreated' && e.device === 'pc2' && e.process === 'tcp')).toBe(false);
     const refused = type(sim, pc2, ADMIN_PASSWORD);
-    expect(refused.text).toEqual([`Connecting to ${R1} port 22 ...`, `% Connection refused by ${R1}`]);
+    expect(refused.text).toEqual([`Connecting to ${R1} port 22 ...\n`, `% Connection refused by ${R1}\n`]);
     expect(lastPrompt(refused)).toMatchObject({ prompt: 'PC2>', busy: false });
     const r1Flags = segments(sim, refused.events, 'r1').map(flags);
     const synAck = r1Flags.findIndex((f) => f === 'SA');
@@ -223,7 +223,7 @@ describe('accept.p3.vty [S13]: §3.14 SSH-only access with a vty ACL', () => {
     // step 4: PC1 ssh — permitted (row 10 counted), logged in at user EXEC, the chip and the prompt
     type(sim, pc1, `ssh -l admin ${R1}`, 1 * SEC);
     const login = type(sim, pc1, ADMIN_PASSWORD);
-    expect(login.text).toEqual([`Connecting to ${R1} port 22 ...`]);
+    expect(login.text).toEqual([`Connecting to ${R1} port 22 ...\n`]);
     expect(lastPrompt(login)).toMatchObject({ prompt: 'R1>', busy: false });
     expect(lastPrompt(login)?.input).toBeUndefined();
     expect(sim.cli.session(pc1)).toMatchObject({ prompt: 'R1>', remote: 'R1 via SSH', busy: false });
@@ -285,7 +285,7 @@ describe('accept.p3.vty [S13]: §3.14 SSH-only access with a vty ACL', () => {
 
     // exit: the remote session ends in the dispatch of the remoteCli {op: 'line', text: 'exit'} event
     const bye = type(sim, pc1, 'exit');
-    expect(bye.text).toEqual([`% Connection to ${R1} closed by the remote device.`]);
+    expect(bye.text).toEqual([`% Connection to ${R1} closed by the remote device.\n`]);
     expect(lastPrompt(bye)).toMatchObject({ prompt: 'PC1>', busy: false });
     expect(sim.cli.session(pc1)?.remote).toBeUndefined();
     expect(sessionChanges(bye.steps).map((s) => [s.ev.kind, s.before, s.after])).toEqual([['remoteCli', 1, 0]]);
@@ -308,7 +308,7 @@ describe('accept.p3.vty [S13]: §3.14 SSH-only access with a vty ACL', () => {
     expect(sim.device('r1')!.processes.get('vty')!.stateSnapshot().state['listening']).toEqual(['telnet', 'ssh']);
     const pc1 = sim.cli.open('pc1', 'console');
     const open = type(sim, pc1, `telnet ${R1}`);
-    expect(open.text).toEqual([`Connecting to ${R1} port 23 ...`, `Connected to ${R1}.`]);
+    expect(open.text).toEqual([`Connecting to ${R1} port 23 ...\n`, `Connected to ${R1}.\n`]);
     expect(lastPrompt(open)).toMatchObject({ prompt: VTY_PROMPT_PASSWORD, busy: false, input: { kind: 'secret' } });
     const telnet = type(sim, pc1, LINE_PASSWORD, 5 * SEC);
     expect(lastPrompt(telnet)).toMatchObject({ prompt: 'R1>', busy: false });
@@ -376,7 +376,7 @@ describe('accept.p3.vty [S13]: §3.14 SSH-only access with a vty ACL', () => {
     expect(logins(sim, 'r5')).toEqual([]);
     // logging out of R4 returns to R3
     const back = type(sim, s, 'exit', 5 * SEC);
-    expect(back.text).toEqual(['% Connection to 192.168.10.4 closed by the remote device.']);
+    expect(back.text).toEqual(['% Connection to 192.168.10.4 closed by the remote device.\n']);
     expect(lastPrompt(back)).toMatchObject({ prompt: 'R3>' });
     expect(sim.cli.sessions().filter((v) => v.via === 'vty').map((v) => v.device)).toEqual(['r1', 'r2', 'r3']);
   });
@@ -388,7 +388,7 @@ describe('accept.p3.vty [S13]: on a managed switch (D22)', () => {
     const sim = world([], P1_LINES);
     const pc1 = sim.cli.open('pc1', 'console');
     const dormant = type(sim, pc1, `telnet ${SW1}`);
-    expect(dormant.text).toEqual([`Connecting to ${SW1} port 23 ...`, `% Cannot reach ${SW1}: protocol unreachable.`]);
+    expect(dormant.text).toEqual([`Connecting to ${SW1} port 23 ...\n`, `% Cannot reach ${SW1}: protocol unreachable.\n`]);
     expect(dormant.events.some((e) => e.kind === 'drop' && e.device === 'sw1' && e.reason === 'unsupported-protocol' && e.detail === 'ip protocol 6 has no listener')).toBe(true);
     expect(logins(sim, 'sw1')).toEqual([]);
     expect(sim.device('sw1')!.tables.get('sockets')!.rows()).toEqual([]);
@@ -398,7 +398,7 @@ describe('accept.p3.vty [S13]: on a managed switch (D22)', () => {
     sim.runFor(1 * SEC);
     type(sim, pc1, `ssh -l admin ${SW1}`, 1 * SEC);
     const login = type(sim, pc1, ADMIN_PASSWORD);
-    expect(login.text).toEqual([`Connecting to ${SW1} port 22 ...`]);
+    expect(login.text).toEqual([`Connecting to ${SW1} port 22 ...\n`]);
     expect(lastPrompt(login)).toMatchObject({ prompt: 'SW1>', busy: false });
     expect(sim.cli.session(pc1)?.remote).toBe('SW1 via SSH');
     expect(sessionChanges(login.steps).map((s) => [s.ev.kind, s.ev.kind === 'remoteCli' ? s.ev.device : '', s.after - s.before])).toEqual([['remoteCli', 'sw1', 1]]);
@@ -407,10 +407,10 @@ describe('accept.p3.vty [S13]: on a managed switch (D22)', () => {
     const pc2 = sim.cli.open('pc2', 'console');
     type(sim, pc2, `ssh -l admin ${SW1}`, 1 * SEC);
     const refused = type(sim, pc2, ADMIN_PASSWORD);
-    expect(refused.text).toEqual([`Connecting to ${SW1} port 22 ...`, `% Connection refused by ${SW1}`]);
+    expect(refused.text).toEqual([`Connecting to ${SW1} port 22 ...\n`, `% Connection refused by ${SW1}\n`]);
     // and telnet, which the transport excludes, is a RST with no row
     const telnet = type(sim, pc1, `telnet ${SW1}`);
-    expect(telnet.text).toEqual([`Connecting to ${SW1} port 23 ...`, `% Connection refused by ${SW1}`]);
+    expect(telnet.text).toEqual([`Connecting to ${SW1} port 23 ...\n`, `% Connection refused by ${SW1}\n`]);
     expect(logins(sim, 'sw1')).toEqual([
       { seq: 1, proto: 'ssh', peer: PC1, user: 'admin', result: 'success', reason: undefined },
       { seq: 2, proto: 'ssh', peer: PC2, user: 'admin', result: 'refused', reason: 'access-class 10' },

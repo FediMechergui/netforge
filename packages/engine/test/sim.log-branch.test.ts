@@ -107,10 +107,11 @@ describe('sim.log-branch: a P3 world prints logs on consoles and terminal-monito
     const open = ta.findIndex((e) => e.kind === 'cliPrompt' && e.session === sa.console);
     const logs = logsOf(ta.slice(open)).filter((l) => l.device === 'r1');
     expect(printed.map((o) => o.t)).toEqual(logs.map((l) => l.t));
-    // each is the CLI's rendering of its log (the logger's renderer, the device clock then, `service timestamps log`)
+    // each is the CLI's rendering of its log (the logger's renderer, the device clock then, `service timestamps log`),
+    // a whole line (ruling R63 (a))
     const r1 = a.device('r1')!;
     const fmt = storedTimestampFormat(r1.running.root, 'log');
-    expect(printed.map((o) => o.text)).toEqual(logs.map((l) => renderLogLine(l, r1.clockView(l.t), r1.uptime(l.t), fmt)));
+    expect(printed.map((o) => o.text)).toEqual(logs.map((l) => `${renderLogLine(l, r1.clockView(l.t), r1.uptime(l.t), fmt)}\n`));
     printed.forEach((o, i) => expect(o.text).toContain(logs[i]!.message));
     for (const o of printed) {
       const at = ta.indexOf(o);

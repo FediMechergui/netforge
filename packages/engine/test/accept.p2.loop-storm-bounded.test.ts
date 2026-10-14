@@ -125,7 +125,12 @@ describe('accept P2 loop-storm-bounded: P1 profile (no spanning tree)', () => {
     expect(SLOT_NS_100M).toBe(6720);
     expect(window.events).toBeLessThanOrEqual(bound);
     expect(window.events).toBeGreaterThan(0);
-  }, 300_000); // one simulated second at line rate on five links is a few million scheduler events
+    // Advisory timeout (ARCHITECTURE-P3 R61(c), carrying R29): one simulated second at line rate on five links is a
+    // few million scheduler events, so this case runs for minutes and lives in the slow project (vitest.workspace.ts).
+    // The body is synchronous and vitest 2.1 arms its timer only after the body returns, so the 300_000 literal below
+    // can never fail the run, whatever the wall time. The proof is the deterministic bounds asserted above (the queue
+    // cap per port and the line-rate event count of the window), not the clock; §14 records the measured run time.
+  }, 300_000);
 });
 
 describe('accept P2 loop-storm-bounded: P2 profile (spanning tree)', () => {

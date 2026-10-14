@@ -28,7 +28,8 @@
  *
  * @since P3 (ruling R57(b); W6 web-inspector) The frame detail shows the protected banner (`frameProtection`): an ESP
  * header decides by itself; for a TCP or UDP frame of a live capture the mark the engine put on its PDU is read once per
- * decoded frame (`CapturePort.pduMeta`), and the banner follows when it names TLS, SSH or IKE.
+ * decoded frame (`CapturePort.pduMeta`), and the banner follows when it names TLS, SSH or IKE — or, for a packet now
+ * inside an IPsec tunnel, when its inner mark does (W8 item 47, R58(a)).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {

@@ -192,6 +192,15 @@ export interface PduMeta {
    * together with `protected` keeps P2's DTLS meaning (CAPWAP control), so no P2 byte or label changes.
    */
   readonly protectedBy?: 'tls' | 'ssh' | 'esp' | 'ike';
+  /**
+   * @since P3 (optional by meaning; W8 item 47, rulings R58(a), R61(a)) The mark a PDU already carried when a tunnel
+   * protected it again: while [C13] ESP wraps a TLS or SSH segment (D27), `protectedBy` is 'esp' and this keeps the
+   * inner channel, which the tunnel's tail restores (`ProcessCtx.protect(pdu, null)`), so the segment shows its own
+   * mark on both LANs and ESP between the routers. 'dtls' names P2's mark (`protected` without `protectedBy`). One
+   * level only: a tunnel inside a tunnel keeps the mark the inner tunnel set. Absent on every PDU that was not protected
+   * before a tunnel protected it, so no P1/P2 PDU carries it.
+   */
+  readonly innerProtectedBy?: 'dtls' | 'tls' | 'ssh' | 'esp' | 'ike';
 }
 
 /** Read-only view handed to the UI, tables and assertions. */

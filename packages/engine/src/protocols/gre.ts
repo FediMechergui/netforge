@@ -34,13 +34,15 @@
  * protection line), `ike-failed`, `ike-no-proposal` or `ike-no-response`. Each change issues `virtualChanged`.
  *   Head (§3.13 step 7), after the same IP MTU check (the D15 fallback at 1456) and MSS clamp: the framing stripped
  *   and `esp {spi: the peer's inbound SPI, seq: the next sequence number, nextHeader 4, keyId}` pushed (records
- *   Decapsulate <framing>, Encapsulate esp), an `Encrypt` record (`esp.keyId`), `meta.protected` with `protectedBy:
- *   'esp'`, then `ipv4 {source → destination, protocol 50, ttl 255, dscp copied}` encapsulated (Encapsulate ipv4),
- *   cause `interface Tunnel0`, and `ipv4.send`.
+ *   Decapsulate <framing>, Encapsulate esp), an `Encrypt` record (`esp.keyId`), the mark `ctx.protect(pdu, 'esp')`
+ *   (`meta.protected` with `protectedBy: 'esp'`; a TLS or SSH segment keeps its own mark in `innerProtectedBy`, W8
+ *   item 47, R58(a)), then `ipv4 {source → destination, protocol 50, ttl 255, dscp copied}` encapsulated (Encapsulate
+ *   ipv4), cause `interface Tunnel0`, and `ipv4.send`.
  *   Tail (§3.13 step 9): IP protocol 50 arrives here (ip-upper); the SA is found by the ESP SPI (none: drop
  *   `ipsec-no-sa`, counted on the tunnel the outer addresses name); the keyed ICV word is checked against the SA's key
- *   id (`espIcvKeyMatches`; a mismatch drops `bad-checksum`); then a `Decrypt` record (`esp.keyId`) that clears
- *   `meta.protected`, ONE strip-only rewrap (the framing, the outer IPv4 and ESP removed), the MSS clamp, and
+ *   id (`espIcvKeyMatches`; a mismatch drops `bad-checksum`); then a `Decrypt` record (`esp.keyId`), the mark cleared
+ *   with `ctx.protect(pdu, null)` (which restores a TLS or SSH segment's own mark, so it shows on both LANs), ONE
+ *   strip-only rewrap (the framing, the outer IPv4 and ESP removed), the MSS clamp, and
  *   `ingress {port: 'Tunnel0', layer: 'ipv4'}`. Sequence numbers are carried and shown, never checked (no replay
  *   window, a listed deviation).
  *
@@ -57,9 +59,8 @@
  * stateSnapshot(): { tunnels: [{ port, mode, state, encaps, decaps, mtuDrops, mssClamped }] } (port order); an
  * ipsec-mode entry also carries `IpsecTunnelCounters`' `seqOut`, `lastSeqIn` and `noSa` ([C13], §2.17).
  *
- * CONTRACT GAP ([C13], reported by the W3 wan-ipsec item): `Pdu` has no member that changes `meta` after birth, yet
- * D27 marks an existing PDU `meta.protected` / `protectedBy: 'esp'` at the head and clears it at the tail (one PduId
- * end to end). Until the architect adds one, `setEspProtection` below replaces the PDU's own `meta` object.
+ * The ESP mark (D27: one PduId end to end) is set and cleared through `ProcessCtx.protect` (W8 item 47, rulings R36,
+ * R58(a), R61(a)), which replaced the W3 `setEspProtection` cast: this module writes nothing outside the contract.
  */
 import { ipv4ToU32, isIpv4, type Ipv4Address } from '../contracts/addr.js';
 import type { ConfigDelta, ConfigNode } from '../contracts/config.js';
@@ -74,7 +75,6 @@ import {
   IPSEC_OVERHEAD,
   type LayerSpec,
   type Pdu,
-  type PduMeta,
 } from '../contracts/pdu.js';
 import type { Action, DebugEvent, FsmTransition, Process, ProcessCtx, ProcessRequest, StateView } from '../contracts/process.js';
 import type { IpsecTunnelCounters, RouteRow, Table, TunnelDownReason, TunnelRow } from '../contracts/tables.js';
@@ -136,16 +136,6 @@ export function ipsecNoSaDetail(spi: number, from: Ipv4Address): string {
 /** [C13] The drop detail of an ESP packet whose keyed ICV word does not match its SA's key id. */
 export function ipsecIcvDetail(port: PortId, spi: number): string {
   return `ESP integrity check failed on ${port} (SPI 0x${(spi >>> 0).toString(16).padStart(8, '0')})`;
-}
-
-/**
- * [C13] Mark `pdu` protected by ESP (`on`) or clear the mark. See the CONTRACT GAP note in the file header: the PDU's
- * `meta` is replaced by a new object (the other members kept), the one write this module makes outside the contract.
- */
-export function setEspProtection(pdu: Pdu, on: boolean): void {
-  const { protected: _wasProtected, protectedBy: _wasBy, ...rest } = pdu.meta;
-  const meta: PduMeta = on ? { ...rest, protected: true, protectedBy: 'esp' } : rest;
-  (pdu as { meta: PduMeta }).meta = meta;
 }
 
 const posInt = (t: string | undefined, lo: number, hi: number): number | undefined => {
@@ -477,7 +467,7 @@ export function createGre(): Process {
 
   /**
    * [C13] ESP head (§3.13 step 7), after the IP MTU check and the MSS clamp: the framing (`strip` layers) replaced by
-   * ESP, the Encrypt record, the protected mark, the outer IPv4, `ipv4.send`. The PduId never changes.
+   * ESP, the Encrypt record, the protected mark (`ctx.protect`), the outer IPv4, `ipv4.send`. The PduId never changes.
    */
   function espHead(ctx: ProcessCtx, pdu: Pdu, port: PortId, v: Verdict, strip: number, dscp: number): Action[] {
     const sa = sas.get(port);
@@ -489,7 +479,8 @@ export function createGre(): Process {
     const inner = pdu.layers[strip]!;
     ctx.rewrap(pdu, { strip, push: [{ proto: 'esp', fields: { spi: sa.spiOut, seq: sa.seqOut, nextHeader: ESP_NEXT_HEADER_IPV4, keyId: sa.keyId } }] }, cause);
     ctx.mutate(pdu, 'esp.keyId', sa.keyId, 'Encrypt', cause);
-    setEspProtection(pdu, true);
+    // the ESP mark; a TLS or SSH segment's own mark moves to `innerProtectedBy` (W8 item 47, R58(a))
+    ctx.protect?.(pdu, 'esp');
     ctx.encapsulate(pdu, { proto: 'ipv4', fields: { src: v.source, dst: v.destination, protocol: IPPROTO_ESP, ttl: GRE_OUTER_TTL, dscp } }, cause);
     countersOf(port).encaps++;
     debug(ctx, `${port}: encrypted ${String(inner.fields.src)} > ${String(inner.fields.dst)} in ESP (SPI 0x${hex32(sa.spiOut)}, seq ${sa.seqOut}) to ${v.destination}`, { pdu: pdu.id, port });
@@ -532,7 +523,8 @@ export function createGre(): Process {
     const seq = typeof e.fields.seq === 'number' ? e.fields.seq : 0;
     const cause = greTunnelCause(match);
     ctx.mutate(pdu, 'esp.keyId', sa.keyId, 'Decrypt', cause);
-    setEspProtection(pdu, false);
+    // the ESP mark cleared; an inner TLS or SSH mark is restored (W8 item 47, R58(a))
+    ctx.protect?.(pdu, null);
     ctx.rewrap(pdu, { strip: o + 2, push: [] }, cause);
     clampMss(ctx, pdu, match, t.cfg.adjustMss);
     countersOf(match).decaps++;

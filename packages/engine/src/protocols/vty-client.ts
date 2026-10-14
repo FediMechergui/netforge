@@ -14,10 +14,12 @@
  *    server's line, USERAUTH_REQUEST (user, password) in a protected packet; FAILURE prints a refusal and asks for the
  *    password again (or re-sends the supplied one); SUCCESS opens the session; CHANNEL_DATA carries the terminal stream
  *    both ways (protocols/vty.ts).
- *  • The terminal stream from the server: complete lines become `cliOutput` (one per received segment), a prompt
- *    (`IAC GA`) becomes `cliRemote {session, prompt, input: 'secret' while the server echoes (WILL ECHO), remote: '<name>
- *    via SSH|Telnet' once, at the first device prompt}` — the prompt frees the session for the next line. With
- *    credentials in the request, the login prompts are answered with them instead of being relayed.
+ *  • The terminal stream from the server: its text becomes `cliOutput` exactly as the far end printed it (one per
+ *    received segment or packet: the complete lines with their line ends, and the start of a line a piece of output
+ *    ended in, `IAC EOR`; ruling R63 (b)), a prompt (`IAC GA`) becomes `cliRemote {session, prompt, input: 'secret'
+ *    while the server echoes (WILL ECHO), remote: '<name> via SSH|Telnet' once, at the first device prompt}` — the
+ *    prompt frees the session for the next line. With credentials in the request, the login prompts are answered with
+ *    them instead of being relayed.
  *  • `vty.input {line}`: the password (SSH), or a line for the far end — SSH: one CHANNEL_DATA packet; telnet: one
  *    segment per line, but one segment per character while the server masks the input (so a telnet password is seen
  *    in clear, one character per segment), each sent once the previous one is acknowledged (`sock.drained`).
@@ -25,6 +27,8 @@
  *  • The end: the server closing prints the closing line; a refusal (a RST before the session opened, or no listener)
  *    prints `% Connection refused by <addr>`; an ICMP error prints why the address cannot be reached; each ends with
  *    `cliDone` (the CLI's relay ends).
+ *  • Every line the client prints itself (the texts below, and an SSH DISCONNECT reason) is a whole line, `\n` ended
+ *    (ruling R63 (a)): more output can follow it while the session is busy.
  *
  * Timers: none of its own (§4.2: the connect timeout is tcp's). Debug categories (§5.8): `ip ssh` and `telnet`.
  * Determinism: no rng; socket ids count per daemon; the SSH keystream is the server's (`vtySshKey`, §4.1).
@@ -76,7 +80,7 @@ export const VTY_CLIENT_VERSION_MAX = 255;
 /** @since P3 [S13] What became of a client session (the StateView `results`). */
 export type VtyClientOutcome = 'connecting' | 'open' | 'refused' | 'failed' | 'unreachable' | 'timeout' | 'closed' | 'cancelled';
 
-// ── texts the client prints (original wording) ─────────────────────────────
+// ── texts the client prints (original wording; each printed as a whole line, R63 (a)) ──────────
 
 /** @since P3 [S13] The connection attempt. */
 export const vtyClientConnectingText = (target: IpAddress, port: number): string => `Connecting to ${target} port ${port} ...`;
@@ -198,7 +202,10 @@ export function createVtyClient(): Process {
   }
 
   const toTcp = (req: ProcessRequest): Action => ({ type: 'request', to: 'tcp', req });
-  const print = (c: ClientSession, text: string): Action => ({ type: 'cliOutput', session: c.session, text });
+  /** One line of the client's own (R63 (a): a whole line, so later output starts on the next one). */
+  const print = (c: ClientSession, line: string): Action => ({ type: 'cliOutput', session: c.session, text: `${line}\n` });
+  /** Far-end text, exactly as it arrived (R63 (b)). */
+  const relayText = (c: ClientSession, text: string): Action => ({ type: 'cliOutput', session: c.session, text });
   const label = (c: ClientSession): string => (c.proto === 'ssh' ? 'SSH' : 'Telnet');
 
   function outcome(ctx: ProcessCtx, c: ClientSession, o: VtyClientOutcome, detail?: string): void {
@@ -315,16 +322,17 @@ export function createVtyClient(): Process {
     return [print(c, VTY_CLIENT_DENIED), ...done(c), ...(c.socket !== undefined ? [toTcp({ kind: 'tcp.close', socket: c.socket })] : [])];
   }
 
-  /** Terminal stream bytes from the far end: lines are printed, a prompt is relayed. */
+  /** Terminal stream bytes from the far end: its text is printed as it arrived (R63 (b)), a prompt is relayed. */
   function onTerm(ctx: ProcessCtx, c: ClientSession, bytes: Uint8Array): Action[] {
     const out: Action[] = [];
-    let lines: string[] = [];
+    let text = '';
     const flush = (): void => {
-      if (lines.length > 0) out.push(print(c, lines.join('\n')));
-      lines = [];
+      if (text !== '') out.push(relayText(c, text));
+      text = '';
     };
     for (const ev of c.reader.feed(bytes)) {
-      if (ev.kind === 'line') lines.push(ev.text);
+      if (ev.kind === 'line') text += `${ev.text}\n`;
+      else if (ev.kind === 'partial') text += ev.text;
       else if (ev.kind === 'prompt') {
         flush();
         out.push(...onPrompt(ctx, c, ev.text, ev.masked));

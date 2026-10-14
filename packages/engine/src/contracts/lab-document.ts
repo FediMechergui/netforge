@@ -69,8 +69,8 @@ function labCategoryOf(course: string | undefined, tasks: number): ScenarioCateg
  * assertions, its scheduled faults and its reference solution, all copied as plain data (no member is shared with the
  * lab, and no member is `undefined`, so the JSON text of the document parses back to an equal document). A lab without
  * a `version` is version 1; one without a `seed` takes its topology's seed. The members a document has no place for
- * (`description`, `category`, `labType`, `objectives`, `tags`, `difficulty`, `estimatedMinutes`, `requires` and the
- * deprecated `customChecks`) are left out. Pure: calls `s.build()` once.
+ * (`description`, `category`, `labType`, `objectives`, `tags`, `difficulty`, `estimatedMinutes` and `requires`) are
+ * left out. Pure: calls `s.build()` once.
  */
 export function labDocumentOf(s: ScenarioInfo): LabDocument {
   const topology = s.build();

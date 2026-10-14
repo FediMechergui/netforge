@@ -1,14 +1,17 @@
 /**
  * test/p3-flip.world.ts — the P3 worlds of the W4 qa acceptance rows (ARCHITECTURE-P3 §0 rules 13 and 14, §7 W4,
  * §10 "From W4 the tests build their worlds with `staged.world`, which equals the real catalog once the flip has
- * landed"). Not a test file.
+ * landed"). Not a test file. Since the W8 exit gate it is the wrapper of `test/staged.world.ts` keyed to stage P3, as
+ * `test/p2.world.ts` is its wrapper keyed to stage P2.
  *
  * ONE helper builds a P3 world for the W4 qa files that need the real catalog (`accept.p3.silence`,
- * `accept.p3.switch-transport`, `accept.p3.profile`, `accept.p3.ospf-scale`, `accept.p3.mgmt-scale`): since the W4
- * catalog flip (`CATALOG_STAGE` 'P3', every approved P3 daemon registered in `protocols/index.ts`) that is
- * `createSimulation` itself. Ruling R47: the flip deleted the helper's pre-flip branch (`staged.world` at stage P3 with
- * the approved P3 daemons' factories laid over the registry) together with that factory overlay and the world-source
- * switch, so the real catalog is the only source; nothing else in the qa files changed.
+ * `accept.p3.switch-transport`, `accept.p3.profile`, `accept.p3.ospf-scale`, `accept.p3.mgmt-scale`):
+ * `createP3Simulation(opts)` is `createStagedSimulation({…opts, stage: 'P3'})` with no registry overlay, which is
+ * `createSimulation` itself on the real (flipped) catalog, the profile defaulting to 'P3' (`staged.world.ts`: the real
+ * catalog equals the helper's at stage `CATALOG_STAGE` with the real registry, `staged.world.p3-parity.test.ts`).
+ * Ruling R47: the W4 flip deleted this helper's pre-flip branch (`staged.world` at stage P3 with the approved P3
+ * daemons' factories laid over the registry) together with that factory overlay and the world-source switch, so the
+ * real catalog is the only source; nothing else in the qa files changed.
  *
  * `P3_SILENCE_DAEMONS` names exactly the daemons §10.1 `accept.p3.silence` (a) attributes events to: the seven MUST
  * daemons (ospf, acl, cdp, lldp, ntp, restconf, traffic) and the approved items' daemons ([S19] ppp, [S18] gre, [S13]
@@ -23,7 +26,7 @@ import type { ScenarioInfo } from '../src/contracts/scenario.js';
 import type { Simulation, SimulationOptions } from '../src/contracts/simulation.js';
 import type { Topology } from '../src/contracts/topology.js';
 import { SCENARIO_SEED } from '../src/sim/scenarios.js';
-import { createSimulation } from '../src/sim/simulation.js';
+import { createStagedSimulation } from './staged.world.js';
 
 /** The daemons the silence rows attribute events to (§10.1 `accept.p3.silence` (a)), in that order. Frozen. */
 export const P3_SILENCE_DAEMONS: readonly ProcessName[] = Object.freeze([
@@ -50,10 +53,9 @@ export interface P3WorldOptions extends Omit<SimulationOptions, 'catalog' | 'pro
   readonly profile?: DefaultsProfile;
 }
 
-/** A world on the real (flipped) P3 catalog: `createSimulation`, the profile defaulting to 'P3'. */
+/** A world on the real (flipped) P3 catalog: `createStagedSimulation` at stage P3, the profile defaulting to 'P3'. */
 export function createP3Simulation(opts: P3WorldOptions): Simulation {
-  const { profile = 'P3', ...rest } = opts;
-  return createSimulation({ ...rest, profile });
+  return createStagedSimulation({ ...opts, stage: 'P3' });
 }
 
 /**

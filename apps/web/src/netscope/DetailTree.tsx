@@ -10,8 +10,9 @@
  * @since P3 (ARCHITECTURE-P3 §9.2 ruling R57(b); §3.8 step 2, §3.13 step 8; W6 web-inspector) The protected banner of the
  * Packet inspector (`ProtectedBanner`, its titles from `protectedBannerTitle`) sits under the summary of a frame whose
  * layers carry the protection: "Encrypted (ESP, simulated)" for a frame with an ESP header — what the provider sees —
- * and "Protected (TLS / SSH / IKE, simulated)" for a segment the engine marked (`frameProtection`); each layer the
- * protection covers carries the simulated-plaintext mark. A CAPWAP control frame (P2's DTLS) keeps its P2 view.
+ * and "Protected (TLS / SSH / IKE, simulated)" for a segment the engine marked (`frameProtection`) — on both LANs of an
+ * IPsec tunnel too, from the inner mark the tunnel keeps (W8 item 47, R58(a)); each layer the protection covers carries
+ * the simulated-plaintext mark. A CAPWAP control frame (P2's DTLS) keeps its P2 view.
  *
  * ponytail: layers are expanded sections rather than a generic tree widget — the depth is always 2 (layer,
  * field), so a tree's roving state would buy nothing over ordinary tab stops.
@@ -48,18 +49,21 @@ export interface DetailTreeProps {
 /**
  * @since P3 (ruling R57(b)) The banner of a captured frame: 'esp' when the frame holds an ESP header (the provider's view;
  * the PDU's own mark is cleared where the tunnel ends, so the header decides); otherwise the channel the engine marked
- * the frame's PDU with — 'tls', 'ssh' or 'ike', which mark a segment end to end (except a segment that crossed an
- * IPsec tunnel: the tail clears the single mark slot, D27, so its TLS/SSH mark is gone). A CAPWAP control message
- * (P2's DTLS: `protected` without `protectedBy`) keeps NetScope's P2 view, without a banner; so does a frame outside an
- * ESP tunnel whose packet happens to be inside one now (its mark is 'esp' but the frame has no ESP header).
+ * the frame's PDU with — 'tls', 'ssh' or 'ike', which mark a segment end to end. A segment that crosses an IPsec tunnel
+ * keeps its mark (W8 item 47, ruling R58(a)): while the packet is inside the tunnel its mark is 'esp' and its own
+ * channel waits in `innerProtectedBy`, which a frame outside the tunnel (no ESP header) shows; after the tail the mark
+ * is the segment's own again. A CAPWAP control message (P2's DTLS: `protected` without `protectedBy`) keeps NetScope's P2
+ * view, without a banner; so does a frame outside an ESP tunnel whose packet is inside one now with no inner mark (a
+ * ping: its mark is 'esp' but the frame has no ESP header).
  */
 export function frameProtection(
   layers: readonly Pick<LayerView, 'proto'>[],
-  meta?: Pick<PduMeta, 'protected' | 'protectedBy'>,
+  meta?: Pick<PduMeta, 'protected' | 'protectedBy' | 'innerProtectedBy'>,
 ): ProtectionKind | undefined {
   if (layers.some((l) => l.proto === 'esp')) return 'esp';
   if (meta?.protected !== true) return undefined;
-  const by = meta.protectedBy;
+  // a leg outside the tunnel shows the mark the segment carries inside it (R58(a))
+  const by = meta.protectedBy === 'esp' ? meta.innerProtectedBy : meta.protectedBy;
   return by === 'tls' || by === 'ssh' || by === 'ike' ? by : undefined;
 }
 

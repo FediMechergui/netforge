@@ -440,8 +440,30 @@ export type ProcessRequest =
    * the `tunnels` row (up only while the SA is up) and issues `virtualChanged`.
    */
   | { kind: 'tunnel.sa'; port: PortId; op: 'up' | 'down'; spiIn?: number; spiOut?: number; keyId?: number; reason?: 'ike-negotiating' | 'ike-failed' | 'ike-no-proposal' | 'ike-no-response' }
-  /** Extension slot: non-built-in requests must be namespaced `ext.<name>` so built-in kinds still narrow. */
+  /**
+   * Extension slot: non-built-in requests must be namespaced `ext.<name>` so built-in kinds still narrow. P3's
+   * sanctioned users of the slot are listed in `SANCTIONED_EXT_REQUESTS` (ruling R61(a)).
+   */
   | { kind: `ext.${string}`; [k: string]: unknown };
+
+/**
+ * @since P3 (W8 item 47; rulings R38, R61(a)) The P3 requests that use the `ext.*` slot of `ProcessRequest`, recorded
+ * as its sanctioned users. They stay in the slot with no change of form (no named member is added for them):
+ *  - `ext.tcp.protect {socket, protectedBy: 'ssh'}` — vty and vty-client → tcp ([S13]): every byte of the connection
+ *    queued from then on travels in segments marked `meta.protected` + `protectedBy 'ssh'` (`tcpProtectRequest`,
+ *    protocols/tcp.ts);
+ *  - `ext.ipv4.transportHold {owner, key, hold}` — vty-client (and a grader clone's probe) → ipv4 ([S13], rulings
+ *    R17, R27): an outbound session keeps a dormant switch transport awake while it lasts (`transportHoldRequest`,
+ *    protocols/ip-upper.ts);
+ *  - `ext.logging.clear` — cli → logger ([S24]): `clear logging` empties the buffer's lines and used bytes and keeps
+ *    the counters (`LOGGER_CLEAR_REQUEST`, protocols/logger.ts).
+ * The slot's earlier user is unchanged (P2: `ext.stp.clear-detected-protocols`, protocols/stp/mixed.ts). A new
+ * extension request is added to this list by the item that adds it.
+ */
+export const SANCTIONED_EXT_REQUESTS = Object.freeze(['ext.tcp.protect', 'ext.ipv4.transportHold', 'ext.logging.clear'] as const);
+
+/** @since P3 (ruling R61(a)) One of the sanctioned P3 `ext.*` request kinds (`SANCTIONED_EXT_REQUESTS`). */
+export type SanctionedExtRequest = (typeof SANCTIONED_EXT_REQUESTS)[number];
 
 // ── P3 request and action payloads (ARCHITECTURE-P3 §2.4) ──
 
@@ -822,6 +844,16 @@ export interface ProcessCtx {
   files(fs: FileSystemId): readonly StoredFileMeta[];
   /** @since P3 [S32] One file of a host's store, or undefined. Required since W1 device. */
   readFile(fs: FileSystemId, path: string): StoredFile | undefined;
+  /**
+   * @since P3 (W8 item 47; rulings R36, R58(a), R61(a)) Mark `pdu` protected by the simulated channel `by`, or clear
+   * its mark (`null`), in place: same PduId, no provenance record and no trace event of its own (the change of
+   * channel is told by the provenance around it: [C13] `Encrypt` at a tunnel's head, `Decrypt` at its tail). A PDU
+   * that already carries a mark keeps it in `PduMeta.innerProtectedBy` (a TLS or SSH segment entering an IPsec tunnel),
+   * and `null` restores that inner mark instead of clearing everything, so the segment shows its own mark again after
+   * the tail. Implemented by device/process-ctx.ts (`withProtection`); [C13] gre is its caller (D27). Required since
+   * the P3a exit gate (W8 item 45): hand-built typed fakes spread `P3_CTX` from test/port.fixtures.ts.
+   */
+  protect(pdu: Pdu, by: NonNullable<PduMeta['protectedBy']> | null): void;
 }
 
 export interface Process {

@@ -11,15 +11,20 @@
  * tsconfig covers src/ only, so they are checked when this file is type-checked on its own. The runtime half calls the
  * members without the optional part and reads the declarations from the source, so the `?` and the
  * `@since P2 (optional by meaning)` tag are pinned on every test run as well.
+ *
+ * The P3a exit gate (ARCHITECTURE-P3 §2.15 row "web store/types.ts, bridge/protocol.ts", §9.2 W8 item 45, ruling
+ * R61 (e)) adds the web P3 rows: `DropMarker.rule` (R42: absent for every drop without a policy rule, every P1/P2 drop)
+ * and `RunToIdleSnapshot.runStopped` (R31: absent = the run reached idle). The web contracts have no transition `?`
+ * left to remove: every other `@since P3` web member was required from the item that added it.
  */
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 import type { DefaultsProfile, SimSnapshot } from '@netforge/engine';
-import type { EngineApi, EngineBatch, InitResult } from '../src/bridge/protocol';
+import type { EngineApi, EngineBatch, InitResult, RunToIdleSnapshot } from '../src/bridge/protocol';
 import { defaultTimelineUi, store } from '../src/store/store';
-import type { LabUiState, UiState } from '../src/store/types';
+import type { DropMarker, LabUiState, UiState } from '../src/store/types';
 
 // ── type-level half ──────────────────────────────────────────────────────────
 
@@ -33,6 +38,9 @@ const RESET_PROFILE_OPTIONAL: [seed: number] extends Parameters<EngineApi['reset
 const REVIEW_OPTIONAL: IsOptional<EngineBatch, 'review'> = true;
 const TIMELINE_HEAD_OPTIONAL: IsOptional<EngineBatch, 'timelineHead'> = true;
 const CHECKING_OPTIONAL: IsOptional<LabUiState, 'checking'> = true;
+// optional by meaning since P3 (ARCHITECTURE-P3 §2.15, ruling R61 (e))
+const DROP_RULE_OPTIONAL: IsOptional<DropMarker, 'rule'> = true;
+const RUN_STOPPED_OPTIONAL: IsOptional<RunToIdleSnapshot, 'runStopped'> = true;
 
 // required since the W8 exit gate: each line stops compiling if the member regains a `?`
 const SEEK_REQUIRED: IsOptional<EngineApi, 'seek'> = false;
@@ -132,5 +140,27 @@ describe('web members the W8 exit gate made required', () => {
     expect(declaration(TYPES, 'UiState', 'timeline').line).toMatch(/^\s*timeline: TimelineUiState;/);
     expect(Object.keys(store.getState())).toContain('timeline');
     expect(defaultTimelineUi()).toEqual({ review: null, head: null, lanes: expect.any(Array), seeking: false, reviewEvents: [] });
+  });
+});
+
+describe('web members that stay optional since P3 (optional by meaning, ARCHITECTURE-P3 §2.15, ruling R61 (e))', () => {
+  it('the type-level checks hold', () => {
+    expect([DROP_RULE_OPTIONAL, RUN_STOPPED_OPTIONAL]).toEqual([true, true]);
+  });
+
+  it('DropMarker.rule keeps its ? and its JSDoc says "@since P3 (optional by meaning" (ruling R42)', () => {
+    const { line, doc } = declaration(TYPES, 'DropMarker', 'rule');
+    expect(line).toMatch(/^\s*rule\?: DropRule;/);
+    expect(doc).toContain('@since P3 (optional by meaning');
+  });
+
+  it('RunToIdleSnapshot.runStopped keeps its ? and its JSDoc tags it @since P3, optional by meaning (ruling R31)', () => {
+    const at = PROTOCOL.indexOf('export type RunToIdleSnapshot =');
+    expect(at, 'type RunToIdleSnapshot').toBeGreaterThan(0);
+    expect(PROTOCOL.slice(at, PROTOCOL.indexOf('\n', at))).toContain("readonly runStopped?: 'maxEvents'");
+    // the JSDoc right above, its lines joined (the tag wraps)
+    const doc = PROTOCOL.slice(PROTOCOL.lastIndexOf('/**', at), at).replace(/\s*\n\s*\*\s*/g, ' ');
+    expect(doc).toMatch(/@since P3\b/);
+    expect(doc).toContain("`runStopped: 'maxEvents'` (optional by meaning");
   });
 });

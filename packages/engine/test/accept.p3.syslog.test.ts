@@ -230,7 +230,8 @@ describe('§3.7 steps 7–8: stamps, the wire and the server', () => {
       `${stamp}: %LINEPROTO-5-UPDOWN: Interface GigabitEthernet0/0: line protocol is down`,
     ];
     expect(loggerView(sim).entries.slice(-2).map((e) => e.text)).toEqual(lines);
-    expect(printed(evs, con)).toEqual(lines);
+    // each printed as a whole line (ruling R63 (a))
+    expect(printed(evs, con)).toEqual(lines.map((l) => `${l}\n`));
     const shown = exec(sim, 'r1', 'show logging').split('\n');
     expect(shown.slice(-2)).toEqual(lines);
     expect(shown).toContain('Syslog logging: level warnings (4), facility local7, 1 message sent');

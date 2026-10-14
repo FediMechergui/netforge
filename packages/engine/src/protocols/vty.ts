@@ -27,9 +27,12 @@
  *  • A refusal by `access-class` is a TCP RST after the handshake (`tcp.abort`, listed deviation), a severity-5 log and a
  *    `refused` row; a wrong credential a `failed` row and a severity-5 log; a success a `success` row and the
  *    `remoteCli {op: 'open', conn, peer, proto, user?}` action (the Simulation opens a via-'vty' CLI session, D14).
- * The terminal stream (both protocols; inside SSH CHANNEL_DATA): server → client text with CR LF line ends, a prompt
- * followed by `IAC GA` (RFC 854 Go Ahead: the server waits for a line), `IAC WILL ECHO` before a masked prompt and
- * `IAC WONT ECHO` when the next prompt is plain again; client → server lines ending CR LF. Each line received on an
+ * The terminal stream (both protocols; inside SSH CHANNEL_DATA): server → client text exactly as the CLI printed it, with
+ * CR LF line ends; text that stops in the middle of a line (a ping's marks, a result without its line end) is closed by
+ * `IAC EOR` (RFC 885 End of Record), so the client prints every piece as it arrives with nothing added or joined, however
+ * TCP cuts or coalesces the segments (ruling R63 (b)); a prompt followed by `IAC GA` (RFC 854 Go Ahead: the server waits
+ * for a line), `IAC WILL ECHO` before a masked prompt and `IAC WONT ECHO` when the next prompt is plain again; the
+ * server's own messages are whole lines (R63 (a)); client → server lines ending CR LF. Each line received on an
  * open connection is `remoteCli {op: 'line', text}`; the session's output returns as ProcessEvent `vty.output` and goes
  * back over the connection (`closed` closes it). The client closing its end is `remoteCli {op: 'close'}`. An interrupt
  * (`IAC IP`, or ^C in an SSH channel) is ignored: the remote CLI session has no interrupt seam (RemoteCliAction has no
@@ -227,14 +230,22 @@ const SB = 250;
 const GA = 249;
 const IP = 244;
 const SE = 240;
+const EOR = 239;
 const OPT_ECHO = 1;
 const ETX = 0x03;
 const CR = 0x0d;
 const LF = 0x0a;
 const NUL = 0x00;
 
-/** @since P3 [S13] What a terminal stream reader found: a complete line, a prompt (`IAC GA`), an interrupt. */
-export type VtyTermEvent = { kind: 'line'; text: string } | { kind: 'prompt'; text: string; masked: boolean } | { kind: 'interrupt' };
+/**
+ * @since P3 [S13] What a terminal stream reader found: a complete line, the start of a line that a piece of output ended
+ * in (`IAC EOR`, R63 (b)), a prompt (`IAC GA`), an interrupt.
+ */
+export type VtyTermEvent =
+  | { kind: 'line'; text: string }
+  | { kind: 'partial'; text: string }
+  | { kind: 'prompt'; text: string; masked: boolean }
+  | { kind: 'interrupt' };
 
 /** @since P3 [S13] An incremental reader of one direction of a terminal stream. */
 export interface VtyTermReader {
@@ -246,8 +257,9 @@ export interface VtyTermReader {
 
 /**
  * @since P3 [S13] A terminal stream reader. Data bytes build the current line (CR and NUL are skipped, LF ends it);
- * `IAC GA` turns the current partial line into a prompt; `IAC WILL|WONT ECHO` sets `masked`; `IAC IP` and ^C (0x03)
- * are interrupts; a doubled IAC is one 0xff data byte; other commands and subnegotiations are skipped.
+ * `IAC GA` turns the current partial line into a prompt; `IAC EOR` hands it over as a `partial` (when not empty; R63
+ * (b)); `IAC WILL|WONT ECHO` sets `masked`; `IAC IP` and ^C (0x03) are interrupts; a doubled IAC is one 0xff data byte;
+ * other commands and subnegotiations are skipped.
  */
 export function createVtyTermReader(): VtyTermReader {
   let cur: number[] = [];
@@ -281,7 +293,9 @@ export function createVtyTermReader(): VtyTermReader {
               state = 'opt';
             } else if (b === SB) state = 'sb';
             else if (b === GA) out.push({ kind: 'prompt', text: take(), masked });
-            else if (b === IP) out.push({ kind: 'interrupt' });
+            else if (b === EOR) {
+              if (cur.length > 0) out.push({ kind: 'partial', text: take() });
+            } else if (b === IP) out.push({ kind: 'interrupt' });
             break;
           case 'opt':
             state = 'data';
@@ -302,13 +316,17 @@ export function createVtyTermReader(): VtyTermReader {
 }
 
 /**
- * @since P3 [S13] Server output as terminal stream bytes: `text` (when not empty) with CR LF line ends and a final
- * CR LF; then, with a `prompt`, `IAC WILL ECHO` / `IAC WONT ECHO` when the masking changes (`echo.masked` is updated)
- * and the prompt followed by `IAC GA`.
+ * @since P3 [S13] Server output as terminal stream bytes: `text` exactly (when not empty) with CR LF line ends, closed
+ * by `IAC EOR` when it ends in the middle of a line (ruling R63 (b): no line end is added, so the client prints the
+ * text as it was printed here); then, with a `prompt`, `IAC WILL ECHO` / `IAC WONT ECHO` when the masking changes
+ * (`echo.masked` is updated) and the prompt followed by `IAC GA`.
  */
 export function vtyTermOutput(out: { text: string; prompt?: string; secret?: boolean }, echo: { masked: boolean }): Uint8Array {
   const parts: number[] = [];
-  if (out.text !== '') for (const b of UTF8_ENCODER.encode(`${out.text.replace(/\r?\n/g, '\r\n')}\r\n`)) parts.push(b);
+  if (out.text !== '') {
+    for (const b of UTF8_ENCODER.encode(out.text.replace(/\r?\n/g, '\r\n'))) parts.push(b);
+    if (!out.text.endsWith('\n')) parts.push(IAC, EOR);
+  }
   if (out.prompt !== undefined) {
     const secret = out.secret === true;
     if (secret !== echo.masked) {
@@ -615,7 +633,8 @@ export function createVty(): Process {
     return toTcp({ kind: 'tcp.send', socket: c.id, data });
   }
 
-  const sendText = (c: VtyConn, text: string): Action => send(c, vtyTermOutput({ text }, c));
+  /** One of the server's own messages: a whole line (R63 (a)). */
+  const sendText = (c: VtyConn, text: string): Action => send(c, vtyTermOutput({ text: `${text}\n` }, c));
   const sendPrompt = (c: VtyConn, prompt: string, secret: boolean): Action => send(c, vtyTermOutput({ text: '', prompt, secret }, c));
 
   /** Close the connection gracefully (FIN after the queued data); the login guard stops. */

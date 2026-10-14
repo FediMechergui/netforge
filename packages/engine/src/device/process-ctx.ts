@@ -63,6 +63,13 @@
  *
  * P3 [S18] (§2.7): `pduSummary` tags a framed GRE leg (`[frame, ipv4, gre, …]`) `tunnel: 'gre'`; P1/P2 PDUs carry no
  * `gre` layer, so their summaries are unchanged.
+ *
+ * P3 W8 item 47 (rulings R36, R58(a), R61(a)): `protect(pdu, by | null)` marks a PDU protected by a simulated channel,
+ * or clears the mark, after its birth — the one write of `meta` outside the factory's `build` / `decode` / `clone`. The
+ * factory hands out only `PduImpl` handles, whose `meta` is a plain field holding an object nobody else owns, so the ctx
+ * replaces that object with `withProtection(meta, by)`: same PduId, no provenance record, no trace event (so no trace
+ * byte moves). A mark already present moves to `innerProtectedBy` and `null` restores it (a TLS or SSH segment through
+ * an IPsec tunnel, D27). [C13] gre is the only caller; P1/P2 code never calls it.
  */
 import { broadcastOf, inSubnet, isIpv4Broadcast, type Ipv4Address, type Ipv6Address, type MacAddress } from '../contracts/addr.js';
 import type { Capability, DefaultsProfile } from '../contracts/catalog.js';
@@ -304,6 +311,28 @@ export function pduSummary(pdu: Pdu): PduSummary {
     }
   }
   return s;
+}
+
+// ── the protected mark (P3 W8 item 47; rulings R58(a), R61(a)) ──────────────
+
+/** @since P3 A simulated channel `ProcessCtx.protect` marks a PDU with (`PduMeta.protectedBy`). */
+export type ProtectChannel = NonNullable<PduMeta['protectedBy']>;
+
+/**
+ * @since P3 (W8 item 47) The meta of a PDU after `ProcessCtx.protect(pdu, by)`; `meta` itself is never written. Pure.
+ *  - `by` given: `protected: true` with `protectedBy: by`; a mark the PDU already carried moves to `innerProtectedBy`
+ *    (its `protectedBy`, or 'dtls' for P2's mark without one), replacing an older inner mark (one level);
+ *  - `null`: the mark is cleared; an `innerProtectedBy` becomes the mark again ('dtls' as `protected` alone).
+ * Every other member is kept, in its order; the mark members follow them.
+ */
+export function withProtection(meta: PduMeta, by: ProtectChannel | null): PduMeta {
+  const { protected: wasProtected, protectedBy: wasBy, innerProtectedBy: inner, ...rest } = meta;
+  if (by !== null) {
+    if (wasProtected !== true) return { ...rest, protected: true, protectedBy: by };
+    return { ...rest, protected: true, protectedBy: by, innerProtectedBy: wasBy ?? 'dtls' };
+  }
+  if (inner === undefined) return rest;
+  return inner === 'dtls' ? { ...rest, protected: true } : { ...rest, protected: true, protectedBy: inner };
 }
 
 // ── IPv6 helpers (P1, §4.6 / §4.8) ──────────────────────────────────────────
@@ -650,6 +679,10 @@ export function createProcessCtx(host: ProcessHost, name: ProcessName, rng: Rng)
     },
     clone(pdu: Pdu): Pdu {
       return host.pdus.clone(pdu, host.now);
+    },
+    protect(pdu: Pdu, by: ProtectChannel | null): void {
+      // P3 W8 item 47: the factory's handle keeps `meta` as a plain field; the new object replaces it (file header)
+      (pdu as { meta: PduMeta }).meta = withProtection(pdu.meta, by);
     },
     lpm(dst: Ipv4Address): LpmResult {
       return lpm(host.tables.rib, dst);

@@ -63,10 +63,10 @@ export interface Course {
   modules: readonly CourseModule[];
   /**
    * @since P3 The defaults profile a world opened from this course takes (ARCHITECTURE-P3 D2): data from W0 (ccna1 'P1',
-   * ccna2 'P2', ccna3 'P3' while still planned). Nothing reads it until the W7 course flip, whose change makes
-   * `profileForCourse(id) = courseById(id)?.profile ?? LATEST_DEFAULTS_PROFILE`; required at W8.
+   * ccna2 'P2', ccna3 'P3'). Read since the W7 course flip: `profileForCourse(id) = courseById(id)?.profile ??
+   * LATEST_DEFAULTS_PROFILE` (the fallback only for an unknown id). Required since the P3a exit gate (W8 item 45).
    */
-  profile?: DefaultsProfile;
+  profile: DefaultsProfile;
 }
 
 /** Theory bodies by lesson id (markdown subset), contributed by `curriculum/<course>/theory.ts`. */

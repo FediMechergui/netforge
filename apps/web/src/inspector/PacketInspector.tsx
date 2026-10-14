@@ -20,7 +20,9 @@
  * changes are undone exactly; a header a later device removed is listed by name only (its fields were not kept); when
  * every header is known the leg's bytes are re-encoded with the engine's codecs and kept only if they decode back to
  * the same fields and the leg's size. The hop belongs to the selection it was opened with: any other selection of the
- * packet (the canvas, the Events list, "Inspect layers") shows today's view, unchanged.
+ * packet (the canvas, the Events list, "Inspect layers") shows today's view, unchanged. A TLS or SSH segment carried
+ * through an IPsec tunnel shows its own banner on both LANs and ESP between the routers (`hopProtection`, from the inner
+ * mark the tunnel keeps; W8 item 47, ruling R58(a)).
  *
  * Also hosts the small shared helpers of the inspector module: the PduJson cache
  * (`fetchPdu`, `usePduJson`), the device index hook, value formatters and the
@@ -824,13 +826,17 @@ export function rewindToHop(pdu: PduJson, hop: PacketHop): HopImage {
 /**
  * @since P3 (ruling R57(b)) The channel protecting a packet on one leg: ESP when an ESP header is on that leg (the PDU's
  * own mark is cleared where the tunnel ends); otherwise the packet's mark (TLS, SSH and IKE mark a segment end to end,
- * except a segment that crossed an IPsec tunnel, whose TLS/SSH mark the tail cleared with the ESP one, D27; and a
- * protected PDU without `protectedBy` is still P2's DTLS) — but not ESP on a leg outside the tunnel.
+ * and a protected PDU without `protectedBy` is still P2's DTLS) — but not ESP on a leg outside the tunnel. A segment
+ * carried through an IPsec tunnel keeps its own mark (W8 item 47, ruling R58(a)): after the tail it is the packet's
+ * mark again, and while the packet is still inside the tunnel a leg outside it shows the inner mark the tunnel keeps
+ * (`innerProtectedBy`) — so TLS or SSH on both LANs, ESP between the routers.
  */
 export function hopProtection(layers: readonly Pick<HopLayer, 'proto'>[], meta: PduMeta): ProtectionKind | undefined {
   if (layers.some((l) => l.proto === 'esp')) return 'esp';
   const by = protectionOf({ meta });
-  return by === 'esp' ? undefined : by;
+  if (by !== 'esp') return by;
+  const inner = meta.innerProtectedBy;
+  return inner === 'esp' ? undefined : inner;
 }
 
 /** @since P3 Words of a header whose fields the rewind could not recover. */

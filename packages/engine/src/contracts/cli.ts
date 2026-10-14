@@ -408,24 +408,24 @@ export interface CliRuntime {
   /** @since P2 [S1] Sessions opened (`s_<n>`) and headless runs (`h_<n>`) so far, counted from `CliRuntimeDeps.resume`. */
   counters(): { sessions: number; headless: number };
 
-  // ── P3 (ARCHITECTURE-P3 §2.11; optional during the transition, required in the item that implements them) ──
+  // ── P3 (ARCHITECTURE-P3 §2.11; required since the P3a exit gate, W8 item 45, §2.15) ──
   /**
    * @since P3 [S24] Fed by the Simulation for every `log` trace event (the `sim/simulation.ts` trace-sink branch, like
    * `onDebugEvent`): console and `terminal monitor` printing in P3 worlds or after a typed `logging console` (D20).
    */
-  onLogEvent?(ev: Extract<TraceEvent, { kind: 'log' }>): void;
+  onLogEvent(ev: Extract<TraceEvent, { kind: 'log' }>): void;
   /**
    * @since P3 [S13] Open a via-'vty' session for the vty daemon's connection `act.conn` on `device` (D14). Called only by
    * the Simulation's `remoteCli` event dispatch. The session's output is delivered to the device's vty daemon as
    * ProcessEvent `vty.output`, never as a `cliOutput` trace event.
    */
-  openRemote?(device: DeviceId, act: RemoteCliAction, now: SimTime): SessionId;
+  openRemote(device: DeviceId, act: RemoteCliAction, now: SimTime): SessionId;
   /** @since P3 [S13] One line received on a remote connection (`remoteCli` op 'line'). */
-  execRemote?(device: DeviceId, act: RemoteCliAction, now: SimTime): void;
+  execRemote(device: DeviceId, act: RemoteCliAction, now: SimTime): void;
   /** @since P3 [S13] The remote connection closed (`remoteCli` op 'close'). */
-  closeRemote?(device: DeviceId, act: RemoteCliAction, now: SimTime): void;
+  closeRemote(device: DeviceId, act: RemoteCliAction, now: SimTime): void;
   /** @since P3 [S13] The vty-client's view of a console session running a remote session (`cliRemote`). */
-  setRemote?(act: CliRemoteAction, now: SimTime): void;
+  setRemote(act: CliRemoteAction, now: SimTime): void;
 }
 
 /** @since P0.5 Options of `CommandCtx.enterMode`. */
@@ -508,16 +508,20 @@ export interface CommandCtx {
   /** @since P1 Hash/verify secrets (`nf1$<16 hex>` = FNV-1a-64 of device-id salt + plain); deterministic. */
   readonly secrets: { hash(plain: string): string; verify(stored: string, plain: string): boolean };
 
-  // ── P3 (ARCHITECTURE-P3 §2.9; optional during the transition, required once implemented) ──
+  // ── P3 (ARCHITECTURE-P3 §2.9; required since the item that implemented each, the rest at the P3a exit gate, W8
+  //    item 45; the members tagged "optional by meaning" keep their `?`, §2.15) ──
   /**
    * @since P3 The device clock (`show clock`, `show ntp status`, the [S24] timestamps render; D19). Required since W1
    * (§0 rule 2, §9.2 item 19).
    */
   clock(): DeviceClockView;
-  /** @since P3 A port's QoS marking counters (display; M13). */
-  qosCounters?(port: PortId): PortSnapshot['qos'];
-  /** @since P3 [S20] The held queues of a scheduler port (`show policy-map interface`). */
-  egressQueues?(port: PortId): EgressQueueView | undefined;
+  /** @since P3 A port's QoS marking counters (display; M13). Required since the P3a exit gate (W8). */
+  qosCounters(port: PortId): PortSnapshot['qos'];
+  /**
+   * @since P3 [S20] The held queues of a scheduler port (`show policy-map interface`). Required since the P3a exit gate
+   * (W8).
+   */
+  egressQueues(port: PortId): EgressQueueView | undefined;
   /**
    * @since P3 (W2 fix, verified finding 8; a minimal additive contract member, optional by meaning) The world's defaults
    * profile (`DeviceRuntime.profile`), so a show handler can print a profile default (proxy ARP is off in a P1 world).
@@ -531,7 +535,9 @@ export interface CommandCtx {
    * file of it (hosts only; empty elsewhere). cli/command-ctx-p3.ts `ctxP3` reads the same members.
    */
   setMonitor?(on: boolean): void;
+  /** @since P3 (optional by meaning, like `setMonitor`; ruling R23) [S32] The files of the device's `files:` store. */
   files?(fs: FileSystemId): readonly StoredFileMeta[];
+  /** @since P3 (optional by meaning, like `setMonitor`; ruling R23) [S32] One file of the device's `files:` store. */
   readFile?(fs: FileSystemId, path: string): StoredFile | undefined;
 }
 

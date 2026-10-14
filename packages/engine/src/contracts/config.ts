@@ -68,6 +68,9 @@ export interface ConfigAst {
    *   (2) the `no` form of a rule with `negationRestoresDefault` (only `spanning-tree mode`) stores the default line of
    *       that slot, or clears the slot when the slot is not a default slot.
    * Without `defaults` the behaviour is exactly `set`/`unset` today. Implemented by W1 cli (required since then).
+   * @since P3 (optional by meaning) `opts.seq`: the access-list entry's sequence number (D12, §2.11) for a line of a
+   * sequenced rule that gives none itself (a leading number typed in a list section wins); absent = an unsequenced
+   * line, which takes the list's highest + 10 (`ConfigNode.seq`), and every P2 apply is unchanged.
    */
   apply(context: readonly (readonly string[])[], line: readonly string[], negate: boolean, opts?: { defaults?: DefaultSlots; seq?: number }): ConfigDelta | undefined;
 }

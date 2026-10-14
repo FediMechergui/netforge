@@ -4,7 +4,7 @@
  *
  * Wire image: the data stream with its IAC (0xff) commands. The layer covers every byte the transport hands down.
  *  • `data` — the text carried (UTF-8), with the commands removed and a doubled IAC (0xff 0xff) read as one 0xff byte.
- *  • `iac` — the commands, joined by ';', in wire order: 'WILL ECHO', 'DO SUPPRESS-GO-AHEAD', 'WONT 99', 'GA',
+ *  • `iac` — the commands, joined by ';', in wire order: 'WILL ECHO', 'DO SUPPRESS-GO-AHEAD', 'WONT 99', 'GA', 'EOR',
  *    'SB TERMINAL-TYPE 0158' (a subnegotiation: the option, then its data in hex). Option names are the RFC names;
  *    an unnamed option is its number.
  *  • Encode writes the commands first, then the data (a 0xff data byte, impossible in UTF-8 text, is never produced).
@@ -19,8 +19,9 @@ const SE = 240;
 const SB = 250;
 /** Commands that take an option byte. */
 const OPTION_COMMANDS: Readonly<Record<number, string>> = Object.freeze({ 251: 'WILL', 252: 'WONT', 253: 'DO', 254: 'DONT' });
-/** Two-byte commands. */
+/** Two-byte commands (EOR, RFC 885: the vty server closes output that ends mid-line with it, ruling R63 (b)). */
 const SIMPLE_COMMANDS: Readonly<Record<number, string>> = Object.freeze({
+  239: 'EOR',
   241: 'NOP',
   242: 'DM',
   243: 'BRK',

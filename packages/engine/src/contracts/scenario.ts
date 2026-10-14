@@ -84,9 +84,14 @@ export type LabFault =
   /** @since P3 A configuration fault: `lines` applied to `device` through `configure` in the clone. */
   | { config: { device: string; lines: readonly string[] } };
 
-/** @since P3 (optional by meaning) On every assertion (spec §12.4): shown when the assertion fails. */
+/** @since P3 (optional by meaning) On every assertion (spec §12.4). */
 export interface LabAssertionNotes {
+  /** @since P3 (optional by meaning) Shown when the assertion fails. */
   feedback?: string;
+  /**
+   * @since P3 (optional by meaning) The analytics tag of a failing assertion: `LabCheckResult.misconception` carries
+   * the one of the task's first failing assertion that has one (ruling R18). Never shown to the learner.
+   */
   misconception?: string;
 }
 
@@ -442,12 +447,6 @@ export interface ScenarioInfo extends ScenarioMeta {
   faults?: readonly { at: SimTime; fault: FaultSpec }[];
   /** Reference solution: per device name, commands for `Simulation.configure` (labs.solutions test). */
   solution?: Readonly<Record<string, readonly string[]>>;
-  /**
-   * Deterministic escape hatch for checks the declarative assertions cannot express.
-   * @deprecated since P3 W0 (ARCHITECTURE-P3 D6): no lab or task uses it and the grader does not run it; removed at the
-   * P3a exit gate (W8).
-   */
-  customChecks?: readonly { id: string; evaluate(sim: Simulation): { pass: boolean; detail?: string } }[];
 }
 
 /**
@@ -456,9 +455,9 @@ export interface ScenarioInfo extends ScenarioMeta {
  */
 export type EvaluateLab = (sim: Simulation, lab: ScenarioInfo) => LabStatus;
 
-/** Strip engine-only members (build, faults, solution, customChecks, assertions) for the UI. */
+/** Strip engine-only members (build, faults, solution, assertions) for the UI. */
 export function scenarioMeta(s: ScenarioInfo): ScenarioMeta {
-  const { build: _build, faults: _faults, solution: _solution, customChecks: _checks, tasks, ...meta } = s;
+  const { build: _build, faults: _faults, solution: _solution, tasks, ...meta } = s;
   if (tasks === undefined) return meta;
   return { ...meta, tasks: tasks.map(({ assertions: _assertions, feedbackOnFail: _feedback, ...t }) => t) };
 }

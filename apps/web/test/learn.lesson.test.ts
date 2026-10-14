@@ -258,6 +258,8 @@ describe('moving between lessons', () => {
       { id: 'm1', title: 'One', summary: '', lessons: [lesson({ id: 'a', title: 'Lesson A' }), lesson({ id: 'b', title: 'Lesson B' })] },
       { id: 'm2', title: 'Two', summary: '', lessons: [lesson({ id: 'c', title: 'Lesson C' })] },
     ],
+    // ARCHITECTURE-P3 W8 item 45: `Course.profile` is required (the fixture is not in the catalogue, so nothing reads it)
+    profile: 'P1' as const,
   };
 
   it('walks the lessons of a course across module boundaries', () => {

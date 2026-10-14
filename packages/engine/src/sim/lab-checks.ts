@@ -57,7 +57,7 @@
  * changes no LabStatus. `labCloneMemoStats(sim)` reports the builds and hits (tests).
  *
  * ponytail: clones are built lazily and kept for the whole `evaluateLab` call (a lab rarely has more than two fault
- * sets). `ScenarioInfo.customChecks` is not run here: no LabTask references one and LabStatus has nowhere to report it.
+ * sets).
  */
 import type { ConfigureOptions } from '../contracts/cli.js';
 import type { FaultSpec } from '../contracts/events.js';

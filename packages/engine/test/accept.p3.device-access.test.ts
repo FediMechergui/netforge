@@ -229,7 +229,7 @@ describe('accept.p3.device-access: username … privilege 15 with login local, a
       const ask = typed(sim, pc1, `ssh -l admin ${d.address}`, 1 * SEC);
       expect(ask.prompt, d.name).toMatchObject({ prompt: VTY_PROMPT_PASSWORD, input: { kind: 'secret' } });
       const t = typed(sim, pc1, ADMIN_PASSWORD, 5 * SEC);
-      expect(t.text).toEqual([`Connecting to ${d.address} port 22 ...`]);
+      expect(t.text).toEqual([`Connecting to ${d.address} port 22 ...\n`]);
       expect(t.prompt, d.name).toMatchObject({ prompt: `${d.hostname}#`, busy: false });
       expect(sim.cli.session(pc1)).toMatchObject({ prompt: `${d.hostname}#`, remote: `${d.hostname} via SSH` });
       const remote = sim.cli.sessions().filter((v) => v.via === 'vty' && v.device === d.id);
@@ -240,7 +240,7 @@ describe('accept.p3.device-access: username … privilege 15 with login local, a
       const pc2 = sim.cli.open('pc2', 'console');
       typed(sim, pc2, `ssh -l admin ${d.address}`, 1 * SEC);
       const refused = typed(sim, pc2, ADMIN_PASSWORD, 5 * SEC);
-      expect(refused.text, d.name).toEqual([`Connecting to ${d.address} port 22 ...`, `% Connection refused by ${d.address}`]);
+      expect(refused.text, d.name).toEqual([`Connecting to ${d.address} port 22 ...\n`, `% Connection refused by ${d.address}\n`]);
       expect(refused.prompt).toMatchObject({ prompt: 'PC2>', busy: false });
       sim.cli.close(pc2);
       expect(logins(sim, d.id).map((r) => [r.proto, r.peer, r.user, r.result, r.reason])).toEqual([

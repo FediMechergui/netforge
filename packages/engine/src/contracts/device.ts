@@ -351,8 +351,9 @@ export interface DeviceRuntime {
   /** @since P2 Fault path (`err-disable` fault, lab-check clone): the same effects as an `errDisable` action. */
   errDisablePort(port: PortId, cause: ErrDisableCause, now: SimTime): void;
 
-  // ── P3 (ARCHITECTURE-P3 §2.9; optional during the transition, required in the item that implements them — hand-built
-  //    typed fakes spread `P3_DEVICE` from test/port.fixtures.ts). No DeviceRuntimeDeps member is added (D14, D21).
+  // ── P3 (ARCHITECTURE-P3 §2.9; each required since the item that implemented it — hand-built typed fakes spread
+  //    `P3_DEVICE` from test/port.fixtures.ts — except the members tagged optional by meaning, which keep their `?`
+  //    after the P3a exit gate, §2.15). No DeviceRuntimeDeps member is added (D14, D21).
   //    Required since W1 device: `clockView`, `setClock`, [S24] `emitLog`; since W3 device: `qosCounters` and [S20]
   //    `egressPolicy` (§0 rule 2, §2.15, §9.2 item 19). ──
   /** @since P3 The device clock at `now` (D19). Required since W1 device. */
@@ -382,6 +383,7 @@ export interface DeviceRuntime {
    * CLI's command context.
    */
   files?(fs: FileSystemId): readonly StoredFileMeta[];
+  /** @since P3 [S32] (optional by meaning, like `files`; ruling R23) One file of the device's `files:` store. */
   readFile?(fs: FileSystemId, path: string): StoredFile | undefined;
   /**
    * @since P3 [S25] (ruling R47; W5 integration, a minimal additive member, optional by meaning like `files?`) The CLI

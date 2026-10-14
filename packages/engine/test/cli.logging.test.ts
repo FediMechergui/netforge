@@ -4,7 +4,8 @@
  * (levels as keywords, timestamp options in order), the console path of cli/log-render.ts over the logger's one
  * renderer (D20), and which sessions print a log: P3 consoles by default, P1/P2 consoles only after a typed `logging
  * console`, `terminal monitor` sessions up to `logging monitor`; never a `cliOutput` in a P2 world without the line
- * (P1/P2 transcripts keep their bytes); debug lines stamped by `service timestamps debug`, P1's line without it.
+ * (P1/P2 transcripts keep their bytes); debug lines stamped by `service timestamps debug`, P1's line without it. A
+ * printed log line and a stamped debug line end with `\n` (ruling R63 (a)); P1's debug line keeps its bytes (R63 (d)).
  */
 import { describe, expect, it } from 'vitest';
 import type { DeviceClockView } from '../src/contracts/clock.js';
@@ -167,8 +168,8 @@ describe('cli.logging: onLogEvent and terminal monitor through the runtime', () 
     h.cli.onLogEvent(logEvent(3, 'UPDOWN'));
     const line = 'Jan  6 08:10:03.123: %LINK-3-UPDOWN: Interface GigabitEthernet0/2 changed state to down';
     expect(h.trace.of('cliOutput')).toEqual([
-      { t: 400 * SEC, kind: 'cliOutput', session: con, text: line },
-      { t: 400 * SEC, kind: 'cliOutput', session: vty, text: line },
+      { t: 400 * SEC, kind: 'cliOutput', session: con, text: `${line}\n` },
+      { t: 400 * SEC, kind: 'cliOutput', session: vty, text: `${line}\n` },
     ]);
     // levels: the console up to errors, the monitor up to critical
     d.running.set([], ['logging', 'console', 'errors']);
@@ -194,7 +195,7 @@ describe('cli.logging: onLogEvent and terminal monitor through the runtime', () 
     d.running.set([], ['logging', 'console']);
     h.cli.onLogEvent(logEvent(3));
     expect(h.trace.of('cliOutput')).toEqual([
-      { t: 400 * SEC, kind: 'cliOutput', session: con, text: '*00:06:40.000000: %LINK-3: Interface GigabitEthernet0/2 changed state to down' },
+      { t: 400 * SEC, kind: 'cliOutput', session: con, text: '*00:06:40.000000: %LINK-3: Interface GigabitEthernet0/2 changed state to down\n' },
     ]);
   });
 
@@ -213,6 +214,6 @@ describe('cli.logging: onLogEvent and terminal monitor through the runtime', () 
     d.running.set([], ['service', 'timestamps', 'log', 'uptime']); // the log form does not stamp debug lines
     h.trace.clear();
     h.cli.onDebugEvent(dbg);
-    expect(h.trace.of('cliOutput').map((e) => e.text)).toEqual(['Jan  6 08:10:03.123: ip icmp: echo reply sent']);
+    expect(h.trace.of('cliOutput').map((e) => e.text)).toEqual(['Jan  6 08:10:03.123: ip icmp: echo reply sent\n']);
   });
 });

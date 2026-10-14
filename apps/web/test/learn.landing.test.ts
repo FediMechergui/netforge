@@ -46,6 +46,8 @@ const FIXTURE: Course = {
     },
     { id: 'm2', title: 'Second module', summary: 'The second run.', lessons: [lesson('c', { lab: 'ccna1-switched-lan', estimatedMinutes: 20 })] },
   ],
+  // ARCHITECTURE-P3 W8 item 45: `Course.profile` is required (the fixture is not in the catalogue, so nothing reads it)
+  profile: 'P1',
 };
 
 const CCNA1 = courseById('ccna1') as Course;

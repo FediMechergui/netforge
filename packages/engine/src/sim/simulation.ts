@@ -489,6 +489,12 @@ export function createSimulation(opts: SimulationOptions): Simulation {
     onDebugEvent: (ev) => cliCore.onDebugEvent(ev),
     // [S25] the trace sink's log branch (above) reaches the CLI core through this member
     onLogEvent: (ev) => cliCore.onLogEvent(ev),
+    // [S13] (D14; contract members required since the W8 exit gate): the CLI core's remote-session methods, never
+    // journaled; the `remoteCli` dispatch itself calls the core directly (`remoteCliEnv` below)
+    openRemote: (device, act, now) => cliCore.openRemote(device, act, now),
+    execRemote: (device, act, now) => cliCore.execRemote(device, act, now),
+    closeRemote: (device, act, now) => cliCore.closeRemote(device, act, now),
+    setRemote: (act, now) => cliCore.setRemote(act, now),
     open: (device, via) =>
       apply({ op: 'cliOpen', device, via }, () => cliCore.open(device, via)),
     close: (id) => apply({ op: 'cliClose', session: id }, () => cliCore.close(id)),

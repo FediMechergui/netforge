@@ -23,10 +23,11 @@
  * What NetForge does not model is said plainly where a learner could notice it (§11.3, §12.2 R2): remote-access VPNs,
  * AH, IKEv1 and crypto maps (23, 25); no fragmentation and no GRE keepalives (24); the one fixed IPsec proposal and the
  * simulated cryptography under its banner (25, D27); FIFO on slow serial lines and the sandbox's WFQ (26); switch QoS
- * and the queueing-policy limits (27); CDP's own format, Ethernet-only discovery and the profile of older projects
- * (28, D2, D18); clocks that reset at reload, the stepped clock and the admin-down log's severity (29, D19, R2 (13));
- * SNMP, flow export and SPAN (30); file systems, TFTP and the ROM monitor (31); power budgets (32); the OSPF timings
- * of a point-to-point link and the serial cost (34); hypervisors and clouds (35); controllers (36).
+ * and the queueing-policy limits, and the traffic generator's discard sink on UDP 9 (27, R2 (15), ruling R62 (e));
+ * CDP's own format, Ethernet-only discovery and the profile of older projects (28, D2, D18); clocks that reset at
+ * reload, the stepped clock and the admin-down log's severity (29, D19, R2 (13)); SNMP, flow export and SPAN (30); file
+ * systems, TFTP and the ROM monitor (31); power budgets (32); the OSPF timings of a point-to-point link and the serial
+ * cost (34); hypervisors and clouds (35); controllers (36).
  *
  * ponytail: the same `md(...)` join as the CCNA 1 and 2 files, so a line of markdown is a line of source and a
  * backtick never needs escaping.
@@ -271,6 +272,7 @@ export const CCNA3_THEORY_C: LessonTheoryMap = {
     '- Marking alone protects nothing: in a FIFO queue an EF packet still waits behind every data packet. Queue where the queue forms, outbound on the slow interface.',
     '- The clock rate sets a serial line\'s speed, but the router plans with its bandwidth line, assuming 1544 kb/s without one.',
     '- NetForge attaches policies only to routed interfaces and subinterfaces (switch ports neither trust nor re-mark), queuing only outbound on physical ports; the priority queue may burst for 200 ms, and class queues take turns by deficit round robin.',
+    '- Generated flows go to UDP port 9 unless you name another port, and a host that runs the traffic generator quietly counts a generated packet that reaches a port nothing listens on, where a real host would answer with a port-unreachable message.',
     '',
     '## See it in NetForge',
     '',

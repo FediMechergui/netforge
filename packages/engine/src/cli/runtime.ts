@@ -87,7 +87,8 @@
  *   • [S25] `onLogEvent` prints a log line (the logger's renderer, through cli/log-render.ts) on the device's console
  *     sessions up to `consoleLogLevel` (P3 worlds by default, P1/P2 only after a typed `logging console`) and on its
  *     sessions with `terminal monitor` up to `monitorLogLevel`; `CliSessionView.monitor` shows the flag. [S24] A stored
- *     `service timestamps debug …` stamps debug lines the same way (absent: P1's line, byte for byte).
+ *     `service timestamps debug …` stamps debug lines the same way (absent: P1's line, byte for byte). Both are whole
+ *     lines, `\n` ended (ruling R63 (a): a busy session prints output as it comes); P1's debug line keeps its bytes.
  *   • [S32] the command context also carries the host's `files:` store (`files` / `readFile`, cli/command-ctx-p3.ts).
  *
  * Deterministic: no wall clock, no randomness; sessions are kept in Maps in open order and every iteration is
@@ -947,10 +948,12 @@ export function createCliRuntime(deps: CliRuntimeDepsP3, handlers?: Record<strin
       clock: () => dev.clockView(now),
       // P3 (W2 fix, finding 8): the world's defaults profile, for the show handlers' profile defaults
       profile: dev.profile,
-      // P3 (§2.9, M13; W2 cli): a port's QoS marking counters for `show policy-map interface`, when the runtime has them
-      ...(dev.qosCounters !== undefined ? { qosCounters: (port: PortId) => dev.qosCounters?.(port) } : {}),
-      // P3 [S20] (ruling R32): the held queues of a scheduler port, from the link model, when the Simulation supplies them
-      ...(deps.egressQueues !== undefined ? { egressQueues: (port: PortId) => deps.egressQueues?.({ device: dev.id, port }) } : {}),
+      // P3 (§2.9, M13; W2 cli; required since the W8 exit gate): a port's QoS marking counters for `show policy-map
+      // interface` (undefined without a policy, or on a hand-built runtime without them)
+      qosCounters: (port: PortId) => dev.qosCounters?.(port),
+      // P3 [S20] (ruling R32; required since the W8 exit gate): the held queues of a scheduler port, from the link
+      // model; undefined when the Simulation does not supply them (`CliRuntimeDeps.egressQueues` is optional by meaning)
+      egressQueues: (port: PortId) => deps.egressQueues?.({ device: dev.id, port }),
       // ── P3 approved items (cli/command-ctx-p3.ts) ──
       // [S25] `terminal monitor` / `terminal no monitor`
       setMonitor: (on) => {
@@ -1570,11 +1573,11 @@ export function createCliRuntime(deps: CliRuntimeDepsP3, handlers?: Record<strin
       if (set === undefined || set.size === 0) return;
       if (!set.has(ev.category) && !set.has('all')) return;
       let text = `*${formatSimTime(ev.at)}: ${ev.category}: ${ev.message}`;
-      // ── P3 [S24] (D20): a stored `service timestamps debug …` stamps the line through the logger's renderer; without
-      // the line (every P1/P2 world) the P1 line above is printed unchanged ──
+      // ── P3 [S24] (D20): a stored `service timestamps debug …` stamps the line through the logger's renderer, as a
+      // whole line (ruling R63 (a)); without the line (every P1/P2 world) the P1 line above is printed unchanged (R63 (d)) ──
       const dev = deps.device(ev.device);
       const fmt = dev === undefined ? undefined : storedTimestampFormat(dev.running.root, 'debug');
-      if (dev !== undefined && fmt !== undefined) text = renderDebugLine(ev, dev.clockView(ev.at), dev.uptime(ev.at), fmt);
+      if (dev !== undefined && fmt !== undefined) text = `${renderDebugLine(ev, dev.clockView(ev.at), dev.uptime(ev.at), fmt)}\n`;
       for (const s of sessions.values()) {
         if (s.device === ev.device) emitOutput(s, text, ev.at);
       }
@@ -1739,7 +1742,8 @@ export function createCliRuntime(deps: CliRuntimeDepsP3, handlers?: Record<strin
         else if (s.monitor === true) level = monitorLevel ??= monitorLogLevel(dev.running.root);
         else continue;
         if (ev.severity > level) continue;
-        line ??= renderLogLine(ev, dev.clockView(ev.t), dev.uptime(ev.t), storedTimestampFormat(dev.running.root, 'log'));
+        // a whole line (ruling R63 (a)): a busy session prints it as it comes, so the next output starts below it
+        line ??= `${renderLogLine(ev, dev.clockView(ev.t), dev.uptime(ev.t), storedTimestampFormat(dev.running.root, 'log'))}\n`;
         emitOutput(s, line, ev.t);
       }
     },

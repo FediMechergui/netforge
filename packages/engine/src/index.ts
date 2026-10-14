@@ -18,10 +18,21 @@
  * contract exports (`DefaultSlots`, `schemaIdFor`, …): two `export *` lines that export different declarations under
  * one name do not compile.
  *
- * P3a (docs/ARCHITECTURE-P3.md §0 rule 1): this file stays architect-owned and append-only. Wave 0 adds no line here:
- * the P3 contracts (including the new contracts/clock.ts, contracts/storage.ts [S32] and contracts/lab-document.ts
- * [S37]) are exported through contracts/index.js. Each later wave item adds only its own `export * from …` lines, in
- * the change that creates those files; the architect reconciles the file at the exit gate.
+ * P3a (docs/ARCHITECTURE-P3.md §0 rule 1): this file stays architect-owned; each wave item added only its own
+ * `export * from …` lines, and the W8 exit gate reconciled it. Every public P3 module is exported exactly once: the P3
+ * contracts (including contracts/clock.ts, contracts/storage.ts [S32] and contracts/lab-document.ts [S37]) through
+ * contracts/index.js; each P3 codec, daemon and daemon helper by its own line; the P3 CLI grammar through
+ * cli/grammar.js (the approved items' fragments through `GRAMMAR_FRAGMENTS` and `HANDLERS`); the CCNA 3 labs through
+ * sim/scenarios.js (`CCNA3_LABS`, `SCENARIOS`); the CCNA 3 course through curriculum/index.js (`COURSES`); the grader
+ * through sim/lab-checks.js and the headless grading of a lab document through sim/grade.js. The gate added the six
+ * lines the waves had left out, each module already evaluated by an earlier line, so the evaluation order is unchanged:
+ * `protocols/restconf.js` (the MUST daemon), `link/control-frame.js` (the QoS control-frame rule, ruling R33),
+ * `automation/py/compiler.js`, `automation/py/vm.js` and `automation/py/lib.js` (the [S32] NF-Py machine the script
+ * host drives) and `cli/log-render.js` ([S24]/[S25] console log lines). Internal, as in P2: per-lab files
+ * (`sim/scenarios/ccna3/<area>.ts`), lesson data (`curriculum/ccna3/*`, its `CourseObjective` types included, ruling
+ * R61 (b)), command handlers and their `CommandCtx` view (`cli/command-ctx-p3.ts`), the grader's checker registry and
+ * area adapters (`sim/lab-checks/<area>.ts`, reached through `evaluateLab`) and the per-protocol display-field tables
+ * (`capture/filter/fields/<proto>.ts`, reached through `PROTO_FIELDS`); nothing test-only is exported.
  */
 export * from './contracts/index.js';
 export { DEFAULT_METRES_PER_UNIT } from './contracts/topology.js';
@@ -138,6 +149,8 @@ export * from './link/rf/log.js';
 export * from './link/rf/mcs.js';
 export * from './link/rf/pathloss.js';
 export * from './link/serial.js';
+// link — P3 W3 fix step (ruling R33): what counts as control traffic for QoS (reconciled at W8)
+export * from './link/control-frame.js';
 
 // protocols
 export * from './protocols/index.js';
@@ -230,6 +243,8 @@ export * from './protocols/syslog-server.js';
 // protocols — P3 W3 svc [S13]: the remote terminal server and client (telnet, simulated SSH)
 export * from './protocols/vty.js';
 export * from './protocols/vty-client.js';
+// protocols — P3 W2 http (ARCHITECTURE-P3 D21): the RESTCONF device API daemon (reconciled at W8)
+export * from './protocols/restconf.js';
 
 // cli
 export * from './cli/runtime.js';
@@ -242,6 +257,8 @@ export * from './cli/handlers/index.js';
 export * from './cli/modes.js';
 export * from './cli/parser.js';
 export * from './cli/scope.js';
+// cli — P3 W2 cli [S24]/[S25] (ARCHITECTURE-P3 D20): the console's log and debug lines (reconciled at W8)
+export * from './cli/log-render.js';
 
 // trace
 export * from './trace/filter.js';
@@ -299,6 +316,10 @@ export * from './automation/yang/path.js';
 export * from './automation/yang/model.js';
 export * from './automation/py/lexer.js';
 export * from './automation/py/parser.js';
+// automation — P3 W2 auto [S32] (ARCHITECTURE-P3 D21, §4.1): the NF-Py compiler, machine and library (reconciled at W8)
+export * from './automation/py/compiler.js';
+export * from './automation/py/vm.js';
+export * from './automation/py/lib.js';
 
 // qos — P3 W2 qos (ARCHITECTURE-P3 D16): the MQC reader, the classifier, the marking plan; [S20]/[S21] the port scheduler
 export * from './qos/config.js';
