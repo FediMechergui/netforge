@@ -2306,6 +2306,13 @@ did not match the code. The ruling accepts each fix it made:
   W1a 8.1–10.0 s. The figure is re-measured on an idle machine before the W4b flip (bench/README).
   `worker.time-machine` timed out once at 5 s under that load and passes alone.
 
+**Q10 settled (2026-10-16).** The product owner approved and signed `docs/P3C-LEGAL-REVIEW.md` (L1–L7) as recommended:
+- `sysObjectID` keeps 32473 until NetForge has its own IANA enterprise number. The product owner requests it, and the
+  change is one constant.
+- No "Ansible" appears in learner-visible text; the D23 "Ansible-style" allowance does not apply to P3c content.
+- Every new `show` layout and message is checked against rule 6 in its wave's review.
+- The W7 exit gate checks both.
+
 **W1b**
 
 11. `pdu.codecs.p3.test.ts:406-415`: the reserved list becomes exactly `ftp`, `smtp`, `pop3`, `imap` (tftp and snmp
