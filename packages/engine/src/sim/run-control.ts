@@ -31,23 +31,71 @@
  * input journal records it, and a replay reaches a position exactly with `runUntil(now, {maxEvents})`. Counting never
  * changes which event leaves the heap or when.
  *
+ * P3c [S39] (ARCHITECTURE-P3C §3.10, D11): the quiet settle. `runToIdle(maxEvents, {quiet: {windowNs}})` first runs
+ * EXACTLY today's `runToIdle` up to the smaller cap `min(maxEvents, LAB_CLONE_IDLE_FIRST_EVENTS)`, so every world that
+ * idles inside it dispatches the same events and returns the same stats as without the option. Only a world still busy
+ * at that cap switches to the quiet rule: it runs on, and stops with `stopped: 'quiet'` once a window of `windowNs`
+ * simulated time passes with no lab-relevant trace event (`QUIET_RELEVANT_KINDS`: configChange, tableWrite, portState,
+ * assocState) and no non-periodic event other than frame and link events (`isQuietNeutralEvent`: no one-shot timer,
+ * boot, fault, command, configure or move) dispatched in it or due before its end. Such an event that keeps being
+ * re-armed and never comes due (P2 item 22c: the root bridge's topology-change timer, restarted by every notice of a
+ * wrong EtherChannel answer) therefore does not hold the window open; one due inside the window (an OSPF wait timer, an
+ * NTP retry) does, and its dispatch restarts the window. Reaching idle still returns plainly, and `maxEvents` stays the
+ * backstop (`stopped: 'maxEvents'`). The tracked scheduler keeps the due times of the pending "other" events for this
+ * (`earliestOtherAt`).
+ *
  * Determinism: events leave the scheduler strictly by `(at, seq)`; the wrapper's bookkeeping Map is used for
- * membership and lookup only and is never iterated. The run loop draws no randomness and reads no clock.
+ * membership and lookup only and is never iterated (the [S39] `others` map is read only for its minimum). The run
+ * loop draws no randomness and reads no clock.
  */
 import type { Scheduler, SimEvent, SimEventBody } from '../contracts/events.js';
-import type { RunOptions, RunStats, TraceFilter, TraceQuery, TraceQueryResult } from '../contracts/simulation.js';
+import type { RunOptions, RunStats, RunToIdleOptions, TraceFilter, TraceQuery, TraceQueryResult } from '../contracts/simulation.js';
 import { assertSimTime, type SimTime } from '../contracts/time.js';
-import type { TraceEvent } from '../contracts/trace.js';
+import type { TraceEvent, TraceKind } from '../contracts/trace.js';
 import { createScheduler } from '../core/scheduler.js';
 import { matchesTraceFilter } from '../trace/filter.js';
 
 /** Default event cap of `stepToNext` when `opts.maxEvents` is omitted (contracts/simulation.ts). */
 export const DEFAULT_STEP_MAX_EVENTS = 100_000;
 
+/**
+ * @since P3c [S39] The idle-first cap of the quiet settle (file header; ARCHITECTURE-P3C §3.10): `runToIdle` with
+ * `opts.quiet` runs today's loop for at most this many events before the quiet rule may stop it. Chosen above every
+ * grader settle of the lab worlds of `lab-status.p2` and `lab-status.p3`, which therefore idle inside it with their
+ * statuses byte-identical (`accept.p3c.quiet-settle`).
+ */
+export const LAB_CLONE_IDLE_FIRST_EVENTS = 50_000;
+
+/** @since P3c [S39] The trace kinds that are lab-relevant progress: one of them restarts the quiet window. */
+export const QUIET_RELEVANT_KINDS: readonly TraceKind[] = Object.freeze(['configChange', 'tableWrite', 'portState', 'assocState'] as const);
+
+/**
+ * @since P3c [S39] True when a pending non-periodic event does NOT hold the quiet window open: frame and link events
+ * (`frameArrival`, `txComplete`, `linkState`, the medium's `mediumTimer`). A one-shot timer, a boot, a fault, a command,
+ * a configure or a move does.
+ */
+export function isQuietNeutralEvent(body: SimEventBody): boolean {
+  switch (body.kind) {
+    case 'frameArrival':
+    case 'txComplete':
+    case 'linkState':
+    case 'mediumTimer':
+      return true;
+    default:
+      return false;
+  }
+}
+
 /** A scheduler that also counts its live non-periodic events and the events it has handed out. */
 export interface TrackedScheduler extends Scheduler {
   /** Pending events that are NOT periodic maintenance timers. */
   readonly nonPeriodic: number;
+  /**
+   * @since P3c [S39] The due time of the earliest pending non-periodic event that is not a frame or link event
+   * (`isQuietNeutralEvent`): a one-shot timer, a boot, a fault, a command, a configure or a move. Undefined when none is
+   * pending. Read by the quiet settle only.
+   */
+  earliestOtherAt(): SimTime | undefined;
   /**
    * @since P2 Events popped by `next()` since this scheduler was built (cancelled events never count). The
    * `JournalPosition.dispatched` of the world that owns it (ARCHITECTURE-P2 §2.13).
@@ -65,13 +113,21 @@ export function createTrackedScheduler(): TrackedScheduler {
   const inner = createScheduler();
   /** seq → whether the event is periodic. Membership and lookup only; never iterated. */
   const live = new Map<number, boolean>();
+  /**
+   * [S39] seq → due time of each pending "other" event (non-periodic, not `isQuietNeutralEvent`). Iterated only by
+   * `earliestOtherAt`, whose minimum does not depend on the iteration order.
+   */
+  const others = new Map<number, SimTime>();
   let nonPeriodic = 0;
   let dispatched = 0;
   const forget = (seq: number): void => {
     const periodic = live.get(seq);
     if (periodic === undefined) return;
     live.delete(seq);
-    if (!periodic) nonPeriodic--;
+    if (!periodic) {
+      nonPeriodic--;
+      others.delete(seq);
+    }
   };
   return {
     get now(): SimTime {
@@ -86,11 +142,19 @@ export function createTrackedScheduler(): TrackedScheduler {
     get dispatched(): number {
       return dispatched;
     },
+    earliestOtherAt(): SimTime | undefined {
+      let min: SimTime | undefined;
+      for (const at of others.values()) if (min === undefined || at < min) min = at;
+      return min;
+    },
     schedule(at: SimTime, body: SimEventBody): number {
       const seq = inner.schedule(at, body);
       const periodic = isPeriodicEvent(body);
       live.set(seq, periodic);
-      if (!periodic) nonPeriodic++;
+      if (!periodic) {
+        nonPeriodic++;
+        if (!isQuietNeutralEvent(body)) others.set(seq, at);
+      }
       return seq;
     },
     cancel(seq: number): boolean {
@@ -153,6 +217,14 @@ export interface StepToNextOptions {
   until?: SimTime;
 }
 
+/**
+ * @since P3c [S39] `RunToIdleOptions` plus the idle-first cap, which only tests of the run loop override (the
+ * Simulation facade passes the contract options, so its cap is always LAB_CLONE_IDLE_FIRST_EVENTS).
+ */
+export interface QuietRunToIdleOptions extends RunToIdleOptions {
+  readonly idleFirstEvents?: number;
+}
+
 /** The run-control surface the Simulation facade exposes. */
 export interface RunControl {
   /** Pop and dispatch exactly one event; undefined when the queue is empty. */
@@ -166,8 +238,12 @@ export interface RunControl {
   runUntil(t: SimTime, opts?: RunOptions): RunStats;
   /** `runUntil(now + dt, opts)`; `dt` must be an integer >= 0. */
   runFor(dt: SimTime, opts?: RunOptions): RunStats;
-  /** Dispatch until only periodic timers remain, the queue is empty, or `maxEvents` events were dispatched. */
-  runToIdle(maxEvents: number): RunStats;
+  /**
+   * Dispatch until only periodic timers remain, the queue is empty, or `maxEvents` events were dispatched. With
+   * `opts.quiet` (P3c [S39]): the quiet settle of the file header, after at most `opts.idleFirstEvents` (default
+   * LAB_CLONE_IDLE_FIRST_EVENTS) events of today's loop.
+   */
+  runToIdle(maxEvents: number, opts?: QuietRunToIdleOptions): RunStats;
   /** Time of the next pending event. */
   nextEventTime(): SimTime | undefined;
   /**
@@ -266,6 +342,56 @@ export function createRunControl(host: RunLoopHost): RunControl {
     return loop({ until: t, filter: opts?.stopOn, maxEvents: opts?.maxEvents });
   };
 
+  /** Today's `runToIdle` loop. */
+  const idleLoop = (maxEvents: number): RunStats => {
+    const from = host.scheduler().now;
+    let events = 0;
+    while (events < maxEvents && host.scheduler().nonPeriodic > 0) {
+      if (step() === undefined) break;
+      events++;
+    }
+    // P3 (ruling R40, R31's engine half): the cap stopped the run only when non-periodic work is still pending after
+    // `maxEvents` dispatches; a run that reached idle on exactly its last allowed event is not capped. Not traced.
+    if (events >= maxEvents && host.scheduler().nonPeriodic > 0) return { events, from, to: host.scheduler().now, stopped: 'maxEvents' };
+    return { events, from, to: host.scheduler().now };
+  };
+
+  /**
+   * [S39] Phase 2 of the quiet settle (file header): continue `first` (capped, still busy) until idle, the cap, or a
+   * quiet window. The window restarts at every dispatch that emitted a lab-relevant trace event and at every dispatch of
+   * an "other" event (non-periodic, not a frame or link event: a one-shot timer fired, a boot, a fault, …). It has
+   * passed once the next pending event, and the earliest pending "other" event, both lie more than `windowNs` after its
+   * start. Checked before each dispatch, so the clock never moves past the last dispatched event.
+   */
+  const quietLoop = (first: RunStats, maxEvents: number, windowNs: SimTime): RunStats => {
+    let events = first.events;
+    let relevant = false;
+    const untap = host.tap((ev) => {
+      if (!relevant && QUIET_RELEVANT_KINDS.includes(ev.kind)) relevant = true;
+    });
+    try {
+      let quietSince = host.scheduler().now;
+      for (;;) {
+        const sched = host.scheduler();
+        if (sched.nonPeriodic === 0) return { events, from: first.from, to: sched.now };
+        if (events >= maxEvents) return { events, from: first.from, to: sched.now, stopped: 'maxEvents' };
+        const next = sched.peekTime();
+        if (next === undefined) return { events, from: first.from, to: sched.now };
+        if (next - quietSince > windowNs) {
+          const other = sched.earliestOtherAt();
+          if (other === undefined || other - quietSince > windowNs) return { events, from: first.from, to: sched.now, stopped: 'quiet' };
+        }
+        relevant = false;
+        const ev = step();
+        if (ev === undefined) return { events, from: first.from, to: sched.now };
+        events++;
+        if (relevant || (!isPeriodicEvent(ev) && !isQuietNeutralEvent(ev))) quietSince = host.scheduler().now;
+      }
+    } finally {
+      untap();
+    }
+  };
+
   const traceQuery = (q: TraceQuery): TraceQueryResult => {
     if (!Number.isInteger(q.from)) throw new RangeError(`traceQuery from must be an integer cursor, got ${q.from}`);
     if (!Number.isInteger(q.limit) || q.limit < 0) {
@@ -305,17 +431,16 @@ export function createRunControl(host: RunLoopHost): RunControl {
       assertSimTime(dt, 'runFor(dt)');
       return runUntil(host.scheduler().now + dt, opts);
     },
-    runToIdle(maxEvents: number): RunStats {
-      const from = host.scheduler().now;
-      let events = 0;
-      while (events < maxEvents && host.scheduler().nonPeriodic > 0) {
-        if (step() === undefined) break;
-        events++;
-      }
-      // P3 (ruling R40, R31's engine half): the cap stopped the run only when non-periodic work is still pending after
-      // `maxEvents` dispatches; a run that reached idle on exactly its last allowed event is not capped. Not traced.
-      if (events >= maxEvents && host.scheduler().nonPeriodic > 0) return { events, from, to: host.scheduler().now, stopped: 'maxEvents' };
-      return { events, from, to: host.scheduler().now };
+    runToIdle(maxEvents: number, opts?: QuietRunToIdleOptions): RunStats {
+      const quiet = opts?.quiet;
+      if (quiet === undefined) return idleLoop(maxEvents);
+      assertSimTime(quiet.windowNs, 'runToIdle quiet.windowNs');
+      const firstCap = opts?.idleFirstEvents ?? LAB_CLONE_IDLE_FIRST_EVENTS;
+      checkMaxEvents(firstCap, 'runToIdle idleFirstEvents');
+      // phase 1: exactly today's loop, up to the smaller cap; a world that idles inside it returns today's stats
+      const first = idleLoop(Math.min(maxEvents, firstCap));
+      if (first.stopped === undefined || first.events >= maxEvents) return first;
+      return quietLoop(first, maxEvents, quiet.windowNs);
     },
     nextEventTime: () => host.scheduler().peekTime(),
     stepToNext(filter: TraceFilter, opts?: StepToNextOptions): RunStats {

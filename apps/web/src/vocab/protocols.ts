@@ -130,6 +130,7 @@ export const PROTOCOL_VOCAB: Readonly<Record<KnownProto, ProtocolVocab>> = Objec
   // ── P3c (ARCHITECTURE-P3C §2.3, §9.2 W0 item 1): [S6] OSPFv3; [S29] TFTP and [S33] SNMP leave the reserved vocabulary
   // (the P3a R22 precedent); their codecs arrive in W1a/W1b, until then their traffic decodes as raw data ──
   ospf6: entry('ospf6', 'OSPFv3', 'O6', 'hexagon', 'purple', 'control', 'P3c', 'Link-state routing messages for IPv6 between neighbouring routers.'),
+  'ospf6-lsa': entry('ospf6-lsa', 'OSPFv3 LSA', 'OA', 'hexagon', 'textDim', 'control', 'P3c', 'One entry of the IPv6 link-state map: a router, a network, a prefix or an outside route.'),
   tftp: entry('tftp', 'TFTP', 'TF', 'capsule', 'accent', 'application', 'P3c', 'A simple file transfer, used to back up configurations and copy images.'),
   snmp: entry('snmp', 'SNMP', 'SN', 'capsule', 'yellow', 'application', 'P3c', 'Management requests, answers and alerts between a manager and a device.'),
 });

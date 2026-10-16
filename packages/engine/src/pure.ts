@@ -42,6 +42,15 @@ export type { OspfLsaRow, OspfRouterLink, SpfTree, SpfVertex } from './contracts
 export type { PacketTuple } from './contracts/process.js';
 export type { EgressClassSpec } from './contracts/link.js';
 
+// ── P3c core (ARCHITECTURE-P3C §7 W1a core): IPv6 access lists [S11], the ACL placement advisor and impact preview
+//    [S23], and the longest-prefix match over plain RIB rows for the route-path overlay [S7] ──
+export * from './core/acl6.js';
+export * from './core/acl-placement.js';
+export * from './core/lpm.js';
+export * from './core/lpm6.js';
+export type { PacketTuple6, AnyPacketTuple } from './contracts/process.js';
+export type { LpmResult, Lpm6Result, RouteRow, Route6Row } from './contracts/tables.js';
+
 // ── P3 automation (ARCHITECTURE-P3 §7 W1 auto, [S32]): the data-format parsers, the YANG model and RESTCONF paths,
 //    the NF-Py lexer and parser — for the data-formats playground and the script editor ──
 export * from './automation/data/json.js';

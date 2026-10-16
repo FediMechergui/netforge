@@ -27,7 +27,10 @@
  * Connectivity clones. A clone is `createSimulation({seed: sim.seed, catalog: sim.catalog})` +
  * `loadTopology(sim.exportTopology())` with the live world's RUNTIME L1 state re-applied as faults at t = 0 — every
  * cut cable (`cable-cut`) and every err-disabled port (`err-disable` with the live cause, §3.8 step 7) — then settled
- * with `runToIdle`, which waits for boots, forward delay, TC windows, LACP and HSRP elections (§4.2). A port that
+ * with `runToIdle`, which waits for boots, forward delay, TC windows, LACP and HSRP elections (§4.2) — P3c [S39]: the
+ * quiet settle `runToIdle(LAB_CLONE_BOOT_EVENTS, LAB_CLONE_SETTLE)`, identical for every world that idles within
+ * LAB_CLONE_IDLE_FIRST_EVENTS, and bounded by a QUIET_WINDOW_MS quiet window for one that never idles (P2 item 22c's
+ * EtherChannel wrong answer; ARCHITECTURE-P3C §3.10). A port that
  * does not exist at t = 0 (a virtual port the boot creates) is err-disabled right after that first settle, and the
  * clone settles again. The clone takes the live world's catalog, so a world built on a test catalog is copied
  * faithfully; its journal is off (a clone is never replayed).
@@ -69,6 +72,7 @@ import type { Topology } from '../contracts/topology.js';
 import {
   LAB_AFTER_SETTLE_EVENTS,
   LAB_CLONE_BOOT_EVENTS,
+  LAB_CLONE_SETTLE,
   canonicalJson,
   faultKey,
   pingAddressOf,
@@ -93,7 +97,10 @@ export {
   LAB_PING_TIMEOUT_MS,
   LAB_FLOOD_DROP_REASONS,
   LAB_PROBE_TIMEOUT_MS,
+  LAB_CLONE_SETTLE,
+  QUIET_WINDOW_MS,
 } from './lab-checks/core.js';
+export { LAB_CLONE_IDLE_FIRST_EVENTS } from './run-control.js';
 
 /**
  * @since P3 How a `config` fault's lines run in the clone (§2.10): pasted-configuration semantics (a line's leading
@@ -135,7 +142,7 @@ function settledClone(sim: Simulation, topo: Topology): Simulation {
   // An err-disabled port is runtime state too (P2 §3.8 step 7): re-apply it the same way, with the live cause.
   const disabled = errDisabledPorts(sim);
   for (const [device, port, cause] of disabled) fresh.injectFault(0, errDisableFault(device, port, cause));
-  fresh.runToIdle(LAB_CLONE_BOOT_EVENTS);
+  fresh.runToIdle(LAB_CLONE_BOOT_EVENTS, LAB_CLONE_SETTLE);
   // A port that did not exist at t = 0 (a virtual port the boot creates) is err-disabled now, and the clone settles.
   const late = disabled.filter(([device, port]) => {
     const p = fresh.device(device)?.port(port);
@@ -143,7 +150,7 @@ function settledClone(sim: Simulation, topo: Topology): Simulation {
   });
   if (late.length > 0) {
     for (const [device, port, cause] of late) fresh.injectFault(fresh.now, errDisableFault(device, port, cause));
-    fresh.runToIdle(LAB_CLONE_BOOT_EVENTS);
+    fresh.runToIdle(LAB_CLONE_BOOT_EVENTS, LAB_CLONE_SETTLE);
   }
   return fresh;
 }

@@ -158,6 +158,7 @@ import {
   type HostAppTicket,
   type RunOptions,
   type RunStats,
+  type RunToIdleOptions,
   type Simulation,
   type SimulationOptions,
   type SnapshotOptions,
@@ -1361,7 +1362,9 @@ export function createSimulation(opts: SimulationOptions): Simulation {
     runUntil: (t: SimTime, options?: RunOptions) => recorder.nested(() => run.runUntil(t, options)),
     runFor: (dt: SimTime, options?: RunOptions) => recorder.nested(() => run.runFor(dt, options)),
     step: () => recorder.nested(() => run.step()),
-    runToIdle: (maxEvents: number = DEFAULT_MAX_IDLE_EVENTS): RunStats => recorder.nested(() => run.runToIdle(maxEvents)),
+    // P3c [S39]: the contract options pass through (absent = today exactly); `idleFirstEvents` is never set here
+    runToIdle: (maxEvents: number = DEFAULT_MAX_IDLE_EVENTS, opts?: RunToIdleOptions): RunStats =>
+      recorder.nested(() => run.runToIdle(maxEvents, opts?.quiet === undefined ? undefined : { quiet: opts.quiet })),
     nextEventTime: () => run.nextEventTime(),
     stepToNext: (filter, options) => recorder.nested(() => run.stepToNext(filter, options)),
 

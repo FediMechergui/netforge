@@ -130,6 +130,21 @@
  *    `MAX_TOPOLOGY_FILE_NAME_CHARS`-character names, `MAX_TOPOLOGY_FILE_CHARS` characters per file; io/schema.ts), so
  *    every file a host holds survives export and reload (`storageWriteProblem`).
  *
+ * P3c (ARCHITECTURE-P3C D10, §2.9, §3.4, §3.5; W1a device) [S29] [S30] [S31]:
+ *  - the store is keyed by (file system, path): `files:` on hosts (unchanged), and `flash:` and `nvram:` on a model
+ *    with `DeviceModel.storage` (`hasFileStore(fs)`). Every P1/P2/P3a model has no `storage` until the W4b flip, so
+ *    nothing changes for them;
+ *  - `flash:` holds the user's files, bounded by `storage.flashBytes` (`flashWriteProblem`: the virtual image's nominal
+ *    size plus every file at its `nominalBytes`, else its size); `nvram:` holds only the virtual `startup-config` and
+ *    takes no write. The model's image is virtual: `dir(fs)` lists it (and nvram's `startup-config`) under `virtual`,
+ *    while `files(fs)` lists stored files only, so neither appears in `DeviceSnapshot.storage` or in an export;
+ *  - a written file whose content starts with a valid image header (`imageHeaderNominalBytes`, io/schema.ts) carries
+ *    `StoredFileMeta.nominalBytes` from it; any other file has none;
+ *  - the persistent configuration register (`configRegister`, `setConfigRegister`): DEFAULT_CONFIG_REGISTER until
+ *    written, kept across power-off like the file store; the value in effect is latched at power-on;
+ *  - `ifIndexSource()` supplies the two lists of the shared interface index (device/if-index.ts `ifIndexOf`): the
+ *    physical ports in port order and the virtual interfaces in the order of their first creation since boot.
+ *
  * P3 (ARCHITECTURE-P3 D16, §3.0 (a) step 9 and (b) step 10c, §3.5, §3.11; rulings R26; W3 device) — QoS in the runtime:
  *  - the policy cache: one compiled policy per (port, direction) (`qos/config.ts` `compileQosPolicy`), tagged with the
  *    QoS configuration generation (`qosGen`: +1 for every `isQosConfigDelta` delta — class-map, policy-map,
@@ -215,7 +230,7 @@ import type {
   StateView,
 } from '../contracts/process.js';
 import type { PortQosView } from '../contracts/snapshot.js';
-import type { FileSystemId, StoredFile, StoredFileInput, StoredFileMeta } from '../contracts/storage.js';
+import { DEFAULT_CONFIG_REGISTER, type FileSystemId, type StoredFile, type StoredFileInput, type StoredFileMeta } from '../contracts/storage.js';
 import type { L2ChangedEvent, LogRecordEvent } from '../contracts/transport.js';
 import { CHANNELS, type BssSettings, type ChannelWidthMhz, type RadioSettings, type RfBand, type WifiSecurity } from '../contracts/rf.js';
 import {
@@ -240,7 +255,14 @@ import { configTextLinesOf } from '../cli/config-text.js';
 import { vlanPopOp, vlanPushOp } from '../pdu/vlan.js';
 import { carries, channelOperOf, isImplicitVlan, operOf, type L2PortView } from '../protocols/l2/membership.js';
 import { readSwitchport } from '../protocols/l2/switchport-config.js';
-import { MAX_TOPOLOGY_FILES_PER_DEVICE, MAX_TOPOLOGY_FILE_CHARS, MAX_TOPOLOGY_FILE_NAME_CHARS } from '../io/schema.js';
+import {
+  MAX_CONFIG_REGISTER,
+  MAX_TOPOLOGY_FILES_PER_DEVICE,
+  MAX_TOPOLOGY_FILE_CHARS,
+  MAX_TOPOLOGY_FILE_NAME_CHARS,
+  imageHeaderNominalBytes,
+} from '../io/schema.js';
+import type { IfIndexSource } from './if-index.js';
 import { isQosControlFrame } from '../link/control-frame.js';
 import { createQosPolicer, policeQosPacket, qosPoliceConformDropDetail, qosPolicedDetail, type QosPolicer } from '../link/qos/scheduler.js';
 import { classifyQos, qosPacketFacts } from '../qos/classify.js';
@@ -424,6 +446,59 @@ export function storageWriteProblem(paths: ReadonlySet<string> | readonly string
   return undefined;
 }
 
+/** @since P3c [S29] The name of the startup configuration in `nvram:` (a virtual file: the device's saved configuration). */
+export const NVRAM_STARTUP_CONFIG = 'startup-config';
+
+/**
+ * @since P3c [S29] [S30] What `dir <fs>:` shows (ARCHITECTURE-P3C §3.4 step 5): the virtual entries first (the model's
+ * running image on `flash:`, `startup-config` on `nvram:` when one is saved; never stored, never exported, never in a
+ * snapshot; `modifiedAt` 0), then the stored files by path, and the capacity, the bytes used and free. `capacity` and
+ * `free` are undefined for a host's `files:` store, which has no byte bound (only the io limits, ruling R20).
+ */
+export interface FileSystemListing {
+  readonly fs: FileSystemId;
+  readonly virtual: readonly StoredFileMeta[];
+  readonly files: readonly StoredFileMeta[];
+  readonly capacity: number | undefined;
+  readonly used: number;
+  readonly free: number | undefined;
+}
+
+/** @since P3c [S30] The bytes a stored file takes on a bounded file system: its nominal size when it has one, else its size. */
+export function storedFileBytes(f: Pick<StoredFileMeta, 'size' | 'nominalBytes'>): number {
+  return f.nominalBytes ?? f.size;
+}
+
+/**
+ * @since P3c [S29] [S30] The bytes `flash:` uses (ARCHITECTURE-P3C §3.4 step 5): the virtual image's nominal size plus
+ * every stored file at `storedFileBytes`. Pure.
+ */
+export function flashUsedBytes(storage: NonNullable<DeviceModel['storage']>, files: readonly Pick<StoredFileMeta, 'size' | 'nominalBytes'>[]): number {
+  let used = storage.image.nominalBytes;
+  for (const f of files) used += storedFileBytes(f);
+  return used;
+}
+
+/**
+ * @since P3c [S29] [S30] Why a write of `path` taking `bytes` (`storedFileBytes` of the new content) cannot be stored
+ * in a `flash:` that holds `files`, in original wording; undefined when it can. The name of the virtual image is
+ * refused (the image is never stored), and a write that would take the used bytes beyond `storage.flashBytes` is
+ * refused ("flash full"); replacing a file frees its old bytes first. Pure; the `storage` action and a copy's
+ * capacity check before the first block (§3.4 step 5, `tsize`) read the same rule.
+ */
+export function flashWriteProblem(
+  storage: NonNullable<DeviceModel['storage']>,
+  files: readonly Pick<StoredFileMeta, 'path' | 'size' | 'nominalBytes'>[],
+  path: string,
+  bytes: number,
+): string | undefined {
+  if (path === storage.image.file) return `${path} is the running image`;
+  const others = files.filter((f) => f.path !== path);
+  const free = storage.flashBytes - flashUsedBytes(storage, others);
+  if (bytes > free) return `not enough space on flash: (${Math.max(0, free)} bytes free, ${bytes} needed)`;
+  return undefined;
+}
+
 // ── P3 [S25]: the extended-logging default (D2, D20; W2 device) ─────────────────
 
 /** @since P3 [S25] Syslog facility of the line-protocol change log (the link log uses the P1 `LINK` facility). */
@@ -525,6 +600,14 @@ interface StoredFileEntry {
   readonly content: string;
   readonly size: number;
   readonly modifiedAt: SimTime;
+  /** @since P3c [S30] The nominal size from the content's image header; absent for any other file. */
+  readonly nominalBytes?: number;
+}
+
+/** @since P3c [S30] A stored file's metadata, frozen; `nominalBytes` only when the file has one (P3a key order kept). */
+function storedMeta(fs: FileSystemId, path: string, e: StoredFileEntry): StoredFileMeta {
+  if (e.nominalBytes === undefined) return Object.freeze({ fs, path, size: e.size, modifiedAt: e.modifiedAt });
+  return Object.freeze({ fs, path, size: e.size, modifiedAt: e.modifiedAt, nominalBytes: e.nominalBytes });
 }
 
 /**
@@ -986,8 +1069,22 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
    * unset plus uptime on a network device, true time on a host). RAM: power-off forgets it.
    */
   private clockBase: DeviceClockBase | undefined;
-  /** @since P3 [S32] The hosts' `files:` store by path (D21); persistent (kept across power-off, like a disk). */
-  private readonly fileStore = new Map<string, StoredFileEntry>();
+  /**
+   * @since P3 [S32] The hosts' `files:` store by path (D21); persistent (kept across power-off, like a disk).
+   * @since P3c [S29] keyed by (file system, path): one map per file system that holds stored files (`files`, `flash`).
+   */
+  private readonly fileStore = new Map<FileSystemId, Map<string, StoredFileEntry>>();
+  /**
+   * @since P3c [S31] The configuration register written to nvram: (persistent, like the file store) and the one in
+   * effect since the last power-on (latched by `setPower(true)`).
+   */
+  private configRegisterNext: number = DEFAULT_CONFIG_REGISTER;
+  private configRegisterInEffect: number = DEFAULT_CONFIG_REGISTER;
+  /**
+   * @since P3c (§3.5) The virtual interfaces in the order of their first creation since boot (removed ones kept), the
+   * second list of `ifIndexSource`. RAM: power-off restarts it from the virtual interfaces that survive (the auto ones).
+   */
+  private readonly ifIndexVirtual: PortId[] = [];
   /** @since P3 [S25] The extended-logging default applies: a P3 world and a model that takes it (fixed per device). */
   private readonly extendedLogging: boolean;
   /** @since P3 [S25] The carrier state last reported by a link log, per physical port (RAM: cleared at power-off). */
@@ -1064,6 +1161,7 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
     }
     states.push(...autoVirtualPortStates(model, this.macBase));
     insertPorts(this.ports, model, states);
+    this.restartIfIndexVirtual();
     for (const [slotId, type] of this.installed) this.applyCageTransceiver(slotId, type);
 
     this.tables = createDeviceTables(spec.id, this.computeTableNames(), deps.tables, deps.trace, () => this.clock);
@@ -1251,28 +1349,108 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
 
   // ── P3 [S32]: the hosts' `files:` store (D21) ───────────────────────────
 
-  /** @since P3 [S32] True when this device keeps a `files:` store: every device with the `host` capability. */
-  private get hasFileStore(): boolean {
-    return this.effectiveCaps.includes('host');
+  /**
+   * @since P3 [S32] True when this device keeps a `files:` store: every device with the `host` capability.
+   * @since P3c [S29] Per file system: `files` on hosts; `flash` and `nvram` on a model with `DeviceModel.storage`.
+   */
+  hasFileStore(fs: FileSystemId): boolean {
+    if (fs === HOST_STORE_FS) return this.effectiveCaps.includes('host');
+    return (fs === 'flash' || fs === 'nvram') && this.model.storage !== undefined;
   }
 
-  /** @since P3 [S32] The files of `fs`, by path (code-unit order); empty on a device without a store. */
+  /** @since P3c [S29] The stored files of `fs` by path; empty for a file system with no stored file. */
+  private storeOf(fs: FileSystemId): ReadonlyMap<string, StoredFileEntry> {
+    return this.fileStore.get(fs) ?? new Map<string, StoredFileEntry>();
+  }
+
+  /**
+   * @since P3 [S32] The files of `fs`, by path (code-unit order); empty on a device without a store.
+   * @since P3c [S29] [S30] Stored files only (never the virtual image or nvram's `startup-config`; see `dir`), each with
+   * `nominalBytes` when its content starts with an image header.
+   */
   files(fs: FileSystemId): readonly StoredFileMeta[] {
-    if (fs !== HOST_STORE_FS || !this.hasFileStore) return [];
+    if (!this.hasFileStore(fs)) return [];
+    const store = this.storeOf(fs);
     const out: StoredFileMeta[] = [];
-    for (const path of [...this.fileStore.keys()].sort()) {
-      const e = this.fileStore.get(path) as StoredFileEntry;
-      out.push(Object.freeze({ fs, path, size: e.size, modifiedAt: e.modifiedAt }));
-    }
+    for (const path of [...store.keys()].sort()) out.push(storedMeta(fs, path, store.get(path) as StoredFileEntry));
     return Object.freeze(out);
   }
 
-  /** @since P3 [S32] One file of `fs` with its content, or undefined. */
+  /** @since P3 [S32] One file of `fs` with its content, or undefined (@since P3c never a virtual entry). */
   readFile(fs: FileSystemId, path: string): StoredFile | undefined {
-    if (fs !== HOST_STORE_FS || !this.hasFileStore) return undefined;
-    const e = this.fileStore.get(path);
+    if (!this.hasFileStore(fs)) return undefined;
+    const e = this.storeOf(fs).get(path);
     if (e === undefined) return undefined;
-    return Object.freeze({ fs, path, size: e.size, modifiedAt: e.modifiedAt, content: e.content });
+    return Object.freeze({ ...storedMeta(fs, path, e), content: e.content });
+  }
+
+  /**
+   * @since P3c [S29] [S30] What `dir <fs>:` shows (`FileSystemListing`), or undefined when the device has no such file
+   * system. `flash:` lists the model's running image first (virtual, at its nominal size) and counts its bytes;
+   * `nvram:` lists `startup-config` when one is saved (its rendered size) and counts it against `nvramBytes`.
+   */
+  dir(fs: FileSystemId): FileSystemListing | undefined {
+    if (!this.hasFileStore(fs)) return undefined;
+    const files = this.files(fs);
+    const storage = this.model.storage;
+    if (fs === 'flash' && storage !== undefined) {
+      const image = storage.image;
+      const virtual = [Object.freeze({ fs, path: image.file, size: image.nominalBytes, modifiedAt: 0, nominalBytes: image.nominalBytes })];
+      const used = flashUsedBytes(storage, files);
+      return Object.freeze({ fs, virtual: Object.freeze(virtual), files, capacity: storage.flashBytes, used, free: Math.max(0, storage.flashBytes - used) });
+    }
+    if (fs === 'nvram' && storage !== undefined) {
+      const text = this.startup?.render();
+      const virtual = text === undefined ? [] : [Object.freeze({ fs, path: NVRAM_STARTUP_CONFIG, size: storedFileSize(text), modifiedAt: 0 })];
+      const used = virtual.reduce((n, f) => n + f.size, 0);
+      return Object.freeze({ fs, virtual: Object.freeze(virtual), files, capacity: storage.nvramBytes, used, free: Math.max(0, storage.nvramBytes - used) });
+    }
+    return Object.freeze({ fs, virtual: Object.freeze([]), files, capacity: undefined, used: files.reduce((n, f) => n + f.size, 0), free: undefined });
+  }
+
+  /**
+   * @since P3c [S31] The configuration register: `current` is the one in effect since the last power-on, `next` the one
+   * written to nvram: (the next boot's); undefined on a device without `nvram:`.
+   */
+  configRegister(): { readonly current: number; readonly next: number } | undefined {
+    if (!this.hasFileStore('nvram')) return undefined;
+    return Object.freeze({ current: this.configRegisterInEffect, next: this.configRegisterNext });
+  }
+
+  /**
+   * @since P3c [S31] Write the persistent configuration register (`config-register 0x…`, ROMMON `confreg 0x…`, a
+   * 1.4 load): it takes effect at the next power-on and survives power-off. False (nothing changes) on a device
+   * without `nvram:` or for a value outside 0x0000–0xFFFF.
+   */
+  setConfigRegister(value: number): boolean {
+    if (!this.hasFileStore('nvram') || !Number.isInteger(value) || value < 0 || value > MAX_CONFIG_REGISTER) return false;
+    this.configRegisterNext = value;
+    return true;
+  }
+
+  /**
+   * @since P3c (§3.5) The two lists of the shared interface index (device/if-index.ts `ifIndexOf`): the physical ports
+   * (every port but the virtual ones, the console and aux lines and USB) in port order, and the virtual interfaces in
+   * the order of their first creation since boot.
+   */
+  ifIndexSource(): IfIndexSource {
+    const physical: PortId[] = [];
+    for (const port of this.ports.values()) {
+      const kind = port.spec.kind;
+      if (kind !== 'virtual' && kind !== 'console' && kind !== 'usb') physical.push(port.id);
+    }
+    return Object.freeze({ physical: Object.freeze(physical), virtual: Object.freeze([...this.ifIndexVirtual]) });
+  }
+
+  /** @since P3c (§3.5) Restart the virtual-interface order from the virtual interfaces that exist now, in port order. */
+  private restartIfIndexVirtual(): void {
+    this.ifIndexVirtual.length = 0;
+    for (const port of this.ports.values()) if (port.spec.kind === 'virtual') this.ifIndexVirtual.push(port.id);
+  }
+
+  /** @since P3c (§3.5) Record a created virtual interface (its first creation since boot keeps its place). */
+  private noteIfIndexVirtual(port: PortId): void {
+    if (!this.ifIndexVirtual.includes(port)) this.ifIndexVirtual.push(port);
   }
 
   /**
@@ -1280,18 +1458,27 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
    * store. Refused with a runtime debug line on a device without a store, for another file system, a path that is not
    * a flat name, a write without content, or (ruling R20) a write beyond the io limits (`storageWriteProblem`: the name
    * or the content too long, or a new file in a full store); deleting a missing file changes nothing.
+   * @since P3c [S29] [S30] Writes go to `files:` on a host and `flash:` on a model with storage (`nvram:` takes none);
+   * a `flash:` write beyond the capacity or onto the running image's name is refused (`flashWriteProblem`). A file
+   * whose content starts with a valid image header stores `nominalBytes` from it (a request's own `nominalBytes` is
+   * not trusted: the header is the one source, so a reload derives the same metadata).
    */
   private applyStorage(owner: ProcessName, a: Extract<Action, { type: 'storage' }>, now: SimTime): void {
-    if (!this.hasFileStore) {
+    if (!this.hasFileStore(HOST_STORE_FS) && !this.hasFileStore('flash')) {
       this.runtimeDebug(owner, `storage ${a.op} of ${a.path} ignored: this device keeps no files`, now);
       return;
     }
-    if (a.fs !== HOST_STORE_FS || !isStoredFileName(a.path)) {
-      this.runtimeDebug(owner, `storage ${a.op} of ${a.path} ignored: not a file name of ${HOST_STORE_FS}:`, now);
+    // P3c [S29]: `files:` on hosts, `flash:` on a model with storage; `nvram:` holds only the virtual startup-config
+    const writable = a.fs !== 'nvram' && this.hasFileStore(a.fs);
+    if (!writable || !isStoredFileName(a.path)) {
+      const fs = this.hasFileStore(HOST_STORE_FS) ? HOST_STORE_FS : 'flash';
+      this.runtimeDebug(owner, `storage ${a.op} of ${a.path} ignored: not a file name of ${writable ? a.fs : fs}:`, now);
       return;
     }
+    const store = this.fileStore.get(a.fs) ?? new Map<string, StoredFileEntry>();
     if (a.op === 'delete') {
-      this.fileStore.delete(a.path);
+      store.delete(a.path);
+      if (store.size === 0) this.fileStore.delete(a.fs);
       return;
     }
     const file: StoredFileInput | undefined = a.file;
@@ -1299,13 +1486,23 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
       this.runtimeDebug(owner, `storage write of ${a.path} ignored: no content`, now);
       return;
     }
-    // ruling R20: the io limits, so every stored file survives export and reload
-    const problem = storageWriteProblem(new Set(this.fileStore.keys()), a.path, file.content);
+    const size = storedFileSize(file.content);
+    // P3c [S30]: the nominal size comes from the content's image header, never from the request alone
+    const nominalBytes = imageHeaderNominalBytes(file.content);
+    // ruling R20: the io limits, so every stored file survives export and reload; P3c [S29]: flash: capacity
+    const shown = a.path.length > 64 ? `${a.path.slice(0, 64)}…` : a.path;
+    const storage = this.model.storage;
+    const problem =
+      storageWriteProblem(new Set(store.keys()), a.path, file.content) ??
+      (a.fs === 'flash' && storage !== undefined
+        ? flashWriteProblem(storage, this.files('flash'), a.path, nominalBytes ?? size)
+        : undefined);
     if (problem !== undefined) {
-      this.runtimeDebug(owner, `storage write of ${a.path.length > 64 ? `${a.path.slice(0, 64)}…` : a.path} ignored: ${problem}`, now);
+      this.runtimeDebug(owner, `storage write of ${shown} ignored: ${problem}`, now);
       return;
     }
-    this.fileStore.set(a.path, { content: file.content, size: storedFileSize(file.content), modifiedAt: now });
+    store.set(a.path, nominalBytes === undefined ? { content: file.content, size, modifiedAt: now } : { content: file.content, size, modifiedAt: now, nominalBytes });
+    this.fileStore.set(a.fs, store);
   }
 
   // ── run-loop entry points ───────────────────────────────────────────────
@@ -2525,6 +2722,7 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
     this.power = on;
     if (on) {
       this.bootedAt = undefined;
+      this.configRegisterInEffect = this.configRegisterNext; // P3c [S31]: the register is read at power-on
       this.bootSeq = this.deps.scheduler.schedule(now + this.model.bootNs, { kind: 'boot', device: this.id });
       this.trace.emit({ t: now, kind: 'deviceState', device: this.id, power: true, booted: false });
       return;
@@ -2575,6 +2773,7 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
       removePorts(this.ports, this.model, created);
       this.version++;
     }
+    this.restartIfIndexVirtual(); // P3c (§3.5): the creation order is RAM; the auto interfaces keep their places
     let rolesChanged = false;
     for (const port of this.ports.values()) {
       const before = port.role;
@@ -2647,6 +2846,7 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
     if (!plan.created) return { ok: true, port: plan.port, created: false };
     const state = createVirtualPortState(plan.family, plan.number, this.macBase);
     insertPorts(this.ports, this.model, [state]);
+    this.noteIfIndexVirtual(state.id);
     seedInterfaceSection(this.runningAst, state, this.effectiveCaps);
     this.version++;
     this.emitPortState(state.id, 'virtual-created');
@@ -2667,6 +2867,7 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
     const parent = this.ports.get(plan.parent) as PortState;
     const state = createSubinterfacePortState(parent, plan.number);
     insertPorts(this.ports, this.model, [state]);
+    this.noteIfIndexVirtual(state.id);
     seedInterfaceSection(this.runningAst, state, this.effectiveCaps);
     this.version++;
     this.emitPortState(state.id, 'virtual-created');

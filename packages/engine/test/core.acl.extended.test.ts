@@ -317,7 +317,8 @@ describe('core/acl P3: tupleOf', () => {
     const layer = (proto: string, fields: Record<string, unknown>): LayerView =>
       ({ proto, offset: 0, length: 0, headerLength: 0, fields, fieldRanges: {} }) as unknown as LayerView;
     const pdu = { layers: [layer('ipv4', { protocol: 6, src: '10.0.0.1', dst: '10.0.0.2', fragOffset: 185 }), layer('tcp', { srcPort: 1, dstPort: 2, flags: 'A' })] };
-    expect(tupleOf(pdu)).toEqual({ family: 4, proto: 6, src: '10.0.0.1', dst: '10.0.0.2' });
+    // P3c [S17a] (§3.8 step 5): `tupleOf` marks it, so the ACL fragment rule applies
+    expect(tupleOf(pdu)).toEqual({ family: 4, proto: 6, src: '10.0.0.1', dst: '10.0.0.2', fragment: 'non-initial' });
   });
 });
 

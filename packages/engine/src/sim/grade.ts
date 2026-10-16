@@ -34,7 +34,8 @@
  *     grader's clone does it: an `err-disable` fault at t = 0 for each, and once the world has settled, again for each
  *     listed port that exists and is not err-disabled (a virtual port the boot creates), then idle once more.
  *   • settle — `runFor(GRADE_SETTLE_MS)`, then `runToIdle`, each phase capped at LAB_CLONE_BOOT_EVENTS events (a
- *     world that never quiets is graded where the cap leaves it). `runToIdle` alone is the live grader's clone
+ *     world that never quiets is graded where the cap leaves it; P3c [S39]: `runToIdle` is the grader's quiet settle,
+ *     `LAB_CLONE_SETTLE`, so a world that never idles is graded after a QUIET_WINDOW_MS quiet window instead).`runToIdle` alone is the live grader's clone
  *     settle, but it stops as soon as only periodic timers are pending, and some first messages ARE periodic timers:
  *     a router that boots with IPv6 routing arms its first router advertisement as one, so hosts would still be
  *     waiting for their SLAAC addresses. GRADE_SETTLE_MS covers the slowest boot (a router, 45 s) and those first
@@ -83,7 +84,7 @@ import { MS, type SimTime } from '../contracts/time.js';
 import type { Topology, TopologyErrDisabledPort, TopologyPendingFault } from '../contracts/topology.js';
 import { parseSavedLabState, type SavedLabState } from '../io/lab-schema.js';
 import { LAB_CLONE_BOOT_EVENTS, evaluateLab, misconceptionOf } from './lab-checks.js';
-import { canonicalJson } from './lab-checks/core.js';
+import { LAB_CLONE_SETTLE, canonicalJson } from './lab-checks/core.js';
 import { FACT_READERS } from './lab-checks/facts.js';
 import { createSimulation } from './simulation.js';
 
@@ -270,7 +271,7 @@ export function gradeTopology(doc: LabDocument, submission: Topology): HeadlessL
   for (const p of saved.errDisabled) world.injectFault(0, errDisableFault(p));
   const cap = { maxEvents: LAB_CLONE_BOOT_EVENTS };
   world.runFor(GRADE_SETTLE_MS * MS, cap);
-  world.runToIdle(LAB_CLONE_BOOT_EVENTS);
+  world.runToIdle(LAB_CLONE_BOOT_EVENTS, LAB_CLONE_SETTLE);
   // a recorded port the boot created (absent at t = 0) is err-disabled now, as the live grader's clone does it
   const late = saved.errDisabled.filter((p) => {
     const port = world.device(p.device)?.port(p.port);
@@ -278,12 +279,12 @@ export function gradeTopology(doc: LabDocument, submission: Topology): HeadlessL
   });
   if (late.length > 0) {
     for (const p of late) world.injectFault(world.now, errDisableFault(p));
-    world.runToIdle(LAB_CLONE_BOOT_EVENTS);
+    world.runToIdle(LAB_CLONE_BOOT_EVENTS, LAB_CLONE_SETTLE);
   }
   const prepared = Math.max(lastScheduledFaultAt(doc), lastFaultAt(faults));
   if (prepared > world.now) {
     world.runUntil(prepared, cap);
-    world.runToIdle(LAB_CLONE_BOOT_EVENTS);
+    world.runToIdle(LAB_CLONE_BOOT_EVENTS, LAB_CLONE_SETTLE);
   }
   return headlessStatus(lab, evaluateLab(world, lab));
 }

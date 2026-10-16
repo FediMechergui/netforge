@@ -21,15 +21,24 @@
  * load — the view a grader clone has of it — with `runToIdle(5000)`: it must return (not stop at the cap) after fewer
  * than 5 000 events, with the fault really in place (no Full adjacency, no synchronisation, CHAP failed, no EIGRP
  * neighbour, no IPsec SA).
+ *
+ * Part 3 (P3c [S39], ARCHITECTURE-P3C §3.10, §9.2 W1a item 9): P2's EtherChannel item 22c was the one documented
+ * exception to rule 19 — a static bundle on SW1 against SW2's lone LACP members never lets spanning tree settle (SW2's
+ * topology-change timer is re-armed by every notice and never comes due), so every grading copy ran to its event cap.
+ * It is replaced by an exact deterministic bound: the plain `runToIdle` still meets the cap (the world is unchanged),
+ * while the grader's quiet settle (`LAB_CLONE_SETTLE`) stops `'quiet'` after more than LAB_CLONE_IDLE_FIRST_EVENTS and
+ * fewer than the bound computed from the constants: LAB_CLONE_IDLE_FIRST_EVENTS plus the events the same copy
+ * dispatches in two QUIET_WINDOW_MS windows after that first phase. The whole lab then grades, the same twice.
  */
 import { describe, expect, it } from 'vitest';
 import type { DeviceId } from '../src/contracts/ids.js';
 import type { ScenarioInfo } from '../src/contracts/scenario.js';
 import type { RunStats, Simulation } from '../src/contracts/simulation.js';
 import type { EigrpNeighborRow, IpsecSaRow, NtpPeerRow, OspfNeighborRow, PppRow } from '../src/contracts/tables.js';
-import { SEC } from '../src/contracts/time.js';
+import { MS, SEC } from '../src/contracts/time.js';
 import type { Topology } from '../src/contracts/topology.js';
-import { LAB_CLONE_BOOT_EVENTS } from '../src/sim/lab-checks.js';
+import { LAB_CLONE_BOOT_EVENTS, LAB_CLONE_IDLE_FIRST_EVENTS, LAB_CLONE_SETTLE, QUIET_WINDOW_MS, evaluateLab } from '../src/sim/lab-checks.js';
+import { ccna2EtherchannelLacp } from '../src/sim/scenarios/ccna2/etherchannel.js';
 import { CCNA3_LABS } from '../src/sim/scenarios/ccna3/index.js';
 import { createSimulation } from '../src/sim/simulation.js';
 import { KEY, pairWorld, tunnelWorld } from './approved-kinds.world.js';
@@ -58,6 +67,12 @@ function idOf(sim: Simulation, name: string): DeviceId {
   throw new Error(`no device called ${name} in this lab`);
 }
 
+/** Configure `lines` on the device called `name` (every line must be accepted). */
+function configureLines(sim: Simulation, name: string, lines: readonly string[]): void {
+  const r = sim.configure(idOf(sim, name), lines);
+  expect(r.lines.filter((l) => !l.ok).map((l) => `${l.line}: ${l.error?.message ?? l.output}`), name).toEqual([]);
+}
+
 /** Configure the solution's lines for the devices named in `devices` (every line must be accepted). */
 function configureSolution(sim: Simulation, lab: ScenarioInfo, devices: readonly string[]): void {
   for (const [name, lines] of Object.entries(lab.solution ?? {})) {
@@ -72,6 +87,11 @@ function configureSolution(sim: Simulation, lab: ScenarioInfo, devices: readonly
  * catalog, the live cut cables and err-disabled ports re-applied at t = 0, run to idle within the clone's event cap.
  */
 function cloneSettle(sim: Simulation): RunStats {
+  return copyOf(sim).runToIdle(LAB_CLONE_BOOT_EVENTS);
+}
+
+/** The grader's copy of `sim` before it settles: the export, the live seed and catalog, the runtime L1 state at t = 0. */
+function copyOf(sim: Simulation): Simulation {
   const topo: Topology = sim.exportTopology();
   const copy = createSimulation({ seed: sim.seed, catalog: sim.catalog, journal: false });
   copy.loadTopology(topo);
@@ -83,7 +103,7 @@ function cloneSettle(sim: Simulation): RunStats {
       if (p.errDisabled !== undefined) copy.injectFault(0, { id: `bounded-errdisable:${d.id}:${p.id}`, kind: 'err-disable', target: { device: d.id, port: p.id }, params: { cause: p.errDisabled } });
     }
   }
-  return copy.runToIdle(LAB_CLONE_BOOT_EVENTS);
+  return copy;
 }
 
 /** Load `t` and run it to idle from the load (the grader clone's view), within the bound. */
@@ -189,4 +209,45 @@ describe('accept.p3.grader-bounded: worlds that never converge still return in f
     expect(rows<IpsecSaRow>(sim, 'r1', 'ipsec-sa').map((r) => r.state)).not.toContain('established');
     expect(rows<IpsecSaRow>(sim, 'r2', 'ipsec-sa')).toEqual([]);
   });
+});
+
+describe('accept.p3.grader-bounded [S39]: the P2 EtherChannel wrong answer settles quietly within an exact bound', () => {
+  /** P2 item 22c's world: SW2's odd member repaired, SW1 a static bundle against SW2's passive LACP. */
+  function wrongAnswer(): Simulation {
+    const sim = labWorld(ccna2EtherchannelLacp);
+    configureLines(sim, 'SW2', ['interface GigabitEthernet0/2', ' switchport mode trunk', 'port-channel load-balance src-dst-mac']);
+    configureLines(sim, 'SW1', ['interface range GigabitEthernet0/1 - 2', ' switchport mode trunk', ' channel-group 1 mode on', 'port-channel load-balance src-dst-mac']);
+    sim.runFor(60 * SEC);
+    return sim;
+  }
+
+  it('the plain settle meets the cap; the quiet settle stops quiet under the computed bound, deterministically', () => {
+    const sim = wrongAnswer();
+    expect(copyOf(sim).runToIdle(LAB_CLONE_BOOT_EVENTS).stopped).toBe('maxEvents');
+
+    // the bound: the first phase, then two quiet windows of the same copy's events
+    const probe = copyOf(sim);
+    const first = probe.runToIdle(LAB_CLONE_IDLE_FIRST_EVENTS);
+    expect(first.stopped).toBe('maxEvents');
+    const bound = first.events + probe.runFor(2 * QUIET_WINDOW_MS * MS).events;
+    expect(bound).toBeLessThan(LAB_CLONE_BOOT_EVENTS);
+
+    const settled = copyOf(sim).runToIdle(LAB_CLONE_BOOT_EVENTS, LAB_CLONE_SETTLE);
+    expect(settled.stopped).toBe('quiet');
+    expect(settled.events).toBeGreaterThan(LAB_CLONE_IDLE_FIRST_EVENTS);
+    expect(settled.events).toBeLessThan(bound);
+    expect(copyOf(sim).runToIdle(LAB_CLONE_BOOT_EVENTS, LAB_CLONE_SETTLE)).toEqual(settled);
+  }, LAB_TIMEOUT_MS);
+
+  it('the whole lab grades, the same twice', () => {
+    const status = evaluateLab(wrongAnswer(), ccna2EtherchannelLacp);
+    expect(Object.fromEntries(status.results.map((r) => [r.task, r.pass]))).toMatchObject({
+      'lacp-active': false,
+      'fix-member': false,
+      'one-logical-link': false,
+      'load-balance': true,
+    });
+    expect(status.results.map((r) => r.task)).toContain('lose-a-cable');
+    expect(JSON.stringify(evaluateLab(wrongAnswer(), ccna2EtherchannelLacp))).toBe(JSON.stringify(status));
+  }, LAB_TIMEOUT_MS);
 });

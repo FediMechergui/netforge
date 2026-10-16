@@ -13,6 +13,9 @@
  * 1.1 → 1.2 is the identity on content plus the schema id for the same reason: 1.2 only adds `profile`, whose absence
  * means the P1 defaults. @since P3 1.2 → 1.3 is the identity on content plus the schema id too (ARCHITECTURE-P3 §2.9):
  * 1.3 only widens `profile` with `'P3'` and adds [S32] `devices[].files`, whose absence means an empty store.
+ * @since P3c 1.3 → 1.4 is the identity on content plus the schema id (ARCHITECTURE-P3C D2): 1.4 only adds [S29]
+ * `files[].fs`, [S30] `files[].nominalBytes` and [S31] `devices[].nvram`, whose absence means a file of the host's
+ * `files:` store, a file that is not an image and the default configuration register.
  *
  * Migrations only move forward. A document whose own id is already later than `schemaIdFor(t)` (a hand-written 1.2
  * document without `profile`) keeps its id and its content.
@@ -27,6 +30,7 @@ import {
   TOPOLOGY_SCHEMA_ID_1_1,
   TOPOLOGY_SCHEMA_ID_1_2,
   TOPOLOGY_SCHEMA_ID_1_3,
+  TOPOLOGY_SCHEMA_ID_1_4,
   schemaIdFor,
   type Topology,
   type TopologySchemaId,
@@ -57,6 +61,11 @@ function migrate12to13(t: Topology): Topology {
   return { ...t, schema: TOPOLOGY_SCHEMA_ID_1_3 };
 }
 
+/** @since P3c 1.3 → 1.4: identity on content, schema id rewritten (W1a io, D2). */
+function migrate13to14(t: Topology): Topology {
+  return { ...t, schema: TOPOLOGY_SCHEMA_ID_1_4 };
+}
+
 /**
  * Migration steps keyed by their source schema id. The latest id has no entry. Every other id in
  * `TOPOLOGY_SCHEMA_IDS` has exactly one step, and following the steps from any id reaches the latest id.
@@ -65,6 +74,7 @@ export const TOPOLOGY_MIGRATIONS: Readonly<Partial<Record<TopologySchemaId, Topo
   [TOPOLOGY_SCHEMA_ID_1_0]: Object.freeze({ from: TOPOLOGY_SCHEMA_ID_1_0, to: TOPOLOGY_SCHEMA_ID_1_1, migrate: migrate10to11 }),
   [TOPOLOGY_SCHEMA_ID_1_1]: Object.freeze({ from: TOPOLOGY_SCHEMA_ID_1_1, to: TOPOLOGY_SCHEMA_ID_1_2, migrate: migrate11to12 }),
   [TOPOLOGY_SCHEMA_ID_1_2]: Object.freeze({ from: TOPOLOGY_SCHEMA_ID_1_2, to: TOPOLOGY_SCHEMA_ID_1_3, migrate: migrate12to13 }),
+  [TOPOLOGY_SCHEMA_ID_1_3]: Object.freeze({ from: TOPOLOGY_SCHEMA_ID_1_3, to: TOPOLOGY_SCHEMA_ID_1_4, migrate: migrate13to14 }),
 });
 
 /** True when `id` is a schema id this build can load. */

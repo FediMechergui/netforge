@@ -11,13 +11,14 @@
  *    `error` is set only when the header itself is truncated or the version is not 6.
  *  • Next layer: DISPATCH_TABLE `ipproto` on `nextHeader` (extension headers, icmpv6, tcp, udp; unknown values
  *    decode as payload) whenever the payload is at least 1 byte; next header 59 (no next header) ends the chain.
+ *    @since P3c the IPv6-only `ipv6.nh` space is consulted first (`nextIpv6Proto`: 89 → ospf6).
  *  • Jumbograms (payload length 0 with a hop-by-hop jumbo option) are not simulated.
  */
 import type { Codec, DecodedLayer, FieldValue, MutationReason } from '../../contracts/pdu.js';
 import { IPPROTO_NONE, IPV6_DEFAULT_HOP_LIMIT, IPV6_HEADER } from '../../contracts/pdu.js';
 import { bytesToIpv6, ipv6ToBytes } from '../../core/addr6.js';
 import { numField, readU16, strField, writeU16 } from '../checksum.js';
-import { nextProto } from './dispatch.js';
+import { nextIpv6Proto } from './dispatch.js';
 
 const DERIVED: Readonly<Record<string, MutationReason>> = Object.freeze({ payloadLength: 'Other' });
 
@@ -69,7 +70,7 @@ function decode(bytes: Uint8Array, offset: number, length: number): DecodedLayer
   const out: DecodedLayer = { fields, fieldRanges, headerLength: IPV6_HEADER, length: layerLen };
   const inner = layerLen - IPV6_HEADER;
   if (inner > 0 && fields.nextHeader !== IPPROTO_NONE) {
-    out.next = { proto: nextProto('ipproto', fields.nextHeader), offset: offset + IPV6_HEADER, length: inner };
+    out.next = { proto: nextIpv6Proto(fields.nextHeader), offset: offset + IPV6_HEADER, length: inner };
   }
   return out;
 }

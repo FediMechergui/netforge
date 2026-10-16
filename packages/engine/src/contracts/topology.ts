@@ -54,15 +54,22 @@ export const TOPOLOGY_SCHEMA_ID_1_3 = 'netforge.topology/1.3';
 export const TOPOLOGY_SCHEMA_ID_1_4 = 'netforge.topology/1.4';
 /**
  * Every schema id a loader accepts (older first). 1.3 appended @since P3 by the W1 io item (ruling R7, a reviewed
- * additive edit of this file).
+ * additive edit of this file). 1.4 appended @since P3c by the W1a io item (the R7 precedent, ARCHITECTURE-P3C D2).
  */
-export const TOPOLOGY_SCHEMA_IDS = [TOPOLOGY_SCHEMA_ID_1_0, TOPOLOGY_SCHEMA_ID_1_1, TOPOLOGY_SCHEMA_ID_1_2, TOPOLOGY_SCHEMA_ID_1_3] as const;
+export const TOPOLOGY_SCHEMA_IDS = [
+  TOPOLOGY_SCHEMA_ID_1_0,
+  TOPOLOGY_SCHEMA_ID_1_1,
+  TOPOLOGY_SCHEMA_ID_1_2,
+  TOPOLOGY_SCHEMA_ID_1_3,
+  TOPOLOGY_SCHEMA_ID_1_4,
+] as const;
 export type TopologySchemaId = (typeof TOPOLOGY_SCHEMA_IDS)[number];
 /**
- * The newest id this build reads (1.2 @since P2, 1.3 @since P3). `migrateTopology` walks a document up to
- * `schemaIdFor(t)`, never further: a P1 document stays 1.1 and a P2 document 1.2, so neither gains an id it does not need.
+ * The newest id this build reads (1.2 @since P2, 1.3 @since P3, 1.4 @since P3c). `migrateTopology` walks a document up
+ * to `schemaIdFor(t)`, never further: a P1 document stays 1.1, a P2 document 1.2 and a P3a document 1.3, so none gains
+ * an id it does not need.
  */
-export const LATEST_TOPOLOGY_SCHEMA_ID: TopologySchemaId = TOPOLOGY_SCHEMA_ID_1_3;
+export const LATEST_TOPOLOGY_SCHEMA_ID: TopologySchemaId = TOPOLOGY_SCHEMA_ID_1_4;
 /**
  * The id of a document with no 1.2 content. P0 value was 1.0; the D11 io wave (P0.5 W1) switched it to
  * TOPOLOGY_SCHEMA_ID_1_1 together with `migrateTopology` (io/migrate.ts) and io/schema.ts accepting every id in
@@ -207,10 +214,24 @@ export interface Topology {
  * @since P3 (ARCHITECTURE-P3 §2.9, ruling R7; W1 io) 1.3 iff `t.profile` is 'P3' or a 1.3-only key is present: [S32]
  * a device whose `files` store holds at least one file (an empty `files` is no content, and the writer drops it). A P1
  * or P2 document therefore still exports byte-identically as 1.1 or 1.2. Pure; reads `t.profile` and `devices[].files`.
+ * @since P3c (ARCHITECTURE-P3C D2; W1a io, a reviewed edit, the R7 precedent) 1.4 iff a 1.4 member is present
+ * (`hasV14Content`): a device whose `nvram.configRegister` is set, or a stored file that carries [S29] `fs` or [S30]
+ * `nominalBytes`. Otherwise exactly what it returned at cad4ac9, so every 1.1, 1.2 and 1.3 document keeps its id and
+ * its bytes.
  */
 export function schemaIdFor(t: Topology): TopologySchemaId {
+  if (t.devices.some(hasV14Content)) return TOPOLOGY_SCHEMA_ID_1_4;
   if (t.profile === 'P3' || t.devices.some((d) => d.files !== undefined && d.files.length > 0)) return TOPOLOGY_SCHEMA_ID_1_3;
   return t.profile !== undefined ? TOPOLOGY_SCHEMA_ID_1_2 : TOPOLOGY_SCHEMA_ID_1_1;
+}
+
+/**
+ * @since P3c (D2) True when `d` carries a 1.4 member: [S31] `nvram.configRegister`, or a file with [S29] `fs` or [S30]
+ * `nominalBytes`. An empty `nvram` object is no content (the writers drop it). Pure.
+ */
+export function hasV14Content(d: TopologyDevice): boolean {
+  if (d.nvram !== undefined && d.nvram.configRegister !== undefined) return true;
+  return d.files !== undefined && d.files.some((f) => f.fs !== undefined || f.nominalBytes !== undefined);
 }
 
 /** `manifest.json` inside a `.netforge` zip. */

@@ -2257,6 +2257,55 @@ did not match the code. The ruling accepts each fix it made:
 10. [S29] io: the `TOPOLOGY_SCHEMA_IDS` and `LATEST_TOPOLOGY_SCHEMA_ID` pins gain 1.4; `schemaIdFor` pins gain the 1.4
     cases; every 1.1–1.3 export pin is unchanged.
 
+**W1a as built: ruling RC5 (architect, 2026-10-16).**
+- **(a) [S39] quiet rule.** §3.10's literal rule never stops the P2 EtherChannel world, because STP's one-shot
+  topology-change timer is re-armed by every notice. The rule as built:
+  - `runToIdle` runs the plain loop up to `LAB_CLONE_IDLE_FIRST_EVENTS` (50 000). Only a world still busy then moves to
+    the quiet window (60 s).
+  - The window restarts on a lab-relevant trace event, or when an "other" event is actually dispatched. It ends when no
+    "other" event is due before its end.
+  - The 200 000-event cap stays the backstop.
+  - Both lab-status goldens are byte-identical. The largest first-phase settle over every grader clone of the 56
+    labs is 1 289 events, and the EtherChannel world settles quietly at 51 088.
+  - `sim/simulation.ts` passes `opts.quiet` through, a reviewed three-line edit.
+  - `accept.p3.grader-bounded` gains its Part 3 (§9.2 W1a item 9).
+- **(b) [S8].** `MeasureConvergenceOptions` adds `to?` and `firstCursor?` locally. No contract changes. A fault clone at
+  settle 0 applies its same-instant effects before the check listens (Q-S8-2). W3b decides whether it needs a
+  `faultsFirst` option.
+  - `measureConvergence` is exported from `index.ts`. It is not on `/pure`, which may reach only contracts, core,
+    capture/filter, cli/format and automation; the W3b web panel adds it to `src/web.ts`.
+- **(c) [S12] DSCP is opt-in.** `tupleOf(pdu, { dscp: true })` carries the DSCP; the default tuple is exactly the P3
+  tuple, because `qos.classify` pins `facts.tuple`. The W2a acl and W2b nat items must pass `{ dscp: true }`. The W2a
+  acl item must also log `log-input` entries, which parse today but do not log.
+- **(d) Existing test pins that moved.** Each still asserts exactly, and only gained the new value:
+  - `core.acl.extended`: a non-initial fragment's tuple carries `fragment: 'non-initial'` ([S17a]);
+  - `pdu.codecs`: the `CODECS` key list gains `ospf6` and `ospf6-lsa`;
+  - `pdu.codecs.p3`: the "no body encoder" case uses LSA type 7;
+  - the io schema-id pins (`io.migrate`, `io.schema`, `.p2`, `.p3`, `io.lab-schema`) gain 1.4.
+- **(e) `ospf6-lsa`.** It is a `ProtoName` member (architect) with a web vocabulary entry, letters `OA`. The
+  `ipv6.nh` dispatch space carries next header 89 → `ospf6`. NetScope field tables for `ospf6` and `ospf6-lsa` are
+  for the capture owner (W3b).
+- **(f) [S29]–[S31] files and storage.**
+  - `io/netforge-file.ts` writes `fs`, `nominalBytes` and `nvram`, and 1.3 files keep their bytes (reviewed edit).
+  - The **W2b device** item also owns two things the W1a item could not reach:
+    - declaring `hasFileStore`, `dir`, `configRegister`, `setConfigRegister` and `ifIndexSource` on `DeviceRuntime`,
+      each `@since P3c` and optional by meaning until the flip, with `FileSystemListing` in `contracts/storage.ts`;
+    - loading and saving the 1.4 members in `sim/simulation.ts` (`populate` writes flash files and the register;
+      `exportTopology` writes them and sets `schema = schemaIdFor(topo)`), with `accept.p3c.tftp` and
+      `accept.p3c.password-recovery` relying on it.
+  - User flash files join `DeviceSnapshot.storage` with the W4b flip.
+  - `ifIndex` excludes console, aux and usb ports. A flash write onto the running image's name is refused.
+- **(g) [S14]–[S16] l2.**
+  - Storm-control rows: `dropped` counts since the row was first written; `current` is the last closed window that
+    carried traffic; a window with an exceedance may be written twice. The W4a test accepts both writes.
+  - With both actions configured, the port err-disables and the trap log is emitted too.
+  - For ARP filters, the last line naming a VLAN wins.
+  - The W2a l2 item updates `arp-inspection.ts`'s header when it wires the DAI order.
+- **(h) Speed.** [S39]'s tracked scheduler adds one type check per scheduled event, and a map write only for "other"
+  (non-frame, non-link) events. Back-to-back storm benchmarks on a loaded machine were inconclusive: W0h 6.9–12.8 s,
+  W1a 8.1–10.0 s. The figure is re-measured on an idle machine before the W4b flip (bench/README).
+  `worker.time-machine` timed out once at 5 s under that load and passes alone.
+
 **W1b**
 
 11. `pdu.codecs.p3.test.ts:406-415`: the reserved list becomes exactly `ftp`, `smtp`, `pop3`, `imap` (tftp and snmp

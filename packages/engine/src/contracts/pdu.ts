@@ -101,6 +101,8 @@ export type ProtoName =
   // ── P3c (ARCHITECTURE-P3C §2.3; appended; field table in contracts/fields.ts, codec from W1) ──
   /** @since P3c [S6] OSPFv3 (IPv6 next header 89, RFC 5340 bytes; D7: a separate codec, not `ospf` version 3). */
   | 'ospf6'
+  /** @since P3c [S6] One OSPFv3 LSA inside an LSU (RFC 5340 A.4; the `ospf6-lsa` codec, as `ospf-lsa` for v2). */
+  | 'ospf6-lsa'
   /**
    * @since P3c [S29] TFTP (UDP 69, RFC 1350). Not a new name: the dispatch table has used it since P1 (reserved, decoded
    * as raw data until the W1b codec). Spelt out here so the web's exhaustive `PROTOCOL_VOCAB` can carry it

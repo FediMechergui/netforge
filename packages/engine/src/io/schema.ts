@@ -25,6 +25,14 @@
  * version does not have (1.0 and 1.1 lose it too). `topologySchema` reads each document with the object schema of its
  * version (`topologyObjectSchemaFor`), so every issue path and message of a 1.0–1.2 document is unchanged.
  *
+ * @since P3c (ARCHITECTURE-P3C D2, §2.9; W1a io) Schema 1.4 = 1.3 plus [S29] `files[].fs` ('flash': a router's or
+ * switch's `flash:` store; absent = the host's `files:` store), [S30] `files[].nominalBytes` (an image file's nominal
+ * size, which must equal the size its content's image header carries) and [S31] `devices[].nvram.configRegister` (the
+ * persistent configuration register, 0x0000–0xFFFF). A 1.0–1.3 document keeps its own field set: a 1.3 document that
+ * carries a 1.4 key is read without it (zod strips unknown keys), exactly as at cad4ac9. The names of one device's files
+ * are unique per file system. The catalog check refuses flash files and a register on a model without
+ * `DeviceModel.storage`.
+ *
  * Catalog-aware validation (`validateTopologyAgainstCatalog`) and the atomic
  * load gate (`prepareTopologyLoad`) run before a simulation replaces its world;
  * they report `TopologyLoadProblem`s per device or link.
@@ -54,6 +62,7 @@ import type { PortId } from '../contracts/ids.js';
 import { MEDIA, type MediaType } from '../contracts/link.js';
 import type { PortSpec } from '../contracts/port.js';
 import { TopologyLoadError, type TopologyLoadProblem } from '../contracts/simulation.js';
+import { IMAGE_HEADER_BYTES } from '../contracts/storage.js';
 import {
   LATEST_TOPOLOGY_SCHEMA_ID,
   NETFORGE_FORMAT_VERSION,
@@ -62,6 +71,7 @@ import {
   TOPOLOGY_SCHEMA_ID_1_1,
   TOPOLOGY_SCHEMA_ID_1_2,
   TOPOLOGY_SCHEMA_ID_1_3,
+  TOPOLOGY_SCHEMA_ID_1_4,
   type NetforgeManifest,
   type Topology,
   type TopologyDevice,
@@ -129,6 +139,41 @@ export function isTopologyFileName(path: string): boolean {
     if (c < 0x20 || c === 0x7f || c === 0x2f || c === 0x5c) return false;
   }
   return true;
+}
+
+/** @since P3c [S30] The largest nominal image size: the image header carries it as 10 decimal digits (§2.9). */
+export const MAX_IMAGE_NOMINAL_BYTES = 9_999_999_999;
+/** @since P3c [S30] The magic that starts an image header (`IMAGE_HEADER_BYTES` = this plus 10 decimal digits). */
+export const IMAGE_HEADER_MAGIC = 'NFIMG1';
+/** @since P3c [S31] The largest configuration register (16 bits). */
+export const MAX_CONFIG_REGISTER = 0xffff;
+
+/**
+ * @since P3c [S30] The nominal size an image file's content carries in its header (ARCHITECTURE-P3C §2.9, D10): the
+ * content starts with `IMAGE_HEADER_MAGIC` followed by exactly 10 decimal digits, the nominal size, between 1 and
+ * MAX_IMAGE_NOMINAL_BYTES. Undefined for any other content (a short text, another magic, a non-digit, a size of 0).
+ * Pure; the device runtime (`StoredFileMeta.nominalBytes`) and the 1.4 schema both read it.
+ */
+export function imageHeaderNominalBytes(content: string): number | undefined {
+  if (content.length < IMAGE_HEADER_BYTES || !content.startsWith(IMAGE_HEADER_MAGIC)) return undefined;
+  let n = 0;
+  for (let i = IMAGE_HEADER_MAGIC.length; i < IMAGE_HEADER_BYTES; i++) {
+    const c = content.charCodeAt(i) - 0x30;
+    if (c < 0 || c > 9) return undefined;
+    n = n * 10 + c;
+  }
+  return n >= 1 ? n : undefined;
+}
+
+/**
+ * @since P3c [S30] The 16-byte image header of a nominal size (an integer 1..MAX_IMAGE_NOMINAL_BYTES): the magic and
+ * the size as 10 zero-padded decimal digits. Throws a RangeError for any other size. Pure.
+ */
+export function imageHeader(nominalBytes: number): string {
+  if (!Number.isInteger(nominalBytes) || nominalBytes < 1 || nominalBytes > MAX_IMAGE_NOMINAL_BYTES) {
+    throw new RangeError(`an image's nominal size must be an integer from 1 to ${MAX_IMAGE_NOMINAL_BYTES} (got ${nominalBytes})`);
+  }
+  return `${IMAGE_HEADER_MAGIC}${String(nominalBytes).padStart(IMAGE_HEADER_BYTES - IMAGE_HEADER_MAGIC.length, '0')}`;
 }
 
 /** Number of issues quoted in the message of the Error thrown by `parseTopology` / `parseManifest`. */
@@ -285,6 +330,65 @@ export const topologyFilesSchema = z
 /** @since P3 (1.3) One entry of `topology.devices` in the 1.3 field set: the 1.1 device plus [S32] `files`. */
 export const topologyDeviceSchemaV13 = topologyDeviceSchema.extend({
   files: topologyFilesSchema.optional(),
+});
+
+/**
+ * @since P3c (1.4) One stored file in the 1.4 field set: the 1.3 file plus [S29] `fs` ('flash' only; absent = the
+ * host's `files:` store) and [S30] `nominalBytes` (an integer 1..MAX_IMAGE_NOMINAL_BYTES that must equal the nominal
+ * size of the content's image header, so a reload derives the same metadata the save wrote).
+ */
+export const topologyFileSchemaV14 = topologyFileSchema
+  .extend({
+    fs: z.literal('flash', { errorMap: () => ({ message: 'must be "flash"; leave it out for the files: store' }) }).optional(),
+    nominalBytes: z
+      .number({ invalid_type_error: 'must be a number' })
+      .int('must be an integer')
+      .min(1, `must be between 1 and ${MAX_IMAGE_NOMINAL_BYTES}`)
+      .max(MAX_IMAGE_NOMINAL_BYTES, `must be between 1 and ${MAX_IMAGE_NOMINAL_BYTES}`)
+      .optional(),
+  })
+  .superRefine((f, ctx) => {
+    if (f.nominalBytes === undefined) return;
+    const header = imageHeaderNominalBytes(f.content);
+    if (header !== f.nominalBytes) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['nominalBytes'],
+        message: header === undefined ? 'is set, but the content does not start with an image header' : `must equal the image header's size ${header}`,
+      });
+    }
+  });
+
+/**
+ * @since P3c (1.4) A device's `files` list in the 1.4 field set: at most MAX_TOPOLOGY_FILES_PER_DEVICE files, names
+ * unique per file system (`files:` and `flash:` may each hold a file of one name).
+ */
+export const topologyFilesSchemaV14 = z
+  .array(topologyFileSchemaV14, { invalid_type_error: 'must be an array' })
+  .max(MAX_TOPOLOGY_FILES_PER_DEVICE, `at most ${MAX_TOPOLOGY_FILES_PER_DEVICE} files are allowed`)
+  .superRefine((files, ctx) => {
+    const seen = new Set<string>();
+    files.forEach((f, j) => {
+      const key = `${f.fs ?? 'files'}:${f.path}`;
+      if (seen.has(key)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: [j, 'path'], message: `file "${key}" is listed more than once` });
+      else seen.add(key);
+    });
+  });
+
+/** @since P3c [S31] (1.4) `devices[].nvram`: the persistent configuration register, 0x0000–0xFFFF. */
+export const topologyNvramSchema = z.object({
+  configRegister: z
+    .number({ invalid_type_error: 'must be a number' })
+    .int('must be an integer')
+    .min(0, `must be between 0 and ${MAX_CONFIG_REGISTER} (0xFFFF)`)
+    .max(MAX_CONFIG_REGISTER, `must be between 0 and ${MAX_CONFIG_REGISTER} (0xFFFF)`)
+    .optional(),
+});
+
+/** @since P3c (1.4) One entry of `topology.devices` in the 1.4 field set: the 1.3 device, 1.4 `files` and `nvram`. */
+export const topologyDeviceSchemaV14 = topologyDeviceSchema.extend({
+  files: topologyFilesSchemaV14.optional(),
+  nvram: topologyNvramSchema.optional(),
 });
 
 /** One entry of `topology.links` (1.1 field set). `length_m` is range-checked in the topology refinement (radio links are exempt from MAX_LENGTH_M). */
@@ -506,17 +610,26 @@ const topologyObjectSchema = topologyObjectSchemaFor(topologyDeviceSchema, profi
 /** @since P3 The object schema of a 1.3 document: `profile` 'P2' | 'P3' and device `files`. */
 const topologyObjectSchemaV13 = topologyObjectSchemaFor(topologyDeviceSchemaV13, profileSchemaV13);
 
-/** @since P3 A parsed document of any version (the 1.3 output type is the widest). */
-type VersionedTopology = z.output<typeof topologyObjectSchemaV13>;
+/** @since P3c The object schema of a 1.4 document: the 1.3 field set plus the 1.4 file members and `nvram`. */
+const topologyObjectSchemaV14 = topologyObjectSchemaFor(topologyDeviceSchemaV14, profileSchemaV13);
+
+/** @since P3 A parsed document of any version (the 1.4 output type, @since P3c, is the widest). */
+type VersionedTopology = z.output<typeof topologyObjectSchemaV14>;
 
 /**
- * @since P3 Judge a (stripped) document with the object schema of its version: 1.3 with the 1.3 field set, anything
+ * @since P3 Judge a (stripped) document with the object schema of its version: (@since P3c) 1.4 with the 1.4 field
+ * set, 1.3 with the 1.3 field set, anything
  * else (1.0–1.2, an unknown or missing id) with the 1.2 field set exactly as before, so every issue it reports keeps its
  * path and message.
  */
 const versionedTopologySchema = z.unknown().transform((input, ctx): VersionedTopology => {
-  const v13 = isRecord(input) && input['schema'] === TOPOLOGY_SCHEMA_ID_1_3;
-  const result = v13 ? topologyObjectSchemaV13.safeParse(input) : topologyObjectSchema.safeParse(input);
+  const id = isRecord(input) ? input['schema'] : undefined;
+  const result =
+    id === TOPOLOGY_SCHEMA_ID_1_4
+      ? topologyObjectSchemaV14.safeParse(input)
+      : id === TOPOLOGY_SCHEMA_ID_1_3
+        ? topologyObjectSchemaV13.safeParse(input)
+        : topologyObjectSchema.safeParse(input);
   if (result.success) return result.data;
   for (const issue of result.error.issues) ctx.addIssue(issue as z.IssueData);
   return z.NEVER;
@@ -525,8 +638,9 @@ const versionedTopologySchema = z.unknown().transform((input, ctx): VersionedTop
 /**
  * Full topology document schema: `schema` (any id in TOPOLOGY_SCHEMA_IDS), `seed`, `devices`, `links`, optional
  * `objectives`/`notes`, the 1.1 sections, the 1.2 `profile` and (@since P3) the 1.3 `profile` values and device
- * `files`. A 1.0 document is read without its 1.1, 1.2 and 1.3 keys, a 1.1 document without its 1.2 and 1.3 keys, a 1.2
- * document without its 1.3 keys.
+ * `files`, and (@since P3c) the 1.4 file members and device `nvram`. A 1.0 document is read without its 1.1, 1.2 and 1.3
+ * keys, a 1.1 document without its 1.2 and 1.3 keys, a 1.2 document without its 1.3 keys; a 1.0–1.3 document never
+ * keeps a 1.4 key (no older object schema has one, and zod strips unknown keys).
  */
 export const topologySchema = z.preprocess(stripNewerSections, versionedTopologySchema);
 
@@ -746,7 +860,9 @@ function resolveEndpoint(dev: ScratchDevice, name: string, catalog: DeviceCatalo
 /**
  * Validate a PARSED topology against a device catalog before any world state changes (§3.14 step 3).
  *
- * Checks, per device in file order: the type exists; (@since P3) a device that carries [S32] `files` is a host; every
+ * Checks, per device in file order: the type exists; (@since P3) a device that carries [S32] `files` of the `files:`
+ * store is a host; (@since P3c) a device that carries [S29] `flash:` files or an [S31] `nvram.configRegister` has
+ * `DeviceModel.storage`; every
  * module install (the file's `modules`, or the model's default modules when absent) names a slot of the model, a
  * catalog module, and a module that fits the slot (wording from HARDWARE_MESSAGES). Then, per link in file order: each endpoint's port name resolves on a scratch port set
  * made of the fixed ports plus the ports of the valid module installs (`catalog.resolvePort`); virtual interfaces and virtual-role ports cannot terminate a link; and
@@ -764,9 +880,18 @@ export function validateTopologyAgainstCatalog(t: Topology, catalog: DeviceCatal
       problems.push({ device: d.id, message: `${deviceLabel(d)} has type "${d.type}", which this build's catalog does not contain` });
       continue;
     }
-    if (d.files !== undefined && d.files.length > 0 && !expandCapabilities(model.capabilities).includes('host')) {
+    const files = d.files ?? [];
+    if (files.some((f) => f.fs === undefined) && !expandCapabilities(model.capabilities).includes('host')) {
       // @since P3 [S32]: the `files:` store belongs to hosts only (D21)
       problems.push({ device: d.id, message: `${deviceLabel(d)} carries files, but a ${model.model} has no files: store (only hosts keep files)` });
+    }
+    if (model.storage === undefined && files.some((f) => f.fs === 'flash')) {
+      // @since P3c [S29]: flash: belongs to the models with `DeviceModel.storage` (routers and switches)
+      problems.push({ device: d.id, message: `${deviceLabel(d)} carries flash: files, but a ${model.model} has no flash: file system` });
+    }
+    if (model.storage === undefined && d.nvram?.configRegister !== undefined) {
+      // @since P3c [S31]: the persistent register lives in nvram:, which only the models with storage have
+      problems.push({ device: d.id, message: `${deviceLabel(d)} carries a configuration register, but a ${model.model} has no nvram: file system` });
     }
     const ports = new Map<PortId, { readonly spec: PortSpec }>();
     for (const spec of model.ports) ports.set(spec.name, { spec });

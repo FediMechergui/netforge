@@ -64,6 +64,8 @@ describe('pdu/codecs registry', () => {
       // ARCHITECTURE-P3 §9.2 item 13: the MUST codecs, then the approved ones in the ProtoName order of §2.3
       'ospf', 'ospf-lsa', 'cdp', 'lldp', 'ntp',
       'telnet', 'ssh', 'gre', 'ppp', 'lcp', 'pap', 'chap', 'ipcp', 'ipv6cp', 'syslog', 'eigrp', 'esp', 'ikev2',
+      // ARCHITECTURE-P3C §7 W1a pdu: the P3c codecs follow
+      'ospf6', 'ospf6-lsa',
     ]);
     expect(getCodec('ethernet')).toBe(ethernetCodec);
     expect(getCodec('arp')).toBe(arpCodec);

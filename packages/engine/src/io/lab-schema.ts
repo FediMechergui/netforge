@@ -24,6 +24,11 @@
  * grading (`Topology.lab.pendingFaults`, `Topology.lab.errDisabled`), with this file's scheduled-fault schema, before
  * sim/grade.ts replays it.
  *
+ * @since P3c (ARCHITECTURE-P3C D2; W1a io, a reviewed edit) A lab document's `topology` may be a
+ * `netforge.topology/1.4` document ([S29] flash files, [S30] image sizes, [S31] the configuration register): the
+ * topology schema reads every id of `TOPOLOGY_SCHEMA_IDS` with its own field set, and keeps the document's id (no
+ * migration), so a 1.1–1.3 topology inside a lab document reads exactly as before.
+ *
  * ponytail: §0 rule 12 — the schema is built on first use (`labDocumentSchema` is a lazy zod schema over a memoised
  * builder), so nothing here reads another module at module scope.
  */

@@ -12,6 +12,7 @@
  *   type 6 software     — text (original wording, chosen by the sender)
  *   type 7 nativeVlan   — 2 bytes
  *   type 8 duplex       — 1 byte: 1 full, 0 half
+ *   type 9 voiceVlan    — 2 bytes (@since P3c [S35], ARCHITECTURE-P3C §3.9: sent only on a port with a voice VLAN)
  *  • Encode writes the TLVs in type order, only for the fields present (deviceId and portId are required); an empty
  *    `addresses` or `capabilities` is written as an empty list, so decode gives back ''.
  *  • `addresses` is the comma-joined list; `capabilities` the letters in the fixed order R S I H P, joined by ' '.
@@ -33,6 +34,8 @@ export const CDP_TLV = Object.freeze({
   software: 6,
   nativeVlan: 7,
   duplex: 8,
+  /** @since P3c [S35] */
+  voiceVlan: 9,
 });
 /** Capability letters and their bits, in rendering order. */
 export const CDP_CAPABILITY_BITS: Readonly<Record<string, number>> = Object.freeze({ R: 0x01, S: 0x02, I: 0x04, H: 0x08, P: 0x10 });
@@ -145,6 +148,12 @@ function decode(bytes: Uint8Array, offset: number, length: number): DecodedLayer
           fieldRanges.duplex = range;
         }
         break;
+      case CDP_TLV.voiceVlan:
+        if (len >= 2) {
+          fields.voiceVlan = readU16(bytes, v);
+          fieldRanges.voiceVlan = range;
+        }
+        break;
       default:
         break; // unknown TLV: skipped by its length
     }
@@ -209,6 +218,13 @@ function encode(fields: Record<string, FieldValue>, payload: Uint8Array): Uint8A
     const duplex = strField(p, fields, 'duplex', 'full');
     if (duplex !== 'full' && duplex !== 'half') throw new Error(`cdp.duplex must be 'full' or 'half', got "${duplex}"`);
     tlv(out, CDP_TLV.duplex, [duplex === 'full' ? 1 : 0]);
+  }
+  if (has(fields, 'voiceVlan')) {
+    const vlan = numField(p, fields, 'voiceVlan', null);
+    if (vlan < 0 || vlan > 0xffff) throw new Error(`cdp.voiceVlan out of range: ${vlan}`);
+    const b = new Uint8Array(2);
+    writeU16(b, 0, vlan);
+    tlv(out, CDP_TLV.voiceVlan, b);
   }
   return Uint8Array.from(out);
 }

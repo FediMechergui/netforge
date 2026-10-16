@@ -89,7 +89,7 @@ import type { DropReason } from '../../contracts/link.js';
 import type { PortCounters, PortState } from '../../contracts/port.js';
 import type { ProcessRequest } from '../../contracts/process.js';
 import type { LabAssertion, LabFault } from '../../contracts/scenario.js';
-import type { Simulation } from '../../contracts/simulation.js';
+import type { RunToIdleOptions, Simulation } from '../../contracts/simulation.js';
 import type { TopologyLink } from '../../contracts/topology.js';
 import { TABLE_DESCRIPTORS, type TableDescriptor, type TableName, type TableRow, type TransportProbeView } from '../../contracts/tables.js';
 import { MS, SEC, type SimTime } from '../../contracts/time.js';
@@ -109,6 +109,18 @@ export const LAB_PING_SIZE_BYTES = 100;
 
 /** Events the disposable clone may dispatch while it boots and settles. */
 export const LAB_CLONE_BOOT_EVENTS = 200_000;
+
+/** @since P3c [S39] The quiet window of the grader's settle in simulated milliseconds (ARCHITECTURE-P3C D11, §3.10). */
+export const QUIET_WINDOW_MS = 60_000;
+
+/**
+ * @since P3c [S39] The grader's settle options (ARCHITECTURE-P3C §3.10): every grader `runToIdle` — the clone settle
+ * every clone check (connectivity, path, service, traffic, …) runs in, and the headless grade's settles (sim/grade.ts)
+ * — is `runToIdle(LAB_CLONE_BOOT_EVENTS, LAB_CLONE_SETTLE)`. A world that idles within LAB_CLONE_IDLE_FIRST_EVENTS
+ * settles exactly as before; one still busy then stops after QUIET_WINDOW_MS of quiet (`stopped: 'quiet'`) instead
+ * of running to the cap.
+ */
+export const LAB_CLONE_SETTLE: Readonly<RunToIdleOptions> = Object.freeze({ quiet: Object.freeze({ windowNs: QUIET_WINDOW_MS * MS }) });
 
 /** Events one connectivity ping may dispatch in the clone. */
 export const LAB_PING_MAX_EVENTS = 200_000;

@@ -15,6 +15,7 @@ import {
   TOPOLOGY_SCHEMA_ID_1_1,
   TOPOLOGY_SCHEMA_ID_1_2,
   TOPOLOGY_SCHEMA_ID_1_3,
+  TOPOLOGY_SCHEMA_ID_1_4,
   schemaIdFor,
   type Topology,
 } from '../src/contracts/topology.js';
@@ -121,8 +122,9 @@ const P2_OR_P3 = 'profile: must be "P2" or "P3"; leave it out for the classic (P
 describe('the 1.3 id and schemaIdFor', () => {
   it('appends 1.3 to the accepted ids and makes it the latest; the exporter id stays 1.1', () => {
     expect(TOPOLOGY_SCHEMA_ID_1_3).toBe('netforge.topology/1.3');
-    expect(TOPOLOGY_SCHEMA_IDS).toEqual([TOPOLOGY_SCHEMA_ID_1_0, TOPOLOGY_SCHEMA_ID_1_1, TOPOLOGY_SCHEMA_ID_1_2, TOPOLOGY_SCHEMA_ID_1_3]);
-    expect(LATEST_TOPOLOGY_SCHEMA_ID).toBe(TOPOLOGY_SCHEMA_ID_1_3);
+    // ARCHITECTURE-P3C §9.2 item 10 (W1a io): 1.4 follows 1.3 and is now the latest
+    expect(TOPOLOGY_SCHEMA_IDS).toEqual([TOPOLOGY_SCHEMA_ID_1_0, TOPOLOGY_SCHEMA_ID_1_1, TOPOLOGY_SCHEMA_ID_1_2, TOPOLOGY_SCHEMA_ID_1_3, TOPOLOGY_SCHEMA_ID_1_4]);
+    expect(LATEST_TOPOLOGY_SCHEMA_ID).toBe(TOPOLOGY_SCHEMA_ID_1_4);
     expect(TOPOLOGY_SCHEMA_ID).toBe(TOPOLOGY_SCHEMA_ID_1_1);
   });
 
@@ -223,19 +225,21 @@ describe('the profile field set of each version', () => {
   });
 
   it('the load gate keeps a 1.3 profile and normalises the in-memory id to 1.3; the exporter id stays per profile', () => {
+    // ARCHITECTURE-P3C §9.2 item 10 (W1a io): the in-memory id is the latest, now 1.4; the exporter ids do not move
     const loaded = prepareTopologyLoad(json(inProfile('P3')), catalog);
-    expect(loaded).toEqual(inProfile('P3'));
+    expect(loaded).toEqual({ ...inProfile('P3'), schema: TOPOLOGY_SCHEMA_ID_1_4 });
+    expect(schemaIdFor(loaded)).toBe(TOPOLOGY_SCHEMA_ID_1_3);
     const p2 = prepareTopologyLoad(json(inProfile('P2')), catalog);
-    expect(p2).toEqual({ ...inProfile('P2'), schema: TOPOLOGY_SCHEMA_ID_1_3 });
+    expect(p2).toEqual({ ...inProfile('P2'), schema: TOPOLOGY_SCHEMA_ID_1_4 });
     expect(schemaIdFor(p2)).toBe(TOPOLOGY_SCHEMA_ID_1_2);
     const p1 = prepareTopologyLoad(json(p1Doc()), catalog);
-    expect(p1).toEqual({ ...p1Doc(), schema: TOPOLOGY_SCHEMA_ID_1_3 });
+    expect(p1).toEqual({ ...p1Doc(), schema: TOPOLOGY_SCHEMA_ID_1_4 });
     expect(schemaIdFor(p1)).toBe(TOPOLOGY_SCHEMA_ID_1_1);
   });
 });
 
 describe('migration 1.2 → 1.3', () => {
-  it('is one identity step plus the schema id, never mutating its input; 1.3 has no step', () => {
+  it('is one identity step plus the schema id, never mutating its input; 1.3 steps on to 1.4 (P3c)', () => {
     const step = TOPOLOGY_MIGRATIONS[TOPOLOGY_SCHEMA_ID_1_2];
     expect(step?.from).toBe(TOPOLOGY_SCHEMA_ID_1_2);
     expect(step?.to).toBe(TOPOLOGY_SCHEMA_ID_1_3);
@@ -247,7 +251,8 @@ describe('migration 1.2 → 1.3', () => {
       expect(out).toEqual({ ...input, schema: TOPOLOGY_SCHEMA_ID_1_3 });
       expect(JSON.stringify(input)).toBe(before);
     }
-    expect(TOPOLOGY_MIGRATIONS[TOPOLOGY_SCHEMA_ID_1_3]).toBeUndefined();
+    // ARCHITECTURE-P3C §9.2 item 10 (W1a io): 1.3 now has its identity step to 1.4 (io.schema.v14 tests it)
+    expect(TOPOLOGY_MIGRATIONS[TOPOLOGY_SCHEMA_ID_1_3]?.to).toBe(TOPOLOGY_SCHEMA_ID_1_4);
   });
 
   it('migrateTopology walks a document up to schemaIdFor(t) and never further or down', () => {
@@ -278,7 +283,8 @@ describe('[S32] the hosts\' files store in schema 1.3', () => {
     expect(text).toBe(HOST_DOC_JSON);
     expect(Object.keys((JSON.parse(text) as { devices: object[] }).devices[0]!)).toEqual(['id', 'type', 'name', 'position', 'config', 'files']);
     expect(topologyFromJson(text)).toEqual(t);
-    expect(prepareTopologyLoad(json(t), catalog)).toEqual(t);
+    // ARCHITECTURE-P3C §9.2 item 10 (W1a io): the load gate's in-memory id is the latest, now 1.4
+    expect(prepareTopologyLoad(json(t), catalog)).toEqual({ ...t, schema: TOPOLOGY_SCHEMA_ID_1_4 });
     expect(topologyToJson(hostDoc(inProfile('P2')))).toBe(HOST_DOC_JSON.replace('    "version": 1\n  }\n}\n', '    "version": 1\n  },\n  "profile": "P2"\n}\n'));
   });
 

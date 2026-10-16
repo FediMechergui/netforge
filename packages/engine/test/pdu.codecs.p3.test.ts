@@ -180,7 +180,8 @@ describe('OSPF codec (D7, RFC 2328 bytes)', () => {
     const ext = ospfLsaCodec.encode({ lsType: 5, lsid: '0.0.0.0', advRouter: '1.1.1.1', mask: '0.0.0.0', e2: true, metric: 1 }, new Uint8Array(0));
     expect(Array.from(ext)).toEqual(hex(EXTERNAL_LSA));
     expect(ospfLsaCodec.decode(ext, 0, ext.length).fields).toMatchObject({ lsType: 5, mask: '0.0.0.0', e2: true, metric: 1, forward: '0.0.0.0', tag: 0, checksumValid: true, headerOnly: false });
-    expect(() => ospfLsaCodec.encode({ lsType: 3, lsid: '10.0.0.0', advRouter: '1.1.1.1' }, new Uint8Array(0))).toThrow(/no body encoder/);
+    // P3c [S4] gave types 3 and 4 a body encoder (pdu.codecs.p3c-routing); NSSA type 7 [C4] still has none
+    expect(() => ospfLsaCodec.encode({ lsType: 7, lsid: '10.0.0.0', advRouter: '1.1.1.1' }, new Uint8Array(0))).toThrow(/no body encoder/);
     expect(() => ospfLsaCodec.encode({ lsType: 1, lsid: '1.1.1.1', advRouter: '1.1.1.1', links: 'bogus,1,2,3' }, new Uint8Array(0))).toThrow(/links entry/);
   });
 

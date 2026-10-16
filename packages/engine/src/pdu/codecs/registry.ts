@@ -32,6 +32,7 @@
  *  • P3 (ARCHITECTURE-P3 §7 W1 pdu, §9.2 item 13): the P3 codecs follow the P2 codecs in the order ospf, ospf-lsa,
  *    cdp, lldp, ntp, then the approved items' codecs in the ProtoName order of §2.3 (telnet, ssh [S13]; gre [S18];
  *    ppp, lcp, pap, chap, ipcp, ipv6cp [S19]; syslog [S25]; eigrp [C1]; esp, ikev2 [C13]).
+ *  • P3c (ARCHITECTURE-P3C §2.3, §7 W1a pdu): ospf6, ospf6-lsa [S6] follow the P3 codecs (the W1b codecs append after).
  */
 import type {
   Codec,
@@ -86,6 +87,7 @@ import { syslogCodec } from './syslog.js'; // [S25]
 import { eigrpCodec } from './eigrp.js'; // [C1]
 import { espCodec } from './esp.js'; // [C13]
 import { ikev2Codec } from './ikev2.js'; // [C13]
+import { ospf6Codec, ospf6LsaCodec } from './ospf6.js'; // P3c [S6]
 import { linkFieldFill } from './dispatch.js';
 
 /**
@@ -93,7 +95,8 @@ import { linkFieldFill } from './dispatch.js';
  * link-layer codecs (hdlc, dot11, dot11-mgmt, llc, eapol), then the P1 codecs in contracts/fields.ts order
  * (ipv6, ipv6-hopopts, ipv6-route, ipv6-frag, ipv6-dstopts, icmpv6, udp, tcp, dhcp, dns, http), then the P2 codecs
  * (dot1q, stp, lacp, dtp, dhcpv6, capwap, hsrp, pagp), then the P3 codecs (ospf, ospf-lsa, cdp, lldp, ntp, then the
- * approved telnet, ssh, gre, ppp, lcp, pap, chap, ipcp, ipv6cp, syslog, eigrp, esp, ikev2). Plugins may `set` more.
+ * approved telnet, ssh, gre, ppp, lcp, pap, chap, ipcp, ipv6cp, syslog, eigrp, esp, ikev2), then the P3c codecs (ospf6,
+ * ospf6-lsa [S6]). Plugins may `set` more.
  */
 export const CODECS: Map<ProtoName, Codec> = new Map<ProtoName, Codec>([
   [ethernetCodec.proto, ethernetCodec],
@@ -146,6 +149,9 @@ export const CODECS: Map<ProtoName, Codec> = new Map<ProtoName, Codec>([
   [eigrpCodec.proto, eigrpCodec], // [C1]
   [espCodec.proto, espCodec], // [C13]
   [ikev2Codec.proto, ikev2Codec], // [C13]
+  // P3c (ARCHITECTURE-P3C §2.3, §7 W1a pdu): appended after the P3 codecs.
+  [ospf6Codec.proto, ospf6Codec], // [S6]
+  [ospf6LsaCodec.proto, ospf6LsaCodec], // [S6]
 ]);
 
 /** Codec for `proto`, or undefined when nothing is registered under that name. */

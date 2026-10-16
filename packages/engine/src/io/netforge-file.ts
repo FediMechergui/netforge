@@ -39,6 +39,7 @@ import type { FaultSpec } from '../contracts/events.js';
 import {
   NETFORGE_FORMAT_VERSION,
   TOPOLOGY_SCHEMA_ID_1_3,
+  TOPOLOGY_SCHEMA_ID_1_4,
   type NetforgeProject,
   type Topology,
   type TopologyDevice,
@@ -137,7 +138,21 @@ function canonicalDevice(d: TopologyDevice, withConfig: boolean): TopologyDevice
   if (d.hardware !== undefined && d.hardware.macSalt !== undefined) out.hardware = { macSalt: d.hardware.macSalt };
   if (d.ui !== undefined) out.ui = canonicalUi(d.ui);
   // @since P3 [S32] (1.3): the host's `files:` store, after every 1.1 key; an empty store is no content and is dropped
-  if (d.files !== undefined && d.files.length > 0) out.files = d.files.map((f) => ({ path: f.path, content: f.content }));
+  if (d.files !== undefined && d.files.length > 0) out.files = d.files.map(canonicalFile);
+  // @since P3c [S31] (1.4): the configuration register after `files`; an `nvram` without a register is no content
+  if (d.nvram !== undefined && d.nvram.configRegister !== undefined) out.nvram = { configRegister: d.nvram.configRegister };
+  return out;
+}
+
+/**
+ * @since P3 [S32] One stored file in canonical form: path and content, then (@since P3c, 1.4 only) [S29] `fs` and [S30]
+ * `nominalBytes` when present, so a 1.3 file keeps its bytes.
+ */
+function canonicalFile(f: NonNullable<TopologyDevice['files']>[number]): NonNullable<TopologyDevice['files']>[number] {
+  if (f.fs === undefined && f.nominalBytes === undefined) return { path: f.path, content: f.content };
+  const out: { path: string; content: string; fs?: 'flash'; nominalBytes?: number } = { path: f.path, content: f.content };
+  if (f.fs !== undefined) out.fs = f.fs;
+  if (f.nominalBytes !== undefined) out.nominalBytes = f.nominalBytes;
   return out;
 }
 
@@ -229,11 +244,11 @@ function canonicalPendingFault(f: TopologyPendingFault): TopologyPendingFault {
 /**
  * @since P3 (ruling R58 (b)) `parsed` (the topology schema's output for `raw`, which strips the recorded lab state)
  * with the lab state of `raw` re-attached, checked by `parseSavedLabState` (a malformed one throws a
- * `TopologyLoadError` with its path): only for a 1.3 document with a lab stamp, and each member only when not empty.
+ * `TopologyLoadError` with its path): only for a 1.3 (or, @since P3c, 1.4) document with a lab stamp, and each member only when not empty.
  * A 1.0–1.2 document never carries the members (its field set strips them), as it never carries host `files`.
  */
 function withSavedLabState(parsed: Topology, raw: unknown): Topology {
-  if (parsed.schema !== TOPOLOGY_SCHEMA_ID_1_3 || parsed.lab === undefined) return parsed;
+  if ((parsed.schema !== TOPOLOGY_SCHEMA_ID_1_3 && parsed.schema !== TOPOLOGY_SCHEMA_ID_1_4) || parsed.lab === undefined) return parsed;
   const saved = parseSavedLabState(raw);
   if (saved.pendingFaults.length > 0) parsed.lab.pendingFaults = saved.pendingFaults;
   if (saved.errDisabled.length > 0) parsed.lab.errDisabled = saved.errDisabled;

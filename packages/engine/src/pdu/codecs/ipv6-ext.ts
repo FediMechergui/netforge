@@ -18,7 +18,7 @@
 import type { Codec, DecodedLayer, FieldValue, MutationReason } from '../../contracts/pdu.js';
 import { IPPROTO_NONE } from '../../contracts/pdu.js';
 import { bytesField, numField, readU16, readU32, writeU16, writeU32 } from '../checksum.js';
-import { nextProto } from './dispatch.js';
+import { nextIpv6Proto } from './dispatch.js';
 
 const DERIVED: Readonly<Record<string, MutationReason>> = Object.freeze({ hdrExtLen: 'Other' });
 
@@ -33,7 +33,7 @@ const NAMES: Readonly<Record<string, string>> = Object.freeze({
 /** Next-layer descriptor shared by the extension codecs. */
 function chain(out: DecodedLayer, nextHeader: number, offset: number, remaining: number, dispatch: boolean): void {
   if (remaining <= 0 || nextHeader === IPPROTO_NONE) return;
-  out.next = { proto: dispatch ? nextProto('ipproto', nextHeader) : 'payload', offset, length: remaining };
+  out.next = { proto: dispatch ? nextIpv6Proto(nextHeader) : 'payload', offset, length: remaining };
 }
 
 function nextHeaderField(proto: string, fields: Readonly<Record<string, FieldValue>>): number {

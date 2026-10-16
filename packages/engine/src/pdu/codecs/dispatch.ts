@@ -31,6 +31,12 @@
  * P3 (ARCHITECTURE-P3 §2.3): `LINK_FIELDS` gains [S18] `gre.protocolType` (ethertype space) and [S19] `ppp.protocol`
  * (the new `ppp.proto` space).
  *
+ * P3c (ARCHITECTURE-P3C §2.3) [S6]: the `ipproto` space is shared by IPv4 and IPv6, but IPv6 next header 89 is OSPFv3
+ * (`ospf6`) while IPv4 protocol 89 stays OSPFv2 (`ospf`). The family space `ipv6.nh` (IPV6_NH_SPACE) holds the IPv6-only
+ * entries and is consulted FIRST by the IPv6 header and its extension headers (`nextIpv6Proto`), then `ipproto`; the
+ * builder fill of `ipv6.nextHeader` (and the extension headers' `nextHeader`) does the same in reverse. Every key that
+ * `ipv6.nh` does not name dispatches exactly as before, so no existing decode changes.
+ *
  * Pure data; iteration order is table order (deterministic).
  */
 import type { DispatchSpace, FieldValue, ProtoName } from '../../contracts/pdu.js';
@@ -88,6 +94,20 @@ for (const e of DISPATCH_TABLE) {
 /** Protocol dispatched by `key` in `space`, or undefined when the key is unknown or reserved. */
 export function lookupNext(space: DispatchSpace, key: number): ProtoName | undefined {
   return FORWARD.get(space)?.get(key);
+}
+
+/** @since P3c [S6] The IPv6-only next-header space, consulted before `ipproto` by the IPv6 layers. */
+export const IPV6_NH_SPACE: DispatchSpace = 'ipv6.nh';
+
+/** Layers whose `nextHeader` selects in the IPv6 family (the IPv6 header and its extension headers). */
+const IPV6_FAMILY: ReadonlySet<string> = new Set(['ipv6', 'ipv6-hopopts', 'ipv6-route', 'ipv6-frag', 'ipv6-dstopts']);
+
+/**
+ * @since P3c [S6] The protocol after an IPv6 header or extension header whose next header is `nextHeader`: the
+ * `ipv6.nh` entry when there is one (89 → ospf6), else the shared `ipproto` entry, else `payload`.
+ */
+export function nextIpv6Proto(nextHeader: number): ProtoName {
+  return FORWARD.get(IPV6_NH_SPACE)?.get(nextHeader) ?? nextProto('ipproto', nextHeader);
 }
 
 /** Like `lookupNext`, but returns `fallback` (default `payload`) when nothing is dispatched. */
@@ -158,7 +178,7 @@ export function linkFieldOf(proto: ProtoName, fields: Readonly<Record<string, Fi
  *  • an llc spec with no dsap, ssap, oui or type whose inner proto has no ethertype: the `llc.sap` key → dsap = ssap
  *    = key (a non-SNAP header), else the `nf.pid` key → oui NF_OUI and type = key;
  *  • ethernet / dot1q with inner `llc` → `type: 0` (802.3 length framing; the codec writes the length);
- *  • otherwise the table-driven key of `linkFieldOf`.
+ *  • otherwise the table-driven key of `linkFieldOf` (for the IPv6 family, `ipv6.nh` first: ospf6 → 89).
  */
 export function linkFieldFill(
   proto: ProtoName,
@@ -176,6 +196,6 @@ export function linkFieldFill(
   const lf = linkFieldOf(proto, fields);
   if (!lf || !isAbsent(fields[lf.field])) return undefined;
   if (lf.lengthFramed === true && innerProto === 'llc') return { [lf.field]: 0 };
-  const key = keyForProto(lf.space, innerProto);
+  const key = (IPV6_FAMILY.has(proto) ? keyForProto(IPV6_NH_SPACE, innerProto) : undefined) ?? keyForProto(lf.space, innerProto);
   return key === undefined ? undefined : { [lf.field]: key };
 }

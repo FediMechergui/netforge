@@ -10,12 +10,18 @@
  *   7 system capabilities — `capabilities(2) enabledCapabilities(2)` bit maps (IEEE bits: 0x04 bridge, 0x10 router, …)
  *   8 management address  — `length(1)=5 subtype(1)=1 (IPv4) address(4) ifSubtype(1)=1 (unknown) ifNumber(4)=0
  *                            oidLength(1)=0`
+ * 127 organisation-specific, LLDP-MED (ANSI/TIA-1057, OUI 00-12-BB; @since P3c [S35], ARCHITECTURE-P3C §2.3, §3.9):
+ *                    subtype 1 capabilities — `oui(3) 1 medCapabilities(2) medDeviceType(1)`
+ *                    subtype 2 network policy — `oui(3) 2 appType(1)=1 (voice) U|T|X|vlan(12)|priority(3)|dscp(6)`
+ *                    (24 bits after the application type): written tagged (T = 1, U = 0), priority 5, DSCP 46;
+ *                    decoded as `medVlan` only for application type 1
  *   0 end of LLDPDU — length 0 (derived: always written last)
  *  • Encode writes the optional TLVs only for the fields present; a present `capabilities` or `enabledCapabilities`
- *    writes TLV 7, the missing one taking the other's value.
+ *    writes TLV 7, the missing one taking the other's value. The MED TLVs follow the management address: subtype 1 when
+ *    `medCapabilities` is present (`medDeviceType` defaults to 0, not defined), then subtype 2 when `medVlan` is.
  *  • Decode reads TLVs up to the end TLV, which ends the layer (the Ethernet padding after it belongs to Ethernet);
- *    unknown TLV types (organisation-specific ones included) are skipped by their length. Errors: truncation, a TLV
- *    running past the frame, no end TLV, a missing chassis id, port id or TTL.
+ *    unknown TLV types and every organisation-specific TLV other than the two MED ones above are skipped by their
+ *    length. Errors: truncation, a TLV running past the frame, no end TLV, a missing chassis id, port id or TTL.
  */
 import type { Codec, DecodedLayer, FieldValue } from '../../contracts/pdu.js';
 import { bytesToIpv4, bytesToMac, ipv4ToBytes, isIpv4, macToBytes, normalizeMac } from '../../contracts/addr.js';
@@ -32,7 +38,22 @@ export const LLDP_TLV = Object.freeze({
   systemDescription: 6,
   capabilities: 7,
   mgmtAddress: 8,
+  /** @since P3c [S35] Organisation-specific TLV. */
+  orgSpecific: 127,
 });
+/** @since P3c [S35] The LLDP-MED organisation identifier (TIA). */
+export const LLDP_MED_OUI: readonly number[] = Object.freeze([0x00, 0x12, 0xbb]);
+/** @since P3c [S35] LLDP-MED subtypes. */
+export const LLDP_MED_SUBTYPE = Object.freeze({ capabilities: 1, networkPolicy: 2 });
+/** @since P3c [S35] LLDP-MED capability bits (the `medCapabilities` field). */
+export const LLDP_MED_CAPABILITY = Object.freeze({ capabilities: 0x01, networkPolicy: 0x02, location: 0x04, powerPse: 0x08, powerPd: 0x10, inventory: 0x20 });
+/** @since P3c [S35] LLDP-MED device types (the `medDeviceType` field). */
+export const LLDP_MED_DEVICE = Object.freeze({ notDefined: 0, endpointClass1: 1, endpointClass2: 2, endpointClass3: 3, networkConnectivity: 4 });
+/** @since P3c [S35] Network policy application type 1: voice. */
+export const LLDP_MED_APP_VOICE = 1;
+/** @since P3c [S35] The voice policy written with `medVlan`: 802.1p priority 5 and DSCP 46 (EF). */
+export const LLDP_MED_VOICE_PRIORITY = 5;
+export const LLDP_MED_VOICE_DSCP = 46;
 /** Chassis id subtype 4: a MAC address. */
 export const LLDP_CHASSIS_MAC = 4;
 /** Port id subtypes: 3 a MAC address, 5 an interface name. */
@@ -120,6 +141,21 @@ function decode(bytes: Uint8Array, offset: number, length: number): DecodedLayer
           fieldRanges.mgmtAddress = range;
         }
         break;
+      case LLDP_TLV.orgSpecific: {
+        if (len < 4 || bytes[v] !== LLDP_MED_OUI[0] || bytes[v + 1] !== LLDP_MED_OUI[1] || bytes[v + 2] !== LLDP_MED_OUI[2]) break;
+        const subtype = bytes[v + 3];
+        if (subtype === LLDP_MED_SUBTYPE.capabilities && len >= 7) {
+          fields.medCapabilities = readU16(bytes, v + 4);
+          fields.medDeviceType = bytes[v + 6]!;
+          fieldRanges.medCapabilities = [v + 4, 2];
+          fieldRanges.medDeviceType = [v + 6, 1];
+        } else if (subtype === LLDP_MED_SUBTYPE.networkPolicy && len >= 8 && bytes[v + 4] === LLDP_MED_APP_VOICE) {
+          const word = (bytes[v + 5]! << 16) | (bytes[v + 6]! << 8) | bytes[v + 7]!;
+          fields.medVlan = (word >>> 9) & 0xfff;
+          fieldRanges.medVlan = range;
+        }
+        break; // any other organisation-specific TLV: skipped
+      }
       default:
         break; // unknown or organisation-specific TLV: skipped by its length
     }
@@ -190,6 +226,17 @@ function encode(fields: Record<string, FieldValue>, payload: Uint8Array): Uint8A
     const a = strField(p, fields, 'mgmtAddress', null);
     if (!isIpv4(a)) throw new Error(`lldp.mgmtAddress is not an IPv4 address: "${a}"`);
     tlv(out, LLDP_TLV.mgmtAddress, [5, 1, ...ipv4ToBytes(a), 1, 0, 0, 0, 0, 0]);
+  }
+  if (has(fields, 'medCapabilities')) {
+    const caps = u16(fields, 'medCapabilities', null);
+    tlv(out, LLDP_TLV.orgSpecific, [...LLDP_MED_OUI, LLDP_MED_SUBTYPE.capabilities, (caps >>> 8) & 0xff, caps & 0xff, u8(fields, 'medDeviceType', LLDP_MED_DEVICE.notDefined)]);
+  }
+  if (has(fields, 'medVlan')) {
+    const vlan = u16(fields, 'medVlan', null);
+    if (vlan > 0xfff) throw new Error(`lldp.medVlan out of range: ${vlan}`);
+    // U(1)=0 T(1)=1 X(1)=0 vlan(12) priority(3) dscp(6): 24 bits
+    const word = (1 << 22) | (vlan << 9) | (LLDP_MED_VOICE_PRIORITY << 6) | LLDP_MED_VOICE_DSCP;
+    tlv(out, LLDP_TLV.orgSpecific, [...LLDP_MED_OUI, LLDP_MED_SUBTYPE.networkPolicy, LLDP_MED_APP_VOICE, (word >>> 16) & 0xff, (word >>> 8) & 0xff, word & 0xff]);
   }
   tlv(out, LLDP_TLV.end, []);
   return Uint8Array.from(out);

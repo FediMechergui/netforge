@@ -35,6 +35,17 @@
  * The acl daemon (W2), NAT (P2 reader), the QoS class reader, the grader (`aclDecision`) and the web tools all read
  * lists through these functions, so they cannot disagree.
  *
+ * P3c (ARCHITECTURE-P3C §7 W1a core) adds, without changing a byte of any list written with the P3 terms:
+ *   • [S12] extended-entry terms `dscp <0-63|name>`, `precedence <0-7|name>` (one of the two) and `log-input` (a
+ *     `log` that also names the input interface and MAC; the entry carries `logInput`, never `log`);
+ *   • [S17a] the ACL non-initial-fragment rule: when `tuple.fragment === 'non-initial'`, an entry with L4 conditions
+ *     (ports, `established`, an ICMP type) is judged on its L3 part only if it permits, and is skipped if it denies
+ *     (trail `failed: 'fragment'`); the `fragments` keyword (extended, no L4 conditions) matches non-initial fragments
+ *     only. `tupleOf` sets `fragment` from `fragOffset`, and `dscp` (when not 0) on request (an absent `dscp` reads as 0);
+ *   • [S10] `aclTrailText`: the first-match walk of a trail (either family) as one original-wording line per step.
+ * Canonical text order of an extended entry: `… [established] [<icmp>] [dscp <d>|precedence <p>] [fragments]
+ * [log|log-input]`; the parser accepts the tail terms in any order, each at most once.
+ *
  * Pure: no module state, no randomness; lists keep configuration order.
  */
 import { ipv4ToU32, parseIpv4, u32ToIpv4, type Ipv4Address } from '../contracts/addr.js';
@@ -235,7 +246,15 @@ export interface AclExtendedEntry {
   readonly established?: true;
   /** ICMP only: the type, and the code when given. */
   readonly icmp?: { readonly type: number; readonly code?: number };
+  /** @since P3c [S12] The packet's DSCP must equal this (0–63). Never with `precedence`. */
+  readonly dscp?: number;
+  /** @since P3c [S12] The packet's IP precedence (DSCP ≫ 3) must equal this (0–7). Never with `dscp`. */
+  readonly precedence?: number;
+  /** @since P3c [S17a] `fragments`: matches non-initial fragments only (never with L4 conditions). */
+  readonly fragments?: true;
   readonly log?: true;
+  /** @since P3c [S12] `log-input`: logged like `log`, with the input interface and source MAC. Never with `log`. */
+  readonly logInput?: true;
 }
 
 /** @since P3 A permit or deny entry of either list type. */
@@ -323,6 +342,22 @@ export const ACL_ICMP_NAMES: readonly (readonly [string, number, number?])[] = O
   ['mask-request', 17],
   ['mask-reply', 18],
   ['traceroute', 30],
+]);
+
+/**
+ * @since P3c [S12] The DSCP names a `dscp` term accepts and shows (a value with a name is shown by its name). The
+ * same values as the QoS reader's table (`qos/config.ts`), kept here because core never imports qos.
+ */
+export const ACL_DSCP_NAMES: readonly (readonly [string, number])[] = Object.freeze([
+  ['default', 0], ['cs1', 8], ['af11', 10], ['af12', 12], ['af13', 14], ['cs2', 16], ['af21', 18], ['af22', 20],
+  ['af23', 22], ['cs3', 24], ['af31', 26], ['af32', 28], ['af33', 30], ['cs4', 32], ['af41', 34], ['af42', 36],
+  ['af43', 38], ['cs5', 40], ['ef', 46], ['cs6', 48], ['cs7', 56],
+]);
+
+/** @since P3c [S12] The IP precedence names a `precedence` term accepts and shows. */
+export const ACL_PRECEDENCE_NAMES: readonly (readonly [string, number])[] = Object.freeze([
+  ['routine', 0], ['priority', 1], ['immediate', 2], ['flash', 3], ['flash-override', 4], ['critical', 5],
+  ['internet', 6], ['network', 7],
 ]);
 
 const IPPROTO_ICMP = 1;
@@ -434,14 +469,15 @@ type Mutable<T> = { -readonly [K in keyof T]: T[K] };
 export function parseAclEntry(type: AclListType, tokens: readonly string[]): AclEntry | undefined {
   const action = tokens[0];
   if (action !== 'permit' && action !== 'deny') return undefined;
-  const hasLog = tokens.length > 2 && tokens[tokens.length - 1] === 'log';
-  const body = hasLog ? tokens.slice(0, -1) : tokens;
   if (type === 'standard') {
+    const hasLog = tokens.length > 2 && tokens[tokens.length - 1] === 'log';
+    const body = hasLog ? tokens.slice(0, -1) : tokens;
     const e = parseStandardAclEntry(body);
     if (e === undefined) return undefined;
     const out: AclStandardEntry = { kind: 'standard', action, source: { address: e.address, wildcard: e.wildcard } };
     return hasLog ? { ...out, log: true } : out;
   }
+  const body = tokens;
   const protocol = parseProtocol(body[1]);
   if (protocol === undefined) return undefined;
   const src = parseAclAddress(body, 2);
@@ -465,14 +501,69 @@ export function parseAclEntry(type: AclListType, tokens: readonly string[]): Acl
     icmp = r.value;
     i = r.next;
   }
-  if (i !== body.length) return undefined;
+  const tail = parseExtendedTail(body, i);
+  if (tail === undefined) return undefined;
   const entry: Mutable<AclExtendedEntry> = { kind: 'extended', action, protocol, source: src.value, destination: dst.value };
   if (srcPort.value !== undefined) entry.sourcePort = srcPort.value;
   if (dstPort.value !== undefined) entry.destinationPort = dstPort.value;
   if (established) entry.established = true;
   if (icmp !== undefined) entry.icmp = icmp;
-  if (hasLog) entry.log = true;
+  if (tail.dscp !== undefined) entry.dscp = tail.dscp;
+  if (tail.precedence !== undefined) entry.precedence = tail.precedence;
+  if (tail.fragments) {
+    // [S17a] a non-initial fragment carries no L4 fields, so `fragments` never combines with L4 conditions
+    if (hasL4Conditions(entry)) return undefined;
+    entry.fragments = true;
+  }
+  if (tail.log === 'log') entry.log = true;
+  else if (tail.log === 'log-input') entry.logInput = true;
   return entry;
+}
+
+/** The terms after the L4 part of an extended entry ([S12] [S17a]), each at most once, in any order. */
+interface ExtendedTail {
+  dscp?: number;
+  precedence?: number;
+  fragments: boolean;
+  log?: 'log' | 'log-input';
+}
+
+function parseExtendedTail(body: readonly string[], start: number): ExtendedTail | undefined {
+  const out: ExtendedTail = { fragments: false };
+  let i = start;
+  while (i < body.length) {
+    const t = body[i];
+    if (t === 'log' || t === 'log-input') {
+      if (out.log !== undefined) return undefined;
+      out.log = t;
+      i++;
+    } else if (t === 'fragments') {
+      if (out.fragments) return undefined;
+      out.fragments = true;
+      i++;
+    } else if (t === 'dscp' || t === 'precedence') {
+      // one of the two: both read the same DS field
+      if (out.dscp !== undefined || out.precedence !== undefined) return undefined;
+      const tok = body[i + 1];
+      const v = tok === undefined
+        ? undefined
+        : t === 'dscp'
+          ? (lookupName(ACL_DSCP_NAMES, tok) ?? decimal(tok, 63))
+          : (lookupName(ACL_PRECEDENCE_NAMES, tok) ?? decimal(tok, 7));
+      if (v === undefined) return undefined;
+      if (t === 'dscp') out.dscp = v;
+      else out.precedence = v;
+      i += 2;
+    } else {
+      return undefined;
+    }
+  }
+  return out;
+}
+
+/** True when an extended entry has L4 conditions (ports, `established`, an ICMP type): the [S17a] fragment rule. */
+function hasL4Conditions(e: Pick<AclExtendedEntry, 'sourcePort' | 'destinationPort' | 'established' | 'icmp'>): boolean {
+  return e.sourcePort !== undefined || e.destinationPort !== undefined || e.established === true || e.icmp !== undefined;
 }
 
 function standardAddressText(a: AclAddress): string {
@@ -515,6 +606,10 @@ export function aclEntryText(e: AclEntry): string {
     if (e.destinationPort !== undefined) parts.push(portMatchText(e.protocol, e.destinationPort));
     if (e.established === true) parts.push('established');
     if (e.icmp !== undefined) parts.push(icmpText(e.icmp));
+    if (e.dscp !== undefined) parts.push('dscp', nameOf(ACL_DSCP_NAMES, e.dscp) ?? String(e.dscp));
+    if (e.precedence !== undefined) parts.push('precedence', nameOf(ACL_PRECEDENCE_NAMES, e.precedence) ?? String(e.precedence));
+    if (e.fragments === true) parts.push('fragments');
+    if (e.logInput === true) parts.push('log-input');
   }
   if (e.log === true) parts.push('log');
   return parts.join(' ');
@@ -657,12 +752,22 @@ function intField(v: unknown): number | undefined {
 }
 
 /**
+ * @since P3c [S12] Options of `tupleOf`. `dscp` (absent = false, the P3 tuple exactly): also carry the datagram's
+ * DSCP when it is not 0, for lists with `dscp` / `precedence` terms (the acl daemon and NAT readers ask for it; a
+ * tuple without `dscp` reads as DSCP 0).
+ */
+export interface TupleOfOptions {
+  readonly dscp?: boolean;
+}
+
+/**
  * @since P3 The fields an access list matches (contracts `PacketTuple`), from the first IPv4 layer of a PDU and the
  * layer right after it: the TCP and UDP ports, the TCP flags packed as bits (FIN 0x01, SYN 0x02, RST 0x04, PSH 0x08,
  * ACK 0x10, URG 0x20, ECE 0x40, CWR 0x80), the ICMP type and code (an ICMP error's quoted datagram is never read). A
- * non-initial fragment carries no transport fields. Undefined without an IPv4 layer.
+ * non-initial fragment carries no transport fields and is marked `fragment: 'non-initial'` [S17a]; with
+ * `opts.dscp` a nonzero DSCP is carried as `dscp` [S12]. Undefined without an IPv4 layer.
  */
-export function tupleOf(pdu: Pick<PduView, 'layers'>): PacketTuple | undefined {
+export function tupleOf(pdu: Pick<PduView, 'layers'>, opts?: TupleOfOptions): PacketTuple | undefined {
   const i = pdu.layers.findIndex((l) => l.proto === 'ipv4');
   if (i < 0) return undefined;
   const ip = pdu.layers[i]!.fields;
@@ -671,8 +776,18 @@ export function tupleOf(pdu: Pick<PduView, 'layers'>): PacketTuple | undefined {
   const dst = ip['dst'];
   if (proto === undefined || typeof src !== 'string' || typeof dst !== 'string') return undefined;
   const tuple: Mutable<PacketTuple> = { family: 4, proto, src, dst };
+  // [S12] on request, the DSCP when it is not 0 (absent reads as 0): without the option the tuple keeps its P3 shape
+  if (opts?.dscp === true) {
+    const dscp = intField(ip['dscp']);
+    if (dscp !== undefined && dscp > 0 && dscp <= 63) tuple.dscp = dscp;
+  }
+  // [S17a] a non-initial fragment: no L4 fields, and the fragment rule applies
+  if ((intField(ip['fragOffset']) ?? 0) !== 0) {
+    tuple.fragment = 'non-initial';
+    return tuple;
+  }
   const up = pdu.layers[i + 1];
-  if (up === undefined || (intField(ip['fragOffset']) ?? 0) !== 0) return tuple;
+  if (up === undefined) return tuple;
   const f = up.fields;
   if ((up.proto === 'tcp' && proto === IPPROTO_TCP) || (up.proto === 'udp' && proto === IPPROTO_UDP)) {
     const sp = intField(f['srcPort']);
@@ -694,8 +809,14 @@ export function tupleOf(pdu: Pick<PduView, 'layers'>): PacketTuple | undefined {
   return tuple;
 }
 
-/** @since P3 The part of an entry a packet failed first (the trail's reason). */
-export type AclMatchField = 'protocol' | 'source' | 'source-port' | 'destination' | 'destination-port' | 'established' | 'icmp';
+/**
+ * @since P3 The part of an entry a packet failed first (the trail's reason). 'dscp' and 'precedence' @since P3c [S12];
+ * 'fragment' @since P3c [S17a] (a deny with L4 conditions skipped by a non-initial fragment, or a `fragments` entry
+ * and a packet that is not a non-initial fragment).
+ */
+export type AclMatchField =
+  | 'protocol' | 'source' | 'source-port' | 'destination' | 'destination-port' | 'established' | 'icmp'
+  | 'dscp' | 'precedence' | 'fragment';
 
 /** @since P3 One entry examined by `evaluateAcl`, in order; the implicit entry has `seq: 'implicit'`. */
 export interface AclTrailStep {
@@ -736,20 +857,31 @@ function portMatches(m: AclPortMatch, port: number | undefined): boolean {
 
 /**
  * @since P3 The first part of `e` that the packet fails, in the order protocol, source, source port, destination,
- * destination port, established, ICMP; undefined when the entry matches. A standard entry reads the source only.
+ * destination port, established, ICMP, then (P3c) DSCP or precedence [S12] and the fragment rule [S17a]; undefined
+ * when the entry matches. A standard entry reads the source only.
+ * [S17a] For a non-initial fragment (`t.fragment === 'non-initial'`) the L4 conditions are not read: an entry with
+ * them matches on its L3 part when it permits and is skipped ('fragment') when it denies; a `fragments` entry misses
+ * ('fragment') every packet that is not a non-initial fragment. A tuple without `dscp` has DSCP 0.
  */
 export function aclEntryMiss(e: AclEntry, t: PacketTuple): AclMatchField | undefined {
   if (e.kind === 'standard') return wildcardMatches(t.src, e.source.address, e.source.wildcard) ? undefined : 'source';
+  const nonInitial = t.fragment === 'non-initial';
   if (e.protocol !== 'ip' && e.protocol !== t.proto) return 'protocol';
   if (!wildcardMatches(t.src, e.source.address, e.source.wildcard)) return 'source';
-  if (e.sourcePort !== undefined && !portMatches(e.sourcePort, t.srcPort)) return 'source-port';
+  if (!nonInitial && e.sourcePort !== undefined && !portMatches(e.sourcePort, t.srcPort)) return 'source-port';
   if (!wildcardMatches(t.dst, e.destination.address, e.destination.wildcard)) return 'destination';
-  if (e.destinationPort !== undefined && !portMatches(e.destinationPort, t.dstPort)) return 'destination-port';
-  if (e.established === true && ((t.tcpFlags ?? 0) & (TCP_ACK | TCP_RST)) === 0) return 'established';
-  if (e.icmp !== undefined) {
-    if (t.icmpType !== e.icmp.type) return 'icmp';
-    if (e.icmp.code !== undefined && t.icmpCode !== e.icmp.code) return 'icmp';
+  if (!nonInitial) {
+    if (e.destinationPort !== undefined && !portMatches(e.destinationPort, t.dstPort)) return 'destination-port';
+    if (e.established === true && ((t.tcpFlags ?? 0) & (TCP_ACK | TCP_RST)) === 0) return 'established';
+    if (e.icmp !== undefined) {
+      if (t.icmpType !== e.icmp.type) return 'icmp';
+      if (e.icmp.code !== undefined && t.icmpCode !== e.icmp.code) return 'icmp';
+    }
   }
+  if (e.dscp !== undefined && (t.dscp ?? 0) !== e.dscp) return 'dscp';
+  if (e.precedence !== undefined && (t.dscp ?? 0) >> 3 !== e.precedence) return 'precedence';
+  if (e.fragments === true && !nonInitial) return 'fragment';
+  if (nonInitial && e.action === 'deny' && hasL4Conditions(e)) return 'fragment';
   return undefined;
 }
 
@@ -771,6 +903,61 @@ export function evaluateAcl(list: Pick<AclList, 'type' | 'entries'>, tuple: Pack
   }
   trail.push({ seq: 'implicit', text: aclImplicitText(list.type), result: 'match' });
   return { action: 'deny', seq: null, implicit: 'deny', trail };
+}
+
+/** @since P3c [S10] One step of a first-match walk of either family (`AclTrailStep`, `Acl6TrailStep`). */
+export interface AclTrailLike {
+  readonly seq: number | 'implicit' | 'nd-na' | 'nd-ns';
+  readonly text: string;
+  readonly result: 'match' | 'miss';
+  readonly failed?: AclMatchField;
+}
+
+const TRAIL_MISS_TEXT: Readonly<Record<AclMatchField, string>> = Object.freeze({
+  protocol: 'the protocol differs',
+  source: 'the source address is outside the entry',
+  'source-port': 'the source port does not satisfy the entry',
+  destination: 'the destination address is outside the entry',
+  'destination-port': 'the destination port does not satisfy the entry',
+  established: 'the segment carries neither ACK nor RST',
+  icmp: 'the ICMP message differs',
+  dscp: 'the DSCP differs',
+  precedence: 'the precedence differs',
+  fragment: 'the fragment rule passes over this entry',
+});
+
+/**
+ * @since P3c [S10] The first-match walk as text, one line per step (original wording), for the ACL workbench's
+ * "Test a packet" and the inspector's "why it stopped here": `line 10 deny tcp … : no match, the source address is
+ * outside the entry` for a miss, `line 30 permit ip any any: match, permitted` for the deciding entry, and `implicit
+ * deny ip any any: match, denied` (or `implicit permit icmp any any nd-na: match, permitted`) for the tail.
+ */
+export function aclTrailText(trail: readonly AclTrailLike[]): string[] {
+  return trail.map((s) => {
+    const where = typeof s.seq === 'number' ? `line ${s.seq} ${s.text}` : `implicit ${s.text}`;
+    if (s.result === 'miss') return `${where}: no match, ${s.failed === undefined ? 'the entry does not apply' : TRAIL_MISS_TEXT[s.failed]}`;
+    return `${where}: match, ${s.text.startsWith('permit') ? 'permitted' : 'denied'}`;
+  });
+}
+
+/** @since P3c [S11] Parse a port condition at `tokens[i]` (shared with core/acl6); see `parseAclEntry`. */
+export function parseAclPortMatch(protocol: number | 'ip', tokens: readonly string[], i: number): { value?: AclPortMatch; next: number } | undefined {
+  return parsePortMatch(protocol, tokens, i);
+}
+
+/** @since P3c [S11] The canonical text of a port condition (shared with core/acl6). */
+export function aclPortMatchText(protocol: number, m: AclPortMatch): string {
+  return portMatchText(protocol, m);
+}
+
+/** @since P3c [S11] True when `port` satisfies the condition (absent port = no match; shared with core/acl6). */
+export function aclPortMatches(m: AclPortMatch, port: number | undefined): boolean {
+  return portMatches(m, port);
+}
+
+/** @since P3c [S11] True when every port `inner` accepts is accepted by `outer` (absent = every port). */
+export function aclPortsCover(outer: AclPortMatch | undefined, inner: AclPortMatch | undefined): boolean {
+  return portsCover(outer, inner);
 }
 
 /**
@@ -848,6 +1035,15 @@ function entryCovers(outer: AclEntry, inner: AclEntry): boolean {
   }
   if (outer.protocol !== 'ip' && outer.protocol !== inner.protocol) return false;
   if (!addressCovers(outer.source, inner.source) || !addressCovers(outer.destination, inner.destination)) return false;
+  // [S12] the DS terms: a dscp covers that dscp only; a precedence covers its eight DSCP values
+  if (outer.dscp !== undefined && inner.dscp !== outer.dscp) return false;
+  if (outer.precedence !== undefined && inner.precedence !== outer.precedence && (inner.dscp === undefined || inner.dscp >> 3 !== outer.precedence)) return false;
+  // [S17a] the fragment rule: `fragments` covers fragments only; a fragments-only entry is covered on its L3 part by
+  // an entry without `fragments` that reads it (one without L4 conditions, or a permit with them)
+  if (outer.fragments === true) return inner.fragments === true;
+  if (inner.fragments === true) return !hasL4Conditions(outer) || outer.action === 'permit';
+  // a deny with L4 conditions skips the non-initial fragments an entry without them matches
+  if (outer.action === 'deny' && hasL4Conditions(outer) && !hasL4Conditions(inner)) return false;
   if (!portsCover(outer.sourcePort, inner.sourcePort) || !portsCover(outer.destinationPort, inner.destinationPort)) return false;
   if (outer.established === true && inner.established !== true) return false;
   if (outer.icmp !== undefined) {

@@ -39,6 +39,9 @@ export { DEFAULT_METRES_PER_UNIT } from './contracts/topology.js';
 
 // core
 export * from './core/acl.js';
+// core — P3c W1a [S11] the IPv6 ACL core and [S23] the placement advisor (pure; also on @netforge/engine/pure)
+export * from './core/acl6.js';
+export * from './core/acl-placement.js';
 export * from './core/addr6.js';
 export * from './core/lpm.js';
 export * from './core/lpm6.js';
@@ -307,6 +310,8 @@ export * from './curriculum/index.js';
 
 // timeline — time travel [S1]: lanes
 export * from './timeline/lanes.js';
+// timeline — P3c W1a [S8]: measureConvergence (the web reaches it through @netforge/engine/web when W3b needs it)
+export * from './timeline/convergence.js';
 
 // automation — P3 W1 auto (ARCHITECTURE-P3 D21): data formats, the YANG model, the RESTCONF path parser; [S32] NF-Py
 export * from './automation/data/json.js';

@@ -535,7 +535,8 @@ describe('wrong documents are refused with readable messages', () => {
   it('reports a topology problem with the topology schema message, under its path', () => {
     expect(errorsAfter((d) => (d.topology.links[0].a.device = 'zz'))).toEqual(['topology.links[0].a.device: unknown device "zz"']);
     expect(errorsAfter((d) => (d.topology.schema = 'netforge.topology/9'))).toEqual([
-      'topology.schema: must be one of "netforge.topology/1.0", "netforge.topology/1.1", "netforge.topology/1.2", "netforge.topology/1.3"',
+      // ARCHITECTURE-P3C §9.2 item 10 (W1a io): the message lists the five ids
+      'topology.schema: must be one of "netforge.topology/1.0", "netforge.topology/1.1", "netforge.topology/1.2", "netforge.topology/1.3", "netforge.topology/1.4"',
     ]);
     // a topology refused together with a wrong reference: the structure is reported, nothing throws
     expect(

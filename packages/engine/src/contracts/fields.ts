@@ -437,7 +437,12 @@ export const PROTO_FIELDS: Readonly<Record<string, ProtoFieldTable>> = Object.fr
     f('area', 'ipv4', 'Area id (dotted, e.g. 0.0.0.0).', REQ),
     f('checksum', 'uint', 'IP one\'s-complement checksum over the packet minus the authentication field.', u(16, DER)),
     f('checksumValid', 'bool', 'Checksum matched.', DEC),
-    f('auType', 'uint', 'Authentication type (0 = none).', u(16, { default: 0 })),
+    f('auType', 'uint', 'Authentication type: 0 none, 1 simple password, 2 keyed MD5.', u(16, { default: 0 })),
+    // [S5] (ARCHITECTURE-P3C §2.3, §3.2): present only when the packet carries them
+    f('authKey', 'string', 'Simple password authentication (auType 1): the key, at most 8 bytes, sent in clear in the header.'),
+    f('keyId', 'uint', 'Keyed MD5 (auType 2): the key id.', u(8)),
+    f('cryptoSeq', 'uint', 'Keyed MD5 (auType 2): the cryptographic sequence number (non-decreasing).', u(32)),
+    f('digest', 'bytes', 'Keyed MD5 (auType 2): the 16-byte message digest, a trailer after the OSPF length (RFC 2328 D.4.3); never the key.'),
     f('mask', 'ipv4', 'Hello: the network mask of the sending interface.'),
     f('helloInterval', 'uint', 'Hello: seconds between hellos.', u(16, { default: 10 })),
     f('options', 'uint', 'Hello and database description: option bits (E = 0x02, external routes accepted).', u(8, { default: 0x02 })),
@@ -455,7 +460,7 @@ export const PROTO_FIELDS: Readonly<Record<string, ProtoFieldTable>> = Object.fr
   'ospf-lsa': table('ospf-lsa', 'P3', [
     f('age', 'uint', 'LSA age in seconds (MaxAge 3600 = being flushed).', u(16, { default: 0 })),
     f('options', 'uint', 'Option bits.', u(8, { default: 0x02 })),
-    f('lsType', 'uint', 'LSA type: 1 router, 2 network, 5 external.', u(8, REQ)),
+    f('lsType', 'uint', 'LSA type: 1 router, 2 network, 3 summary (network), 4 summary (ASBR), 5 external.', u(8, REQ)),
     f('lsid', 'ipv4', 'Link-state id.', REQ),
     f('advRouter', 'ipv4', 'Advertising router id.', REQ),
     f('seq', 'uint', 'Sequence number (starts at 0x80000001).', u(32, { default: 0x80000001 })),
@@ -465,10 +470,10 @@ export const PROTO_FIELDS: Readonly<Record<string, ProtoFieldTable>> = Object.fr
     f('headerOnly', 'bool', 'This layer is an LSA header copy (database description, acknowledgement), from the enclosing ospf.type.', DEC),
     f('flags', 'uint', 'Router LSA: V 4, E 2, B 1.', u(8)),
     f('links', 'string', "Router LSA: '<kind>,<id>,<data>,<metric>' entries joined by ';' (kinds p2p, transit, stub)."),
-    f('mask', 'ipv4', 'Network and external LSAs: the network mask.'),
+    f('mask', 'ipv4', 'Network, summary and external LSAs: the network mask (0.0.0.0 in an ASBR summary).'),
     f('attached', 'string', "Network LSA: router ids of the attached routers, joined by ','."),
     f('e2', 'bool', 'External LSA: type 2 external metric.'),
-    f('metric', 'uint', 'External LSA: the metric.', u(24)),
+    f('metric', 'uint', 'Summary and external LSAs: the metric.', u(24)),
     f('forward', 'ipv4', 'External LSA: forwarding address.'),
     f('tag', 'uint', 'External LSA: route tag.', u(32)),
   ], 'The LSA header (20 bytes) and, in an update, its body. The encoder reads the enclosing ospf.type through ctx.outer.'),
@@ -483,6 +488,7 @@ export const PROTO_FIELDS: Readonly<Record<string, ProtoFieldTable>> = Object.fr
     f('software', 'string', 'The sender\'s software description (original text).'),
     f('nativeVlan', 'uint', 'Native VLAN of the sending port.', u(16)),
     f('duplex', 'string', "Duplex of the sending port: 'full' | 'half'."),
+    f('voiceVlan', 'uint', 'Voice VLAN offered on the sending port (NF TLV 9; sent only on a port with a voice VLAN).', u(16)), // [S35]
   ], 'Original NF discovery format ("CDP" is a name only; D18): 802.3 + LLC/SNAP with the NF OUI and PID 4 (NF_PID_CDP), to the NF L2 control group, always untagged; TLVs are type u16, length u16, value.'),
   lldp: table('lldp', 'P3', [
     f('chassisSubtype', 'uint', 'Chassis id subtype (4 = MAC address).', u(8, { default: 4 })),
@@ -496,6 +502,10 @@ export const PROTO_FIELDS: Readonly<Record<string, ProtoFieldTable>> = Object.fr
     f('capabilities', 'uint', 'System capabilities bit map.', u(16)),
     f('enabledCapabilities', 'uint', 'Enabled capabilities bit map.', u(16)),
     f('mgmtAddress', 'ipv4', 'Management address.'),
+    // [S35] LLDP-MED (organisation TLV 127, OUI 00-12-BB); every other organisation TLV stays skipped
+    f('medCapabilities', 'uint', 'LLDP-MED capabilities bit map (subtype 1): 0x01 capabilities, 0x02 network policy, 0x04 location, 0x08 power (PSE), 0x10 power (PD), 0x20 inventory.', u(16)),
+    f('medDeviceType', 'uint', 'LLDP-MED device type (subtype 1): 0 not defined, 1–3 endpoint class I–III, 4 network connectivity.', u(8)),
+    f('medVlan', 'uint', 'LLDP-MED network policy for voice (subtype 2, application type 1): the voice VLAN, tagged, priority 5, DSCP 46.', u(16)),
   ], 'IEEE 802.1AB: ethertype 0x88cc to 01:80:c2:00:00:0e; the end-of-LLDPDU TLV is derived.'),
   ntp: table('ntp', 'P3', [
     f('leap', 'uint', 'Leap indicator (3 = alarm: the server is not synchronised).', u(2, { default: 0 })),
@@ -626,6 +636,57 @@ export const PROTO_FIELDS: Readonly<Record<string, ProtoFieldTable>> = Object.fr
     f('tsr', 'string', 'Responder traffic selectors.'),
     f('notify', 'string', "Notification, e.g. 'AUTHENTICATION_FAILED', 'NO_PROPOSAL_CHOSEN'."),
   ], 'UDP 500, RFC 7296 header with original compact payload bodies. IKE_AUTH messages carry meta.protected with protectedBy \'ike\'.'),
+  // ── P3c (ARCHITECTURE-P3C §2.3; ruling RC1 (g): written by the W1a pdu item with their codec) ──
+  // [S6]
+  ospf6: table('ospf6', 'P3c', [
+    f('version', 'uint', 'OSPF version (3).', u(8, { required: true, default: 3 })),
+    f('type', 'uint', 'Packet type: 1 hello, 2 database description, 3 link-state request, 4 link-state update, 5 link-state acknowledgement.', u(8, REQ)),
+    f('length', 'uint', 'Packet length in bytes.', u(16, DER)),
+    f('routerId', 'ipv4', 'Router id of the sender.', REQ),
+    f('areaId', 'ipv4', 'Area id (dotted, e.g. 0.0.0.0).', REQ),
+    f('checksum', 'uint', 'IPv6 checksum over the pseudo-header (next header 89) and the packet.', u(16, DER)),
+    f('checksumValid', 'bool', 'Checksum matched (only with an enclosing IPv6 header).', DEC),
+    f('instanceId', 'uint', 'Instance id (0 by default).', u(8, { default: 0 })),
+    f('interfaceId', 'uint', 'Hello: the interface id of the sending interface.', u(32)),
+    f('priority', 'uint', 'Hello: router priority for the DR election (0 = never DR or BDR).', u(8, { default: 1 })),
+    f('options', 'uint', 'Hello and database description: option bits (V6 0x01, E 0x02, R 0x10).', u(24, { default: 0x13 })),
+    f('helloInterval', 'uint', 'Hello: seconds between hellos.', u(16, { default: 10 })),
+    f('deadInterval', 'uint', 'Hello: seconds without a hello before a neighbour is declared down.', u(16, { default: 40 })),
+    f('dr', 'ipv4', 'Hello: the designated router\'s router id as the sender sees it; 0.0.0.0 = none.'),
+    f('bdr', 'ipv4', 'Hello: the backup designated router\'s router id as the sender sees it; 0.0.0.0 = none.'),
+    f('neighbors', 'string', "Hello: router ids of the neighbours heard on this interface, joined by ','."),
+    f('mtu', 'uint', 'Database description: the interface MTU.', u(16)),
+    f('flags', 'uint', 'Database description: I (initial) 4, M (more) 2, MS (master) 1.', u(8)),
+    f('ddSeq', 'uint', 'Database description: sequence number.', u(32)),
+    f('requests', 'string', "Link-state request: '<type>:<lsId>:<adv>' entries joined by ';' (the function-coded LSA type in decimal)."),
+    f('count', 'uint', 'Link-state update: number of LSAs that follow.', u(32, DER)),
+  ], 'IPv6 next header 89, RFC 5340 layout; hellos from the link-local address to ff02::5. Each LSA (in an update) or LSA header (in a database description or an acknowledgement) is its own chained ospf6-lsa layer. summary()/topProto() stop here.'),
+  'ospf6-lsa': table('ospf6-lsa', 'P3c', [
+    f('age', 'uint', 'LSA age in seconds (MaxAge 3600 = being flushed).', u(16, { default: 0 })),
+    f('lsType', 'uint', 'Function-coded LSA type: 0x2001 router, 0x2002 network, 0x2003 inter-area-prefix, 0x2004 inter-area-router, 0x4005 AS-external, 0x0008 link, 0x2009 intra-area-prefix.', u(16, REQ)),
+    f('lsId', 'ipv4', 'Link-state id.', REQ),
+    f('advRouter', 'ipv4', 'Advertising router id.', REQ),
+    f('seq', 'uint', 'Sequence number (starts at 0x80000001).', u(32, { default: 0x80000001 })),
+    f('checksum', 'uint', 'Fletcher checksum over the LSA except its age: computed in an update; carried as the full LSA\'s value (required) when headerOnly.', u(16)),
+    f('length', 'uint', 'LSA length in bytes: computed in an update; carried as the full LSA\'s value (required) when headerOnly.', u(16)),
+    f('checksumValid', 'bool', 'Fletcher checksum matched (full LSAs only).', DEC),
+    f('headerOnly', 'bool', 'This layer is an LSA header copy (database description, acknowledgement), from the enclosing ospf6.type.', DEC),
+    f('flags', 'uint', 'Router LSA: Nt 0x10, V 4, E 2, B 1.', u(8)),
+    f('options', 'uint', 'Router, network, inter-area-router and link LSAs: option bits (V6 0x01, E 0x02, R 0x10).', u(24)),
+    f('links', 'string', "Router LSA: '<kind>,<metric>,<ifaceId>,<nbrIfaceId>,<nbrRouterId>' entries joined by ';' (kinds p2p, transit, virtual)."),
+    f('attached', 'string', "Network LSA: router ids of the attached routers, joined by ','."),
+    f('metric', 'uint', 'Inter-area-prefix, inter-area-router and AS-external LSAs: the metric.', u(24)),
+    f('destRouterId', 'ipv4', 'Inter-area-router LSA: the router id of the AS boundary router described.'),
+    f('e2', 'bool', 'AS-external LSA: type 2 external metric (the E bit).'),
+    f('forward', 'ipv6', 'AS-external LSA: forwarding address (present only when the F bit is set).'),
+    f('tag', 'uint', 'AS-external LSA: route tag (present only when the T bit is set).', u(32)),
+    f('priority', 'uint', 'Link LSA: the router priority on the link.', u(8)),
+    f('linkLocal', 'ipv6', 'Link LSA: the link-local address of the originating interface.'),
+    f('refType', 'uint', 'Intra-area-prefix and AS-external LSAs: the type of the referenced LSA (0x2001 router, 0x2002 network; 0 none).', u(16)),
+    f('refLsId', 'ipv4', 'Intra-area-prefix and AS-external LSAs: the link-state id of the referenced LSA.'),
+    f('refAdvRouter', 'ipv4', 'Intra-area-prefix LSA: the advertising router of the referenced LSA.'),
+    f('prefixes', 'string', "Prefix-carrying LSAs: '<prefix>/<len>' entries joined by ';', each with ',<metric>' in an intra-area-prefix LSA (the per-prefix option bits are written as zero)."),
+  ], 'The LSA header (20 bytes, RFC 5340 A.4.2) and, in an update, its body. The encoder reads the enclosing ospf6.type through ctx.outer.'),
 });
 
 /** One next-protocol dispatch entry (pdu/codecs/dispatch.ts builds its tables from these). */
@@ -648,6 +709,8 @@ const d = (space: DispatchSpace, key: number, proto: ProtoName, since: BuildStag
  * until their codec lands. P3 adds the space 'ppp.proto' ([S19] ppp.protocol), the P3 entries, and un-reserves
  * UDP 123 (ntp), [S25] UDP 514 (syslog) and [S13] TCP 22/23 (ssh/telnet); UDP 69, 161 and TCP 21 stay reserved.
  * Dispatch does not depend on a world's profile: only decoding changes, never bytes (ARCHITECTURE-P3 §9.2 item 14).
+ * P3c [S6] adds the space 'ipv6.nh' (pdu/codecs/dispatch.ts IPV6_NH_SPACE): IPv6-only next-header entries that the
+ * IPv6 header and its extension headers consult before 'ipproto' (next header 89 is ospf6; IPv4 protocol 89 stays ospf).
  */
 export const DISPATCH_TABLE: readonly DispatchEntry[] = Object.freeze([
   d('ethertype', 0x0800, 'ipv4', 'P0'),
@@ -705,4 +768,6 @@ export const DISPATCH_TABLE: readonly DispatchEntry[] = Object.freeze([
   d('ipproto', 88, 'eigrp', 'P3'), // [C1]
   d('ipproto', 50, 'esp', 'P3'), // [C13]
   d('udp.port', 500, 'ikev2', 'P3'), // [C13]
+  // ── P3c (ARCHITECTURE-P3C §2.3): the IPv6-only next-header space, consulted before 'ipproto' by the IPv6 layers ──
+  d('ipv6.nh', 89, 'ospf6', 'P3c'), // [S6] IPv4 protocol 89 stays ospf
 ]);

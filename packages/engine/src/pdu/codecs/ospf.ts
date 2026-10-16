@@ -10,8 +10,15 @@
  *   4 LSU:    `count(4)` then full LSAs (each its own `ospf-lsa` layer)
  *   5 LSAck:  LSA headers (each its own `ospf-lsa` layer)
  *  • `checksum` is the IP one's-complement sum over the packet minus the 8-byte authentication field (derived);
- *    `length` and, in an LSU, `count` are derived from what follows. The authentication field is written as zeros
- *    (auType 0 is the only type simulated; [S5] is not approved).
+ *    `length` and, in an LSU, `count` are derived from what follows.
+ *  • Authentication (header octets 16–23; @since P3c [S5], ARCHITECTURE-P3C §2.3, §3.2):
+ *    auType 0 — eight zero octets (no field is decoded, so every P3 capture decodes as before);
+ *    auType 1 — `authKey`, at most 8 bytes, zero-padded, in clear (a teaching point, like PAP);
+ *    auType 2 — `0(2) keyId(1) 16(1) cryptoSeq(4)`, checksum 0 (RFC 2328 D.4.3: not calculated, so `checksumValid` is
+ *    not set), and the 16-byte `digest` as a TRAILER after the OSPF `length` (the layer's `trailerLength`; the packet
+ *    length excludes it). The codec never sees a key: the sender encodes the packet, computes the digest over it with
+ *    `ospfMd5Digest(packet, key)` (MD5 of the packet ‖ the key zero-padded to 16 bytes) and encodes again with
+ *    `digest` set (absent = 16 zero octets). A mutate keeps the decoded digest, so a changed packet no longer matches.
  *  • Lists are flat strings (the CAPWAP precedent): `neighbors` holds router ids joined by ','.
  *  • `stopsMeaning`: summary() and topProto() stop here, so a packet is described by its OSPF type.
  *
@@ -21,6 +28,8 @@
  *   header (20): `age(2) options(1) lsType(1) lsid(4) advRouter(4) seq(4) checksum(2) length(2)`
  *   router (1):  `flags(1: V 4, E 2, B 1) 0(1) links(2) (id(4) data(4) type(1) tos(1) metric(2) tos*4)*`
  *   network (2): `mask(4) attached(4)*`
+ *   summary (3, 4): `mask(4) 0(1) metric(3)` (@since P3c [S4]; RFC 2328 A.4.4: the mask is 0.0.0.0 in a type 4; any
+ *                 TOS entries after the first word pair are kept inside the layer, not decoded)
  *   external (5): `mask(4) E|0(1) metric(3) forward(4) tag(4)`
  *  • The layer knows it is a header copy from the enclosing packet type (`ctx.outer`, the nearest `ospf` layer: 2
  *    DBD or 5 LSAck). A header copy carries the FULL LSA's `checksum` and `length`, which its 20 bytes cannot
@@ -28,12 +37,14 @@
  *    from the body and the checksum by Fletcher over the LSA from its options byte (the age excluded, RFC 2328
  *    §12.1.7). `headerOnly` and `checksumValid` (full LSAs only) are decode-only.
  *  • `links` holds '<kind>,<id>,<data>,<metric>' entries joined by ';' (kinds p2p, transit, stub; a decoded virtual
- *    link is 'virtual'); `attached` holds router ids joined by ','. Only types 1, 2 and 5 have a body encoder (the
- *    summary types [S4] and NSSA [C4] are not approved); any other type decodes its header only.
+ *    link is 'virtual'); `attached` holds router ids joined by ','. Types 1–5 have a body encoder (NSSA [C4] is not
+ *    approved); any other type decodes its header only.
  */
 import type { Codec, CodecContext, DecodedLayer, FieldValue, MutationReason, ProtoName } from '../../contracts/pdu.js';
 import { bytesToIpv4, ipv4ToBytes, isIpv4 } from '../../contracts/addr.js';
+import { MD5_DIGEST_BYTES, md5 } from '../../core/md5.js';
 import {
+  bytesField,
   finishChecksum,
   numField,
   onesSum,
@@ -48,8 +59,14 @@ import {
 
 /** OSPF packet types (the `ospf.type` field). */
 export const OSPF_PACKET = Object.freeze({ hello: 1, dbd: 2, lsr: 3, lsu: 4, lsack: 5 });
-/** LSA types with a body encoder (the `ospf-lsa.lsType` field). */
-export const OSPF_LSA_KIND = Object.freeze({ router: 1, network: 2, external: 5 });
+/** LSA types with a body encoder (the `ospf-lsa.lsType` field; the summary types @since P3c [S4]). */
+export const OSPF_LSA_KIND = Object.freeze({ router: 1, network: 2, summary: 3, asbrSummary: 4, external: 5 });
+/** @since P3c [S5] Authentication types (the `ospf.auType` field, RFC 2328 D.3). */
+export const OSPF_AUTH = Object.freeze({ none: 0, simple: 1, md5: 2 });
+/** @since P3c [S5] Longest simple-password key (the 8-octet authentication field). */
+export const OSPF_SIMPLE_KEY_BYTES = 8;
+/** @since P3c [S5] Longest keyed-MD5 secret (zero-padded to 16 octets before hashing, RFC 2328 D.4.3). */
+export const OSPF_MD5_KEY_BYTES = 16;
 /** Database description flag bits (the `ospf.flags` field of a DBD). */
 export const OSPF_DD_FLAG = Object.freeze({ I: 4, M: 2, MS: 1 });
 /** Router-LSA flag bits (the `ospf-lsa.flags` field). */
@@ -62,6 +79,11 @@ export const OSPF_LSA_HEADER_BYTES = 20;
 export const OSPF_INITIAL_LSA_SEQ = 0x80000001;
 
 const HELLO_FIXED = 20;
+const AUTH_OFFSET = 16;
+const AUTH_BYTES = 8;
+const SUMMARY_BODY = 8;
+const UTF8_DECODER = new TextDecoder('utf-8', { fatal: false });
+const UTF8_ENCODER = new TextEncoder();
 const DBD_FIXED = 8;
 const LSR_ENTRY = 12;
 const LSU_FIXED = 4;
@@ -191,6 +213,19 @@ function decodeOspf(bytes: Uint8Array, offset: number, length: number): DecodedL
   fieldRanges.checksum = [o + 12, 2];
   fieldRanges.auType = [o + 14, 2];
 
+  const md5Auth = fields.auType === OSPF_AUTH.md5;
+  if (fields.auType === OSPF_AUTH.simple) {
+    let n = 0;
+    while (n < AUTH_BYTES && bytes[o + AUTH_OFFSET + n] !== 0) n++;
+    fields.authKey = UTF8_DECODER.decode(bytes.subarray(o + AUTH_OFFSET, o + AUTH_OFFSET + n));
+    fieldRanges.authKey = [o + AUTH_OFFSET, AUTH_BYTES];
+  } else if (md5Auth) {
+    fields.keyId = bytes[o + 18]!;
+    fields.cryptoSeq = readU32(bytes, o + 20);
+    fieldRanges.keyId = [o + 18, 1];
+    fieldRanges.cryptoSeq = [o + 20, 4];
+  }
+
   const declared = fields.length;
   if (declared < OSPF_HEADER_BYTES) {
     fields.checksumValid = false;
@@ -198,10 +233,21 @@ function decodeOspf(bytes: Uint8Array, offset: number, length: number): DecodedL
   }
   const complete = declared <= avail;
   const len = complete ? declared : avail;
-  if (complete) {
+  if (complete && !md5Auth) {
     fields.checksumValid = finishChecksum(onesSum(bytes, o + OSPF_HEADER_BYTES, declared - OSPF_HEADER_BYTES, onesSum(bytes, o, 16))) === 0;
   }
   const out: DecodedLayer = { fields, fieldRanges, headerLength: OSPF_HEADER_BYTES, length: len };
+  if (md5Auth && complete) {
+    const digestLen = bytes[o + 19]!;
+    if (digestLen === MD5_DIGEST_BYTES && declared + MD5_DIGEST_BYTES <= avail) {
+      fields.digest = bytes.slice(o + declared, o + declared + MD5_DIGEST_BYTES);
+      fieldRanges.digest = [o + declared, MD5_DIGEST_BYTES];
+      out.length = declared + MD5_DIGEST_BYTES;
+      out.trailerLength = MD5_DIGEST_BYTES;
+    } else {
+      out.error = 'OSPF keyed MD5 digest missing or truncated';
+    }
+  }
   const truncated = (): DecodedLayer => ({ ...out, headerLength: len, error: `OSPF ${ospfPacketText(fields.type as number)} truncated` });
   const b = o + OSPF_HEADER_BYTES;
   switch (fields.type) {
@@ -278,6 +324,24 @@ function decodeOspf(bytes: Uint8Array, offset: number, length: number): DecodedL
   return out;
 }
 
+/**
+ * @since P3c [S5] The RFC 2328 D.4.3 keyed-MD5 digest of an OSPF packet encoded with auType 2: MD5 over the packet's
+ * `length` octets (read from octets 2–3; the checksum is zero and the authentication field holds `0 keyId 16
+ * cryptoSeq`) followed by `key` zero-padded to 16 octets. A trailer already present after `length` is ignored. Throws
+ * when the key is longer than 16 octets or the packet is shorter than its length.
+ */
+export function ospfMd5Digest(packet: Uint8Array, key: string | Uint8Array): Uint8Array {
+  const secret = typeof key === 'string' ? UTF8_ENCODER.encode(key) : key;
+  if (secret.length > OSPF_MD5_KEY_BYTES) throw new Error(`ospf: an MD5 key is at most ${OSPF_MD5_KEY_BYTES} bytes`);
+  if (packet.length < OSPF_HEADER_BYTES) throw new Error('ospf: the packet is shorter than its header');
+  const length = readU16(packet, 2);
+  if (length < OSPF_HEADER_BYTES || length > packet.length) throw new Error(`ospf: packet length ${length} does not fit ${packet.length} bytes`);
+  const data = new Uint8Array(length + OSPF_MD5_KEY_BYTES);
+  data.set(packet.subarray(0, length), 0);
+  data.set(secret, length);
+  return md5(data);
+}
+
 function encodeOspf(fields: Record<string, FieldValue>, payload: Uint8Array): Uint8Array {
   const p = 'ospf';
   const version = uint(p, fields, 'version', 8, 2);
@@ -285,6 +349,17 @@ function encodeOspf(fields: Record<string, FieldValue>, payload: Uint8Array): Ui
   const routerId = ipField(p, fields, 'routerId', null);
   const area = ipField(p, fields, 'area', null);
   const auType = uint(p, fields, 'auType', 16, 0);
+  let auth: Uint8Array | undefined;
+  if (auType === OSPF_AUTH.simple) {
+    auth = UTF8_ENCODER.encode(strField(p, fields, 'authKey', ''));
+    if (auth.length > AUTH_BYTES) throw new Error(`ospf.authKey is at most ${AUTH_BYTES} bytes, got ${auth.length}`);
+  }
+  let trailer: Uint8Array | undefined;
+  if (auType === OSPF_AUTH.md5) {
+    const d = bytesField(p, fields, 'digest');
+    if (d.length !== 0 && d.length !== MD5_DIGEST_BYTES) throw new Error(`ospf.digest must be ${MD5_DIGEST_BYTES} bytes, got ${d.length}`);
+    trailer = d.length === MD5_DIGEST_BYTES ? d : new Uint8Array(MD5_DIGEST_BYTES);
+  }
   let body: Uint8Array;
   switch (type) {
     case OSPF_PACKET.hello: {
@@ -338,16 +413,27 @@ function encodeOspf(fields: Record<string, FieldValue>, payload: Uint8Array): Ui
   }
   const total = OSPF_HEADER_BYTES + body.length + payload.length;
   if (total > 0xffff) throw new Error(`ospf packet too large: ${total} bytes`);
-  const out = new Uint8Array(total);
+  const out = new Uint8Array(total + (trailer?.length ?? 0));
   out[0] = version;
   out[1] = type;
   writeU16(out, 2, total);
   out.set(routerId, 4);
   out.set(area, 8);
   writeU16(out, 14, auType);
-  // authentication (16..23) stays zero; checksum (12..13) is zero while summing
+  // authentication (16..23): zeros (auType 0 and any other type), the key (1) or `0 keyId 16 cryptoSeq` (2)
+  if (auth) out.set(auth, AUTH_OFFSET);
+  if (trailer) {
+    out[18] = uint(p, fields, 'keyId', 8, null);
+    out[19] = MD5_DIGEST_BYTES;
+    writeU32(out, 20, uint(p, fields, 'cryptoSeq', 32, 0));
+  }
   out.set(body, OSPF_HEADER_BYTES);
   out.set(payload, OSPF_HEADER_BYTES + body.length);
+  if (trailer) {
+    out.set(trailer, total); // keyed MD5: the checksum is not calculated (stays 0)
+    return out;
+  }
+  // checksum (12..13) is zero while summing; the authentication field is outside the sum
   writeU16(out, 12, finishChecksum(onesSum(out, OSPF_HEADER_BYTES, total - OSPF_HEADER_BYTES, onesSum(out, 0, 16))));
   return out;
 }
@@ -380,7 +466,7 @@ function summarizeOspf(fields: Readonly<Record<string, FieldValue>>): string {
 
 const OSPF_DERIVED: Readonly<Record<string, MutationReason>> = Object.freeze({ checksum: 'ChecksumRecompute', length: 'Other', count: 'Other' });
 
-/** OSPFv2 packet codec. Required on encode: `type`, `routerId`, `area`. */
+/** OSPFv2 packet codec. Required on encode: `type`, `routerId`, `area`; with auType 2 also `keyId`. */
 export const ospfCodec: Codec = {
   proto: 'ospf',
   defaults: Object.freeze({ version: 2, type: null, routerId: null, area: null, auType: 0 }),
@@ -482,6 +568,18 @@ function decodeLsa(bytes: Uint8Array, offset: number, length: number, ctx?: Code
       fieldRanges.attached = [b + 4, n * 4];
       break;
     }
+    case OSPF_LSA_KIND.summary:
+    case OSPF_LSA_KIND.asbrSummary: {
+      if (b + SUMMARY_BODY > end) {
+        error = 'summary LSA body truncated';
+        break;
+      }
+      fields.mask = bytesToIpv4(bytes, b);
+      fields.metric = (bytes[b + 5]! << 16) | (bytes[b + 6]! << 8) | bytes[b + 7]!;
+      fieldRanges.mask = [b, 4];
+      fieldRanges.metric = [b + 5, 3];
+      break;
+    }
     case OSPF_LSA_KIND.external: {
       if (b + 16 > end) {
         error = 'external LSA body truncated';
@@ -546,6 +644,16 @@ function encodeLsaBody(type: number, fields: Readonly<Record<string, FieldValue>
       attached.forEach((a, i) => body.set(a, 4 + i * 4));
       return body;
     }
+    case OSPF_LSA_KIND.summary:
+    case OSPF_LSA_KIND.asbrSummary: {
+      const body = new Uint8Array(SUMMARY_BODY);
+      body.set(ipField(p, fields, 'mask', type === OSPF_LSA_KIND.asbrSummary ? '0.0.0.0' : null), 0);
+      const metric = uint(p, fields, 'metric', 24, null);
+      body[5] = (metric >>> 16) & 0xff;
+      body[6] = (metric >>> 8) & 0xff;
+      body[7] = metric & 0xff;
+      return body;
+    }
     case OSPF_LSA_KIND.external: {
       const body = new Uint8Array(16);
       body.set(ipField(p, fields, 'mask', null), 0);
@@ -560,7 +668,7 @@ function encodeLsaBody(type: number, fields: Readonly<Record<string, FieldValue>
       return body;
     }
     default:
-      throw new Error(`ospf-lsa: LSA type ${type} has no body encoder (1 router, 2 network, 5 external)`);
+      throw new Error(`ospf-lsa: LSA type ${type} has no body encoder (1 router, 2 network, 3 and 4 summary, 5 external)`);
   }
 }
 
