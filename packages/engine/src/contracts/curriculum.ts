@@ -36,6 +36,12 @@ export interface Lesson {
   video?: LessonVideo;
   /** `ScenarioInfo.name` of the lab that practises this lesson, when one exists. */
   lab?: string;
+  /**
+   * @since P3c (optional by meaning) A second verified video on the lesson's hands-on part (ARCHITECTURE-P3C D5, ruling
+   * X-5): the lessons that gain a lab in P3c (08, 09, 30, 31, 39) carry one when a candidate passes the P3a verification
+   * rule; absent otherwise, and on every P1, P2 and P3a lesson. The lesson minutes include it.
+   */
+  labVideo?: LessonVideo;
   /** Reading and watching time for this lesson alone; the lab adds its own `estimatedMinutes`. */
   estimatedMinutes: number;
   /** Topic cluster, shared with `ScenarioMeta.topic` so a lesson and its lab file under the same heading. */

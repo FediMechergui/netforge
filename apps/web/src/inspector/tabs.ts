@@ -104,6 +104,10 @@ export const PANEL_TAB: Readonly<Record<GuiPanelId, InspectorTab>> = Object.free
   // [S32] automation workspace are Desktop apps of hosts.
   'desktop.traffic': 'desktop',
   'desktop.automation': 'desktop',
+  // P3c (ARCHITECTURE-P3C §2.1, §9.2 W0 item 1; the architect's W0 stub, final values): the [S33] SNMP manager and the
+  // [S27] API client are Desktop apps of hosts (stage P3c: derived only after the W4b flip).
+  'desktop.snmp-manager': 'desktop',
+  'desktop.api-client': 'desktop',
 });
 
 /** The P0 tab set, used for snapshots without catalog v2 fields (hand-built fixtures). */

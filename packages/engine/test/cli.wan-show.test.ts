@@ -202,6 +202,8 @@ describe('show interfaces: the tunnel lines', () => {
     expect(admin[0]).toBe('Tunnel0: admin down, link down');
     expect(Object.keys(TUNNEL_DOWN_REASON_TEXT)).toEqual([
       'no-source', 'no-destination', 'no-route', 'recursive-routing', 'ike-negotiating', 'ike-failed', 'ike-no-proposal', 'ike-no-response',
+      // ARCHITECTURE-P3C §2.6 (W0): [C17] appends the keepalive reason
+      'keepalive-missed',
     ]);
     for (const reason of Object.keys(TUNNEL_DOWN_REASON_TEXT) as (keyof typeof TUNNEL_DOWN_REASON_TEXT)[]) {
       const out = showLines(r1({ tunnels: [{ ...GRE_ROW, reason }] }), S.showInterfaces, { iface: 'Tunnel0' });

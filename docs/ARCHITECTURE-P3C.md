@@ -2162,6 +2162,47 @@ their migrations in Appendix A.
    explicit `GATE_TESTS`; `accept.p3c.silence` joins `SLOW_TESTS`; `accept.p3c.ospf-scale-multiarea` joins
    `GATE_TESTS`.
 
+**W0 as built: rulings RC1 (architect, 2026-10-16).** The W0 contracts builder found that twelve points of the brief
+did not match the code. The ruling accepts each fix it made:
+- (a) `TunnelRow.key?` would clash with `TableRow.key: string`, so the [C17] member is named `tunnelKey?`.
+- (b) `ArgType 'url'` already exists (P1), so it is documented, not added.
+- (c) `MODES` lives in `contracts/cli.ts`, not `cli/modes.ts`. The four reserved modes are added there, and `rommon` is
+  class `exec` with no parent and the prompt template `rommon N >`.
+- (d) `ProtoName` spells out `'tftp'` and `'snmp'`. `RESERVED_PROTOCOL_VOCAB` becomes exactly ftp, smtp, pop3 and imap,
+  and `vocab.test`'s rule "reserved in dispatch ⇒ in RESERVED" exempts the two names. They are asserted known and not
+  reserved.
+- (e) The `HostAppRequest` members `'http.request'` and `'snmp'` are added with their daemon rows in W3a1/W3b, because
+  `HOST_APP_PROCESS` is an exhaustive record (P3a R5 precedent).
+- (f) The `TopoOverlayState` members and `RoutingOverlayToggle` additions arrive with the first [S7]/[S26] item, which
+  owns the persisted-slice bump. `OverlayId` gains its two ids in W0.
+- (g) The new field tables (ospf6, ospf6-lsa, tftp, snmp, and the ospf/cdp/lldp/gre additions) are written by the
+  W1a/W1b pdu items, because a `PROTO_FIELDS` table would change NetScope in W0.
+- (h) `P3C_CTX` and `P3C_DEVICE` are empty in W0: no required `ProcessCtx` or `DeviceRuntime` member is added yet.
+- (i) `FACT_AREAS` and `NEIGHBOR_AREAS` get thunks that return `{}`. `sim.lab-checks.registry` asserts the ten pending
+  P3c entries are exactly undefined, and that every P3a entry stays defined.
+- (j) The `convergence` and `packetSeen` kinds are accepted in lab documents, because `io.lab-schema` needs a schema for
+  every kind. They grade as "not available in this build" until W3b.
+- (k) Test moves beyond the W0 list above are each a key or vocabulary widening with an exact assertion kept:
+  - the CLI fragment-key pins (`cli.parser.grammar`, `cli.stp`, `cli.vlan`, `cli.wlc`);
+  - `cli.wan-show`'s reason keys;
+  - the `sources()` records of `sim.lab-checks.p3.discovery` and `.wan`;
+  - web `markdown`, `store.topo-overlays.p3` and `shell.surface`.
+- (l) `BUILD_STAGES` pins (`device.catalog.define.p3`, `device.catalog.tunnel`, `accept.p2.p1-digests`
+  `LATER_STAGES`) gain `'P3c'`; the first two assert that P3c derives exactly what P3 does until the W4b flip.
+
+**W0 as built: rulings RC2 (architect, 2026-10-16), the qa `'P3c'` staged path.**
+- (a) Building at stage `'P3c'` also applies `GUI_PANEL_SINCE`. Every host model gains `desktop.api-client`, and server
+  and programmable hosts gain `desktop.snmp-manager`. This is the fourth delta of the W4b flip, alongside processes,
+  tables and storage, and `staged.world.p3c` asserts it.
+- (b) Storage goes to the router, switch, mlswitch and dcswitch kinds (14 models).
+  - The image names and capacities in `test/staged.world.ts` `P3C_STORAGE` are binding: the W4b catalog owner copies
+    them, and changes both places together if they ever change. Example: NF-2911's `nf2900-15.7.bin` is 38 MB, and lab
+    31's `nf2900-15.9.bin` is 40 MB and fits.
+  - The two NF-OS firewalls get no storage in P3c. Their derived `tftp` serves no file system, so a copy to `flash:` is
+    refused there with the usual "no such file system" message. Firewall files belong to P4.
+- (c) `P3C_PROCESS_TABLES` is staged with the processes, as in P3a's W0.
+- (d) The phone's `cdp` and `lldp` answer only after they hear a neighbour, and it has no `cdpDefault` (D9).
+
 **W0h**
 
 6. [C32] (c) `apps/web/test/timeline.strip.test.ts:41,300`: the cases pinning `TIMELINE_UNAVAILABLE_TEXT` are deleted

@@ -21,7 +21,7 @@ import type { TraceSink } from './trace.js';
 import type { SocketId, TcpState } from './transport.js';
 import type { WifiAssocState } from './medium.js';
 import type { SwitchportMode } from './port.js';
-import type { HttpMethod } from './process.js';
+import type { HttpMethod, SnmpValue } from './process.js';
 
 /**
  * Tables beyond cam/arp/rib (kebab-case names are the trace `table` field).
@@ -73,7 +73,15 @@ export type ExtraTableName =
   | 'script-runs' // [S32]
   | 'eigrp-neighbors' // [C1]
   | 'eigrp-topology' // [C1]
-  | 'ipsec-sa'; // [C13]
+  | 'ipsec-sa' // [C13]
+  // ── P3c (ARCHITECTURE-P3C §2.6; @since P3c, appended). W0 adds the names and their TABLE_DESCRIPTORS (since 'P3c'); a
+  // model derives a table only through PROCESS_TABLES (or STAGED_PROCESS_TABLES) of a daemon it runs, added in the
+  // change that registers that daemon (the W4b flip), so no P1/P2/P3a model declares one. ──
+  | 'ospf6-interfaces' // [S6]
+  | 'ospf6-neighbors' // [S6]
+  | 'ospf6-lsdb' // [S6]
+  | 'storm-control' // [S16]
+  | 'snmp-traps'; // [S33]
 export type TableName = 'cam' | 'arp' | 'rib' | ExtraTableName | (string & {});
 
 export interface TableRow {
@@ -165,9 +173,10 @@ export interface RouteRow extends TableRow {
   /**
    * @since P3 (optional by meaning) The OSPF route type of an 'O' row (D11): 'E2' for an external type-2 route (MUST:
    * `default-information originate`); absent on an 'O' row = intra-area, absent on every other source (P1/P2 bytes).
-   * ([S4] 'IA', [C6] 'E1' and [C4] 'N1' | 'N2' are not approved.)
+   * ([C6] 'E1' and [C4] 'N1' | 'N2' are not approved.) 'IA' @since P3c (optional by meaning) [S4] (a value widening):
+   * an inter-area route from a summary LSA, rendered `O IA`.
    */
-  routeType?: 'E2';
+  routeType?: 'E2' | 'IA';
   nextHop?: Ipv4Address;
   iface?: PortId;
   /** Administrative distance (C/L = 0, S = 1, D = 254; P3: O = 110, [C1] EIGRP = 90). */
@@ -208,11 +217,21 @@ export interface NdRow extends TableRow {
 }
 export const ndKey = (iface: PortId, ip: Ipv6Address): string => `${iface}|${ip}`;
 
-/** @since P1 IPv6 RIB. key = route6Key(network, prefixLen). C/L/S as IPv4; ND = default from RA via router LLA (AD 2). Written only by `ipv6`. */
+/**
+ * @since P1 IPv6 RIB. key = route6Key(network, prefixLen). C/L/S as IPv4; ND = default from RA via router LLA (AD 2).
+ * Written only by `ipv6`. 'O' @since P3c [S6]: OSPFv3, AD 110, offered by `ipv6.routes`.
+ */
 export interface Route6Row extends TableRow {
   network: Ipv6Address;
   prefixLen: number;
-  source: 'C' | 'L' | 'S' | 'ND';
+  source: 'C' | 'L' | 'S' | 'ND' | 'O';
+  /**
+   * @since P3c (optional by meaning) [S6] The OSPFv3 route type of an 'O' row: 'OI' inter-area, 'OE2' external type 2;
+   * absent on an 'O' row = intra-area, absent on every other source (P1/P2/P3a bytes).
+   */
+  routeType?: 'OI' | 'OE2';
+  /** @since P3c (optional by meaning) [S6] The process that offered the row (`ipv6.routes`); absent = ipv6's own rows. */
+  owner?: ProcessName;
   nextHop?: Ipv6Address;
   iface?: PortId;
   ad: number;
@@ -504,6 +523,10 @@ export interface OspfInterfaceRow extends TableRow {
   waitUntil?: SimTime;
   /** The last refused hello. */
   rejected?: { from: Ipv4Address; routerId: Ipv4Address; reason: string; at: SimTime };
+  /** @since P3c (optional by meaning) [S5] The interface's authentication type; absent = none (every P3a row's bytes). */
+  auth?: 'simple' | 'md5';
+  /** @since P3c (optional by meaning) [S5] The youngest MD5 key id (display); absent without MD5 authentication. */
+  authKeyId?: number;
 }
 
 /** @since P3 key = ospfNbrKey(port, routerId). Writer: ospf. Written only on state, role, DR/BDR or priority change. */
@@ -521,8 +544,11 @@ export interface OspfNeighborRow extends TableRow {
 }
 export const ospfNbrKey = (port: PortId, routerId: Ipv4Address): string => `${port}|${routerId}`;
 
-/** @since P3 MUST: 1 router, 2 network, 5 external. ([S4] 3, 4 and [C4] 7 are not approved.) */
-export type OspfLsaType = 1 | 2 | 5;
+/**
+ * @since P3 MUST: 1 router, 2 network, 5 external. 3 (summary network) and 4 (summary ASBR) @since P3c [S4]. ([C4] 7 is
+ * not approved.)
+ */
+export type OspfLsaType = 1 | 2 | 3 | 4 | 5;
 /** @since P3 One link of a router LSA (virtual links: P5). */
 export interface OspfRouterLink {
   kind: 'p2p' | 'transit' | 'stub';
@@ -550,10 +576,10 @@ export interface OspfLsaRow extends TableRow {
   /** Type 1. */
   flags?: { b: boolean; e: boolean; v: boolean };
   links?: readonly OspfRouterLink[];
-  /** Type 2 (mask also type 5). */
+  /** Type 2 (mask also types 3 and 5 @since P3c [S4]). */
   mask?: Ipv4Address;
   attached?: readonly Ipv4Address[];
-  /** Type 5. */
+  /** Type 5 (and types 3 and 4 @since P3c [S4]: the summary's metric). */
   metric?: number;
   external?: { e2: boolean; forward: Ipv4Address; tag: number };
   /** Being flushed. */
@@ -563,14 +589,14 @@ export const ospfLsaKey = (scope: string, type: number, lsid: string, adv: strin
 
 /** @since P3 key = aclKey(family, list, seq). Writer: acl. Rows exist ONLY for lists applied as filters (D12). */
 export interface AclRow extends TableRow {
-  /** ([S11] would add 6.) */
-  family: 4;
+  /** 6 @since P3c [S11] (a value widening; family-4 rows keep their bytes). */
+  family: 4 | 6;
   list: string;
-  /** ([S11] would add 'ipv6'.) */
-  type: 'standard' | 'extended';
+  /** 'ipv6' @since P3c [S11] (a value widening). */
+  type: 'standard' | 'extended' | 'ipv6';
   seq: number | null;
-  /** ([S11] would add 'nd-na' | 'nd-ns'.) */
-  implicit?: 'deny';
+  /** 'nd-na' | 'nd-ns' @since P3c [S11] (a value widening of the optional-by-meaning member: the implicit ND rows). */
+  implicit?: 'deny' | 'nd-na' | 'nd-ns';
   /** Canonical aclEntryText, no sequence number. */
   entry: string;
   action: 'permit' | 'deny';
@@ -583,8 +609,8 @@ export interface AclRow extends TableRow {
   /** 'GigabitEthernet0/0 in' ([S13] adds ', vty in'). */
   applied: string;
 }
-/** @since P3 ([S11] would widen the family.) */
-export const aclKey = (f: 4, list: string, seq: number | 'implicit'): string => `${f}|${list}|${seq}`;
+/** @since P3 Family 6 and the seq values 'nd-na' | 'nd-ns' @since P3c [S11]; family-4 keys are byte-identical. */
+export const aclKey = (f: 4 | 6, list: string, seq: number | 'implicit' | 'nd-na' | 'nd-ns'): string => `${f}|${list}|${seq}`;
 
 /** @since P3 key = `${vlan}|${mac}`. Writer: eth-switch. expiresAt = lease end (none for static bindings). */
 export interface DhcpSnoopingRow extends TableRow {
@@ -602,6 +628,35 @@ export interface ArpInspectionRow extends TableRow {
   dropped: number;
   droppedNoBinding: number;
   droppedAcl: number;
+  /** @since P3c (optional by meaning) [S14] `validate src-mac` drops; written once nonzero. */
+  droppedSrcMac?: number;
+  /** @since P3c (optional by meaning) [S14] `validate dst-mac` drops; written once nonzero. */
+  droppedDstMac?: number;
+  /** @since P3c (optional by meaning) [S14] `validate ip` drops; written once nonzero. */
+  droppedIp?: number;
+  /** @since P3c (optional by meaning) [S14] ARPs permitted by an ARP ACL; written once nonzero. */
+  aclPermitted?: number;
+}
+
+/**
+ * @since P3c [S16] key = `${port}|${kind}`. Writer: eth-switch. Written once when the line is stored or the port comes
+ * up (state 'forwarding', current 0, windowStart = now), then on a state change or once per window with drops, never
+ * per frame (rule 20). Windows are evaluated lazily on arrival, so `current`, `dropped` and `state` may be stale once
+ * traffic stops: they are not live values.
+ */
+export interface StormControlRow extends TableRow {
+  port: PortId;
+  kind: 'broadcast' | 'multicast' | 'unicast';
+  unit: 'percent' | 'pps' | 'bps';
+  /** Percent in hundredths (100 = 1.00 %), else pps or bps. */
+  rise: number;
+  fall: number;
+  /** The last full window's level, same unit (not a live value). */
+  current: number;
+  state: 'forwarding' | 'blocking' | 'err-disabled';
+  action: 'drop' | 'shutdown' | 'trap';
+  dropped: number;
+  windowStart: SimTime;
 }
 
 /** @since P3 key = `${localPort}|${deviceId}`. Writer: cdp. expiresAt = last update + holdtime. */
@@ -618,6 +673,8 @@ export interface CdpNeighbourRow extends TableRow {
   cdpVersion: number;
   nativeVlan?: number;
   duplex?: 'full' | 'half';
+  /** @since P3c (optional by meaning) [S35] The voice VLAN the neighbour advertises (NF TLV 9). */
+  voiceVlan?: number;
 }
 /** @since P3 key = `${localPort}|${chassisId}|${portId}`. Writer: lldp. expiresAt = last update + TTL. */
 export interface LldpNeighbourRow extends TableRow {
@@ -631,6 +688,10 @@ export interface LldpNeighbourRow extends TableRow {
   capabilities?: string;
   enabled?: string;
   mgmtAddress?: Ipv4Address;
+  /** @since P3c (optional by meaning) [S35] The LLDP-MED Network Policy voice VLAN. */
+  medVlan?: number;
+  /** @since P3c (optional by meaning) [S35] The neighbour's LLDP-MED capability bits. */
+  medCapabilities?: number;
 }
 
 /** @since P3 key = configured address. Writer: ntp. Rewritten on a poll result that changes a column. */
@@ -732,7 +793,9 @@ export type TunnelDownReason =
   | 'ike-negotiating'
   | 'ike-failed'
   | 'ike-no-proposal'
-  | 'ike-no-response';
+  | 'ike-no-response'
+  /** @since P3c [C17] GRE keepalives went unanswered (appended). */
+  | 'keepalive-missed';
 /**
  * @since P3 [S18] key = tunnel port. Writer: gre (the tunnel owner, D17; [C13] in both modes). The runtime derives the
  * tunnel's line protocol from `state` (`virtualChanged`). `ipMtu` is 1476 in GRE mode, [C13] 1456 in ipsec mode.
@@ -748,6 +811,15 @@ export interface TunnelRow extends TableRow {
   transportMtu: number;
   ipMtu: number;
   since: SimTime;
+  /** @since P3c (optional by meaning) [C17] `keepalive <period> <retries>` and the replies missed so far. */
+  keepalive?: { periodS: number; retries: number; missed: number };
+  /**
+   * @since P3c (optional by meaning) [C17] `tunnel key <n>`. Named `tunnelKey`, not `key` as ARCHITECTURE-P3C §2.6
+   * writes it: `key` is every row's TableRow key (a string), so a `key?: number` member cannot exist on a row.
+   */
+  tunnelKey?: number;
+  /** @since P3c (optional by meaning) [S36a] Present while the recursion hold is armed (the tunnel stays down until then). */
+  holdUntil?: SimTime;
 }
 
 /** @since P3 [S19] RFC 1661 automaton states (LCP and the NCPs). */
@@ -807,6 +879,72 @@ export interface ScriptRunRow extends TableRow {
   requests: number;
   /** The traceback's last line on 'failed'. */
   error?: string;
+  /** @since P3c (optional by meaning) [C22] 'playbook' for a playbook run; absent = python (lab 40's rows keep their bytes). */
+  kind?: 'python' | 'playbook';
+  /** @since P3c (optional by meaning) [C22] A playbook run's recap, one entry per host. */
+  recap?: readonly { host: string; ok: number; changed: number; failed: number; unreachable: number }[];
+}
+
+/** @since P3c [S33] The `snmp-traps` table's bound: the oldest row is deleted when a 65th arrives. */
+export const SNMP_TRAPS_RETAINED = 64;
+
+/** @since P3c [S33] key = `${seq}`. Writer: snmp-manager. Bounded (SNMP_TRAPS_RETAINED); one row per trap received. */
+export interface SnmpTrapRow extends TableRow {
+  seq: number;
+  at: SimTime;
+  from: IpAddress;
+  community: string;
+  version: '2c' | '3';
+  trap: 'coldStart' | 'linkDown' | 'linkUp' | 'authenticationFailure';
+  varbinds: readonly { oid: string; value: SnmpValue }[];
+}
+
+/** @since P3c [S6] key = `${port}`. Writer: ospfv3. Exists while the interface is enabled for OSPFv3. */
+export interface Ospf6InterfaceRow extends TableRow {
+  port: PortId;
+  area: string;
+  ifaceId: number;
+  type: 'broadcast' | 'point-to-point' | 'loopback';
+  state: OspfIsmState;
+  cost: number;
+  priority: number;
+  dr: string;
+  bdr: string;
+  hello: number;
+  dead: number;
+  linkLocal: Ipv6Address;
+  /** @since P3c (optional by meaning) */
+  passive?: true;
+  /** @since P3c (optional by meaning) The last refused hello's reason. */
+  rejected?: string;
+}
+
+/** @since P3c [S6] key = `${port}|${routerId}`. Writer: ospfv3. */
+export interface Ospf6NeighborRow extends TableRow {
+  port: PortId;
+  routerId: string;
+  ifaceId: number;
+  priority: number;
+  state: OspfNsmState;
+  role: 'DR' | 'BDR' | 'DROTHER' | '-';
+  linkLocal: Ipv6Address;
+  deadAt: SimTime;
+}
+
+/** @since P3c [S6] key = `${scope}|${lsType}|${lsId}|${advRouter}`. Writer: ospfv3. */
+export interface Ospf6LsaRow extends TableRow {
+  scope: string;
+  lsType: number;
+  lsId: number;
+  advRouter: string;
+  seq: number;
+  age: number;
+  checksum: number;
+  links?: readonly { type: number; metric: number; ifaceId: number; nbrIfaceId: number; nbrRouterId: string }[];
+  attached?: readonly string[];
+  linkLocal?: Ipv6Address;
+  prefixes?: readonly { prefix: Ipv6Address; prefixLen: number; metric: number }[];
+  ref?: { lsType: number; lsId: number; advRouter: string };
 }
 
 /** @since P3 [C1] */
@@ -911,6 +1049,8 @@ export interface OspfStateView {
   /** D10: the final SPF tree per area ([S3] parity). */
   trees: readonly { area: OspfAreaId; tree: SpfTree }[];
 }
+/** @since P3c [S6] StateView kind 'ospfv3' (display only): the OspfStateView shape. */
+export type Ospf6StateView = OspfStateView;
 /** @since P3 StateView kind 'ntp' (display only). */
 export interface NtpStateView {
   peers: readonly { address: IpAddress; nextPollAt?: SimTime; retriesLeft: number; lastSentAt?: SimTime; lastReject?: string }[];
@@ -985,8 +1125,8 @@ export interface TableDescriptor {
   /** Original title shown by the generic inspector renderer. */
   readonly title: string;
   readonly columns: readonly TableColumn[];
-  /** 'P2' @since P2. 'P3' @since P3. */
-  readonly since: 'P0' | 'P0.5' | 'P1' | 'P2' | 'P3';
+  /** 'P2' @since P2. 'P3' @since P3. 'P3c' @since P3c. */
+  readonly since: 'P0' | 'P0.5' | 'P1' | 'P2' | 'P3' | 'P3c';
 }
 
 /** Descriptors for every built-in table; the snapshot and TablesView use these. */
@@ -1346,6 +1486,52 @@ export const TABLE_DESCRIPTORS: Readonly<Record<'cam' | 'arp' | 'rib' | ExtraTab
       { key: 'reason', title: 'Reason', format: 'text' }, { key: 'proposal', title: 'Proposal', format: 'text' },
     ],
   },
+  // ── P3c (ARCHITECTURE-P3C §2.6, §9.2 W0 item 1: compile stubs with their final values). A descriptor makes no model
+  // derive its table (PROCESS_TABLES does, in the change that registers the daemon). ──
+  'ospf6-interfaces': {
+    name: 'ospf6-interfaces', title: 'OSPFv3 interfaces', since: 'P3c',
+    columns: [
+      { key: 'port', title: 'Interface', format: 'port' }, { key: 'area', title: 'Area', format: 'text' },
+      { key: 'state', title: 'State', format: 'state' }, { key: 'cost', title: 'Cost', format: 'number' },
+      { key: 'priority', title: 'Priority', format: 'number' }, { key: 'dr', title: 'DR', format: 'text' },
+      { key: 'bdr', title: 'BDR', format: 'text' }, { key: 'linkLocal', title: 'Link-local', format: 'ipv6' },
+    ],
+  },
+  'ospf6-neighbors': {
+    name: 'ospf6-neighbors', title: 'OSPFv3 neighbours', since: 'P3c',
+    columns: [
+      { key: 'routerId', title: 'Neighbour ID', format: 'text' }, { key: 'priority', title: 'Priority', format: 'number' },
+      { key: 'state', title: 'State', format: 'state' }, { key: 'role', title: 'Role', format: 'text' },
+      { key: 'deadAt', title: 'Dead time', format: 'time' }, { key: 'ifaceId', title: 'Interface ID', format: 'number' },
+      { key: 'port', title: 'Interface', format: 'port' },
+    ],
+  },
+  'ospf6-lsdb': {
+    name: 'ospf6-lsdb', title: 'OSPFv3 database', since: 'P3c',
+    columns: [
+      { key: 'scope', title: 'Scope', format: 'text' }, { key: 'lsType', title: 'Type', format: 'number' },
+      { key: 'lsId', title: 'Link ID', format: 'number' }, { key: 'advRouter', title: 'ADV router', format: 'text' },
+      { key: 'age', title: 'Age', format: 'number' }, { key: 'seq', title: 'Seq#', format: 'number' },
+    ],
+  },
+  'storm-control': {
+    name: 'storm-control', title: 'Storm control', since: 'P3c',
+    columns: [
+      { key: 'port', title: 'Interface', format: 'port' }, { key: 'kind', title: 'Filter', format: 'text' },
+      { key: 'state', title: 'State', format: 'state' }, { key: 'rise', title: 'Upper', format: 'number' },
+      { key: 'fall', title: 'Lower', format: 'number' }, { key: 'current', title: 'Current', format: 'number' },
+      { key: 'unit', title: 'Unit', format: 'text' }, { key: 'action', title: 'Action', format: 'text' },
+      { key: 'dropped', title: 'Dropped', format: 'number' },
+    ],
+  },
+  'snmp-traps': {
+    name: 'snmp-traps', title: 'SNMP traps', since: 'P3c',
+    columns: [
+      { key: 'seq', title: 'No.', format: 'number' }, { key: 'at', title: 'Received', format: 'time' },
+      { key: 'from', title: 'From', format: 'ip' }, { key: 'trap', title: 'Trap', format: 'text' },
+      { key: 'version', title: 'Version', format: 'text' }, { key: 'community', title: 'Community', format: 'text' },
+    ],
+  },
 });
 
 /**
@@ -1398,7 +1584,9 @@ export const PROCESS_TABLES: Readonly<Partial<Record<ProcessName, readonly Extra
  * P3 review T6; the W4 catalog flip). `deriveTables` applies a row only when the model's build stage is at or after
  * `since` and the model has `requires`, so the snooping tables are never plain `vlan` rows: no P1/P2-stage model and
  * never the controller (which runs `vlan` too) declares them. A row's tables follow the daemon's own `PROCESS_TABLES`.
- * [S16] would add 'storm-control' to the row (not approved, never in P3a).
+ * [S16] would add 'storm-control' to the row (not approved, never in P3a). @since P3c [S16]: one row has one `since`, so
+ * the W4b flip appends a SECOND row `{process: 'eth-switch', tables: ['storm-control'], since: 'P3c', requires:
+ * 'managed-switch'}` (ARCHITECTURE-P3C §2.1); W0 adds the table name and its descriptor only.
  */
 export const STAGED_PROCESS_TABLES: readonly {
   process: ProcessName;

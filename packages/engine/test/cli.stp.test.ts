@@ -432,6 +432,8 @@ describe('the W3 fragments, folded into the table by W4 (ARCHITECTURE-P2 §7 W3 
       'ipv6', 'dhcp', 'dns', 'services', 'transport', 'traceroute', 'line-auth', 'host-shell',
       'vlan', 'switchport-p2', 'subif', 'routing', ...W3, 'wlc',
       'ospf', 'acl-p3', 'hardening', 'qos', 'discovery', 'time', 'api', 'ssh', 'eigrp', 'wan', 'crypto', 'qos-queueing', 'logging', 'remote', 'devhost',
+      // ARCHITECTURE-P3C §7 W0: one empty fragment per W3a builder area
+      'ospf6', 'acl6', 'hardening-p3c', 'files', 'snmp', 'monitor',
     ]);
     for (const id of Object.values(P2_HANDLERS)) expect(Object.values(HANDLERS), id).toContain(id);
     const p2End = GRAMMAR.length - P3_GRAMMAR.length;

@@ -22,11 +22,14 @@ import { HOUR, MIN, SEC } from './time.js';
  * Delivery stage of a feature (D1). `since` tags in contracts and catalog derivations use it. 'P2' @since P2.
  * 'P3' @since P3 (ARCHITECTURE-P3 §2.1): P3a, the CCNA 3 content. No catalog row, descriptor or panel of stage P3
  * changes a P2-stage derivation; the real catalog flips to it only in the W4 catalog change.
+ * 'P3c' @since P3c (ARCHITECTURE-P3C D1, §2.1): the deeper CCNA 3 content. Every P3c capability row, staged table, GUI
+ * panel and stage constant is `since: 'P3c'`; the real catalog flips to it only in the W4b catalog change. No new
+ * defaults profile comes with it (`DefaultsProfile` and `LATEST_DEFAULTS_PROFILE` are unchanged).
  */
-export type BuildStage = 'P0' | 'P0.5' | 'P1' | 'P2' | 'P3';
+export type BuildStage = 'P0' | 'P0.5' | 'P1' | 'P2' | 'P3' | 'P3c';
 
-/** Stages in delivery order. */
-export const BUILD_STAGES: readonly BuildStage[] = ['P0', 'P0.5', 'P1', 'P2', 'P3'];
+/** Stages in delivery order. 'P3c' @since P3c (appended). */
+export const BUILD_STAGES: readonly BuildStage[] = ['P0', 'P0.5', 'P1', 'P2', 'P3', 'P3c'];
 
 /** True when something delivered in stage `since` exists in a build of stage `current`. */
 export function stageIncluded(since: BuildStage, current: BuildStage): boolean {
@@ -91,6 +94,13 @@ export const CAPABILITIES = [
    * (NF-DEVHOST, `pc.nfdevhost`, is the one model that declares it).
    */
   'programmable',
+  // ── P3c (appended) ──
+  /**
+   * @since P3c [S35] An end device that learns its voice VLAN from the switch by CDP or LLDP-MED (ARCHITECTURE-P3C
+   * §2.1, D9). Implies nothing. NF-IPPHONE gains it at the W4b flip, whose `CAPABILITY_PROCESSES` row adds `cdp` and
+   * `lldp` (since 'P3c'); W0 adds the name only.
+   */
+  'voice-endpoint',
 ] as const;
 export type Capability = (typeof CAPABILITIES)[number];
 
@@ -661,6 +671,11 @@ export const GUI_PANELS = [
   'desktop.traffic',
   /** @since P3 [S32] The automation workspace (NF-Py) of `programmable` hosts. */
   'desktop.automation',
+  // ── P3c (appended; ARCHITECTURE-P3C §2.1; `GUI_PANEL_SINCE` 'P3c') ──
+  /** @since P3c [S33] The SNMP manager desktop app of `server` and `programmable` hosts. */
+  'desktop.snmp-manager',
+  /** @since P3c [S27] The API client desktop app of hosts that have the web browser. */
+  'desktop.api-client',
 ] as const;
 export type GuiPanelId = (typeof GUI_PANELS)[number];
 
@@ -843,6 +858,9 @@ export const CAPABILITY_PROCESSES: Readonly<Record<Capability, readonly Capabili
   // which is [S29] (not approved; a script needs nothing from TFTP, D21). Unapproved items (ospfv3, tftp, snmp-agent,
   // snmp-manager) get no row.
   programmable: [cp('script-host', 'P3')],
+  // P3c (ARCHITECTURE-P3C §2.1; W0 compile stub, empty): [S35] the W4b flip adds `cdp` and `lldp` (since 'P3c') in the
+  // change that derives them, so no model gains a daemon in W0.
+  'voice-endpoint': [],
 });
 
 /**

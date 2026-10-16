@@ -5,7 +5,7 @@
  * stage P2 or earlier carries it (every P0.5–P2-stage model keeps exactly its keys, §9.1).
  */
 import { describe, expect, it } from 'vitest';
-import { BUILD_STAGES, expandCapabilities } from '../src/contracts/catalog.js';
+import { BUILD_STAGES, expandCapabilities, stageIncluded } from '../src/contracts/catalog.js';
 import { ALL_MODEL_INPUTS } from '../src/device/catalog.js';
 import { defineModel, deriveCdpDefault, deriveCliSpec, type ModelInput } from '../src/device/catalog/define.js';
 
@@ -39,9 +39,11 @@ describe('cdpDefault (D2)', () => {
       const want = !has('nat-gateway') && ((p3.cli.shell === 'nfos' && (has('routing') || has('managed-switch'))) || has('wireless-controller'));
       expect([i.type, p3.cdpDefault === true]).toEqual([i.type, want]);
       if (!want) expect([i.type, 'cdpDefault' in p3]).toEqual([i.type, false]);
-      for (const stage of BUILD_STAGES.filter((s) => s !== 'P3')) {
+      // ARCHITECTURE-P3C §9.2 W0 item 2: 'P3c' (after 'P3') keeps the P3 derivation; the stages before P3 never carry it
+      for (const stage of BUILD_STAGES.filter((s) => !stageIncluded('P3', s))) {
         expect([i.type, stage, 'cdpDefault' in defineModel(i, stage)]).toEqual([i.type, stage, false]);
       }
+      expect([i.type, defineModel(i, 'P3c').cdpDefault]).toEqual([i.type, p3.cdpDefault]);
     }
   });
 

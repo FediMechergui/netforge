@@ -130,6 +130,8 @@ export const CAPABILITY_VOCAB: Readonly<Record<Capability, CapabilityVocab>> = O
   'wireless-controller': cap('wireless-controller', 'Wireless controller', ['wireless controller', 'wlc', 'capwap', 'wlan', 'controller']),
   // ── P3 [S32] (ARCHITECTURE-P3 §2.1; W1 web-inspector; no model carries it before the W6 flip) ──
   programmable: cap('programmable', 'Programmable host', ['programmable', 'automation', 'scripts', 'python', 'developer']),
+  // ── P3c (ARCHITECTURE-P3C §2.1, §9.2 W0 item 1; NF-IPPHONE gains it at the W4b flip) ──
+  'voice-endpoint': cap('voice-endpoint', 'Voice endpoint', ['voice', 'ip phone', 'voice vlan', 'telephony']),
 });
 
 /** Capabilities in canonical order (engine `CAPABILITIES`). */
@@ -181,6 +183,9 @@ export const GUI_PANEL_VOCAB: Readonly<Record<GuiPanelId, GuiPanelVocab>> = Obje
   // P3 (ARCHITECTURE-P3 §5.9; W1 web-inspector; the apps arrive with the W3 and [S32] W6 web-desktop items)
   'desktop.traffic': panel('desktop.traffic', 'Traffic generator', 'desktop-app', 'Send steady streams of test traffic and read their delay, jitter and loss.'),
   'desktop.automation': panel('desktop.automation', 'Automation', 'desktop-app', 'Write and run small scripts that manage devices over the network.'),
+  // P3c (ARCHITECTURE-P3C §2.1, §9.2 W0 item 1; the apps arrive with the W3b [S33] and W3c [S27] web-desktop items)
+  'desktop.snmp-manager': panel('desktop.snmp-manager', 'SNMP manager', 'desktop-app', 'Poll devices for their counters and status and collect the alerts they send.'),
+  'desktop.api-client': panel('desktop.api-client', 'API client', 'desktop-app', 'Send requests to a device API and read the answers.'),
 });
 
 /** GUI panels in engine display order. */

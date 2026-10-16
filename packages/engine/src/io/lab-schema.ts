@@ -39,6 +39,7 @@ import type { TraceFilter } from '../contracts/simulation.js';
 import type { HsrpRow, PortSecurityRow, StpRole, StpState } from '../contracts/tables.js';
 import type { Topology, TopologyErrDisabledPort, TopologyPendingFault } from '../contracts/topology.js';
 import type { TraceKind } from '../contracts/trace.js';
+import type { ConvergenceProtocol } from '../contracts/timeline.js';
 import { MAX_ID_CHARS, MAX_LAB_NAME_CHARS, MAX_LAB_VERSION, MEDIA_TYPES, formatIssues, topologyLoadError, topologySchema } from './schema.js';
 
 // ── format and limits ─────────────────────────────────────────────────────
@@ -74,9 +75,20 @@ type Of<K extends Kind> = Extract<LabAssertion, { kind: K }>;
 /** One member of the assertion of kind K, without `undefined`. */
 type Member<K extends Kind, M extends keyof Of<K>> = NonNullable<Of<K>[M]>;
 
-const CONCEPT_TOOLS: Record<ConceptToolId, true> = { subnetting: true, ipv6: true, queueing: true, 'data-formats': true, wildcard: true };
+// P3c (ARCHITECTURE-P3C §2.10, §9.2 W0 item 1): the concept tools [S22] 'wan', [S28] 'yang', [C26] 'sdn' and the
+// neighbour protocol [S6] 'ospfv3' (W0 compile stubs; their views and adapters land with their items).
+const CONCEPT_TOOLS: Record<ConceptToolId, true> = {
+  subnetting: true,
+  ipv6: true,
+  queueing: true,
+  'data-formats': true,
+  wildcard: true,
+  wan: true,
+  yang: true,
+  sdn: true,
+};
 
-const NEIGHBOR_PROTOCOLS: Record<NeighborProtocol, true> = { ospf: true, cdp: true, lldp: true, ppp: true, eigrp: true };
+const NEIGHBOR_PROTOCOLS: Record<NeighborProtocol, true> = { ospf: true, cdp: true, lldp: true, ppp: true, eigrp: true, ospfv3: true };
 
 const FACT_NAMES: Record<LabFactName, true> = {
   'ospf.routerId': true,
@@ -124,6 +136,16 @@ const FACT_NAMES: Record<LabFactName, true> = {
   'eigrp.feasibleSuccessor': true,
   'eigrp.kValues': true,
   'ipsec.sa': true,
+  // P3c (ARCHITECTURE-P3C §2.10; W0 compile stubs: FACT_AREAS reads them as {} until their adapter items land)
+  'ospf.abr': true,
+  'ospf.asbr': true,
+  'ospfv3.routerId': true,
+  'ospfv3.ifaceArea': true,
+  'ospfv3.ifaceCost': true,
+  'ipsg.enabled': true,
+  'storage.file': true,
+  'device.imageVersion': true,
+  'device.configRegister': true,
 };
 
 const DROP_REASONS: Record<DropReason, true> = {
@@ -161,6 +183,10 @@ const DROP_REASONS: Record<DropReason, true> = {
   'mtu-exceeded': true,
   policed: true,
   'ipsec-no-sa': true,
+  // P3c (ARCHITECTURE-P3C §2.7, §9.2 W0 item 1: the reason list +3)
+  'ip-source-guard': true,
+  'storm-control': true,
+  'span-destination': true,
 };
 
 const TRACE_KINDS: Record<TraceKind, true> = {
@@ -216,6 +242,9 @@ const FSM_MACHINES: Record<FsmMachine, true> = {
   'eigrp-nbr': true,
   'eigrp-route': true,
   ike: true,
+  // P3c [S6] (ARCHITECTURE-P3C §2.10)
+  'ospf6-if': true,
+  'ospf6-nbr': true,
 };
 
 const FAULT_KINDS: Record<FaultKind, true> = {
@@ -242,6 +271,8 @@ const ERR_DISABLE_CAUSE_NAMES: Record<ErrDisableCause, true> = {
   fault: true,
   'dhcp-rate-limit': true,
   'arp-inspection': true,
+  // P3c [S16] (ARCHITECTURE-P3C §2.2)
+  'storm-control': true,
 };
 
 const COUNTERS: Record<keyof PortCounters, true> = {
@@ -340,6 +371,10 @@ function buildLabSchemas() {
   const l4Port = integer(0, 65535);
   const family = z.union([z.literal(4), z.literal(6)], { errorMap: () => ({ message: 'must be 4 or 6' }) });
   const aclEntry = z.union([natural(), z.literal('implicit')], { errorMap: () => ({ message: 'must be an entry number or "implicit"' }) });
+  /** @since P3c [S11] The `acl` kind's entry: also an IPv6 list's implicit ND rows. */
+  const aclEntry6 = z.union([natural(), z.literal('implicit'), z.literal('nd-na'), z.literal('nd-ns')], {
+    errorMap: () => ({ message: 'must be an entry number, "implicit", "nd-na" or "nd-ns"' }),
+  });
   const media = z.enum(MEDIA_TYPES as [MediaType, ...MediaType[]], { errorMap: () => ({ message: `must be one of ${MEDIA_TYPES.join(', ')}` }) });
   const notes = { feedback: longText.optional(), misconception: line.optional() };
 
@@ -371,6 +406,9 @@ function buildLabSchemas() {
     tags: list(line).optional(),
     includeBackground: bool().optional(),
     machines: list(oneOf(FSM_MACHINES)).optional(),
+    // P3c (ARCHITECTURE-P3C §2.8): [S10] `reasons` and [C32] `vlans` (optional by meaning)
+    reasons: list(oneOf(DROP_REASONS)).optional(),
+    vlans: list(vlan).optional(),
   });
 
   const flow = obj({
@@ -502,7 +540,7 @@ function buildLabSchemas() {
       ad: integer(0, 255).optional(),
       none: bool().optional(),
       metric: natural().optional(),
-      routeType: oneOf<Member<'route', 'routeType'>>({ E2: true }).optional(),
+      routeType: oneOf<Member<'route', 'routeType'>>({ E2: true, IA: true, OI: true, OE2: true }).optional(),
       minPaths: natural().optional(),
       ...notes,
     }),
@@ -556,7 +594,8 @@ function buildLabSchemas() {
       kind: z.literal('acl'),
       device,
       list: name,
-      type: oneOf<Member<'acl', 'type'>>({ standard: true, extended: true }).optional(),
+      family: family.optional(),
+      type: oneOf<Member<'acl', 'type'>>({ standard: true, extended: true, ipv6: true }).optional(),
       exists: bool().optional(),
       entries: list(line).optional(),
       match: oneOf<Member<'acl', 'match'>>({ exactly: true, includes: true }).optional(),
@@ -567,7 +606,7 @@ function buildLabSchemas() {
           dir: oneOf<Member<'acl', 'applied'>[number]['dir']>({ in: true, out: true }),
         }),
       ).optional(),
-      entry: aclEntry.optional(),
+      entry: aclEntry6.optional(),
       minMatches: natural().optional(),
       ...notes,
     }),
@@ -575,6 +614,7 @@ function buildLabSchemas() {
       kind: z.literal('aclDecision'),
       device,
       list: name,
+      family: family.optional(),
       packet: obj({
         proto: oneOf<Member<'aclDecision', 'packet'>['proto']>({ ip: true, icmp: true, tcp: true, udp: true }),
         src: line,
@@ -689,7 +729,41 @@ function buildLabSchemas() {
     ...notes,
   });
 
-  const kinds = { ...statics, connectivity };
+  // ── P3c (ARCHITECTURE-P3C §2.10; W0): the [S8] `convergence` and [S38] `packetSeen` kinds, written against the
+  // contract (the kind check below). A document may name them; until the W3b sim item lands, the grader's W0 stub
+  // fails each with "not available in this build" (sim/lab-checks/registry.ts P3C_UNAVAILABLE_KIND_DETAILS). Clone
+  // kinds: never a follow-up. ──
+  const convergence = obj({
+    kind: z.literal('convergence'),
+    fault: labFault,
+    protocol: oneOf<ConvergenceProtocol>({ stp: true, etherchannel: true, fhrp: true, routing: true, wireless: true, wan: true }),
+    only: oneOf<Member<'convergence', 'only'>>({ ospf: true, eigrp: true }).optional(),
+    withinMs: atLeastZero(),
+    atLeastMs: atLeastZero().optional(),
+    windowMs: atLeastZero().optional(),
+    ...notes,
+  });
+  const packetSeen = obj({
+    kind: z.literal('packetSeen'),
+    at: z.union([obj({ device, port: port.optional() }), obj({ link: z.tuple([device, device]) })]),
+    filter: line.min(1, 'must not be empty'),
+    dir: oneOf<Member<'packetSeen', 'dir'>>({ tx: true, rx: true, both: true }).optional(),
+    expect: oneOf<Member<'packetSeen', 'expect'>>({ seen: true, absent: true }).optional(),
+    min: natural().optional(),
+    drive: z
+      .union([
+        obj({ probe: obj({ from: device, to: device, proto: oneOf<'icmp' | 'tcp' | 'udp'>({ icmp: true, tcp: true, udp: true }).optional(), port: l4Port.optional() }) }),
+        obj({ flows: list(flow), runMs: atLeastZero() }),
+        obj({ snmp: obj({ from: device, to: device, community: line, oid: line }), runMs: atLeastZero() }),
+        obj({ runMs: atLeastZero() }),
+      ])
+      .optional(),
+    includeBackground: bool().optional(),
+    after: after.optional(),
+    settleMs: atLeastZero().optional(),
+    ...notes,
+  });
+  const kinds = { ...statics, connectivity, convergence, packetSeen };
   const KINDS = Object.keys(kinds).join(', ');
   const assertion = z.discriminatedUnion(
     'kind',
@@ -717,6 +791,8 @@ function buildLabSchemas() {
       kinds.service,
       kinds.path,
       kinds.traffic,
+      kinds.convergence,
+      kinds.packetSeen,
     ],
     {
       errorMap: (issue, ctx) =>

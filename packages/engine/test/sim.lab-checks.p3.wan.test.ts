@@ -157,6 +157,7 @@ const sources = (): { readonly [P in NeighborProtocol]: NeighborSource | undefin
   lldp: undefined,
   eigrp: undefined,
   ppp: WAN_NEIGHBOR_SOURCES.ppp,
+  ospfv3: undefined, // ARCHITECTURE-P3C §2.10 (W0)
 });
 
 function readers(): { readonly [F in LabFactName]: FactReader | undefined } {

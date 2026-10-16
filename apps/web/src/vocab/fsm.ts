@@ -66,6 +66,9 @@ export const FSM_VOCAB: Readonly<Record<FsmMachine, FsmVocab>> = Object.freeze({
   'eigrp-nbr': fsm('eigrp-nbr', 'EIGRP neighbour', ['down', 'pending', 'up']),
   'eigrp-route': fsm('eigrp-route', 'EIGRP route', ['passive', 'active']),
   ike: fsm('ike', 'IKE negotiation', ['idle', 'init-sent', 'init-answered', 'auth-sent', 'established', 'failed']),
+  // P3c [S6] (ARCHITECTURE-P3C §2.10, §9.2 W0 item 1): the OSPFv3 machines share the OSPF states
+  'ospf6-if': fsm('ospf6-if', 'OSPFv3 interface', ['down', 'loopback', 'waiting', 'point-to-point', 'drother', 'backup', 'dr']),
+  'ospf6-nbr': fsm('ospf6-nbr', 'OSPFv3 neighbour', ['down', 'attempt', 'init', '2way', 'exstart', 'exchange', 'loading', 'full']),
 });
 
 /** Machines in display order. */

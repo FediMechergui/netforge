@@ -53,6 +53,26 @@ import { timeHandlers } from './time.js';
 import { apiHandlers } from './api.js';
 import { sshHandlers } from './ssh.js';
 import { P3_APPROVED_HANDLERS } from './p3-approved.js';
+// P3c (ARCHITECTURE-P3C §7 W0): one registry per W3a builder area, registered empty
+import { ospf6Handlers } from './ospf6.js';
+import { acl6Handlers } from './acl6.js';
+import { hardeningP3cHandlers } from './hardening-p3c.js';
+import { filesHandlers } from './files.js';
+import { snmpHandlers } from './snmp.js';
+import { monitorHandlers } from './monitor.js';
+
+/**
+ * @since P3c (ARCHITECTURE-P3C §7 W0, W3a) The handlers of the P3c fragments (`P3C_HANDLER_IDS`), one registry per W3a
+ * builder area; each builder fills its own file, so no one edits this index after W0.
+ */
+export const P3C_HANDLER_REGISTRY: Record<string, CommandHandler> = {
+  ...ospf6Handlers, // [S6]
+  ...acl6Handlers, // [S11]
+  ...hardeningP3cHandlers, // [S14] [S15] [S16]
+  ...filesHandlers, // [S29] [S30] [S31]
+  ...snmpHandlers, // [S33] [C23]
+  ...monitorHandlers, // [S34]
+};
 
 /**
  * @since P2 (ARCHITECTURE-P2 §7 W2, W3 and W5 cli) The handlers of the P2 fragments (`P2_HANDLERS` ids): VLANs, the
@@ -114,4 +134,6 @@ export const HANDLER_REGISTRY: Record<string, CommandHandler> = {
   // P3 (ARCHITECTURE-P3 §7 W2 cli): the MUST handlers (cli part 1), then the approved items' (cli part 2)
   ...P3_HANDLER_REGISTRY,
   ...P3_APPROVED_HANDLERS,
+  // P3c (ARCHITECTURE-P3C §7 W0)
+  ...P3C_HANDLER_REGISTRY,
 };

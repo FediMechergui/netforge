@@ -231,7 +231,11 @@ describe('the P2 fragments folded into the table (ARCHITECTURE-P2 §7 W2 cli; §
       'wlc',
     ];
     // ARCHITECTURE-P3 §9.2 W2 item 21b: the P3 fragments (W2 cli: the MUST ones, then the approved items') follow
-    const P3_KEYS = ['ospf', 'acl-p3', 'hardening', 'qos', 'discovery', 'time', 'api', 'ssh', 'eigrp', 'wan', 'crypto', 'qos-queueing', 'logging', 'remote', 'devhost'];
+    // ARCHITECTURE-P3C §7 W0: one empty fragment per W3a builder area follows them (part of P3_GRAMMAR)
+    const P3_KEYS = [
+      'ospf', 'acl-p3', 'hardening', 'qos', 'discovery', 'time', 'api', 'ssh', 'eigrp', 'wan', 'crypto', 'qos-queueing', 'logging', 'remote', 'devhost',
+      'ospf6', 'acl6', 'hardening-p3c', 'files', 'snmp', 'monitor',
+    ];
     expect(Object.keys(GRAMMAR_FRAGMENTS)).toEqual([...P1_KEYS, ...P2_KEYS, ...P3_KEYS]);
     expect(Object.keys(P2_GRAMMAR_FRAGMENTS)).toEqual(P2_KEYS);
     for (const k of P2_KEYS) expect(GRAMMAR_FRAGMENTS[k], k).toBe(P2_GRAMMAR_FRAGMENTS[k]);

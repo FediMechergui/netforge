@@ -23,7 +23,7 @@
 import type { IpAddress, IpFamily, Ipv4Address, Ipv6Address, MacAddress } from './addr.js';
 import type { PortId, ProcessName } from './ids.js';
 import type { LayerSpec, Pdu } from './pdu.js';
-import type { L2ChangeKind, Severity } from './process.js';
+import type { L2ChangeKind, Severity, SnmpValue } from './process.js';
 import type { WifiAssocState } from './medium.js';
 import type { RouteRow } from './tables.js';
 import type { ConfigureResult } from './cli.js';
@@ -282,9 +282,36 @@ export interface VtyOutputEvent {
 }
 
 /**
+ * @since P3c [S29] tftp → the owner of a `tftp.transfer` request (ARCHITECTURE-P3C §2.5, §3.4): the job's end. `bytes`
+ * and `blocks` count what moved; `error` carries the original-wording reason of a failed job.
+ */
+export interface TftpResultEvent {
+  kind: 'tftp.result';
+  token: string;
+  ok: boolean;
+  bytes: number;
+  blocks: number;
+  error?: string;
+}
+
+/**
+ * @since P3c [S33] snmp-manager → the owner of an `snmp.op` request (ARCHITECTURE-P3C §2.5, §3.5): the varbinds of the
+ * response (a walk's every step), or the error and its 1-based index.
+ */
+export interface SnmpResultEvent {
+  kind: 'snmp.result';
+  token: string;
+  ok: boolean;
+  varbinds: readonly { oid: string; value: SnmpValue }[];
+  error?: string;
+  errorIndex?: number;
+}
+
+/**
  * Every event a process can receive via Action 'event'. Extension events are namespaced 'ext.*'. P2 adds the four
  * events above; P3 adds RibChangedEvent, ConfigResultEvent, HttpResultEvent, TrafficRxEvent and the approved [S24]
- * LogRecordEvent and [S13] AclVerdictEvent and VtyOutputEvent.
+ * LogRecordEvent and [S13] AclVerdictEvent and VtyOutputEvent. P3c adds [S29] TftpResultEvent and [S33]
+ * SnmpResultEvent.
  */
 export type ProcessEvent =
   | SocketEvent
@@ -303,6 +330,8 @@ export type ProcessEvent =
   | LogRecordEvent
   | AclVerdictEvent
   | VtyOutputEvent
+  | TftpResultEvent
+  | SnmpResultEvent
   | { kind: `ext.${string}`; [k: string]: unknown };
 
 /** Payload accepted by udp.send: raw bytes OR application layer specs encoded by the transport. */

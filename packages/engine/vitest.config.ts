@@ -7,14 +7,16 @@
  *   slow  the long-running proofs: `accept.p2.loop-storm-bounded`, the replay-exact shards
  *         (`accept.p2.replay-exact-templates`, `-ccna1`, `-ccna2`, and since P3 W5 `accept.p3.replay-exact-ccna3`),
  *         the digest goldens (`accept.p2.p1-digests`, `accept.p3.p2-digests-*`), and since the P3 W4 catalog flip
- *         (R47) `accept.p3.silence` and
- *         `accept.p3.ospf-scale`.
- * The two projects are disjoint and together hold every test file, so no test is skipped.
+ *         (R47) `accept.p3.silence`; since P3c W0 `accept.p3c.silence` and `accept.p3c.hot-path`;
+ *   gate  (ARCHITECTURE-P3C rule 25) the explicit `GATE_TESTS` list: `accept.p2.loop-storm-bounded`,
+ *         `accept.p3.ospf-scale` and `accept.p3c.ospf-scale-multiarea`.
+ * The three projects are disjoint and together hold every test file, so no test is skipped.
  *
  * Commands, from the repository root:
  *   npx vitest run --root packages/engine                   every test (both projects)
  *   npx vitest run --root packages/engine --project fast    fast only (check 2)
  *   npx vitest run --root packages/engine --project slow    slow only (the lead: once per wave and at every gate)
+ *   npx vitest run --root packages/engine --project gate    gate only (the lead: at gates and inside the flip)
  *   npx vitest run --root packages/engine <name filter>     one's own files (rule 9), in whichever project holds them
  *   npx vitest list --root packages/engine --filesOnly [--project fast|slow]   which files a project collects
  *

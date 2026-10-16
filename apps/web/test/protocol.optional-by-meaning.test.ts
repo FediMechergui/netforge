@@ -16,6 +16,10 @@
  * R61 (e)) adds the web P3 rows: `DropMarker.rule` (R42: absent for every drop without a policy rule, every P1/P2 drop)
  * and `RunToIdleSnapshot.runStopped` (R31: absent = the run reached idle). The web contracts have no transition `?`
  * left to remove: every other `@since P3` web member was required from the item that added it.
+ *
+ * P3c W0 (ARCHITECTURE-P3C §2.12, §2.13, §9.2 W0 item 3) adds the bridge rows: `RunToIdleSnapshot.runStopped` takes
+ * [S39] 'quiet' (optional by meaning, as before), and `EngineApi.sendBreak` [S31] and the ACL workbench's
+ * `EngineApi.aclLists` / `.aclEvaluate` [S10] carry a transition `?` until the W3b items write them and remove it.
  */
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -41,6 +45,11 @@ const CHECKING_OPTIONAL: IsOptional<LabUiState, 'checking'> = true;
 // optional by meaning since P3 (ARCHITECTURE-P3 §2.15, ruling R61 (e))
 const DROP_RULE_OPTIONAL: IsOptional<DropMarker, 'rule'> = true;
 const RUN_STOPPED_OPTIONAL: IsOptional<RunToIdleSnapshot, 'runStopped'> = true;
+// P3c (ARCHITECTURE-P3C §2.12): the [S39] value; and the transition members of §2.13 / §2.12 (W3b removes each `?`)
+const RUN_STOPPED_QUIET: NonNullable<RunToIdleSnapshot['runStopped']> = 'quiet';
+const SEND_BREAK_TRANSITION: IsOptional<EngineApi, 'sendBreak'> = true;
+const ACL_LISTS_TRANSITION: IsOptional<EngineApi, 'aclLists'> = true;
+const ACL_EVALUATE_TRANSITION: IsOptional<EngineApi, 'aclEvaluate'> = true;
 
 // required since the W8 exit gate: each line stops compiling if the member regains a `?`
 const SEEK_REQUIRED: IsOptional<EngineApi, 'seek'> = false;
@@ -162,5 +171,27 @@ describe('web members that stay optional since P3 (optional by meaning, ARCHITEC
     const doc = PROTOCOL.slice(PROTOCOL.lastIndexOf('/**', at), at).replace(/\s*\n\s*\*\s*/g, ' ');
     expect(doc).toMatch(/@since P3\b/);
     expect(doc).toContain("`runStopped: 'maxEvents'` (optional by meaning");
+  });
+});
+
+describe('web members of P3c (ARCHITECTURE-P3C §2.12, §2.13, §9.2 W0 item 3)', () => {
+  it('the type-level checks hold', () => {
+    expect(RUN_STOPPED_QUIET).toBe('quiet');
+    expect([SEND_BREAK_TRANSITION, ACL_LISTS_TRANSITION, ACL_EVALUATE_TRANSITION]).toEqual([true, true, true]);
+  });
+
+  it("RunToIdleSnapshot.runStopped takes 'quiet', keeps its ? and its JSDoc tags the value @since P3c, optional by meaning", () => {
+    const at = PROTOCOL.indexOf('export type RunToIdleSnapshot =');
+    expect(PROTOCOL.slice(at, PROTOCOL.indexOf('\n', at))).toContain("readonly runStopped?: 'maxEvents' | 'quiet'");
+    const doc = PROTOCOL.slice(PROTOCOL.lastIndexOf('/**', at), at).replace(/\s*\n\s*\*\s*/g, ' ');
+    expect(doc).toContain("'quiet' @since P3c (optional by meaning)");
+  });
+
+  it.each(['sendBreak', 'aclLists', 'aclEvaluate'])('EngineApi.%s keeps its transition ? and its JSDoc says so', (name) => {
+    const { line, doc } = declaration(PROTOCOL, 'EngineApi', name);
+    expect(line).toMatch(new RegExp(`^\\s*${name}\\?\\(`));
+    expect(doc).toMatch(/@since P3c\b/);
+    expect(doc.replace(/\s*\n\s*\*\s*/g, ' ')).toMatch(/[Tt]ransition `\?`/);
+    expect(doc).not.toContain('optional by meaning');
   });
 });

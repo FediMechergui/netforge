@@ -170,6 +170,10 @@ export const GUI_PANEL_SINCE: Readonly<Record<GuiPanelId, BuildStage>> = Object.
   // and the [S32] automation workspace. Stage P3 only, so no P2-stage derivation changes.
   'desktop.traffic': 'P3',
   'desktop.automation': 'P3',
+  // P3c (ARCHITECTURE-P3C §2.1, §9.2 W0 item 1; the architect's W0 compile stub, final values): the [S33] SNMP manager
+  // and the [S27] API client desktop apps. Stage P3c only, so no P3-stage derivation changes before the W4b flip.
+  'desktop.snmp-manager': 'P3c',
+  'desktop.api-client': 'P3c',
 });
 
 /** Loopback family derived for routing devices (except home routers). */
@@ -473,6 +477,10 @@ export function deriveGui(caps: readonly Capability[], cli: CliSpec, stage: Buil
     // the [S32] automation workspace on `programmable` hosts.
     'desktop.traffic': has('host'),
     'desktop.automation': has('programmable'),
+    // P3c (W0 stub, final values; stage P3c only): the [S33] SNMP manager on `server` and `programmable` hosts (the
+    // `snmp-manager` rows, §2.1); the [S27] API client on every host that has the web browser.
+    'desktop.snmp-manager': has('server') || has('programmable'),
+    'desktop.api-client': has('host'),
   };
   return GUI_PANELS.filter((id) => want[id] && stageIncluded(GUI_PANEL_SINCE[id], stage));
 }

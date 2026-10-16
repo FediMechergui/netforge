@@ -98,6 +98,17 @@ export type ProtoName =
   | 'esp'
   /** @since P3 [C13] IKEv2-lite (UDP 500; D27). */
   | 'ikev2'
+  // ── P3c (ARCHITECTURE-P3C §2.3; appended; field table in contracts/fields.ts, codec from W1) ──
+  /** @since P3c [S6] OSPFv3 (IPv6 next header 89, RFC 5340 bytes; D7: a separate codec, not `ospf` version 3). */
+  | 'ospf6'
+  /**
+   * @since P3c [S29] TFTP (UDP 69, RFC 1350). Not a new name: the dispatch table has used it since P1 (reserved, decoded
+   * as raw data until the W1b codec). Spelt out here so the web's exhaustive `PROTOCOL_VOCAB` can carry it
+   * (ARCHITECTURE-P3C §9.2 W0 item 1: it leaves the reserved vocabulary).
+   */
+  | 'tftp'
+  /** @since P3c [S33] SNMP (UDP 161 and 162, RFC 3416). As 'tftp': a dispatch name since P1, spelt out for the web vocabulary. */
+  | 'snmp'
   | (string & {});
 
 export type FieldValue = number | string | boolean | Uint8Array | null;
@@ -201,6 +212,12 @@ export interface PduMeta {
    * before a tunnel protected it, so no P1/P2 PDU carries it.
    */
   readonly innerProtectedBy?: 'dtls' | 'tls' | 'ssh' | 'esp' | 'ike';
+  /**
+   * @since P3c (optional by meaning) [S34] A SPAN copy (ARCHITECTURE-P3C §2.3): set only on the copies a monitor session
+   * makes, never on the original. Absent on every PDU of a world with no `monitor session`, so no P1/P2/P3a PDU carries
+   * it.
+   */
+  readonly mirror?: true;
 }
 
 /** Read-only view handed to the UI, tables and assertions. */
@@ -691,3 +708,16 @@ export const ESP_ICV_BYTES = 12;
  * packet of that size or less fits.
  */
 export const IPSEC_OVERHEAD = 44;
+
+// ── P3c wire constants (ARCHITECTURE-P3C §2.3) ───────────────────────────────
+
+/** @since P3c [S6] AllSPFRouters for OSPFv3 (every non-passive OSPFv3 interface joins it). */
+export const OSPF6_ALL_ROUTERS = 'ff02::5';
+/** @since P3c [S6] AllDRouters for OSPFv3 (joined on entering DR or Backup). */
+export const OSPF6_ALL_DROUTERS = 'ff02::6';
+/** @since P3c [S29] TFTP (RFC 1350; the dispatch row exists since P1 as reserved, W1b un-reserves it). */
+export const UDP_PORT_TFTP = 69;
+/** @since P3c [S33] SNMP requests (RFC 3416; the dispatch row exists since P1 as reserved, W1b un-reserves it). */
+export const UDP_PORT_SNMP = 161;
+/** @since P3c [S33] SNMP traps (the dispatch row is added by W1b). */
+export const UDP_PORT_SNMP_TRAP = 162;

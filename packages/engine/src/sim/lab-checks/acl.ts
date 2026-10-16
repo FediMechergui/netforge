@@ -154,6 +154,8 @@ export function checkAcl(sim: Simulation, a: Extract<LabAssertion, { kind: 'acl'
   const list = configuredList(dev, a.list);
   if (a.exists === false) return list === undefined ? PASS : fail(`${a.device} still has access list ${a.list}.`);
   if (list === undefined) return fail(`${a.device} has no access list ${a.list}.`);
+  // ARCHITECTURE-P3C W0 compile stub: the kind's `type` widened to 'ipv6' [S11]; the W3c acl adapter item reads IPv6 lists
+  if (a.type === 'ipv6' || a.family === 6) return fail('IPv6 access list checks are not available in this build.');
   if (a.type !== undefined && list.type !== a.type) return fail(`Access list ${a.list} on ${a.device} is ${typeText(list.type)}, expected ${typeText(a.type)}.`);
   const problem = entriesProblem(a, list) ?? appliedProblem(a, dev, list.name) ?? matchesProblem(a, dev, list);
   return problem === undefined ? PASS : fail(problem);

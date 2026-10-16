@@ -16,6 +16,7 @@ import type { Simulation, TraceFilter } from './simulation.js';
 import type { HsrpRow, PortSecurityRow, StpRole, StpState, TableName } from './tables.js';
 import type { SimTime } from './time.js';
 import type { Topology } from './topology.js';
+import type { ConvergenceProtocol } from './timeline.js';
 
 /** 'ccna2-lab' @since P2 (profile P2 labs, ARCHITECTURE-P2 §11.2). 'ccna3-lab' @since P3 (profile P3 labs, ARCHITECTURE-P3 §11.2). */
 export type ScenarioCategory = 'template' | 'ccna1-lab' | 'ccna2-lab' | 'ccna3-lab' | (string & {});
@@ -24,9 +25,10 @@ export type ScenarioCategory = 'template' | 'ccna1-lab' | 'ccna2-lab' | 'ccna3-l
  * @since P3 One list of concept tools (ARCHITECTURE-P3 D24): replaces the three copies of the union (this file's
  * `ScenarioMeta.concept`, the web store's `ConceptTool` and the markdown link allowlist). 'queueing' and
  * 'data-formats' are M13 / lesson 37's; 'wildcard' is [S9]'s (approved). ([S22] 'wan', [S28] 'yang' and [C26] 'sdn'
- * are not approved.)
+ * were not approved in P3a.) 'wan' [S22], 'yang' [S28] and 'sdn' [C26] @since P3c (appended; ARCHITECTURE-P3C §2.10):
+ * W0 adds the names with stub views; each concept item writes its view.
  */
-export type ConceptToolId = 'subnetting' | 'ipv6' | 'queueing' | 'data-formats' | 'wildcard';
+export type ConceptToolId = 'subnetting' | 'ipv6' | 'queueing' | 'data-formats' | 'wildcard' | 'wan' | 'yang' | 'sdn';
 /** §12.1 subset shipped in P1. */
 export type LabType = 'guided' | 'build' | 'troubleshoot' | 'concept';
 
@@ -98,9 +100,10 @@ export interface LabAssertionNotes {
 /**
  * @since P3 The protocols whose neighbour rows `neighbor` reads: 'ospf' (ospf-neighbors; state words 'full', '2way' …),
  * 'cdp' and 'lldp' (their neighbour tables), [S19] 'ppp' (the `ppp` rows; the state word is the LCP state, 'opened') and
- * [C1] 'eigrp' (eigrp-neighbors; 'up'). ([S6] 'ospfv3' is not approved.)
+ * [C1] 'eigrp' (eigrp-neighbors; 'up'). 'ospfv3' @since P3c [S6] (appended; ospf6-neighbors; W0 maps it to an empty
+ * area thunk in NEIGHBOR_AREAS until the W3c adapter item lands).
  */
-export type NeighborProtocol = 'ospf' | 'cdp' | 'lldp' | 'ppp' | 'eigrp';
+export type NeighborProtocol = 'ospf' | 'cdp' | 'lldp' | 'ppp' | 'eigrp' | 'ospfv3';
 
 /**
  * @since P3 Facts are data: each name has a declared type, a reader (FACT_READERS, sim/lab-checks/facts.ts and the area
@@ -178,7 +181,27 @@ export type LabFactName =
   /** [C1] Configuration ('1 0 1 0 0'). */
   | 'eigrp.kValues'
   /** [C13] ipsec-sa.state; subject: tunnel interface. */
-  | 'ipsec.sa';
+  | 'ipsec.sa'
+  // ── P3c (ARCHITECTURE-P3C §2.10; @since P3c, appended). W0 maps each to an area thunk returning {} in FACT_AREAS
+  // (sim/lab-checks/facts.ts) until its adapter item lands. ──
+  /** @since P3c [S4] subject: device; boolean (an active area-0 interface and one more area). */
+  | 'ospf.abr'
+  /** @since P3c [S4] subject: device; boolean (originates a type-5 LSA). */
+  | 'ospf.asbr'
+  /** @since P3c [S6] ospf6-interfaces (the id in use), as `ospf.routerId`. */
+  | 'ospfv3.routerId'
+  /** @since P3c [S6] ospf6-interfaces; subject: interface name, as `ospf.ifaceArea`. */
+  | 'ospfv3.ifaceArea'
+  /** @since P3c [S6] ospf6-interfaces; subject: interface name, as `ospf.ifaceCost`. */
+  | 'ospfv3.ifaceCost'
+  /** @since P3c [S15] Configuration; subject: port; boolean. */
+  | 'ipsg.enabled'
+  /** @since P3c [S29] The device's stores; subject: `${fs}:${path}`; value: size in bytes, or absent. */
+  | 'storage.file'
+  /** @since P3c [S30] subject: device; the running image's version string. */
+  | 'device.imageVersion'
+  /** @since P3c [S31] subject: device; number (the configuration register in effect). */
+  | 'device.configRegister';
 
 /** @since P3 A packet the pure `aclDecision` kind evaluates against a configured list (no traffic, no clone). */
 export interface LabPacketProbe {
@@ -303,8 +326,9 @@ export type LabAssertion = (
     }
   /**
    * @since P2 The longest-prefix winner for `destination` (an address), or `none`.
-   * `metric`, `routeType` and `minPaths` @since P3 (optional by meaning). ([S4] 'IA', [C6] 'E1', [C4] 'N1' | 'N2' are
-   * not approved.)
+   * `metric`, `routeType` and `minPaths` @since P3 (optional by meaning). ([C6] 'E1', [C4] 'N1' | 'N2' are not
+   * approved.) `routeType` 'IA' @since P3c [S4] (a value widening); family-6 rows: source 'O' with 'OI' | 'OE2' @since
+   * P3c [S6].
    */
   | {
       kind: 'route';
@@ -318,7 +342,7 @@ export type LabAssertion = (
       ad?: number;
       none?: boolean;
       metric?: number;
-      routeType?: 'E2';
+      routeType?: 'E2' | 'IA' | 'OI' | 'OE2';
       minPaths?: number;
     }
   /** @since P2 A NAT translation row (or the count of matching rows). */
@@ -354,22 +378,27 @@ export type LabAssertion = (
   | { kind: 'fact'; device: string; fact: LabFactName; subject?: string; equals?: string | number | boolean; atLeast?: number; atMost?: number }
   /**
    * @since P3 A configured access list: its entries (canonical aclEntryText, no sequence), its bindings read from the
-   * configuration, and the hit count of one entry. ([S11] would add `family` and type 'ipv6'.)
+   * configuration, and the hit count of one entry. `family` @since P3c (optional by meaning) [S11] (absent = 4); `type`
+   * 'ipv6' and `entry` 'nd-na' | 'nd-ns' @since P3c [S11] (value widenings).
    */
   | {
       kind: 'acl';
       device: string;
       list: string;
-      type?: 'standard' | 'extended';
+      family?: 4 | 6;
+      type?: 'standard' | 'extended' | 'ipv6';
       exists?: boolean;
       entries?: readonly string[];
       match?: 'exactly' | 'includes';
       applied?: readonly { iface?: string; vty?: true; dir: 'in' | 'out' }[];
-      entry?: number | 'implicit';
+      entry?: number | 'implicit' | 'nd-na' | 'nd-ns';
       minMatches?: number;
     }
-  /** @since P3 Pure: evaluates the CONFIGURED list with core/acl's evaluateAcl; no traffic, no clone. */
-  | { kind: 'aclDecision'; device: string; list: string; packet: LabPacketProbe; expect: 'permit' | 'deny'; entry?: number | 'implicit' }
+  /**
+   * @since P3 Pure: evaluates the CONFIGURED list with core/acl's evaluateAcl; no traffic, no clone. `family` @since P3c
+   * (optional by meaning) [S11] (absent = 4; the probe's addresses are then IPv6).
+   */
+  | { kind: 'aclDecision'; device: string; list: string; family?: 4 | 6; packet: LabPacketProbe; expect: 'permit' | 'deny'; entry?: number | 'implicit' }
   // the approved items' kinds (W5 sim, clone checks):
   /**
    * @since P3 [S13] The clone opens a remote session from `from` (a vty-client) to `to` and reads the outcome from its
@@ -410,6 +439,46 @@ export type LabAssertion = (
       flows: readonly (TrafficFlowSpec & { from: string; to: string })[];
       runMs: number;
       expect: readonly { receiver: string; flow: string; maxLossPct?: number; maxDelayMs?: number; maxJitterMs?: number }[];
+    }
+  // ── P3c (ARCHITECTURE-P3C §2.10; @since P3c). W0 registers each kind in the checker registry as a "not available in
+  // this build" stub until its item lands. ──
+  /**
+   * @since P3c [S8] Control-plane convergence after `fault`, measured in a fault clone (settle 0) over `windowMs`
+   * (optional by meaning; default 120 000) by `measureConvergence`: passes when the `protocol` lanes settle within
+   * `withinMs` (and, with `atLeastMs`, optional by meaning, not before it). `only` (optional by meaning) restricts the
+   * routing lane to one daemon.
+   */
+  | {
+      kind: 'convergence';
+      fault: LabFault;
+      protocol: ConvergenceProtocol;
+      only?: 'ospf' | 'eigrp';
+      withinMs: number;
+      atLeastMs?: number;
+      windowMs?: number;
+    }
+  /**
+   * @since P3c [S38] A packet matching the NetScope display `filter` (compiled at lab load, refused if invalid) is seen
+   * (or absent) at a capture point in a clone. Every member but `at` and `filter` is optional by meaning: `dir` default
+   * 'both', `expect` default 'seen', `min` default 1 (with 'seen'); `drive` makes the traffic (a probe, flows, one
+   * SNMPv2c GET from a host's snmp-manager, or a passive window); `includeBackground` counts hellos and keepalives;
+   * `after` and `settleMs` as the connectivity kind.
+   */
+  | {
+      kind: 'packetSeen';
+      at: { device: string; port?: string } | { link: [string, string] };
+      filter: string;
+      dir?: 'tx' | 'rx' | 'both';
+      expect?: 'seen' | 'absent';
+      min?: number;
+      drive?:
+        | { probe: { from: string; to: string; proto?: 'icmp' | 'tcp' | 'udp'; port?: number } }
+        | { flows: readonly (TrafficFlowSpec & { from: string; to: string })[]; runMs: number }
+        | { snmp: { from: string; to: string; community: string; oid: string }; runMs: number }
+        | { runMs: number };
+      includeBackground?: boolean;
+      after?: readonly LabFault[];
+      settleMs?: number;
     }
 ) & LabAssertionNotes;
 

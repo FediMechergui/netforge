@@ -14,7 +14,7 @@
 import type { CliRuntime, ConfigureOptions, ConfigureResult } from './cli.js';
 import type { DeviceCatalog, DeviceRuntime } from './device.js';
 import type { DeviceId, LinkId, PduId, PortId, PortRef, ProcessName } from './ids.js';
-import type { Impairments, MediaType, CableValidation, LinkState } from './link.js';
+import type { Impairments, MediaType, CableValidation, DropReason, LinkState } from './link.js';
 import type { PduView, ProtoName } from './pdu.js';
 import type { SimSnapshot } from './snapshot.js';
 import type { SimTime } from './time.js';
@@ -95,8 +95,11 @@ export interface RunStats {
   events: number;
   from: SimTime;
   to: SimTime;
-  /** @since P1 Why a run stopped early. */
-  stopped?: 'breakpoint' | 'maxEvents';
+  /**
+   * @since P1 Why a run stopped early. 'quiet' @since P3c [S39] (appended): `runToIdle` with `opts.quiet` stopped after
+   * a quiet window (`RunToIdleOptions`).
+   */
+  stopped?: 'breakpoint' | 'maxEvents' | 'quiet';
   /** @since P1 First matching event of a breakpoint stop and its ring cursor. */
   stopEvent?: TraceEvent;
   stopCursor?: number;
@@ -125,6 +128,45 @@ export interface TraceFilter {
    * lanes and the state-machine history strip).
    */
   machines?: readonly FsmMachine[];
+  /**
+   * @since P3c (optional by meaning) [S10] A drop matches when its reason is listed; every other event kind never matches
+   * while the member is set.
+   */
+  reasons?: readonly DropReason[];
+  /** @since P3c (optional by meaning) [C32] Matched against PduSummary.vlan. */
+  vlans?: readonly number[];
+}
+
+/**
+ * @since P3c [S39] Options of `runToIdle` (ARCHITECTURE-P3C §2.8). `quiet` (optional by meaning; absent = today
+ * exactly): after the idle-first cap, stop once `windowNs` of simulated time passed with no non-periodic progress.
+ */
+export interface RunToIdleOptions {
+  readonly quiet?: { readonly windowNs: SimTime };
+}
+
+/**
+ * @since P3c [S10] One access list as the ACL workbench shows it (display only: no event, no state). `entries` carry the
+ * canonical entry text, the sequence (or an implicit tail row), and the match count.
+ */
+export interface AclListView {
+  readonly name: string;
+  readonly family: 4 | 6;
+  readonly type: 'standard' | 'extended' | 'ipv6';
+  readonly entries: readonly {
+    readonly text: string;
+    readonly seq: number | null;
+    readonly matches: number;
+    readonly implicit?: 'deny' | 'nd-na' | 'nd-ns';
+  }[];
+  readonly bindings: readonly AclBindingView[];
+}
+
+/** @since P3c [S10] Where a list is applied: an interface and direction, or the vty lines (`access-class`). */
+export interface AclBindingView {
+  readonly device: DeviceId;
+  readonly iface: PortId | 'vty';
+  readonly dir: 'in' | 'out';
 }
 
 export interface RunOptions {
@@ -254,8 +296,11 @@ export interface Simulation {
   runFor(dt: SimTime, opts?: RunOptions): RunStats;
   /** Process exactly one event. */
   step(): SimEvent | undefined;
-  /** Run until only `periodic` timers remain or `maxEvents` processed (tests, grading). */
-  runToIdle(maxEvents?: number): RunStats;
+  /**
+   * Run until only `periodic` timers remain or `maxEvents` processed (tests, grading). `opts` @since P3c [S39] (an
+   * additive second parameter; absent = today exactly).
+   */
+  runToIdle(maxEvents?: number, opts?: RunToIdleOptions): RunStats;
   /** Time of the next pending event. */
   nextEventTime(): SimTime | undefined;
   /** @since P1 `step()` until a matching trace event is emitted, `maxEvents` (default 100 000), `until`, or queue end. */
@@ -303,4 +348,11 @@ export interface Simulation {
   captureStats(id: CaptureId, filter?: string): CaptureStatistics;
   /** Byte-deterministic for a given `baseWallNs` (default 0). */
   exportCapture(id: CaptureId, opts: CaptureExportOptions): Uint8Array;
+
+  // ── P3c ──────────────────────────────────────────────────────────────────
+  /**
+   * @since P3c (optional by meaning) [S10] The access lists of a device with their bindings, for the ACL workbench
+   * (display only: no event, no state). Absent until the W3b sim item implements it.
+   */
+  aclLists?(device: DeviceId): readonly AclListView[];
 }

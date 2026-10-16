@@ -576,6 +576,9 @@ class AclDaemon implements Process {
   // ── [S13] acl.check (the vty access-class, D14) ──────────────────────────
 
   private check(ctx: ProcessCtx, req: Extract<ProcessRequest, { kind: 'acl.check' }>): Action[] {
+    // ARCHITECTURE-P3C W0 compile stub: `acl.check` widened to family 6 [S11]; nothing sends a family-6 check before the
+    // W2a/W3a1 [S11] items, which replace this line with the IPv6 evaluation.
+    if (req.tuple.family !== 4) return [];
     const name = aclListName(req.list);
     const list = this.definedList(name);
     const verdict = (action: 'permit' | 'deny', seq: number | 'implicit'): Action => {

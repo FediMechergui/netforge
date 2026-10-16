@@ -59,6 +59,14 @@ import { WAN_FACT_READERS, WAN_NEIGHBOR_SOURCES } from './wan.js';
 const hasOwn = (o: object, k: string): boolean => Object.prototype.hasOwnProperty.call(o, k);
 
 /**
+ * @since P3c (ARCHITECTURE-P3C §7 W0) The empty area of the P3c neighbour protocol and facts whose adapter items have not
+ * landed: a `neighbor` or `fact` assertion naming one reads no source and fails with the "later wave" detail, exactly as
+ * an unknown reader does. Each adapter item points its thunk at its own records and the constant goes when unused.
+ */
+const P3C_PENDING_NEIGHBOR_SOURCES: Partial<Record<NeighborProtocol, NeighborSource>> = Object.freeze({});
+const P3C_PENDING_FACT_READERS: Partial<Record<LabFactName, FactReader>> = Object.freeze({});
+
+/**
  * A frozen record whose every key reads its value from the adapter table `areas[key]()` returns, at the moment the key
  * is read (file header: rule 12). Building it calls no thunk.
  */
@@ -184,6 +192,8 @@ export const NEIGHBOR_PROTOCOL_LABELS: { readonly [P in NeighborProtocol]: strin
   lldp: 'LLDP',
   ppp: 'PPP',
   eigrp: 'EIGRP',
+  // P3c [S6] (ARCHITECTURE-P3C §2.10)
+  ospfv3: 'OSPFv3',
 };
 
 /**
@@ -197,6 +207,8 @@ export const NEIGHBOR_AREAS: { readonly [P in NeighborProtocol]: () => Partial<R
   lldp: () => DISCOVERY_NEIGHBOR_SOURCES,
   ppp: () => WAN_NEIGHBOR_SOURCES,
   eigrp: () => EIGRP_NEIGHBOR_SOURCES,
+  // P3c [S6] (ARCHITECTURE-P3C §7 W0): an empty area until the W3c ospf adapter item brings `ospf6-neighbors`
+  ospfv3: () => P3C_PENDING_NEIGHBOR_SOURCES,
 });
 
 /** @since P3 D5 NEIGHBOR_SOURCES, exhaustive over NeighborProtocol, each entry read from its adapter at call time. */
@@ -362,6 +374,17 @@ export const FACT_AREAS: { readonly [F in LabFactName]: () => Partial<Record<Lab
   'eigrp.feasibleSuccessor': () => EIGRP_FACT_READERS,
   'eigrp.kValues': () => EIGRP_FACT_READERS,
   'ipsec.sa': () => WAN_FACT_READERS,
+  // P3c (ARCHITECTURE-P3C §2.10, §7 W0): empty areas until each adapter item lands ([S4] [S6] ospf, [S15] hardening,
+  // [S29] [S30] [S31] the svc `sim/lab-checks/mgmt.ts`); the item replaces its thunk with its adapter's readers
+  'ospf.abr': () => P3C_PENDING_FACT_READERS,
+  'ospf.asbr': () => P3C_PENDING_FACT_READERS,
+  'ospfv3.routerId': () => P3C_PENDING_FACT_READERS,
+  'ospfv3.ifaceArea': () => P3C_PENDING_FACT_READERS,
+  'ospfv3.ifaceCost': () => P3C_PENDING_FACT_READERS,
+  'ipsg.enabled': () => P3C_PENDING_FACT_READERS,
+  'storage.file': () => P3C_PENDING_FACT_READERS,
+  'device.imageVersion': () => P3C_PENDING_FACT_READERS,
+  'device.configRegister': () => P3C_PENDING_FACT_READERS,
 });
 
 /** @since P3 D5 FACT_READERS, exhaustive over LabFactName, each entry read from its adapter at call time. */

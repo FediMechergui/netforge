@@ -270,8 +270,17 @@ export const CONTROLLER_PORT_SWITCHPORT: SwitchportConfig = Object.freeze({
  * 'dhcp-rate-limit' and 'arp-inspection' @since P3 (ARCHITECTURE-P3 §2.2, D13): the union in W0; the runtime list
  * ERR_DISABLE_CAUSES gained them, in this order, in the W2 l2 change that raises them (eth-switch steps 7b/7c; the
  * pre-approved contract edit), so `show errdisable recovery` lists them (§9.2 item 24).
+ * 'storm-control' @since P3c [S16] (ARCHITECTURE-P3C §2.2): the union in W0 (with its `ERR_DISABLE_CAUSE_TEXT` row as a
+ * compile stub); the runtime list ERR_DISABLE_CAUSES gains it only in the W2a l2 change that raises it (P3a rule 3).
  */
-export type ErrDisableCause = 'psecure-violation' | 'bpduguard' | 'channel-misconfig' | 'fault' | 'dhcp-rate-limit' | 'arp-inspection';
+export type ErrDisableCause =
+  | 'psecure-violation'
+  | 'bpduguard'
+  | 'channel-misconfig'
+  | 'fault'
+  | 'dhcp-rate-limit'
+  | 'arp-inspection'
+  | 'storm-control';
 /** @since P2 Every err-disable cause, in the order `show errdisable recovery` lists them ('dhcp-rate-limit', 'arp-inspection' @since P3). */
 export const ERR_DISABLE_CAUSES: readonly ErrDisableCause[] = Object.freeze([
   'psecure-violation',

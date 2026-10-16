@@ -98,6 +98,9 @@ export const FSM_MACHINE_LANES: Readonly<Record<FsmMachine, LaneId>> = Object.fr
   'eigrp-nbr': 'routing', // [C1]
   'eigrp-route': 'routing', // [C1]
   ike: 'wan', // [C13]
+  // P3c (ARCHITECTURE-P3C §2.10; the final values, written by the architect in W0)
+  'ospf6-if': 'routing', // [S6]
+  'ospf6-nbr': 'routing', // [S6]
 });
 
 /** The lane of every table whose writes and expiries are timeline activity; tables not listed are in no lane. */
@@ -138,6 +141,12 @@ export const TABLE_LANES: Readonly<Partial<Record<'cam' | 'arp' | 'rib' | ExtraT
   'eigrp-neighbors': 'routing', // [C1]
   'eigrp-topology': 'routing', // [C1]
   'ipsec-sa': 'wan', // [C13]
+  // P3c (ARCHITECTURE-P3C §2.6; data rows written in W0: no model holds these tables before the W4b flip)
+  'ospf6-interfaces': 'routing', // [S6]
+  'ospf6-neighbors': 'routing', // [S6]
+  'ospf6-lsdb': 'routing', // [S6]
+  'storm-control': 'security', // [S16]
+  'snmp-traps': 'mgmt', // [S33]
 });
 
 /** The lane of a table name (`undefined` for tables that are not timeline activity, and for unknown names). */

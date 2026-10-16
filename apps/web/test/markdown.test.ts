@@ -80,13 +80,17 @@ describe('markdown subset', () => {
     expect(markdownLinkTarget('concept:queueing')).toEqual({ kind: 'concept', tool: 'queueing' });
     expect(markdownLinkTarget('concept:data-formats')).toEqual({ kind: 'concept', tool: 'data-formats' });
     expect(markdownLinkTarget('concept:wildcard')).toEqual({ kind: 'concept', tool: 'wildcard' });
+    // ARCHITECTURE-P3C §9.2 W0 item 1: the P3c ids join the contract (and so the allowlist) in W0
+    expect(markdownLinkTarget('concept:wan')).toEqual({ kind: 'concept', tool: 'wan' });
+    expect(markdownLinkTarget('concept:yang')).toEqual({ kind: 'concept', tool: 'yang' });
+    expect(markdownLinkTarget('concept:sdn')).toEqual({ kind: 'concept', tool: 'sdn' });
     expect(markdownLinkTarget('https://example.org/a?b=1')).toEqual({ kind: 'external', href: 'https://example.org/a?b=1' });
     for (const bad of [
       'concept:vlans',
       'concept:',
       'concept:toString',
       'concept:Queueing',
-      'concept:wan',
+      'concept:mpls',
       'http://example.org',
       'javascript:alert(1)',
       'JavaScript:alert',

@@ -44,6 +44,11 @@ const CONCEPT_LINK_IDS: Readonly<Record<ConceptToolId, true>> = Object.freeze({
   queueing: true,
   'data-formats': true,
   wildcard: true,
+  // P3c (ARCHITECTURE-P3C §2.10, §9.2 W0 item 1): [S22] [S28] [C26]; until each tool lands its view is the "not
+  // available" note (concept/ConceptView.tsx)
+  wan: true,
+  yang: true,
+  sdn: true,
 });
 
 const CONCEPT_PREFIX = 'concept:';

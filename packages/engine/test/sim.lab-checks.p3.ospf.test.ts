@@ -44,6 +44,7 @@ import { TIME_FACT_READERS } from '../src/sim/lab-checks/time.js';
 import { WAN_FACT_READERS, WAN_NEIGHBOR_SOURCES } from '../src/sim/lab-checks/wan.js';
 import { runCheck } from '../src/sim/lab-checks/registry.js';
 import { createStagedSimulation } from './staged.world.js';
+import { P3C_PENDING_FACTS, P3C_PENDING_PROTOCOLS } from './p3c-approved-items.js';
 
 const GI0 = 'GigabitEthernet0/0';
 const GI1 = 'GigabitEthernet0/1';
@@ -225,12 +226,20 @@ describe('facts.ts wiring over every area adapter (rule 12: read at call time; r
 
   it('after W3 every fact, neighbour protocol and router-id identity has its entry, with a type and a source', () => {
     for (const f of Object.keys(FACT_AREAS) as LabFactName[]) {
+      // a P3c entry stays undefined until its adapter item lands (ARCHITECTURE-P3C RC1 (i))
+      if (P3C_PENDING_FACTS.includes(f)) {
+        expect(FACT_READERS[f], f).toBeUndefined();
+        continue;
+      }
       const r = FACT_READERS[f];
       expect(r, f).toBeDefined();
       expect(['string', 'number', 'boolean', 'address', 'port']).toContain(r!.type);
       expect(r!.source.length, f).toBeGreaterThan(0);
     }
-    for (const p of Object.keys(NEIGHBOR_AREAS) as NeighborProtocol[]) expect(NEIGHBOR_SOURCES[p]?.table, p).toBeDefined();
+    for (const p of Object.keys(NEIGHBOR_AREAS) as NeighborProtocol[]) {
+      if (P3C_PENDING_PROTOCOLS.includes(p)) expect(NEIGHBOR_SOURCES[p], p).toBeUndefined();
+      else expect(NEIGHBOR_SOURCES[p]?.table, p).toBeDefined();
+    }
     expect(IDENTITY_SOURCES.ospf).toBeDefined();
     expect(IDENTITY_SOURCES.eigrp).toBeDefined();
   });

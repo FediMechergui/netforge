@@ -135,7 +135,17 @@ const FENCE = /^[ \t]*(?:```|~~~)(.*)$/;
 const SECTIONS = ['## The idea in one breath', '## Why it exists', '## How it actually works', '## What trips people up', '## See it in NetForge'];
 
 /** The concept tools a body may link to (`concept:<id>`): exhaustive over `ConceptToolId` (D24). */
-const CONCEPT_TOOLS: Readonly<Record<ConceptToolId, true>> = { subnetting: true, ipv6: true, queueing: true, 'data-formats': true, wildcard: true };
+const CONCEPT_TOOLS: Readonly<Record<ConceptToolId, true>> = {
+  subnetting: true,
+  ipv6: true,
+  queueing: true,
+  'data-formats': true,
+  wildcard: true,
+  // ARCHITECTURE-P3C §2.10 (W0): [S22] [S28] [C26]
+  wan: true,
+  yang: true,
+  sdn: true,
+};
 const LINK = /\[[^\]\n]*\]\(([^()\s]*)\)/g;
 const HTTPS_TARGET = /^https:\/\/[^\s<>"'`\\]+$/;
 

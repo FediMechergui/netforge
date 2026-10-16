@@ -42,7 +42,7 @@ import type { DropReason } from './link.js';
 import type { LayerSpec, Pdu, PduMeta, FieldValue, MutationReason, RewrapOp } from './pdu.js';
 import type { ErrDisableCause, Ipv6PortAddress, PortIpv4Address, PortView, VirtualIpv4 } from './port.js';
 import type { Rng } from './rng.js';
-import type { DeviceTables, Lpm6Result, LpmResult, RouteRow, TableName } from './tables.js';
+import type { DeviceTables, Lpm6Result, LpmResult, Route6Row, RouteRow, TableName } from './tables.js';
 import type { SimTime } from './time.js';
 import type { Capability, DefaultsProfile, PortRole } from './catalog.js';
 import type { AirView, MediumEvent, MediumOp } from './medium.js';
@@ -121,7 +121,12 @@ export type FsmMachine =
    * @since P3 [C13] subject: the tunnel interface ('Tunnel0'); states idle, init-sent, init-answered, auth-sent,
    * established, failed (§2.17).
    */
-  | 'ike';
+  | 'ike'
+  // ── P3c (ARCHITECTURE-P3C §2.10; appended, lane routing) ──
+  /** @since P3c [S6] OSPFv3 interface state machine; subject: the interface ('GigabitEthernet0/0'). */
+  | 'ospf6-if'
+  /** @since P3c [S6] OSPFv3 neighbour state machine; subject: interface and neighbour router id ('GigabitEthernet0/0 2.2.2.2'). */
+  | 'ospf6-nbr';
 
 /**
  * @since P2 One state-machine transition. `subject` is stable and canonical-PortId based — never an abbreviation:
@@ -367,11 +372,14 @@ export type ProcessRequest =
    * nat on the filterOut path (the packet is already translated). acl answers with EXACTLY ONE of: [onPermit]; or a
    * drop {reason 'acl-deny', port: iface, detail, rule} plus, when the rate gate is open, `no ip unreachables` is absent
    * and `natted` is not set, request icmpv4 icmp.error {3, 13, inPort: dir 'in' ? iface : inPort}. Counts on the
-   * matched row. ([S11], not approved, would widen `family` with 6.)
+   * matched row. `family` 6 @since P3c [S11] (a value widening: ipv6 → acl for IPv6 lists; ARCHITECTURE-P3C §2.4, §3.6).
    */
-  | { kind: 'acl.filter'; family: 4; dir: 'in' | 'out'; iface: PortId; inPort?: PortId; natted?: true; pdu: Pdu; onPermit: Action }
-  /** @since P3 cli → acl: `clear access-list counters [<list>]`. */
-  | { kind: 'acl.clear'; list?: string }
+  | { kind: 'acl.filter'; family: 4 | 6; dir: 'in' | 'out'; iface: PortId; inPort?: PortId; natted?: true; pdu: Pdu; onPermit: Action }
+  /**
+   * @since P3 cli → acl: `clear access-list counters [<list>]`. `family` @since P3c (optional by meaning) [S11]: 6 =
+   * `clear ipv6 access-list [<name>]`; absent = 4 (today's meaning).
+   */
+  | { kind: 'acl.clear'; list?: string; family?: 4 | 6 }
   /**
    * @since P3 (ruling R39, additive) cli `clear cdp counters` → cdp: its announcement counters (sent, received, errors)
    * start again from zero; the neighbour rows stay.
@@ -381,8 +389,10 @@ export type ProcessRequest =
    * @since P3 a process or the CLI (the host-shell `rest` job, owner 'cli') → http-client: resolve (dns-client for
    * names), tcp.connect {tls: url is https}, send the head and a Content-Length body, parse the response; answer
    * `http.result` to a process owner, or text to the CLI `session`. `http.fetch` is unchanged.
+   * owner 'gui' @since P3c [S27] (a value widening): the API client desktop app; headers and body are kept for `gui`
+   * calls only.
    */
-  | { kind: 'http.request'; owner: ProcessName | 'cli'; token: string; method: HttpMethod; url: string; headers?: readonly (readonly [string, string])[]; body?: Uint8Array; timeoutNs?: SimTime; session?: SessionId }
+  | { kind: 'http.request'; owner: ProcessName | 'cli' | 'gui'; token: string; method: HttpMethod; url: string; headers?: readonly (readonly [string, string])[]; body?: Uint8Array; timeoutNs?: SimTime; session?: SessionId }
   /** @since P3 host shell (`flow`) / GUI (the Traffic generator app) → traffic: start one generated flow (M13, D16). */
   | { kind: 'traffic.start'; flow: TrafficFlowSpec; session?: SessionId }
   /** @since P3 host shell / GUI → traffic: stop the flow `id`. */
@@ -406,9 +416,10 @@ export type ProcessRequest =
   // ── P3 [S13] remote terminal (D14) ──
   /**
    * @since P3 [S13] vty → acl: check `tuple` against the vty `access-class` list (answered by ProcessEvent
-   * `acl.verdict` to `owner`, counted on the matched row with `lastIface 'vty'`). ([S11] would widen `family`.)
+   * `acl.verdict` to `owner`, counted on the matched row with `lastIface 'vty'`). `family` 6 with a `PacketTuple6`
+   * @since P3c [S11] (a value widening: `ipv6 access-class` on IPv6 vty sessions).
    */
-  | { kind: 'acl.check'; family: 4; list: string; tuple: PacketTuple; token: string; owner: ProcessName }
+  | { kind: 'acl.check'; family: 4 | 6; list: string; tuple: AnyPacketTuple; token: string; owner: ProcessName }
   /** @since P3 [S13] cli (`telnet`, `ssh -l`) → vty-client: open a remote session from this device. */
   | { kind: 'vty.connect'; session: SessionId; target: IpAddress; proto: 'telnet' | 'ssh'; user?: string; password?: string; port?: number }
   /** @since P3 [S13] cli → vty-client: one line typed in a remote session. */
@@ -440,6 +451,61 @@ export type ProcessRequest =
    * the `tunnels` row (up only while the SA is up) and issues `virtualChanged`.
    */
   | { kind: 'tunnel.sa'; port: PortId; op: 'up' | 'down'; spiIn?: number; spiOut?: number; keyId?: number; reason?: 'ike-negotiating' | 'ike-failed' | 'ike-no-proposal' | 'ike-no-response' }
+  // ── P3c (ARCHITECTURE-P3C §2.4; every kind @since P3c) ──
+  // [S6] IPv6 routing plumbing (owner ipv6; P3a D8 mirrored for IPv6)
+  /**
+   * @since P3c [S6] A routing daemon (ospfv3) → ipv6: REPLACE the owner's whole candidate set (key order), as
+   * `ipv4.routes` does for IPv4.
+   */
+  | { kind: 'ipv6.routes'; owner: ProcessName; rows: readonly Route6Row[] }
+  /** @since P3c [S6] ospfv3 → ipv6: join or leave a multicast group (ff02::5, ff02::6) on `iface`; merged by (owner, group). */
+  | { kind: 'ipv6.group'; op: 'join' | 'leave'; iface: PortId; group: Ipv6Address; owner: ProcessName }
+  /** @since P3c [S6] cli → ospfv3: `clear ipv6 ospf process`, after the interactive confirm. */
+  | { kind: 'ospfv3.clear'; session?: SessionId }
+  // [S11] IPv6 ACLs
+  /** @since P3c [S11] acl → ipv6: continue receive processing after the inbound IPv6 list permitted the packet. */
+  | { kind: 'ipv6.resume'; pdu: Pdu; inPort: PortId; after: 'acl-in' }
+  // [S29] TFTP
+  /**
+   * @since P3c [S29] cli (`copy`) or a process → tftp: one transfer. `op` 'get' reads `remote` from `server` into
+   * `local`; 'put' writes `local` to it. `image` @since P3c (optional by meaning) [S30]: a scaled image copy whose RRQ
+   * asks `tsize` (the size and `nominalBytes` come from the server, ARCHITECTURE-P3C §3.4). Answered by ProcessEvent
+   * `tftp.result` to `owner` (or text to the CLI `session`).
+   */
+  | {
+      kind: 'tftp.transfer';
+      owner: ProcessName | 'cli';
+      token: string;
+      session?: SessionId;
+      op: 'get' | 'put';
+      server: IpAddress;
+      remote: string;
+      local: { fs: FileSystemId; path: string } | { config: 'running' | 'startup' };
+      image?: true;
+    }
+  // [S33] SNMP
+  /**
+   * @since P3c [S33] cli, a process or the GUI (the SNMP manager app) → snmp-manager: one SNMP operation (a walk is
+   * client-side GetNext). `user` @since P3c (optional by meaning) [C23] (SNMPv3). `maxRepetitions` (optional by
+   * meaning) and `nonRepeaters` (optional by meaning; getbulk only; absent = 0). Answered by ProcessEvent `snmp.result`.
+   */
+  | {
+      kind: 'snmp.op';
+      owner: ProcessName | 'cli' | 'gui';
+      token: string;
+      op: 'get' | 'getnext' | 'getbulk' | 'walk' | 'set';
+      target: IpAddress;
+      version: '2c' | '3';
+      community?: string;
+      user?: SnmpV3User;
+      oid: string;
+      value?: SnmpValue;
+      maxRepetitions?: number;
+      nonRepeaters?: number;
+    }
+  // [S35]
+  /** @since P3c [S35] cdp/lldp (on a phone) → dhcp-client: a learned voice VLAN restarts the phone's DHCP in it. */
+  | { kind: 'dhcp.restart'; iface: PortId }
   /**
    * Extension slot: non-built-in requests must be namespaced `ext.<name>` so built-in kinds still narrow. P3's
    * sanctioned users of the slot are listed in `SANCTIONED_EXT_REQUESTS` (ruling R61(a)).
@@ -466,6 +532,33 @@ export const SANCTIONED_EXT_REQUESTS = Object.freeze(['ext.tcp.protect', 'ext.ip
 export type SanctionedExtRequest = (typeof SANCTIONED_EXT_REQUESTS)[number];
 
 // ── P3 request and action payloads (ARCHITECTURE-P3 §2.4) ──
+
+/**
+ * @since P3c [S33] One SNMP value (ARCHITECTURE-P3C §2.4; RFC 3416). `counter64` is decimal text so no bigint leaves
+ * the codec. The exceptions `noSuchObject` (0x80), `noSuchInstance` (0x81) and `endOfMibView` (0x82) answer a GET of an
+ * unknown object and end a walk.
+ */
+export type SnmpValue =
+  | { type: 'integer'; value: number }
+  | { type: 'octets'; value: string }
+  | { type: 'oid'; value: string }
+  | { type: 'ipaddress'; value: IpAddress }
+  | { type: 'counter32' | 'gauge32' | 'timeticks'; value: number }
+  | { type: 'counter64'; value: string }
+  | { type: 'null' }
+  | { type: 'noSuchObject' | 'noSuchInstance' | 'endOfMibView' };
+
+/**
+ * @since P3c [C23] An SNMPv3 user (USM). `authProto`, `authKey` and `privKey` are optional by meaning (absent at
+ * `noAuthNoPriv`; `privKey` absent below `authPriv`).
+ */
+export interface SnmpV3User {
+  readonly name: string;
+  readonly level: 'noAuthNoPriv' | 'authNoPriv' | 'authPriv';
+  readonly authProto?: 'md5' | 'sha';
+  readonly authKey?: string;
+  readonly privKey?: string;
+}
 
 /** @since P3 HTTP methods of `http.request` (D21). */
 export type HttpMethod = 'GET' | 'HEAD' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -516,12 +609,41 @@ export interface PacketTuple {
   readonly icmpType?: number;
   readonly icmpCode?: number;
   readonly tcpFlags?: number;
+  /** @since P3c (optional by meaning) [S12] The packet's DSCP (0–63), matched by a `dscp` term; absent = not matched on. */
+  readonly dscp?: number;
+  /**
+   * @since P3c (optional by meaning) [S17a] A non-initial fragment: it carries no L4 fields, so only the `fragments`
+   * keyword and L3 terms match it (the ACL non-initial-fragment rule). Absent = an unfragmented packet.
+   */
+  readonly fragment?: 'non-initial';
 }
+
+/**
+ * @since P3c [S11] The fields an IPv6 access list matches (ARCHITECTURE-P3C §2.4, §3.6): a discriminated tuple beside
+ * `PacketTuple` (D8: `PacketTuple.family` is not widened in place). `proto` is the next header after the extension
+ * headers; `srcPort`, `dstPort`, `icmpType`, `icmpCode`, `tcpFlags` and `fragment` are @since P3c (optional by meaning):
+ * present only when the packet carries them (a non-initial ipv6-frag carries no L4 fields).
+ */
+export interface PacketTuple6 {
+  readonly family: 6;
+  readonly proto: number;
+  readonly src: Ipv6Address;
+  readonly dst: Ipv6Address;
+  readonly srcPort?: number;
+  readonly dstPort?: number;
+  readonly icmpType?: number;
+  readonly icmpCode?: number;
+  readonly tcpFlags?: number;
+  readonly fragment?: 'non-initial';
+}
+
+/** @since P3c [S11] A tuple of either family. */
+export type AnyPacketTuple = PacketTuple | PacketTuple6;
 
 /** @since P3 Why a policy dropped a packet (D12, D13): the sentence, and where the rule lives. */
 export interface DropRule {
-  /** ([S15] 'ip-source-guard' and [S16] 'storm-control' are not approved.) */
-  readonly kind: 'acl' | 'dhcp-snooping' | 'arp-inspection';
+  /** 'ip-source-guard' @since P3c [S15]; 'storm-control' @since P3c [S16] (appended). */
+  readonly kind: 'acl' | 'dhcp-snooping' | 'arp-inspection' | 'ip-source-guard' | 'storm-control';
   /** Original wording, e.g. 'denied by access list 101 line 20 (deny tcp host 10.1.1.10 any eq www), inbound on GigabitEthernet0/0'. */
   readonly text: string;
   readonly table?: TableName;
@@ -530,15 +652,18 @@ export interface DropRule {
   readonly iface?: PortId;
   readonly dir?: 'in' | 'out';
   readonly list?: string;
-  /** ([S11] would add 'nd-na' | 'nd-ns'.) */
-  readonly seq?: number | 'implicit';
-  /** ([S11] would add 6.) */
-  readonly family?: 4;
+  /** 'nd-na' | 'nd-ns' @since P3c [S11] (a value widening: the implicit ND rows of an IPv6 list). */
+  readonly seq?: number | 'implicit' | 'nd-na' | 'nd-ns';
+  /** 6 @since P3c [S11] (a value widening of the optional-by-meaning member; absent = 4). */
+  readonly family?: 4 | 6;
 }
 
-/** @since P3 Who changed the configuration through the configure seam (D21). ([S33] snmp, [S29] tftp, [C21] netconf are not approved.) */
+/**
+ * @since P3 Who changed the configuration through the configure seam (D21). 'tftp' @since P3c [S29] (`copy tftp:
+ * running-config`, a merge); 'snmp' @since P3c [S33] (an SNMP SET). ([C21] netconf is not approved.)
+ */
 export interface ConfigOrigin {
-  readonly via: 'restconf';
+  readonly via: 'restconf' | 'tftp' | 'snmp';
   readonly user?: string;
   readonly address?: IpAddress;
 }

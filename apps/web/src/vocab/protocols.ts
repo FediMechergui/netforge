@@ -127,6 +127,11 @@ export const PROTOCOL_VOCAB: Readonly<Record<KnownProto, ProtocolVocab>> = Objec
     'Advanced distance-vector routing messages; each router keeps feasible successors ready for an instant failover.'),
   esp: entry('esp', 'ESP', 'ES', 'octagon', 'purple', 'network', 'P3', 'The encrypted envelope of an IPsec tunnel (the encryption is simulated).'),
   ikev2: entry('ikev2', 'IKEv2', 'IK', 'hexagon', 'yellow', 'control', 'P3', 'Messages two tunnel ends exchange to agree keys and security associations.'),
+  // ── P3c (ARCHITECTURE-P3C §2.3, §9.2 W0 item 1): [S6] OSPFv3; [S29] TFTP and [S33] SNMP leave the reserved vocabulary
+  // (the P3a R22 precedent); their codecs arrive in W1a/W1b, until then their traffic decodes as raw data ──
+  ospf6: entry('ospf6', 'OSPFv3', 'O6', 'hexagon', 'purple', 'control', 'P3c', 'Link-state routing messages for IPv6 between neighbouring routers.'),
+  tftp: entry('tftp', 'TFTP', 'TF', 'capsule', 'accent', 'application', 'P3c', 'A simple file transfer, used to back up configurations and copy images.'),
+  snmp: entry('snmp', 'SNMP', 'SN', 'capsule', 'yellow', 'application', 'P3c', 'Management requests, answers and alerts between a manager and a device.'),
 });
 
 /** Known protocol names in table order. */
@@ -147,11 +152,10 @@ function reserved(proto: string, label: string): ReservedProtocolVocab {
 
 /**
  * Reserved protocols listed in the engine dispatch table. @since P3 (ARCHITECTURE-P3 §9.2 ruling R22; W2 web) NTP,
- * SSH, Telnet and Syslog are decoded now (`PROTOCOL_VOCAB` has them), so they are no longer listed here.
+ * SSH, Telnet and Syslog are decoded now (`PROTOCOL_VOCAB` has them), so they are no longer listed here. @since P3c
+ * (ARCHITECTURE-P3C §9.2 W0 item 1) TFTP and SNMP moved to `PROTOCOL_VOCAB` as well.
  */
 export const RESERVED_PROTOCOL_VOCAB: Readonly<Record<string, ReservedProtocolVocab>> = Object.freeze({
-  tftp: reserved('tftp', 'TFTP'),
-  snmp: reserved('snmp', 'SNMP'),
   ftp: reserved('ftp', 'FTP'),
   smtp: reserved('smtp', 'SMTP'),
   pop3: reserved('pop3', 'POP3'),

@@ -133,6 +133,8 @@ export const TUNNEL_REASON_TEXT: Readonly<Record<TunnelDownReason, string>> = Ob
   'ike-failed': 'key negotiation failed',
   'ike-no-proposal': 'the peers share no proposal',
   'ike-no-response': 'the peer does not answer',
+  // P3c [C17] (ARCHITECTURE-P3C §2.6; W0 compile stub, the final words)
+  'keepalive-missed': 'the peer stopped answering keepalives',
 });
 
 /** Words of a tunnel down reason (the raw value when unknown, '' when absent). */

@@ -328,7 +328,14 @@ export type DropReason =
   /** @since P3 [S20] A policer dropped it (the LLQ conditional policer; [S21] `police`). */
   | 'policed'
   /** @since P3 [C13] An ESP packet whose SPI names no SA of this router. */
-  | 'ipsec-no-sa';
+  | 'ipsec-no-sa'
+  // ── P3c (ARCHITECTURE-P3C §2.7; appended) ──
+  /** @since P3c [S15] IP source guard refused an IPv4 packet whose source has no binding on the port (eth-switch step 7d). */
+  | 'ip-source-guard'
+  /** @since P3c [S16] Storm control dropped a frame above the port's level in the current window. */
+  | 'storm-control'
+  /** @since P3c [S34] A SPAN destination port forwards nothing it receives. */
+  | 'span-destination';
 
 /** @since P2 Frames queued on one P2P egress port before 'queue-full' (D23; memory bound, not an event-rate bound). */
 export const P2P_QUEUE_LIMIT = 256;

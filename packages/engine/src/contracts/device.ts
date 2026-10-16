@@ -158,6 +158,18 @@ export interface DeviceModel {
    * `defineModel(…, 'P3')`. Absent = never on by default.
    */
   cdpDefault?: true;
+
+  // ── P3c (optional by meaning; ARCHITECTURE-P3C §2.9) ──
+  /**
+   * @since P3c (optional by meaning) [S29] [S30] The `flash:` and `nvram:` capacities of a router or switch and its
+   * virtual image (rendered by `dir`, never stored, never in a snapshot or an export). Added to the routers' and
+   * switches' data by the W4b flip; absent = no `flash:`/`nvram:` (every P1/P2/P3a model at W0).
+   */
+  storage?: {
+    flashBytes: number;
+    nvramBytes: number;
+    image: { file: string; version: string; nominalBytes: number };
+  };
 }
 
 /** What port-name resolution works against: the model plus the live instance port set. */

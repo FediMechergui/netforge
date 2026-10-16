@@ -83,6 +83,15 @@ export type CliMode =
   | 'config-ikev2-profile'
   /** @since P3 [C13] `crypto ipsec profile <name>`. */
   | 'config-ipsec-profile'
+  // ── P3c (ARCHITECTURE-P3C §2.11; registered RESERVED in MODES until the W3a cli item whose grammar enters them) ──
+  /** @since P3c [S6] `ipv6 router ospf <pid>` (prompt `(config-rtr)#`). */
+  | 'config-rtr'
+  /** @since P3c [S11] `ipv6 access-list <name>`. */
+  | 'config-ipv6-acl'
+  /** @since P3c [S14] `arp access-list <name>`. */
+  | 'config-arp-nacl'
+  /** @since P3c [S31] ROM monitor after a break in the boot window (prompt `rommon N >`, N counting the lines typed). */
+  | 'rommon'
   | (string & {});
 
 export type PrivilegeLevel = 0 | 1 | 15;
@@ -103,7 +112,7 @@ export type ArgType =
   | 'ip' // IPv4 or IPv6
   | 'host' // IPv4, IPv6 or DNS name (ping, tracert, nslookup)
   | 'hostname' // DNS label / FQDN
-  | 'url'
+  | 'url' // [S29] @since P3c also tftp://host/file, flash:name, nvram:startup-config (the name exists since P1)
   | 'hex'
   | 'secret' // the terminal may mask; stored hashed where the rule says so
   | 'int-range' // 1-4,7
@@ -426,6 +435,14 @@ export interface CliRuntime {
   closeRemote(device: DeviceId, act: RemoteCliAction, now: SimTime): void;
   /** @since P3 [S13] The vty-client's view of a console session running a remote session (`cliRemote`). */
   setRemote(act: CliRemoteAction, now: SimTime): void;
+
+  // ── P3c (ARCHITECTURE-P3C §2.9, §2.13) ──
+  /**
+   * @since P3c [S31] A break on console session `session` (the terminal's "Send break", Ctrl+Break): issues the
+   * `cliBreak` journal op. Transition `?` (rule 2): written in cli/runtime.ts by the W3a2 cli-runtime item; the W3b
+   * web-shell item removes the `?` and updates every typed fake in the same change.
+   */
+  sendBreak?(session: SessionId): void;
 }
 
 /** @since P0.5 Options of `CommandCtx.enterMode`. */
@@ -578,6 +595,11 @@ export const MODE_PROMPT: Readonly<Record<string, string>> = {
   'config-ikev2-keyring-peer': '(config-ikev2-keyring-peer)#',
   'config-ikev2-profile': '(config-ikev2-profile)#',
   'config-ipsec-profile': '(ipsec-profile)#',
+  // P3c (ARCHITECTURE-P3C §2.11; the MODES registry below holds them too, reserved until their grammar enters them)
+  'config-rtr': '(config-rtr)#',
+  'config-ipv6-acl': '(config-ipv6-acl)#',
+  'config-arp-nacl': '(config-arp-nacl)#',
+  rommon: 'rommon N >',
 };
 
 /** @since P0.5 Mode classes: `exit` pops a config-class mode to its parent; `end` returns to priv-exec; `do` works only in config class. */
@@ -636,6 +658,14 @@ export const MODES: Readonly<Record<string, ModeDef>> = Object.freeze({
   'config-ikev2-keyring-peer': { name: 'config-ikev2-keyring-peer', class: 'config', parent: 'config-ikev2-keyring', prompt: '(config-ikev2-keyring-peer)#', contextKey: 'peer', grammars: ['nfos'] },
   'config-ikev2-profile': { name: 'config-ikev2-profile', class: 'config', parent: 'config', prompt: '(config-ikev2-profile)#', contextKey: 'crypto ikev2 profile', grammars: ['nfos'] },
   'config-ipsec-profile': { name: 'config-ipsec-profile', class: 'config', parent: 'config', prompt: '(ipsec-profile)#', contextKey: 'crypto ipsec profile', grammars: ['nfos'] },
+  // ── P3c (ARCHITECTURE-P3C §2.11, §7 W0). Registered RESERVED, unreachable until the W3a cli item whose grammar enters
+  // a mode drops its flag in that change; no grammar names them in W0, so no help listing moves. `rommon` has no
+  // parent and no context key: the W3a2 item that enters it renders `rommon N >` (N, the line counter) and gives it
+  // its own class handling. ──
+  'config-rtr': { name: 'config-rtr', class: 'config', parent: 'config', prompt: '(config-rtr)#', contextKey: 'ipv6 router ospf', grammars: ['nfos'], reserved: true },
+  'config-ipv6-acl': { name: 'config-ipv6-acl', class: 'config', parent: 'config', prompt: '(config-ipv6-acl)#', contextKey: 'ipv6 access-list', grammars: ['nfos'], reserved: true },
+  'config-arp-nacl': { name: 'config-arp-nacl', class: 'config', parent: 'config', prompt: '(config-arp-nacl)#', contextKey: 'arp access-list', grammars: ['nfos'], reserved: true },
+  rommon: { name: 'rommon', class: 'exec', prompt: 'rommon N >', grammars: ['nfos'], reserved: true },
 });
 
 /** @since P0.5 Debug categories are data (`debug <category>` grammar and validation derive from the registry). */
@@ -747,4 +777,33 @@ export const CLI_MESSAGES = Object.freeze({
   trafficFlowCap: '% A flow lasts at most {minutes} minutes; give a smaller count or duration.',
   /** @since P3 A ninth flow on one device. */
   trafficTooManyFlows: '% This device already sends {max} flows. Stop one first (flow stop <id>).',
+  // ── P3c (ARCHITECTURE-P3C §2.11; original wording, provisional: the implementing item writes the final text) ──
+  /** @since P3c [S5] An OSPF simple password longer than 8 characters. */
+  ospfAuthKeyTooLong: '% An OSPF password is at most 8 characters; only the first 8 would be sent.',
+  /** @since P3c [S6] `ipv6 router ospf` with no router ID and no IPv4 address to borrow one from. */
+  ospf6NeedsRouterId: '% OSPFv3 needs a router ID. Set one with "router-id A.B.C.D" (no IPv4 address can be borrowed).',
+  /** @since P3c [S6] `ipv6 router ospf` without `ipv6 unicast-routing`. */
+  ospf6NeedsUnicastRouting: '% OSPFv3 needs IPv6 routing. Enter "ipv6 unicast-routing" first.',
+  /** @since P3c [S6] A second `ipv6 router ospf` process. */
+  ospf6OneProcess: '% This device runs one OSPFv3 process; process {pid} is already configured. Remove it with "no ipv6 router ospf {pid}" first.',
+  /** @since P3c [C7] `ip mtu` outside 68-1500. */
+  ipMtuRange: '% The IP MTU must be between 68 and {max} bytes on {port}.',
+  /** @since P3c [S15] `ip verify source port-security` without port security. */
+  ipsgNeedsPortSecurity: '% Checking the source MAC needs port security on this port. Enter "switchport port-security" first.',
+  /** @since P3c [S17a] A ping size outside the allowed range. */
+  pingSizeRange: '% The datagram size must be between {min} and {max} bytes.',
+  /** @since P3c [S29] A copy source that does not exist. */
+  fileNotFound: '% There is no file named {file}.',
+  /** @since P3c [S29] A copy that does not fit in flash. */
+  flashFull: '% Not enough room in flash: the file needs {needed} bytes and {free} are free.',
+  /** @since P3c [S29] A TFTP server that stopped answering. */
+  tftpTimeout: '% The TFTP server {server} did not answer; the copy was abandoned.',
+  /** @since P3c [S29] A TFTP server that refused the transfer. */
+  tftpRefused: '% The TFTP server {server} refused the transfer: {reason}',
+  /** @since P3c [S31] A break sent on a remote (vty) session. */
+  breakNotOnVty: '% A break works only on the console line.',
+  /** @since P3c [S31] A ROM monitor command that is not modelled. */
+  rommonUnknown: 'Unknown command. Use confreg, reset or boot.',
+  /** @since P3c [S33] `snmp-server … version 1`. */
+  snmpV1Refused: '% SNMP version 1 is not simulated here; use version 2c.',
 });

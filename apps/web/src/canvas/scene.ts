@@ -27,6 +27,7 @@
 import { Application, Container, Graphics, Text } from 'pixi.js';
 import type { IconPalette } from '../catalog/icon-types';
 import { paletteFromCss } from '../catalog/render-pixi';
+import type { OverlayId } from './overlays/registry';
 
 // ── theme ────────────────────────────────────────────────────────────────────
 
@@ -386,9 +387,14 @@ export class Scene {
     return this.app.canvas;
   }
 
-  /** The underlay container of a topology overlay (by registry id). */
-  topoLayer(id: TopoLayerId): Container {
-    return this.layers[id];
+  /**
+   * The underlay container of a topology overlay (by registry id). @since P3c (ARCHITECTURE-P3C §2.12, W0 compile stub)
+   * `OverlayId` names [S7] 'route-path' and [S26] 'neighbours' before their layers exist: each item adds its id to
+   * `TOPO_LAYER_ORDER` with its module, so an id without a container is a programming error.
+   */
+  topoLayer(id: OverlayId): Container {
+    if (!(TOPO_LAYER_ORDER as readonly string[]).includes(id)) throw new Error(`No overlay layer "${id}" in this build.`);
+    return this.layers[id as TopoLayerId];
   }
 
   /**

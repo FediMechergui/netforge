@@ -135,10 +135,16 @@ describe('protocol vocabulary', () => {
   it('covers every protocol with a field table and every non-reserved dispatch target', () => {
     const known = new Set<string>(protocols.KNOWN_PROTOS);
     for (const p of Object.keys(PROTO_FIELDS)) expect(known.has(p), p).toBe(true);
+    // ARCHITECTURE-P3C §9.2 W0 item 1: TFTP and SNMP leave the reserved vocabulary in W0 (the P3a R22 precedent) while
+    // the engine dispatch still marks UDP 69 and 161 reserved until their W1b codecs; each is a known protocol instead
+    const P3C_UNRESERVED = ['tftp', 'snmp'];
     for (const e of DISPATCH_TABLE) {
-      if (e.reserved) expect(protocols.RESERVED_PROTOCOL_VOCAB[e.proto], e.proto).toBeDefined();
+      if (e.reserved && !P3C_UNRESERVED.includes(e.proto)) expect(protocols.RESERVED_PROTOCOL_VOCAB[e.proto], e.proto).toBeDefined();
       else expect(known.has(e.proto), e.proto).toBe(true);
     }
+    for (const p of P3C_UNRESERVED) expect(protocols.RESERVED_PROTOCOL_VOCAB[p], p).toBeUndefined();
+    // the reserved vocabulary is exactly these four (§9.2 W0 item 1)
+    expect(Object.keys(protocols.RESERVED_PROTOCOL_VOCAB)).toEqual(['ftp', 'smtp', 'pop3', 'imap']);
   });
 
   it('gives every protocol a unique shape and letter pair, and unique letters', () => {
@@ -503,6 +509,9 @@ describe('state-machine vocabulary [S14]', () => {
       'eigrp-nbr',
       'eigrp-route',
       'ike',
+      // ARCHITECTURE-P3C §9.2 W0 item 1 (FSM_VOCAB +2): the [S6] OSPFv3 machines
+      'ospf6-if',
+      'ospf6-nbr',
     ];
     expect([...fsm.FSM_MACHINES].sort()).toEqual([...machines].sort());
     for (const m of fsm.FSM_MACHINES) {
@@ -606,8 +615,10 @@ describe('P3 vocabulary', () => {
 
   it('words the P3 drop reasons', () => {
     const p3: readonly DropReason[] = ['dhcp-snooping', 'arp-inspection', 'mtu-exceeded', 'policed', 'ipsec-no-sa'];
-    expect(drops.DROP_REASONS.slice(-p3.length)).toEqual([...p3]);
-    for (const r of [...p3, 'acl-deny' as const]) {
+    // ARCHITECTURE-P3C §2.7 (W0): the P3c reasons follow the P3 ones
+    const p3c: readonly DropReason[] = ['ip-source-guard', 'storm-control', 'span-destination'];
+    expect(drops.DROP_REASONS.slice(-(p3.length + p3c.length))).toEqual([...p3, ...p3c]);
+    for (const r of [...p3, ...p3c, 'acl-deny' as const]) {
       const v = drops.DROP_VOCAB[r];
       expect(v.tag.length, r).toBeLessThanOrEqual(32);
       expect(v.label.length, r).toBeGreaterThan(20);

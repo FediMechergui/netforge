@@ -87,6 +87,11 @@ export function dropRuleLabel(rule: Pick<DropRule, 'kind' | 'list' | 'seq' | 'if
       return rule.iface === undefined ? 'DHCP snooping' : `DHCP snooping on ${rule.iface}`;
     case 'arp-inspection':
       return rule.iface === undefined ? 'ARP inspection' : `ARP inspection on ${rule.iface}`;
+    // P3c (ARCHITECTURE-P3C §2.4, §9.2 W0 item 1: `markers.ts` labels): [S15] and [S16]
+    case 'ip-source-guard':
+      return rule.iface === undefined ? 'IP source guard' : `IP source guard on ${rule.iface}`;
+    case 'storm-control':
+      return rule.iface === undefined ? 'Storm control' : `Storm control on ${rule.iface}`;
   }
 }
 

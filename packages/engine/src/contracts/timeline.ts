@@ -7,6 +7,7 @@
  * → 'dhcp', capwap* / dot11-assoc → 'wireless', port-security → 'security'); configChange → 'config'; drop → 'drops'.
  * Structured-clone safe.
  */
+import type { DeviceId } from './ids.js';
 import type { SimTime } from './time.js';
 
 /**
@@ -67,3 +68,61 @@ export const DEFAULT_TIME_TRAVEL_BUDGET: TimeTravelBudget = Object.freeze({
 
 /** @since P2 [S1] Row members that change without a state change (ignored when comparing rows across positions). */
 export const VOLATILE_ROW_KEYS = ['updatedAt', 'expiresAt'] as const;
+
+// ── [S8] convergence (ARCHITECTURE-P3C §2.10, D7; @since P3c) ─────────────────
+//
+// The `convergence` lab kind and the convergence panel measure control-plane convergence from the trace: a fault clone
+// with settle 0 applies its faults at the clone instant, attaches a synchronous trace listener, runs `runFor(windowMs)`
+// and hands the events to the pure `measureConvergence` (timeline/convergence.ts, W1a sim).
+
+/** @since P3c [S8] The protocol families whose convergence is measured, each over its timeline lanes. */
+export type ConvergenceProtocol = 'stp' | 'etherchannel' | 'fhrp' | 'routing' | 'wireless' | 'wan';
+
+/** @since P3c [S8] The timeline lanes (timeline/lanes.ts) each protocol's convergence is measured over. */
+export const CONVERGENCE_LANES: Readonly<Record<ConvergenceProtocol, readonly LaneId[]>> = Object.freeze({
+  stp: Object.freeze(['stp'] as const),
+  etherchannel: Object.freeze(['etherchannel'] as const),
+  fhrp: Object.freeze(['fhrp'] as const),
+  routing: Object.freeze(['routing'] as const),
+  wireless: Object.freeze(['wireless'] as const),
+  wan: Object.freeze(['wan'] as const),
+});
+
+/**
+ * @since P3c [S8] The quiet period after the last change that counts as settled (ruling R-13): 12 s for `routing`
+ * (longer than the 10 s SPF hold, so a second SPF after a restore is not cut off), 5 s for the others.
+ */
+export const CONVERGENCE_QUIET_MS: Readonly<Record<ConvergenceProtocol, number>> = Object.freeze({
+  stp: 5_000,
+  etherchannel: 5_000,
+  fhrp: 5_000,
+  routing: 12_000,
+  wireless: 5_000,
+  wan: 5_000,
+});
+
+/** @since P3c [S8] What `measureConvergence` measures. */
+export interface ConvergenceOptions {
+  readonly protocol: ConvergenceProtocol;
+  /** The fault instant: changes before it are ignored. */
+  readonly from: SimTime;
+  /** Default CONVERGENCE_QUIET_MS[protocol]. */
+  readonly quietMs?: number;
+  /** Restrict to these devices; absent = every device. */
+  readonly devices?: readonly DeviceId[];
+  /** The routing lane only: that daemon's machines and tables plus the rib rows it owns. */
+  readonly only?: 'ospf' | 'eigrp';
+}
+
+/**
+ * @since P3c [S8] The measured convergence: `settledAt` is the instant of the last change followed by a full quiet
+ * period (null when the window ended before it settled); `durationNs` = settledAt − from.
+ */
+export interface ConvergenceResult {
+  readonly protocol: ConvergenceProtocol;
+  readonly from: SimTime;
+  readonly settledAt: SimTime | null;
+  readonly durationNs: SimTime | null;
+  readonly changes: number;
+  readonly last?: { readonly cursor: number; readonly device: DeviceId; readonly subject: string };
+}

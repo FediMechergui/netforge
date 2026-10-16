@@ -182,6 +182,8 @@ describe('HANDLERS', () => {
       // ARCHITECTURE-P3 §9.2 W2 item 21b: the P3 fragments (the MUST ones of W2 cli part 1, then the approved items')
       'ospf', 'acl-p3', 'hardening', 'qos', 'discovery', 'time', 'api', 'ssh',
       'eigrp', 'wan', 'crypto', 'qos-queueing', 'logging', 'remote', 'devhost',
+      // ARCHITECTURE-P3C §7 W0: one empty fragment per W3a builder area
+      'ospf6', 'acl6', 'hardening-p3c', 'files', 'snmp', 'monitor',
     ]);
   });
 });

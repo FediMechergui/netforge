@@ -46,6 +46,9 @@ describe('resolveDeviceSurface', () => {
       'wlc.controller': 'wireless',
       'desktop.traffic': 'desktop',
       'desktop.automation': 'desktop',
+      // ARCHITECTURE-P3C §9.2 W0 item 1 (SURFACE_PANEL_TAB +2): the [S33] and [S27] Desktop apps
+      'desktop.snmp-manager': 'desktop',
+      'desktop.api-client': 'desktop',
     });
     expect(resolveDeviceSurface(pc as never, 'desktop.ip-config')).toEqual({ kind: 'window', app: 'desktop.ip-config' });
     expect(resolveDeviceSurface(home as never, 'home-router.setup')).toEqual({ kind: 'tab', tab: 'wireless' });

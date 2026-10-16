@@ -332,6 +332,9 @@ export const ERR_DISABLE_CAUSE_TEXT: Readonly<Record<ErrDisableCause, string>> =
   // also appended them to ERR_DISABLE_CAUSES).
   'dhcp-rate-limit': 'the DHCP snooping rate limit',
   'arp-inspection': 'dynamic ARP inspection',
+  // P3c (ARCHITECTURE-P3C §2.2, §9.2 W0 item 1): the final text; the W2a l2 [S16] item raises it and appends it to
+  // ERR_DISABLE_CAUSES in that change.
+  'storm-control': 'storm control',
 });
 
 /** @since P2 Log line of an `errDisable` action (severity 4; `detail` appended when given). Original wording. */
@@ -474,7 +477,12 @@ export function systemStartedMessage(model: string): string {
 }
 
 /** @since P3 [S25] How a configure origin names its channel in the configuration log. */
-const ORIGIN_CHANNEL: Readonly<Record<ConfigOrigin['via'], string>> = Object.freeze({ restconf: 'RESTCONF' });
+const ORIGIN_CHANNEL: Readonly<Record<ConfigOrigin['via'], string>> = Object.freeze({
+  restconf: 'RESTCONF',
+  // P3c (ARCHITECTURE-P3C §2.4; W0 compile stub, final values): [S29] `copy tftp: running-config`, [S33] an SNMP SET
+  tftp: 'TFTP',
+  snmp: 'SNMP',
+});
 
 /**
  * @since P3 [S25] The configuration log (original wording): from the console for a typed line (no origin), else over

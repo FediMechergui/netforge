@@ -132,6 +132,12 @@ const EXPECTED_TABLES: Readonly<Record<'cam' | 'arp' | 'rib' | ExtraTableName, L
   'eigrp-neighbors': 'routing',
   'eigrp-topology': 'routing',
   'ipsec-sa': 'wan',
+  // P3c (ARCHITECTURE-P3C §2.6, §9.2 W0 item 1)
+  'ospf6-interfaces': 'routing',
+  'ospf6-neighbors': 'routing',
+  'ospf6-lsdb': 'routing',
+  'storm-control': 'security',
+  'snmp-traps': 'mgmt',
 };
 
 /** Machine → lane, written from the brief. */
@@ -160,6 +166,9 @@ const EXPECTED_MACHINES: Readonly<Record<FsmMachine, LaneId>> = {
   'ppp-auth': 'wan',
   'ppp-ncp': 'wan',
   ike: 'wan',
+  // P3c [S6] (ARCHITECTURE-P3C §2.10)
+  'ospf6-if': 'routing',
+  'ospf6-nbr': 'routing',
 };
 
 function fsmEvent(machine: FsmMachine): TraceEvent {

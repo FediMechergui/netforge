@@ -100,6 +100,8 @@ export const TUNNEL_DOWN_REASON_TEXT: Readonly<Record<TunnelDownReason, string>>
   'ike-failed': 'IKE authentication failed',
   'ike-no-proposal': 'the peer accepted no IKE proposal',
   'ike-no-response': 'the peer does not answer IKE',
+  // P3c [C17] (ARCHITECTURE-P3C §2.6; W0 compile stub, the final text): GRE keepalives went unanswered
+  'keepalive-missed': 'keepalives from the tunnel peer stopped arriving',
 });
 
 /** Slot type labels for `show inventory` (original wording). */

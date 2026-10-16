@@ -46,6 +46,13 @@ export const TOPOLOGY_SCHEMA_ID_1_2 = 'netforge.topology/1.2';
  */
 export const TOPOLOGY_SCHEMA_ID_1_3 = 'netforge.topology/1.3';
 /**
+ * @since P3c Schema 1.4 = 1.3 plus [S29] `TopologyFile.fs`, [S30] `TopologyFile.nominalBytes` and [S31]
+ * `TopologyDevice.nvram` (ARCHITECTURE-P3C D2), written only when one of those members is present. W0 declares the
+ * constant only (the R7 precedent): the W1a io item appends it to TOPOLOGY_SCHEMA_IDS, sets LATEST_TOPOLOGY_SCHEMA_ID
+ * and extends `schemaIdFor`, as a reviewed additive edit of this file, together with the identity 1.3 → 1.4 migration.
+ */
+export const TOPOLOGY_SCHEMA_ID_1_4 = 'netforge.topology/1.4';
+/**
  * Every schema id a loader accepts (older first). 1.3 appended @since P3 by the W1 io item (ruling R7, a reviewed
  * additive edit of this file).
  */
@@ -108,6 +115,11 @@ export interface TopologyDevice {
    * absent on every P1/P2 document. Declared in W0; the W1 io item reads and writes it.
    */
   files?: readonly TopologyFile[];
+  /**
+   * @since P3c (optional by meaning; 1.4) [S31] The persistent configuration register, written only when it is not
+   * DEFAULT_CONFIG_REGISTER (0x2102). Absent on every P1/P2/P3a document.
+   */
+  nvram?: { configRegister?: number };
 }
 
 /**

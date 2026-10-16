@@ -268,7 +268,8 @@ function recordOf(value: unknown): Record<string, unknown> {
 /** The stages the P1 golden's engine had (the golden's stage is P1). */
 const P1_STAGES: readonly BuildStage[] = ['P0', 'P0.5', 'P1'];
 /** The stages after P1 (ARCHITECTURE-P3 §9.2 W0 item 3: P2 or P3). */
-const LATER_STAGES: readonly string[] = ['P2', 'P3'];
+// ARCHITECTURE-P3C §9.2 W0 item 2: the build stages after P1, 'P3c' appended last
+const LATER_STAGES: readonly string[] = ['P2', 'P3', 'P3c'];
 
 /**
  * THE fixed rule (ARCHITECTURE-P2 §10.1, per device since ARCHITECTURE-P3 §4.6 item 2): a JSON copy of `snapshot` where

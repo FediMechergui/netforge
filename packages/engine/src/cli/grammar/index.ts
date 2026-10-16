@@ -58,6 +58,13 @@ import { NTP_DEBUG_CATEGORIES, TIME_GRAMMAR, TIME_HANDLERS } from './time.js';
 import { API_DEBUG_CATEGORIES, API_GRAMMAR, API_HANDLERS } from './api.js';
 import { SSH_GRAMMAR, SSH_HANDLERS } from './ssh.js';
 import { P3_APPROVED_DEBUG_CATEGORIES, P3_APPROVED_GRAMMAR_FRAGMENTS, P3_APPROVED_HANDLER_IDS, P3_APPROVED_LITERAL_HELP } from './p3-approved.js';
+// P3c (ARCHITECTURE-P3C §7 W0): one fragment per W3a builder area, registered empty here so no W3a builder edits this file
+import { OSPF6_DEBUG_CATEGORIES, OSPF6_GRAMMAR, OSPF6_HANDLERS, OSPF6_LITERAL_HELP } from './ospf6.js';
+import { ACL6_DEBUG_CATEGORIES, ACL6_GRAMMAR, ACL6_HANDLERS, ACL6_LITERAL_HELP } from './acl6.js';
+import { HARDENING_P3C_DEBUG_CATEGORIES, HARDENING_P3C_GRAMMAR, HARDENING_P3C_HANDLERS, HARDENING_P3C_LITERAL_HELP } from './hardening-p3c.js';
+import { FILES_DEBUG_CATEGORIES, FILES_GRAMMAR, FILES_HANDLERS, FILES_LITERAL_HELP } from './files.js';
+import { SNMP_DEBUG_CATEGORIES, SNMP_GRAMMAR, SNMP_HANDLERS, SNMP_LITERAL_HELP } from './snmp.js';
+import { MONITOR_DEBUG_CATEGORIES, MONITOR_GRAMMAR, MONITOR_HANDLERS, MONITOR_LITERAL_HELP } from './monitor.js';
 
 export * from './core-exec.js';
 export * from './show.js';
@@ -95,6 +102,12 @@ export * from './discovery.js';
 export * from './time.js';
 export * from './api.js';
 export * from './ssh.js';
+export * from './ospf6.js';
+export * from './acl6.js';
+export * from './hardening-p3c.js';
+export * from './files.js';
+export * from './snmp.js';
+export * from './monitor.js';
 
 /**
  * @since P2 (ARCHITECTURE-P2 §5.4; W3 cli) The debug categories of the P2 daemons, in the §5.4 table order. Each is
@@ -251,10 +264,60 @@ export const P3_GRAMMAR_FRAGMENTS: Readonly<Record<string, readonly CommandSpec[
   ssh: SSH_GRAMMAR,
 });
 
-/** @since P3 Every P3 spec (the MUST fragments, then the approved items'), in table order. */
+// ── P3c (ARCHITECTURE-P3C §7 W0, W3a) ──────────────────────────────────────────────────────────────────────────────
+// The architect registers one EMPTY fragment per W3a builder area (the W3a ownership table: cli-routing `ospf6`; cli-acl
+// `acl6`, `hardening-p3c`; cli-management `files`, `snmp`, `monitor`), with its handler ids, debug categories and
+// literal help, so the W3a builders fill their own files and no one edits this index. They follow the P3 fragments in
+// the table and are part of `P3_GRAMMAR` (the CCNA 3 grammar). Empty in W0: no spec, no help listing, no golden moves.
+
+/** @since P3c The P3c grammar fragments by name, in table order (one per W3a builder area). */
+export const P3C_GRAMMAR_FRAGMENTS: Readonly<Record<string, readonly CommandSpec[]>> = Object.freeze({
+  ospf6: OSPF6_GRAMMAR, // [S6]
+  acl6: ACL6_GRAMMAR, // [S11]
+  'hardening-p3c': HARDENING_P3C_GRAMMAR, // [S14] [S15] [S16]
+  files: FILES_GRAMMAR, // [S29] [S30] [S31]
+  snmp: SNMP_GRAMMAR, // [S33] [C23]
+  monitor: MONITOR_GRAMMAR, // [S34]
+});
+
+/** @since P3c Handler ids of the P3c fragments (frozen names shared with their handler files). */
+export const P3C_HANDLER_IDS = Object.freeze({
+  ...OSPF6_HANDLERS,
+  ...ACL6_HANDLERS,
+  ...HARDENING_P3C_HANDLERS,
+  ...FILES_HANDLERS,
+  ...SNMP_HANDLERS,
+  ...MONITOR_HANDLERS,
+});
+
+/** @since P3c The P3c fragments' debug categories, appended to `DEBUG_CATEGORY_DEFS` after the P3 ones. */
+export const P3C_DEBUG_CATEGORIES: readonly GrammarDebugCategory[] = Object.freeze([
+  ...OSPF6_DEBUG_CATEGORIES,
+  ...ACL6_DEBUG_CATEGORIES,
+  ...HARDENING_P3C_DEBUG_CATEGORIES,
+  ...FILES_DEBUG_CATEGORIES,
+  ...SNMP_DEBUG_CATEGORIES,
+  ...MONITOR_DEBUG_CATEGORIES,
+]);
+
+/** @since P3c Help of the P3c fragments' intermediate literals (a key an earlier table defines keeps its text). */
+export const P3C_LITERAL_HELP: Readonly<Record<string, string>> = Object.freeze({
+  ...OSPF6_LITERAL_HELP,
+  ...ACL6_LITERAL_HELP,
+  ...HARDENING_P3C_LITERAL_HELP,
+  ...FILES_LITERAL_HELP,
+  ...SNMP_LITERAL_HELP,
+  ...MONITOR_LITERAL_HELP,
+});
+
+/**
+ * @since P3 Every P3 spec (the MUST fragments, then the approved items'), in table order. @since P3c the P3c fragments
+ * follow (empty in W0).
+ */
 export const P3_GRAMMAR: readonly CommandSpec[] = Object.freeze([
   ...Object.values(P3_GRAMMAR_FRAGMENTS).flat(),
   ...Object.values(P3_APPROVED_GRAMMAR_FRAGMENTS).flat(),
+  ...Object.values(P3C_GRAMMAR_FRAGMENTS).flat(),
 ]);
 
 /**
@@ -280,6 +343,8 @@ export const HANDLERS = Object.freeze({
   ...P2_HANDLERS,
   ...P3_HANDLERS,
   ...P3_APPROVED_HANDLER_IDS,
+  // P3c (ARCHITECTURE-P3C §7 W0)
+  ...P3C_HANDLER_IDS,
 });
 
 /** Union of every handler id in `HANDLERS`. */
@@ -312,6 +377,8 @@ export const GRAMMAR_FRAGMENTS: Readonly<Record<string, readonly CommandSpec[]>>
   // P3 (ARCHITECTURE-P3 §7 W2 cli): the MUST fragments, then the approved items'
   ...P3_GRAMMAR_FRAGMENTS,
   ...P3_APPROVED_GRAMMAR_FRAGMENTS,
+  // P3c (ARCHITECTURE-P3C §7 W0): one empty fragment per W3a builder area
+  ...P3C_GRAMMAR_FRAGMENTS,
 });
 
 /** The full built-in command table: every fragment concatenated in `GRAMMAR_FRAGMENTS` order (P1, then P2, then P3). */
@@ -337,6 +404,8 @@ export const DEBUG_CATEGORY_DEFS: readonly GrammarDebugCategory[] = Object.freez
   // P3 (W3 cli part 2): the MUST daemons' categories, then the approved items' (cli/grammar/p3-approved.ts)
   ...P3_DEBUG_CATEGORIES,
   ...P3_APPROVED_DEBUG_CATEGORIES,
+  // P3c (ARCHITECTURE-P3C §7 W0): the W3a areas' categories (empty in W0)
+  ...P3C_DEBUG_CATEGORIES,
 ]);
 
 /**
@@ -350,7 +419,9 @@ export const DEBUG_CATEGORIES: readonly string[] = Object.freeze(DEBUG_CATEGORY_
  * position). The last literal of a command shows `spec.help`. Original wording.
  */
 export const LITERAL_HELP: Readonly<Record<string, string>> = Object.freeze({
-  // P3 approved items (cli/grammar/p3-approved.ts) first, so a key the P1/P2/P3 MUST tables define keeps their text
+  // P3c fragments (ARCHITECTURE-P3C §7 W0; empty in W0), then the P3 approved items (cli/grammar/p3-approved.ts), first,
+  // so a key an earlier table defines keeps its text
+  ...P3C_LITERAL_HELP,
   ...P3_APPROVED_LITERAL_HELP,
   show: 'Display device information',
   ip: 'Internet protocol settings',

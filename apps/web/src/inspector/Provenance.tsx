@@ -73,6 +73,10 @@ export const DROP_LABEL: Record<string, string> = {
   'not-associated': 'station not associated',
   'encapsulation-mismatch': 'serial encapsulation mismatch',
   'out-of-band': 'console line carries no data frames',
+  // P3c (ARCHITECTURE-P3C §2.7, §9.2 W0 item 1)
+  'ip-source-guard': 'refused by IP source guard',
+  'storm-control': 'dropped by storm control',
+  'span-destination': 'a SPAN destination forwards nothing it receives',
 };
 
 const REASON_ICON: Record<MutationReason, string> = {

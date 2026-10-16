@@ -53,8 +53,12 @@
  * Everything crossing this boundary is structured-clone safe.
  */
 import type {
+  AclBindingView,
+  AclDecision,
+  AclListView,
   AddDeviceSpec,
   AddLinkSpec,
+  AnyPacketTuple,
   CableValidation,
   CaptureExportOptions,
   CaptureId,
@@ -186,8 +190,22 @@ export interface RunStopResult {
  * @since P3 (ruling R31) What `runToIdle` resolves to: the snapshot it posted, and `runStopped: 'maxEvents'` (optional
  * by meaning: absent = the run reached idle) when the run ended at its event cap (`RunStats.stopped`). An idle world
  * still keeps its periodic maintenance timers, so `pendingEvents > 0` alone never means the cap was hit.
+ * 'quiet' @since P3c (optional by meaning) [S39] (ARCHITECTURE-P3C §2.12): the run stopped after a quiet window
+ * (`RunStats.stopped` 'quiet', `RunToIdleOptions.quiet`); no worker run asks for it before the W1a sim item.
  */
-export type RunToIdleSnapshot = SimSnapshot & { readonly runStopped?: 'maxEvents' };
+export type RunToIdleSnapshot = SimSnapshot & { readonly runStopped?: 'maxEvents' | 'quiet' };
+
+/** @since P3c [S10] What `aclLists` resolves to (ARCHITECTURE-P3C §2.12): a device's lists and where they are applied. */
+export interface AclListsResult {
+  readonly lists: readonly AclListView[];
+  readonly bindings: readonly AclBindingView[];
+}
+
+/** @since P3c [S10] What `aclEvaluate` resolves to: the configured list's decision for one tuple, and the list. */
+export interface AclEvaluateResult {
+  readonly decision: AclDecision;
+  readonly list: AclListView | null;
+}
 
 /** @since P1 Where a breakpoint or a step stopped the clock. */
 export interface StopInfo {
@@ -333,6 +351,18 @@ export interface EngineApi {
   cliClose(session: SessionId): Promise<void>;
   /** @since P0.5 */
   cliCanOpen(device: DeviceId, via: 'console' | 'vty'): Promise<{ ok: true } | { ok: false; reason: string }>;
+  /**
+   * @since P3c [S31] The `cliBreak` request (ARCHITECTURE-P3C §2.9, §2.12, §2.13): a break on a console session (the
+   * terminal's "Send break", Ctrl+Break), journaled as the `cliBreak` op. Transition `?` (rule 2): the W3b web-shell item
+   * writes it in the worker, removes the `?` and updates every typed fake in the same change.
+   */
+  sendBreak?(session: SessionId): Promise<void>;
+
+  // acl workbench — P3c [S10] (ARCHITECTURE-P3C §2.12): display only, no event, no state; written by the W3b items
+  /** @since P3c [S10] A device's access lists and their bindings (`Simulation.aclLists`); transition `?` until W3b. */
+  aclLists?(device: DeviceId): Promise<AclListsResult>;
+  /** @since P3c [S10] Evaluate one configured list against a tuple (the pure evaluation); transition `?` until W3b. */
+  aclEvaluate?(device: DeviceId, list: string, tuple: AnyPacketTuple): Promise<AclEvaluateResult>;
 
   // gui
   /** @since P0.5 D9 headless configure; posts a batch with a delta for `device` afterwards. */

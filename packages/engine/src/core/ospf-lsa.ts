@@ -113,6 +113,11 @@ export function lsaLength(lsa: LsaContent): number {
       return LSA_HEADER_BYTES + 4 + 4 * (lsa.attached?.length ?? 0);
     case 5:
       return LSA_HEADER_BYTES + 16;
+    case 3:
+    case 4:
+      // ARCHITECTURE-P3C W0 compile stub: `OspfLsaType` gained the summary types 3 and 4 [S4]; nothing originates or
+      // decodes one before the W1a pdu and W2b ospf [S4] items, which write their body and length here.
+      throw new Error(`OSPF summary LSAs (type ${lsa.type}) are not available in this build`);
   }
 }
 

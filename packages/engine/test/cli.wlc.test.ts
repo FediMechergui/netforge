@@ -304,6 +304,8 @@ describe('grammar and scope', () => {
     // ARCHITECTURE-P3 §9.2 W2 item 21b: `wlc` closes the P1/P2 table; the P3 fragments (W2 cli) follow it
     expect(Object.keys(GRAMMAR_FRAGMENTS).slice(Object.keys(P2_GRAMMAR_FRAGMENTS).length + 16)).toEqual([
       'wlc', 'ospf', 'acl-p3', 'hardening', 'qos', 'discovery', 'time', 'api', 'ssh', 'eigrp', 'wan', 'crypto', 'qos-queueing', 'logging', 'remote', 'devhost',
+      // ARCHITECTURE-P3C §7 W0: one empty fragment per W3a builder area
+      'ospf6', 'acl6', 'hardening-p3c', 'files', 'snmp', 'monitor',
     ]);
     expect(GRAMMAR_FRAGMENTS['wlc']).toBe(WLC_GRAMMAR);
     const wlcEnd = GRAMMAR.length - P3_GRAMMAR.length;

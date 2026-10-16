@@ -47,12 +47,20 @@ import { buildSpfOverlay, lsdbOf, type DeviceLsdb, type SpfOverlayModel } from '
 import { buildStpOverlay, deriveDeviceStp, type DeviceStp, type StpOverlayModel } from './stp-model';
 import { buildWanOverlay, deriveDeviceWan, type DeviceWan, type WanOverlayModel } from './wan-model';
 
-/** The topology overlays, by id. */
-export type OverlayId = 'vlan' | 'stp' | 'capwap' | 'qos' | 'ospf' | 'spf' | 'wan' | 'eigrp';
+/**
+ * The topology overlays, by id. 'route-path' [S7] and 'neighbours' [S26] @since P3c (ARCHITECTURE-P3C §2.12, §9.2 W0
+ * item 1): the names only; each overlay registers its module with its W1c item.
+ */
+export type OverlayId = 'vlan' | 'stp' | 'capwap' | 'qos' | 'ospf' | 'spf' | 'wan' | 'eigrp' | 'route-path' | 'neighbours';
 
 /** The P2 booleans of the slice: the "Switching overlays" toggles. */
 export type SwitchingOverlayToggle = 'vlan' | 'stp' | 'capwap';
-/** @since P3 The P3 booleans of the slice: the "Routing, WAN and QoS overlays" toggles. */
+/**
+ * @since P3 The P3 booleans of the slice: the "Routing, WAN and QoS overlays" toggles. ([S7] 'routePath' and [S26]
+ * 'neighbours' join with the slice members `TopoOverlayState.routePath` / `.neighbours`, in the change of the first of
+ * the two items to land, which owns the persisted-slice version bump, ARCHITECTURE-P3C §2.12: a toggle is a boolean key
+ * of the slice, and the View menu indexes the slice by it.)
+ */
 export type RoutingOverlayToggle = 'qos' | 'ospf' | 'wan' | 'eigrp';
 /** A boolean key of the `topoOverlays` slice that shows an overlay. */
 export type OverlayToggle = SwitchingOverlayToggle | RoutingOverlayToggle;

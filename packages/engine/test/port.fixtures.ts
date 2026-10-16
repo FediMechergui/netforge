@@ -234,6 +234,22 @@ export const P3_DEVICE: Required<Pick<DeviceRuntime, 'clockView' | 'setClock' | 
   },
 });
 
+// ── P3c (ARCHITECTURE-P3C §0 rule 2, §7 W0): the spreads the item that makes a member required uses ──
+
+/**
+ * The P3c `ProcessCtx` members for a hand-built fake (rule 2). ARCHITECTURE-P3C §2 adds no `ProcessCtx` member in W0,
+ * so the spread is empty; an item that adds a required member writes its fake here and updates every typed fake that
+ * spreads this in the same change. Spread it FIRST so a harness's own member wins.
+ */
+export const P3C_CTX: Readonly<Pick<ProcessCtx, never>> = Object.freeze({});
+
+/**
+ * The P3c `DeviceRuntime` members for a hand-built fake (rule 2). ARCHITECTURE-P3C §2 adds no `DeviceRuntime` member in
+ * W0 (the [S31] break is `CliRuntime.sendBreak?`, a transition `?` until W3b), so the spread is empty; an item that adds
+ * a required member writes its fake here. An object literal spreads it FIRST; a class copies the members.
+ */
+export const P3C_DEVICE: Readonly<Pick<DeviceRuntime, never>> = Object.freeze({});
+
 /**
  * Give a P0 table triple the P0.5 `DeviceTables` accessors (required since the exit gate): `get` finds cam/arp/rib
  * by name and nothing else, `names` lists the three in order. Matches a model that declares no extra tables.

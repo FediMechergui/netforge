@@ -5,7 +5,7 @@
  * egress owner is `gre` (`roleEgressOwner`), derived onto a model only when it runs `gre`; validation knows the family.
  */
 import { describe, expect, it } from 'vitest';
-import { BUILD_STAGES, ROLE_TRAITS, ROLE_KINDS } from '../src/contracts/catalog.js';
+import { BUILD_STAGES, ROLE_TRAITS, ROLE_KINDS, stageIncluded } from '../src/contracts/catalog.js';
 import { ALL_MODEL_INPUTS, ALL_MODULES } from '../src/device/catalog.js';
 import {
   LOOPBACK_FAMILY,
@@ -55,10 +55,12 @@ describe('TUNNEL_FAMILY ([S18])', () => {
 
   it('no model derives it before stage P3 (every earlier-stage family list is unchanged)', () => {
     for (const i of ALL_MODEL_INPUTS) {
-      for (const stage of BUILD_STAGES.filter((s) => s !== 'P3')) {
+      // ARCHITECTURE-P3C §9.2 W0 item 2: 'P3c' (after 'P3') keeps the P3 families; the stages before P3 never have Tunnel
+      for (const stage of BUILD_STAGES.filter((s) => !stageIncluded('P3', s))) {
         const fams = defineModel(i, stage).virtualFamilies.map((f) => f.family);
         expect([i.type, stage, fams.includes('Tunnel')]).toEqual([i.type, stage, false]);
       }
+      expect([i.type, defineModel(i, 'P3c').virtualFamilies]).toEqual([i.type, defineModel(i, 'P3').virtualFamilies]);
       // at P3 the families are the P2 list plus, for routing models, the Tunnel family
       const p2 = defineModel(i, 'P2').virtualFamilies;
       const p3 = defineModel(i, 'P3').virtualFamilies;

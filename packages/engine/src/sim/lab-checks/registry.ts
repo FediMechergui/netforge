@@ -70,6 +70,16 @@ export const UNAVAILABLE_KIND_DETAILS = {
   traffic: 'Traffic flow checks are not available in this build.',
 } as const satisfies Partial<Record<LabAssertion['kind'], string>>;
 
+/**
+ * @since P3c (ARCHITECTURE-P3C §2 compile stubs, §7 W0) The stub texts of the two P3c kinds until their W3b sim item
+ * lands ([S8] `sim/lab-checks/convergence.ts`, [S38] `sim/lab-checks/capture.ts`): each checker fails with its text.
+ * Kept apart from UNAVAILABLE_KIND_DETAILS, whose keys P3a's tests pin.
+ */
+export const P3C_UNAVAILABLE_KIND_DETAILS = {
+  convergence: 'Convergence checks are not available in this build.',
+  packetSeen: 'Packet capture checks are not available in this build.',
+} as const satisfies Partial<Record<LabAssertion['kind'], string>>;
+
 /** The refusal of a ping inside `connectivity.then` (the text the P2 grader gives). */
 const FOLLOW_UP_PING = 'A follow-up check reads state; it cannot ping again.';
 
@@ -103,6 +113,9 @@ export const CHECKERS = {
   service: (ctx, a) => (ctx.host === undefined ? fail(FOLLOW_UP_SERVICE) : checkService(ctx.sim, ctx.host, a)),
   path: (ctx, a) => (ctx.host === undefined ? fail(FOLLOW_UP_PATH) : checkPath(ctx.sim, ctx.host, a)),
   traffic: (ctx, a) => (ctx.host === undefined ? fail(FOLLOW_UP_TRAFFIC) : checkTraffic(ctx.sim, ctx.host, a)),
+  // P3c (W0 stubs): "not available in this build" until each item lands
+  convergence: () => fail(P3C_UNAVAILABLE_KIND_DETAILS.convergence),
+  packetSeen: () => fail(P3C_UNAVAILABLE_KIND_DETAILS.packetSeen),
 } satisfies CheckerTable;
 
 /** The checker of `kind`, or undefined for a kind this grader does not know (an untyped lab). */

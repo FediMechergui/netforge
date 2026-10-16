@@ -21,7 +21,7 @@
  * icmp, dns.qry.name, http.request.method, http.response.code, frame.number/len/time_relative/interface).
  * Multi-valued fields (ip.addr): `==` means any, `!=` means none (documented extension).
  */
-import type { PduId, PortRef } from './ids.js';
+import type { DeviceId, PduId, PortRef } from './ids.js';
 import type { LayerView, Pdu, ProtoName } from './pdu.js';
 import type { SimTime } from './time.js';
 
@@ -48,6 +48,11 @@ export interface CaptureSpec {
   /** Include background frames (keepalives, beacons). Default false. */
   includeBackground?: boolean;
   name?: string;
+  /**
+   * @since P3c (optional by meaning) [S34] Capture what this SPAN session delivers (its destination port's copies).
+   * Absent = today's capture points.
+   */
+  span?: { device: DeviceId; session: number };
 }
 
 export interface CaptureInterface {

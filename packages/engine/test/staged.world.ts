@@ -51,6 +51,30 @@
  * `CATALOG_STAGE` (`device.ts` computeProcessOrder), so in a world of this helper at stage P2 (or P1), a module that
  * adds a capability at run time also brings that capability's P3 daemons (the W4b fix step).
  *
+ * The P3c path (ARCHITECTURE-P3C §0 rule 13, §7 W0 qa): at stage 'P3c' this helper applies, as TEST-ONLY data, what the
+ * W4b catalog flip (D6) will make the real contract, so the P3c daemons, acceptance tests and labs run on real worlds
+ * before the flip. Every item is gated on `P3C_APPROVED_ITEMS` (`test/p3c-approved-items.ts`, §8.5c), and none of it
+ * applies at a stage before 'P3c' (every row is `since: 'P3c'`), so stages P0–P3 build exactly what they built before:
+ *   - `P3C_PROCESS_ORDER`: the §2.1 final `PROCESS_ORDER` restricted to the approved names (`tftp` [S29], `snmp-agent`
+ *     and `snmp-manager` [S33] after `ntp`; `ospfv3` [S6] after `ospf`); the real `PROCESS_ORDER` is it minus those;
+ *   - `P3C_CAPABILITY_PROCESS_ROWS`: the §2.1 rows (`routing`, `managed-switch`, `server`, `programmable`,
+ *     `voice-endpoint`), derived only on models with a CLI shell (`cli.shell !== 'none'`, D6: never the home routers);
+ *   - `P3C_PROCESS_TABLES`: the §2.1 `PROCESS_TABLES` additions (`ospfv3` → the three `ospf6-*` tables, `snmp-manager`
+ *     → `snmp-traps`), so a P3c daemon under test finds its tables on the model, as P3a's W0 path did;
+ *   - `P3C_STAGED_PROCESS_TABLES`: the second §2.1 staged row (`eth-switch` brings `storm-control` [S16] to
+ *     `managed-switch` models);
+ *   - `P3C_MODEL_CAPABILITY_DELTAS`: NF-IPPHONE gains `voice-endpoint` [S35] (whose row derives `cdp` and `lldp`);
+ *   - `P3C_STORAGE`: the `DeviceModel.storage` data [S29] [S30] of every NF-OS router and switch (kinds `router`,
+ *     `switch`, `mlswitch`, `dcswitch`), with original image names.
+ * The approved P3c daemons (`P3C_DAEMONS`) join the registry filter: until a factory is registered (the W4b flip, or a
+ * test's overlay) they are left off the models, like an unregistered P2/P3 daemon. The rest of a P3c model is
+ * `defineModel(…, 'P3c')` of the real input, so the real stage-gated P3c contract data (`GUI_PANEL_SINCE` 'P3c': the
+ * [S33] SNMP manager and [S27] API client panels) applies too. `staged.world.p3c.test.ts` proves that the P3c catalog
+ * differs from the real one by exactly these deltas; the W4b flip adds `staged.world.p3c-parity.test.ts`, and the exit
+ * gate reduces this path to a wrapper again. Limitation (P3a's, before its flip): a device that installs a module at
+ * run time derives and ranks its daemons with the real `CAPABILITY_PROCESSES` and `PROCESS_ORDER` (`device.ts`
+ * computeProcessOrder), so in a P3c world a module brings no P3c daemon until the flip.
+ *
  * Nothing here is module-level mutable state: every call builds fresh, frozen models (rule 12), or returns the real
  * frozen ones. Inputs are never mutated.
  */
@@ -58,10 +82,12 @@ import {
   CAPABILITIES,
   CAPABILITY_PROCESSES,
   PROCESS_ORDER,
+  expandCapabilities,
   stageIncluded,
   type BuildStage,
   type Capability,
   type CapabilityProcess,
+  type CliSpec,
   type DefaultsProfile,
 } from '../src/contracts/catalog.js';
 import type { DeviceCatalog, DeviceModel, PortNameSource, PortResolution } from '../src/contracts/device.js';
@@ -75,15 +101,18 @@ import { NF_DEVHOST_MODEL_INPUT, hostEth } from '../src/device/catalog/computers
 import {
   deepFreeze,
   defineModel,
+  deriveCliSpec,
   derivePortOwners,
   deriveProcesses,
   deriveTables,
   moduleReachableProcesses,
+  modulesFitting,
   type ModelInput,
 } from '../src/device/catalog/define.js';
 import { resolvePortName } from '../src/device/catalog/names.js';
 import { PROCESS_FACTORIES } from '../src/protocols/index.js';
 import { createSimulation } from '../src/sim/simulation.js';
+import { P3C_APPROVED_ITEMS, type P3cApprovedItem } from './p3c-approved-items.js';
 
 // ── the approved daemons ───────────────────────────────────────────────────────────────────────────────────────
 
@@ -176,6 +205,136 @@ export function nfDevhostTestInput(): ModelInput {
   return structuredClone(NF_DEVHOST_MODEL_INPUT);
 }
 
+// ── P3c test-only data (ARCHITECTURE-P3C §0 rule 13, §2.1, §2.6, §2.9, D6; the W4b flip makes it the contract) ─────
+
+/** True when the P3c item `id` is approved (§8.5c, `P3C_APPROVED_ITEMS`). */
+function approved(id: P3cApprovedItem): boolean {
+  return (P3C_APPROVED_ITEMS as readonly string[]).includes(id);
+}
+
+/** The P3c daemons of §2.1 with the item each comes from, in their final order. */
+const P3C_DAEMON_ITEMS: readonly (readonly [ProcessName, P3cApprovedItem])[] = [
+  ['tftp', 'S29'],
+  ['snmp-agent', 'S33'],
+  ['snmp-manager', 'S33'],
+  ['ospfv3', 'S6'],
+];
+
+/** The approved P3c daemons (§2.1, §8.5c), in their final order: tftp [S29], snmp-agent and snmp-manager [S33], ospfv3 [S6]. */
+export const P3C_DAEMONS: readonly ProcessName[] = Object.freeze(P3C_DAEMON_ITEMS.filter(([, id]) => approved(id)).map(([p]) => p));
+
+/** The daemons the registry filter applies to at every stage: every approved P2, P3 and P3c daemon. */
+export const P3C_STAGED_DAEMONS: readonly ProcessName[] = Object.freeze([...STAGED_DAEMONS, ...P3C_DAEMONS]);
+
+/**
+ * The §2.1 final P3c `PROCESS_ORDER`, restricted to the approved names: `PROCESS_ORDER` with `tftp`, `snmp-agent` and
+ * `snmp-manager` inserted after `ntp` (before `syslog-server`) and `ospfv3` after `ospf` (before `eigrp`). Every real
+ * name keeps its relative order, so every real model list stays an order-preserving subsequence.
+ */
+export const P3C_PROCESS_ORDER: readonly ProcessName[] = Object.freeze(
+  PROCESS_ORDER.flatMap((p): ProcessName[] => {
+    if (p === 'ntp') return [p, ...P3C_DAEMONS.filter((d) => d === 'tftp' || d === 'snmp-agent' || d === 'snmp-manager')];
+    if (p === 'ospf') return [p, ...P3C_DAEMONS.filter((d) => d === 'ospfv3')];
+    return [p];
+  }),
+);
+
+const p3c = (process: ProcessName): CapabilityProcess => Object.freeze({ process, since: 'P3c' as BuildStage });
+
+/** The §2.1 P3c rows with their items (each capability's rows in `P3C_PROCESS_ORDER` order). */
+const P3C_ROW_ITEMS: Readonly<Partial<Record<Capability, readonly (readonly [ProcessName, P3cApprovedItem])[]>>> = {
+  routing: [['tftp', 'S29'], ['snmp-agent', 'S33'], ['ospfv3', 'S6']],
+  'managed-switch': [['tftp', 'S29'], ['snmp-agent', 'S33']],
+  server: [['tftp', 'S29'], ['snmp-manager', 'S33']],
+  programmable: [['snmp-manager', 'S33']],
+  'voice-endpoint': [['cdp', 'S35'], ['lldp', 'S35']],
+};
+
+/**
+ * The §2.1 `CAPABILITY_PROCESSES` rows of P3c (all `since: 'P3c'`), by capability, approved items only; a capability
+ * with no P3c row has no key. Derived only on a model with a CLI shell (`deriveStagedProcesses`, D6).
+ */
+export const P3C_CAPABILITY_PROCESS_ROWS: Readonly<Partial<Record<Capability, readonly CapabilityProcess[]>>> = (() => {
+  const out: Partial<Record<Capability, readonly CapabilityProcess[]>> = {};
+  for (const cap of CAPABILITIES) {
+    const rows = (P3C_ROW_ITEMS[cap] ?? []).filter(([, id]) => approved(id)).map(([p]) => p3c(p));
+    if (rows.length > 0) out[cap] = Object.freeze(rows);
+  }
+  return Object.freeze(out);
+})();
+
+/** The §2.1 `PROCESS_TABLES` additions of the P3c daemons (`tftp` and `snmp-agent` own no table). */
+export const P3C_PROCESS_TABLES: Readonly<Partial<Record<ProcessName, readonly ExtraTableName[]>>> = (() => {
+  const out: Partial<Record<ProcessName, readonly ExtraTableName[]>> = {};
+  if (P3C_DAEMONS.includes('ospfv3')) out.ospfv3 = Object.freeze(['ospf6-interfaces', 'ospf6-neighbors', 'ospf6-lsdb'] as const);
+  if (P3C_DAEMONS.includes('snmp-manager')) out['snmp-manager'] = Object.freeze(['snmp-traps'] as const);
+  return Object.freeze(out);
+})();
+
+/**
+ * §2.1 [S16]: the second `STAGED_PROCESS_TABLES` row the W4b flip appends (one row has one `since`, so the P3 `vlan`
+ * row is unchanged): `eth-switch` brings `storm-control` from stage P3c, to `managed-switch` models only.
+ */
+export const P3C_STAGED_PROCESS_TABLES: readonly StagedProcessTables[] = Object.freeze(
+  approved('S16')
+    ? [Object.freeze({ process: 'eth-switch', tables: Object.freeze(['storm-control'] as const), since: 'P3c' as BuildStage, requires: 'managed-switch' as Capability })]
+    : [],
+);
+
+/** [S35] The capabilities the W4b flip adds to model data, by type: NF-IPPHONE gains `voice-endpoint`. */
+export const P3C_MODEL_CAPABILITY_DELTAS: Readonly<Record<string, readonly Capability[]>> = Object.freeze(
+  approved('S35') ? { 'ipphone.nfphone': Object.freeze(['voice-endpoint'] as const) } : ({} as Record<string, readonly Capability[]>),
+);
+
+/** The model kinds whose models get `storage` data: the NF-OS routers and switches (§7 W4b, D10 [S29]). */
+export const P3C_STORAGE_KINDS: readonly string[] = Object.freeze(['router', 'switch', 'mlswitch', 'dcswitch']);
+
+/** One `DeviceModel.storage` value (§2.9). */
+export type StagedStorage = NonNullable<DeviceModel['storage']>;
+
+const KIB = 1024;
+const MIB = 1024 * KIB;
+const GIB = 1024 * MIB;
+const storage = (flashBytes: number, nvramBytes: number, file: string, version: string, nominalMib: number): StagedStorage =>
+  Object.freeze({ flashBytes, nvramBytes, image: Object.freeze({ file, version, nominalBytes: nominalMib * MIB }) });
+
+/**
+ * [S29] [S30] `DeviceModel.storage` of every NF-OS router and switch (`P3C_STORAGE_KINDS`), by type: the `flash:` and
+ * `nvram:` capacities and the virtual running image (original NetForge names; the version is what `show version` and
+ * the fact `device.imageVersion` read). NF-2911 runs `nf2900-15.7.bin`, so lab 31's upgrade to `nf2900-15.9.bin`
+ * (40 MB nominal, §3.4) is a newer version and fits beside it. Every image fits its flash, and every nominal size fits
+ * the 10 decimal digits of the image header (§2.9).
+ */
+export const P3C_STORAGE: Readonly<Record<string, StagedStorage>> = Object.freeze(
+  approved('S29') && approved('S30')
+    ? {
+        'router.nf1941': storage(256 * MIB, 256 * KIB, 'nf1900-15.7.bin', '15.7', 36),
+        'router.nf2911': storage(256 * MIB, 256 * KIB, 'nf2900-15.7.bin', '15.7', 38),
+        'router.nf4331': storage(4 * GIB, 32 * MIB, 'nf4300-17.6.bin', '17.6', 512),
+        'router.nf4451': storage(8 * GIB, 32 * MIB, 'nf4400-17.6.bin', '17.6', 600),
+        'router.nfgeneric': storage(256 * MIB, 256 * KIB, 'nfrtr-15.7.bin', '15.7', 36),
+        'switch.nfc2960-8': storage(64 * MIB, 64 * KIB, 'nf2960-15.2.bin', '15.2', 20),
+        'switch.nfc2960': storage(64 * MIB, 64 * KIB, 'nf2960-15.2.bin', '15.2', 20),
+        'switch.nfc2960-48': storage(64 * MIB, 64 * KIB, 'nf2960-15.2.bin', '15.2', 20),
+        'switch.nfc2960-24pg': storage(64 * MIB, 64 * KIB, 'nf2960-15.2.bin', '15.2', 20),
+        'switch.nfc9200-48': storage(2 * GIB, 2 * MIB, 'nf9200-17.6.bin', '17.6', 400),
+        'mlswitch.nfc3650-24': storage(2 * GIB, 2 * MIB, 'nf3650-16.12.bin', '16.12', 420),
+        'mlswitch.nfc9300-48': storage(8 * GIB, 2 * MIB, 'nf9300-17.6.bin', '17.6', 480),
+        'dcswitch.nfn9k-48': storage(32 * GIB, 4 * MIB, 'nfn9k-10.2.bin', '10.2', 1800),
+        'dcswitch.nfn9k-32': storage(32 * GIB, 4 * MIB, 'nfn9k-10.2.bin', '10.2', 1800),
+      }
+    : ({} as Record<string, StagedStorage>),
+);
+
+/** `input` with its P3c capability delta (`P3C_MODEL_CAPABILITY_DELTAS`) applied, as a new object; `input` when none. */
+export function applyP3cModelDelta(input: ModelInput): ModelInput {
+  const add = P3C_MODEL_CAPABILITY_DELTAS[input.type];
+  if (add === undefined) return input;
+  const capabilities = [...input.capabilities];
+  for (const c of add) if (!capabilities.includes(c)) capabilities.push(c);
+  return { ...input, capabilities };
+}
+
 // ── registry overlay ───────────────────────────────────────────────────────────────────────────────────────────
 
 /** A registry overlay: a factory wins over `PROCESS_FACTORIES`; `undefined` removes that name. */
@@ -256,14 +415,66 @@ export function applyP2ModelDelta(input: ModelInput, delta: P2ModelDelta | undef
 
 // ── derivations: the real ones ─────────────────────────────────────────────────────────────────────────────────
 
-/** Daemons of an EXPANDED capability list for a build stage, in `PROCESS_ORDER`: `deriveProcesses`. */
-export function deriveStagedProcesses(caps: readonly Capability[], stage: BuildStage): readonly ProcessName[] {
-  return deriveProcesses(caps, stage);
+/**
+ * Daemons of an EXPANDED capability list for a build stage. Before stage P3c: `deriveProcesses` (`cli` unused). At
+ * P3c: the real rows plus the `P3C_CAPABILITY_PROCESS_ROWS`, the latter only when the model has a CLI shell
+ * (`cli.shell !== 'none'`, D6; `cli` defaults to `deriveCliSpec(caps)`, the derived spec), in `P3C_PROCESS_ORDER`.
+ * Throws when a derived daemon is missing from `P3C_PROCESS_ORDER` (stale test data) instead of misordering it.
+ */
+export function deriveStagedProcesses(caps: readonly Capability[], stage: BuildStage, cli?: Pick<CliSpec, 'shell'>): readonly ProcessName[] {
+  if (!stageIncluded('P3c', stage)) return deriveProcesses(caps, stage);
+  const wanted = new Set<ProcessName>(deriveProcesses(caps, stage));
+  if ((cli ?? deriveCliSpec(caps)).shell !== 'none') {
+    for (const cap of caps) for (const row of P3C_CAPABILITY_PROCESS_ROWS[cap] ?? []) if (stageIncluded(row.since, stage)) wanted.add(row.process);
+  }
+  for (const p of wanted) {
+    if (!P3C_PROCESS_ORDER.includes(p)) throw new Error(`staged.world: daemon ${p} is not in P3C_PROCESS_ORDER`);
+  }
+  return P3C_PROCESS_ORDER.filter((p) => wanted.has(p));
 }
 
-/** Tables a model owns at `stage` (cam, arp, rib, then its daemons' tables and stage-filtered rows): `deriveTables`. */
+/**
+ * Tables a model owns at `stage`. Before stage P3c: `deriveTables`. At P3c: cam, arp, rib, then for each daemon in
+ * `processes` order its real `PROCESS_TABLES`, its `P3C_PROCESS_TABLES`, then the tables of the real
+ * `STAGED_PROCESS_TABLES` rows and of `P3C_STAGED_PROCESS_TABLES` of that daemon whose `since` is included and whose
+ * `requires` is in `capabilities` (EXPANDED); each table once (`deriveTables` over the flipped contract).
+ */
 export function deriveStagedTables(processes: readonly ProcessName[], capabilities: readonly Capability[], stage: BuildStage): readonly TableName[] {
-  return deriveTables(processes, capabilities, stage);
+  if (!stageIncluded('P3c', stage)) return deriveTables(processes, capabilities, stage);
+  const out: TableName[] = ['cam', 'arp', 'rib'];
+  const add = (t: TableName): void => {
+    if (!out.includes(t)) out.push(t);
+  };
+  for (const p of processes) {
+    for (const t of PROCESS_TABLES[p] ?? []) add(t);
+    for (const t of P3C_PROCESS_TABLES[p] ?? []) add(t);
+    for (const row of [...STAGED_PROCESS_TABLES, ...P3C_STAGED_PROCESS_TABLES]) {
+      if (row.process === p && stageIncluded(row.since, stage) && capabilities.includes(row.requires)) for (const t of row.tables) add(t);
+    }
+  }
+  return out;
+}
+
+/**
+ * Daemons a module fitting `slots` can add on top of `processes` at stage P3c (union over the fitting modules of
+ * `deriveStagedProcesses(caps + capabilitiesAdded, stage, cli)`), first-seen order: `moduleReachableProcesses` over the
+ * P3c rows.
+ */
+function stagedModuleReachableProcesses(
+  caps: readonly Capability[],
+  slots: DeviceModel['slots'],
+  processes: readonly ProcessName[],
+  stage: BuildStage,
+  cli: Pick<CliSpec, 'shell'>,
+): readonly ProcessName[] {
+  const out: ProcessName[] = [];
+  for (const m of modulesFitting(slots, ALL_MODULES)) {
+    if ((m.capabilitiesAdded ?? []).length === 0) continue;
+    for (const p of deriveStagedProcesses(expandCapabilities([...caps, ...(m.capabilitiesAdded ?? [])]), stage, cli)) {
+      if (!processes.includes(p) && !out.includes(p)) out.push(p);
+    }
+  }
+  return out;
 }
 
 // ── models, catalog, world ─────────────────────────────────────────────────────────────────────────────────────
@@ -272,9 +483,11 @@ export function deriveStagedTables(processes: readonly ProcessName[], capabiliti
  * One model at `stage` with its daemons filtered to `registry`: `defineModel(applyP2ModelDelta(input), stage)`, then
  * every approved P2/P3 daemon (`STAGED_DAEMONS`) that has no factory removed from its daemons (the rest keep
  * `PROCESS_ORDER`), and `tables` and `portOwners` derived again from the filtered list. At stage P2 this is the P2
- * helper's `defineP2Model` exactly (`staged.world.test.ts` proves it against a copy of that code).
+ * helper's `defineP2Model` exactly (`staged.world.test.ts` proves it against a copy of that code). At stage P3c the
+ * P3c path (`defineP3cStagedModel`).
  */
 export function defineStagedModel(input: ModelInput, stage: BuildStage, registry: StagedRegistry = PROCESS_FACTORIES): DeviceModel {
+  if (stageIncluded('P3c', stage)) return defineP3cStagedModel(input, stage, registry);
   const base = defineModel(applyP2ModelDelta(input), stage, ALL_MODULES);
   const processes = base.processes.filter((p) => !STAGED_DAEMONS.includes(p) || Object.prototype.hasOwnProperty.call(registry, p));
   const moduleProcesses = moduleReachableProcesses(base.capabilities, base.slots, processes, stage, ALL_MODULES);
@@ -284,6 +497,28 @@ export function defineStagedModel(input: ModelInput, stage: BuildStage, registry
     tables: deriveTables(processes, base.capabilities, stage),
     portOwners: derivePortOwners(base.ports, base.virtualFamilies, processes, moduleProcesses),
   });
+}
+
+/**
+ * One model at stage P3c (the file header): `defineModel(applyP3cModelDelta(applyP2ModelDelta(input)), stage)`, then
+ * its daemons from `deriveStagedProcesses` with the model's CLI spec, every approved P2/P3/P3c daemon
+ * (`P3C_STAGED_DAEMONS`) without a factory removed; `tables` (`deriveStagedTables`) and `portOwners` derived again from
+ * the filtered list; and the type's `P3C_STORAGE` added last, as a fresh copy.
+ */
+function defineP3cStagedModel(input: ModelInput, stage: BuildStage, registry: StagedRegistry): DeviceModel {
+  const base = defineModel(applyP3cModelDelta(applyP2ModelDelta(input)), stage, ALL_MODULES);
+  const keep = (p: ProcessName): boolean => !P3C_STAGED_DAEMONS.includes(p) || Object.prototype.hasOwnProperty.call(registry, p);
+  const processes = deriveStagedProcesses(base.capabilities, stage, base.cli).filter(keep);
+  const moduleProcesses = stagedModuleReachableProcesses(base.capabilities, base.slots, processes, stage, base.cli);
+  const model: DeviceModel = {
+    ...base,
+    processes,
+    tables: deriveStagedTables(processes, base.capabilities, stage),
+    portOwners: derivePortOwners(base.ports, base.virtualFamilies, processes, moduleProcesses),
+  };
+  const store = P3C_STORAGE[input.type];
+  if (store !== undefined) model.storage = structuredClone(store);
+  return deepFreeze<DeviceModel>(model);
 }
 
 /** The model inputs of a stage, palette order: every real input (`ALL_MODEL_INPUTS`), at every stage. */

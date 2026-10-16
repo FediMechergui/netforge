@@ -44,6 +44,13 @@
  * is a listed P3 row or one of the earlier members named here, so an inline `?` cannot escape both lists.
  * The web rows (`DropMarker.rule`, `RunToIdleSnapshot.runStopped`) are pinned by the web package
  * (apps/web/test/protocol.optional-by-meaning.test.ts).
+ *
+ * P3c W0 (ARCHITECTURE-P3C §0 rule 2, §2.13, §2.14, §9.2 W0 item 3) adds the P3c rows: every engine member of the §2.14
+ * list keeps its `?` and its `@since P3c (optional by meaning)` tag (as a member, a member of a union arm or of a
+ * nested type literal); the transition members of §2.13 (`CliRuntime.sendBreak`) keep their `?` until the item that
+ * implements them; and two closing checks hold the set: no member whose own JSDoc says `@since P3c` is optional without
+ * being listed, and every member whose own JSDoc says "@since P3c (optional by meaning" has its `?`.
+ * `DemuxSelector.frame` stays in the P2 list until W0h ([C32]).
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -51,9 +58,10 @@ import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import type { VirtualFamilySpec } from '../src/contracts/catalog.js';
+import type { CaptureSpec } from '../src/contracts/capture.js';
 import type { CliRuntime, CliSessionView, CommandCtx, CommandSpec, CliRuntimeDeps, ConfigureOptions } from '../src/contracts/cli.js';
 import type { ConfigAst, ConfigLineRule, ConfigNode } from '../src/contracts/config.js';
-import type { Course } from '../src/contracts/curriculum.js';
+import type { Course, Lesson } from '../src/contracts/curriculum.js';
 import type { DeviceModel, DeviceRuntime, DeviceSpec, PortResolution } from '../src/contracts/device.js';
 import type { SimEventBody } from '../src/contracts/events.js';
 import type { FacadeCounters } from '../src/contracts/journal.js';
@@ -61,12 +69,24 @@ import type { LinkModel, LinkModelDeps, PolicerSpec, TransmitFn } from '../src/c
 import type { BssSnapshot } from '../src/contracts/medium.js';
 import type { PduMeta, RewrapOp } from '../src/contracts/pdu.js';
 import type { PortCounters, PortL3, PortSpec, PortState } from '../src/contracts/port.js';
-import type { Action, DebugEvent, DemuxSelector, LoggerStateView, ProcessCtx, ProcessRequest } from '../src/contracts/process.js';
+import type { Action, DebugEvent, DemuxSelector, LoggerStateView, PacketTuple, PacketTuple6, ProcessCtx, ProcessRequest, SnmpV3User } from '../src/contracts/process.js';
 import type { RadioPortView, RadioSettings } from '../src/contracts/rf.js';
 import type { LabAssertion, LabAssertionNotes, LabCheckResult, LabFault } from '../src/contracts/scenario.js';
-import type { SimulationOptions, TraceFilter } from '../src/contracts/simulation.js';
+import type { RunToIdleOptions, Simulation, SimulationOptions, TraceFilter } from '../src/contracts/simulation.js';
 import type { DeviceClockSnapshot, DeviceSnapshot, PortQosView, PortSnapshot, PortTxQueueView, SimSnapshot } from '../src/contracts/snapshot.js';
-import type { CamRow, Route6Row, RouteRow } from '../src/contracts/tables.js';
+import type { StoredFileInput, StoredFileMeta, TopologyFile } from '../src/contracts/storage.js';
+import type {
+  ArpInspectionRow,
+  CamRow,
+  CdpNeighbourRow,
+  LldpNeighbourRow,
+  Ospf6InterfaceRow,
+  OspfInterfaceRow,
+  Route6Row,
+  RouteRow,
+  ScriptRunRow,
+  TunnelRow,
+} from '../src/contracts/tables.js';
 import type { Topology, TopologyDevice } from '../src/contracts/topology.js';
 import type { PduSummary, TraceEvent } from '../src/contracts/trace.js';
 import type { LeaseEvent } from '../src/contracts/transport.js';
@@ -875,6 +895,180 @@ describe('contracts: P3 members the exit gate made required (ARCHITECTURE-P3 §2
     const lost = [...p3TaggedMembers()]
       .filter(([k, v]) => OBM_P3.test(v.doc) && !v.optional && !paramHolders.has(k))
       .map(([k, v]) => `${k} (line ${v.line})`);
+    expect(lost).toEqual([]);
+  });
+});
+
+// ── P3c (ARCHITECTURE-P3C §0 rule 2, §2.13, §2.14, §9.2 W0 item 3) ─────────────────────────────────────────────────
+
+type AclClear = Extract<ProcessRequest, { kind: 'acl.clear' }>;
+type TftpTransfer = Extract<ProcessRequest, { kind: 'tftp.transfer' }>;
+type SnmpOp = Extract<ProcessRequest, { kind: 'snmp.op' }>;
+type AclAssertion = Extract<LabAssertion, { kind: 'acl' }>;
+type AclDecisionAssertion = Extract<LabAssertion, { kind: 'aclDecision' }>;
+type ConvergenceAssertion = Extract<LabAssertion, { kind: 'convergence' }>;
+type PacketSeenAssertion = Extract<LabAssertion, { kind: 'packetSeen' }>;
+
+/** The P3c members optional by meaning (§2.14), in the order of their contract files. */
+const MEMBERS_P3C: readonly OptionalMember[] = [
+  // pdu.ts
+  p3<PduMeta, 'mirror'>('pdu.ts [S34]', 'pdu.ts', 'PduMeta', 'mirror', true),
+  // capture.ts
+  p3<CaptureSpec, 'span'>('capture.ts [S34]', 'capture.ts', 'CaptureSpec', 'span', true),
+  // process.ts
+  p3<PacketTuple, 'dscp'>('process.ts [S12]', 'process.ts', 'PacketTuple', 'dscp', true),
+  p3<PacketTuple, 'fragment'>('process.ts [S17a]', 'process.ts', 'PacketTuple', 'fragment', true),
+  p3<PacketTuple6, 'srcPort'>('process.ts [S11]', 'process.ts', 'PacketTuple6', 'srcPort', true),
+  p3<PacketTuple6, 'dstPort'>('process.ts [S11]', 'process.ts', 'PacketTuple6', 'dstPort', true),
+  p3<PacketTuple6, 'icmpType'>('process.ts [S11]', 'process.ts', 'PacketTuple6', 'icmpType', true),
+  p3<PacketTuple6, 'icmpCode'>('process.ts [S11]', 'process.ts', 'PacketTuple6', 'icmpCode', true),
+  p3<PacketTuple6, 'tcpFlags'>('process.ts [S11]', 'process.ts', 'PacketTuple6', 'tcpFlags', true),
+  p3<PacketTuple6, 'fragment'>('process.ts [S11]', 'process.ts', 'PacketTuple6', 'fragment', true),
+  p3<AclClear, 'family'>('process.ts [S11]', 'process.ts', 'ProcessRequest', 'family', true, { arm: ['kind', 'acl.clear'] }),
+  p3<TftpTransfer, 'image'>('process.ts [S30]', 'process.ts', 'ProcessRequest', 'image', true, { arm: ['kind', 'tftp.transfer'] }),
+  p3<SnmpOp, 'user'>('process.ts [C23]', 'process.ts', 'ProcessRequest', 'user', true, { arm: ['kind', 'snmp.op'] }),
+  p3<SnmpOp, 'maxRepetitions'>('process.ts [S33]', 'process.ts', 'ProcessRequest', 'maxRepetitions', true, { arm: ['kind', 'snmp.op'] }),
+  p3<SnmpOp, 'nonRepeaters'>('process.ts [S33] (M-26)', 'process.ts', 'ProcessRequest', 'nonRepeaters', true, { arm: ['kind', 'snmp.op'] }),
+  p3<SnmpV3User, 'authProto'>('process.ts [C23]', 'process.ts', 'SnmpV3User', 'authProto', true),
+  p3<SnmpV3User, 'authKey'>('process.ts [C23]', 'process.ts', 'SnmpV3User', 'authKey', true),
+  p3<SnmpV3User, 'privKey'>('process.ts [C23]', 'process.ts', 'SnmpV3User', 'privKey', true),
+  // tables.ts
+  p3<Route6Row, 'routeType'>('tables.ts [S6]', 'tables.ts', 'Route6Row', 'routeType', true),
+  p3<Route6Row, 'owner'>('tables.ts [S6]', 'tables.ts', 'Route6Row', 'owner', true),
+  p3<OspfInterfaceRow, 'auth'>('tables.ts [S5]', 'tables.ts', 'OspfInterfaceRow', 'auth', true),
+  p3<OspfInterfaceRow, 'authKeyId'>('tables.ts [S5]', 'tables.ts', 'OspfInterfaceRow', 'authKeyId', true),
+  p3<Ospf6InterfaceRow, 'passive'>('tables.ts [S6]', 'tables.ts', 'Ospf6InterfaceRow', 'passive', true),
+  p3<Ospf6InterfaceRow, 'rejected'>('tables.ts [S6]', 'tables.ts', 'Ospf6InterfaceRow', 'rejected', true),
+  p3<ArpInspectionRow, 'droppedSrcMac'>('tables.ts [S14]', 'tables.ts', 'ArpInspectionRow', 'droppedSrcMac', true),
+  p3<ArpInspectionRow, 'droppedDstMac'>('tables.ts [S14]', 'tables.ts', 'ArpInspectionRow', 'droppedDstMac', true),
+  p3<ArpInspectionRow, 'droppedIp'>('tables.ts [S14]', 'tables.ts', 'ArpInspectionRow', 'droppedIp', true),
+  p3<ArpInspectionRow, 'aclPermitted'>('tables.ts [S14]', 'tables.ts', 'ArpInspectionRow', 'aclPermitted', true),
+  p3<CdpNeighbourRow, 'voiceVlan'>('tables.ts [S35]', 'tables.ts', 'CdpNeighbourRow', 'voiceVlan', true),
+  p3<LldpNeighbourRow, 'medVlan'>('tables.ts [S35]', 'tables.ts', 'LldpNeighbourRow', 'medVlan', true),
+  p3<LldpNeighbourRow, 'medCapabilities'>('tables.ts [S35]', 'tables.ts', 'LldpNeighbourRow', 'medCapabilities', true),
+  p3<TunnelRow, 'keepalive'>('tables.ts [C17]', 'tables.ts', 'TunnelRow', 'keepalive', true),
+  p3<TunnelRow, 'tunnelKey'>('tables.ts [C17] (`key` in §2.6: renamed, a row key is TableRow.key)', 'tables.ts', 'TunnelRow', 'tunnelKey', true),
+  p3<TunnelRow, 'holdUntil'>('tables.ts [S36a]', 'tables.ts', 'TunnelRow', 'holdUntil', true),
+  p3<ScriptRunRow, 'kind'>('tables.ts [C22]', 'tables.ts', 'ScriptRunRow', 'kind', true),
+  p3<ScriptRunRow, 'recap'>('tables.ts [C22]', 'tables.ts', 'ScriptRunRow', 'recap', true),
+  // simulation.ts
+  p3<TraceFilter, 'reasons'>('simulation.ts [S10]', 'simulation.ts', 'TraceFilter', 'reasons', true),
+  p3<TraceFilter, 'vlans'>('simulation.ts [C32]', 'simulation.ts', 'TraceFilter', 'vlans', true),
+  p3<RunToIdleOptions, 'quiet'>('simulation.ts [S39]', 'simulation.ts', 'RunToIdleOptions', 'quiet', true),
+  p3<Simulation, 'aclLists'>('simulation.ts [S10]', 'simulation.ts', 'Simulation', 'aclLists', true),
+  // device.ts, storage.ts, topology.ts
+  p3<DeviceModel, 'storage'>('device.ts [S29] [S30]', 'device.ts', 'DeviceModel', 'storage', true),
+  p3<StoredFileMeta, 'nominalBytes'>('storage.ts [S30]', 'storage.ts', 'StoredFileMeta', 'nominalBytes', true),
+  p3<StoredFileInput, 'nominalBytes'>('storage.ts [S30]', 'storage.ts', 'StoredFileInput', 'nominalBytes', true),
+  p3<TopologyFile, 'fs'>('storage.ts [S29]', 'storage.ts', 'TopologyFile', 'fs', true),
+  p3<TopologyFile, 'nominalBytes'>('storage.ts [S30]', 'storage.ts', 'TopologyFile', 'nominalBytes', true),
+  p3<TopologyDevice, 'nvram'>('topology.ts [S31]', 'topology.ts', 'TopologyDevice', 'nvram', true),
+  // scenario.ts
+  p3<AclAssertion, 'family'>('scenario.ts [S11]', 'scenario.ts', 'LabAssertion', 'family', true, { arm: ['kind', 'acl'] }),
+  p3<AclDecisionAssertion, 'family'>('scenario.ts [S11]', 'scenario.ts', 'LabAssertion', 'family', true, { arm: ['kind', 'aclDecision'] }),
+  p3<ConvergenceAssertion, 'only'>('scenario.ts [S8]', 'scenario.ts', 'LabAssertion', 'only', true, { arm: ['kind', 'convergence'] }),
+  p3<ConvergenceAssertion, 'atLeastMs'>('scenario.ts [S8]', 'scenario.ts', 'LabAssertion', 'atLeastMs', true, { arm: ['kind', 'convergence'] }),
+  p3<ConvergenceAssertion, 'windowMs'>('scenario.ts [S8]', 'scenario.ts', 'LabAssertion', 'windowMs', true, { arm: ['kind', 'convergence'] }),
+  p3<PacketSeenAssertion, 'dir'>('scenario.ts [S38]', 'scenario.ts', 'LabAssertion', 'dir', true, { arm: ['kind', 'packetSeen'] }),
+  p3<PacketSeenAssertion, 'expect'>('scenario.ts [S38]', 'scenario.ts', 'LabAssertion', 'expect', true, { arm: ['kind', 'packetSeen'] }),
+  p3<PacketSeenAssertion, 'min'>('scenario.ts [S38]', 'scenario.ts', 'LabAssertion', 'min', true, { arm: ['kind', 'packetSeen'] }),
+  p3<PacketSeenAssertion, 'drive'>('scenario.ts [S38]', 'scenario.ts', 'LabAssertion', 'drive', true, { arm: ['kind', 'packetSeen'] }),
+  p3<PacketSeenAssertion, 'includeBackground'>('scenario.ts [S38]', 'scenario.ts', 'LabAssertion', 'includeBackground', true, { arm: ['kind', 'packetSeen'] }),
+  p3<PacketSeenAssertion, 'after'>('scenario.ts [S38]', 'scenario.ts', 'LabAssertion', 'after', true, { arm: ['kind', 'packetSeen'] }),
+  p3<PacketSeenAssertion, 'settleMs'>('scenario.ts [S38]', 'scenario.ts', 'LabAssertion', 'settleMs', true, { arm: ['kind', 'packetSeen'] }),
+  // curriculum.ts (X-5, the product owner's answer to Q11)
+  p3<Lesson, 'labVideo'>('curriculum.ts (X-5)', 'curriculum.ts', 'Lesson', 'labVideo', true),
+];
+
+/**
+ * The §2.13 transition members: optional only until the item that implements them removes the `?` and updates every
+ * typed fake (rule 2); `EngineApi.sendBreak` is the web package's.
+ */
+const TRANSITION_P3C: readonly OptionalMember[] = [p3<CliRuntime, 'sendBreak'>('cli.ts [S31] (§2.13: W3a2 writes it, W3b removes the ?)', 'cli.ts', 'CliRuntime', 'sendBreak', true)];
+
+/**
+ * Members introduced before P3c whose own JSDoc says `@since P3c` about a value, not a new member (§2.4, §2.6, §2.8:
+ * value widenings of members that were optional already), so no P3c list holds them.
+ */
+const EARLIER_WITH_P3C_NOTE: readonly { readonly key: string; readonly why: string }[] = [
+  { key: 'process.ts DropRule.seq', why: "a P3 member; [S11] widens its values with 'nd-na' | 'nd-ns'" },
+  { key: 'process.ts DropRule.family', why: 'a P3 member optional by meaning; [S11] widens it with 6' },
+  { key: 'simulation.ts RunStats.stopped', why: "a P1 member; [S39] appends the value 'quiet'" },
+  { key: 'tables.ts OspfLsaRow.mask', why: 'a P3 member; [S4] documents it for the summary types 3 and 4' },
+  { key: 'tables.ts OspfLsaRow.metric', why: 'a P3 member; [S4] documents it for the summary types 3 and 4' },
+  { key: 'tables.ts AclRow.implicit', why: "a P3 member optional by meaning; [S11] widens it with 'nd-na' | 'nd-ns'" },
+];
+
+const SINCE_P3C = /@since P3c\b/;
+const OBM_P3C = /@since P3c\b[^\n]*\(optional by meaning/;
+
+/** Every contract member whose own JSDoc block says `@since P3c`, optional or not, by `file Owner.member`. */
+function p3cTaggedMembers(): Map<string, TaggedMember> {
+  const out = new Map<string, TaggedMember>();
+  for (const file of readdirSync(CONTRACTS).filter((f) => f.endsWith('.ts')).sort()) {
+    const { text, sf } = parse(file);
+    const visit = (node: ts.Node, owner: string): void => {
+      const at = ts.isInterfaceDeclaration(node) || ts.isTypeAliasDeclaration(node) ? node.name.text : owner;
+      if (ts.isPropertySignature(node) || ts.isMethodSignature(node)) {
+        const doc = jsDocAt(text, node.pos);
+        if (SINCE_P3C.test(doc)) {
+          const line = sf.getLineAndCharacterOfPosition(node.getStart()).line + 1;
+          out.set(`${file} ${at}.${node.name.getText()}`, { optional: node.questionToken !== undefined, doc, line });
+        }
+      }
+      ts.forEachChild(node, (c) => visit(c, at));
+    };
+    visit(sf, '');
+  }
+  return out;
+}
+
+describe('contracts: P3c members optional by meaning (ARCHITECTURE-P3C §2.14, §9.2 W0 item 3)', () => {
+  it('lists each member once, apart from the P2 and P3 lists', () => {
+    const labels = MEMBERS_P3C.map(label);
+    expect(new Set(labels).size).toBe(labels.length);
+    expect(MEMBERS_P3C).toHaveLength(59);
+    const earlier = new Set([...MEMBERS, ...MEMBERS_P3].map(label));
+    expect(labels.filter((l) => earlier.has(l))).toEqual([]);
+  });
+
+  describe.each(MEMBERS_P3C.map((m) => [label(m), m] as const))('%s', (_name, m) => {
+    it('the type accepts an object without it (type-level check, compiled by tsc)', () => {
+      expect(m.accepted).toBe(true);
+    });
+
+    it('the source keeps its ? and tags it @since P3c (optional by meaning)', () => {
+      expect(locate(m).optional).toBe(true);
+      const tag = tagOf(m);
+      expect(tag, `${label(m)}: JSDoc`).toMatch(OBM);
+      expect(tag, `${label(m)}: JSDoc`).toMatch(SINCE_P3C);
+    });
+  });
+
+  it.each(TRANSITION_P3C.map((m) => [label(m), m] as const))('%s: a §2.13 transition member keeps its ? and is not optional by meaning', (_name, m) => {
+    expect(m.accepted).toBe(true);
+    expect(locate(m).optional).toBe(true);
+    const doc = p3cTaggedMembers().get(keyOf(m))?.doc;
+    expect(doc, `${label(m)}: JSDoc`).toMatch(SINCE_P3C);
+    expect(doc, `${label(m)}: JSDoc`).toMatch(/[Tt]ransition `\?`/);
+    expect(doc, `${label(m)}: JSDoc`).not.toMatch(OBM);
+  });
+
+  it('no @since P3c contract member is optional unless it is listed (no transition ? escapes the list)', () => {
+    const listed = new Set([...MEMBERS, ...MEMBERS_P3, ...MEMBERS_P3C, ...TRANSITION_P3C].map(keyOf));
+    const earlier = new Set(EARLIER_WITH_P3C_NOTE.map((e) => e.key));
+    const stray: string[] = [];
+    for (const [k, v] of p3cTaggedMembers()) if (v.optional && !listed.has(k) && !earlier.has(k)) stray.push(`${k} (line ${v.line})`);
+    expect(stray).toEqual([]);
+  });
+
+  it('the earlier members with a P3c note are where they were, and still optional', () => {
+    const tagged = p3cTaggedMembers();
+    for (const e of EARLIER_WITH_P3C_NOTE) expect(tagged.get(e.key)?.optional, `${e.key}: ${e.why}`).toBe(true);
+  });
+
+  it('every member whose own JSDoc says "@since P3c (optional by meaning" keeps its ?', () => {
+    const lost = [...p3cTaggedMembers()].filter(([, v]) => OBM_P3C.test(v.doc) && !v.optional).map(([k, v]) => `${k} (line ${v.line})`);
     expect(lost).toEqual([]);
   });
 });

@@ -38,6 +38,7 @@ import {
 import { CHECKERS, UNAVAILABLE_KIND_DETAILS, runCheck, withNotes } from '../src/sim/lab-checks/registry.js';
 import { pcRouterPc } from '../src/sim/scenarios.js';
 import { createSimulation } from '../src/sim/simulation.js';
+import { P3C_PENDING_FACTS, P3C_PENDING_PROTOCOLS } from './p3c-approved-items.js';
 
 /** Every assertion kind of the contract (a missing or extra key does not compile). */
 const KINDS: { readonly [K in LabAssertion['kind']]: true } = {
@@ -64,6 +65,9 @@ const KINDS: { readonly [K in LabAssertion['kind']]: true } = {
   service: true,
   path: true,
   traffic: true,
+  // ARCHITECTURE-P3C §2.10 (W0): the [S8] and [S38] kinds, stubs until their W3b sim item
+  convergence: true,
+  packetSeen: true,
 };
 
 /** Every neighbour protocol, with the detail its W1 stub gives. */
@@ -73,6 +77,8 @@ const NEIGHBOR_STUBS: { readonly [P in NeighborProtocol]: string } = {
   lldp: 'LLDP neighbour checks are not available in this build.',
   ppp: 'PPP neighbour checks are not available in this build.',
   eigrp: 'EIGRP neighbour checks are not available in this build.',
+  // ARCHITECTURE-P3C §2.10 (W0) [S6]
+  ospfv3: 'OSPFv3 neighbour checks are not available in this build.',
 };
 
 /** Every fact name (a missing or extra key does not compile). */
@@ -122,7 +128,24 @@ const FACTS: { readonly [F in LabFactName]: true } = {
   'eigrp.feasibleSuccessor': true,
   'eigrp.kValues': true,
   'ipsec.sa': true,
+  // ARCHITECTURE-P3C §2.10 (W0)
+  'ospf.abr': true,
+  'ospf.asbr': true,
+  'ospfv3.routerId': true,
+  'ospfv3.ifaceArea': true,
+  'ospfv3.ifaceCost': true,
+  'ipsg.enabled': true,
+  'storage.file': true,
+  'device.imageVersion': true,
+  'device.configRegister': true,
 };
+
+/**
+ * ARCHITECTURE-P3C §7 W0, §9.2 W0 item 1: the P3c neighbour protocol and facts whose adapter items have not landed. W0
+ * maps each to an area thunk returning {}, so each entry is exactly undefined until its item fills it (and removes it
+ * from these lists in the same change).
+ */
+// the lists live in p3c-approved-items.ts, shared with sim.lab-checks.p3.ospf
 
 /** A lab of one task per assertion (points 1 each), graded as the worker grades it. */
 function lab(assertions: readonly LabAssertion[], topo: Topology = pcRouterPc()): ScenarioInfo {
@@ -159,8 +182,15 @@ describe('the registry is exhaustive', () => {
     expect(Object.keys(NEIGHBOR_SOURCES).sort()).toEqual(Object.keys(NEIGHBOR_STUBS).sort());
     expect(Object.keys(NEIGHBOR_PROTOCOL_LABELS).sort()).toEqual(Object.keys(NEIGHBOR_STUBS).sort());
     expect(Object.keys(FACT_READERS).sort()).toEqual(Object.keys(FACTS).sort());
-    for (const p of Object.keys(NEIGHBOR_STUBS) as NeighborProtocol[]) expect(NEIGHBOR_SOURCES[p]).toBeDefined();
-    for (const f of Object.keys(FACTS) as LabFactName[]) expect(FACT_READERS[f]).toBeDefined();
+    // every P3a entry is filled; each P3c entry is exactly undefined until its adapter item lands (P3C_PENDING_*)
+    for (const p of Object.keys(NEIGHBOR_STUBS) as NeighborProtocol[]) {
+      if (P3C_PENDING_PROTOCOLS.includes(p)) expect(NEIGHBOR_SOURCES[p], p).toBeUndefined();
+      else expect(NEIGHBOR_SOURCES[p], p).toBeDefined();
+    }
+    for (const f of Object.keys(FACTS) as LabFactName[]) {
+      if (P3C_PENDING_FACTS.includes(f)) expect(FACT_READERS[f], f).toBeUndefined();
+      else expect(FACT_READERS[f], f).toBeDefined();
+    }
     expect(Object.keys(IDENTITY_SOURCES)).toEqual(['name', 'address', 'mac', 'ospf', 'eigrp']);
     expect(IDENTITY_SOURCES.ospf).toBeDefined();
     expect(IDENTITY_SOURCES.eigrp).toBeDefined();

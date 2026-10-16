@@ -104,6 +104,14 @@ export const DROP_VOCAB: Readonly<Record<DropReason, DropVocab>> = Object.freeze
     'Send less traffic in this class, or raise the rate of its "police" or "priority" line.'),
   'ipsec-no-sa': drop('ipsec-no-sa', 'no security association', 'An encrypted packet named a security association this router does not have', 'policy',
     'Wait for the tunnel to negotiate again, or check the keys at both ends.'),
+  // ── P3c (ARCHITECTURE-P3C §2.7, §9.2 W0 item 1; the engine emits them from W2a) ──
+  'ip-source-guard': drop('ip-source-guard', 'refused by IP source guard',
+    'IP source guard found no binding for the source address of this packet on its port', 'policy',
+    'Let the host take its address by DHCP, or add a static binding ("ip source binding") for it.'),
+  'storm-control': drop('storm-control', 'storm control', 'Storm control dropped the frame: its traffic class was over the level set on the port for this window', 'policy',
+    'Find the source of the flood (a loop or a noisy host), or raise the "storm-control" level on the port.'),
+  'span-destination': drop('span-destination', 'monitor port', 'A SPAN destination port forwards nothing it receives: it only sends copies to the analyser', 'policy',
+    'Plug ordinary devices into another port, or remove the "monitor session" destination.'),
 });
 
 /** Every drop reason in table order. */

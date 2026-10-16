@@ -287,7 +287,8 @@ describe('the [S2] routingUi slice', () => {
 });
 
 describe('concept-view routing by ConceptToolId (D24)', () => {
-  const ALL: readonly ConceptToolId[] = ['subnetting', 'ipv6', 'queueing', 'data-formats', 'wildcard'];
+  // ARCHITECTURE-P3C §2.10 (W0): [S22] 'wan', [S28] 'yang' and [C26] 'sdn' join the contract as stub entries (not built)
+  const ALL: readonly ConceptToolId[] = ['subnetting', 'ipv6', 'queueing', 'data-formats', 'wildcard', 'wan', 'yang', 'sdn'];
 
   it('has one registry entry per ConceptToolId; every tool is built (the P3 tools since W3)', () => {
     expect(Object.keys(CONCEPT_TOOL_VIEWS).sort()).toEqual([...ALL].sort());

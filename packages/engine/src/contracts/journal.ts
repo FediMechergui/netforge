@@ -73,7 +73,12 @@ export type JournalOp =
   | { op: 'cliOpen'; device: DeviceId; via: 'console' | 'vty' }
   | { op: 'cliExec'; session: SessionId; line: string }
   | { op: 'cliInterrupt'; session: SessionId }
-  | { op: 'cliClose'; session: SessionId };
+  | { op: 'cliClose'; session: SessionId }
+  /**
+   * @since P3c [S31] A break sent on a console session (the terminal's "Send break", Ctrl+Break): the only new journal op
+   * of P3c. Within the boot window a router halts in ROMMON; a vty session is refused (`breakNotOnVty`).
+   */
+  | { op: 'cliBreak'; session: SessionId };
 
 /** @since P2 [S1] A journal entry: the op, where it was applied, and the trace head right after it. */
 export interface JournalEntry {

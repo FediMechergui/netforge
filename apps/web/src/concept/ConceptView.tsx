@@ -50,6 +50,11 @@ export const CONCEPT_TOOL_VIEWS: Readonly<Record<ConceptTool, ConceptToolView>> 
   queueing: () => <QueueingTool />,
   'data-formats': () => <DataFormatsTool />,
   wildcard: () => <WildcardTool />,
+  // P3c (ARCHITECTURE-P3C §2.10, §9.2 W0 item 1): stub entries, not built in this build; [S22] 'wan' and [C26] 'sdn'
+  // arrive with W1b web-concept, [S28] 'yang' with its item, each with its `CONCEPT_TOOLS` row
+  wan: null,
+  yang: null,
+  sdn: null,
 });
 
 /** @since P3 Whether this build has the tool (a registered view and a `CONCEPT_TOOLS` row to name it). */

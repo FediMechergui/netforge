@@ -151,6 +151,7 @@ const sources = (): { readonly [P in NeighborProtocol]: NeighborSource | undefin
   eigrp: undefined,
   cdp: DISCOVERY_NEIGHBOR_SOURCES.cdp,
   lldp: DISCOVERY_NEIGHBOR_SOURCES.lldp,
+  ospfv3: undefined, // ARCHITECTURE-P3C §2.10 (W0)
 });
 
 /** A reader table holding only this area's readers (every other fact unavailable). */

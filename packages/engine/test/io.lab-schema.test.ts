@@ -288,6 +288,7 @@ const EVERY_KIND: { readonly [K in Kind]: Required<Extract<LabAssertion, { kind:
     kind: 'acl',
     device: 'R1',
     list: 'VTY',
+    family: 4,
     type: 'standard',
     exists: true,
     entries: ['permit 192.168.1.0 0.0.0.255'],
@@ -302,6 +303,7 @@ const EVERY_KIND: { readonly [K in Kind]: Required<Extract<LabAssertion, { kind:
     kind: 'aclDecision',
     device: 'R1',
     list: '101',
+    family: 4,
     packet: { proto: 'tcp', src: '192.168.1.10', dst: '10.2.2.2', srcPort: 49152, dstPort: 80, established: false },
     expect: 'deny',
     entry: 20,
@@ -356,6 +358,32 @@ const EVERY_KIND: { readonly [K in Kind]: Required<Extract<LabAssertion, { kind:
     ],
     runMs: 10000,
     expect: [{ receiver: 'PC2', flow: 'f1', maxLossPct: 0, maxDelayMs: 100, maxJitterMs: 30 }],
+    feedback: 'f',
+    misconception: 'm',
+  },
+  // ARCHITECTURE-P3C §2.10 (W0): the [S8] and [S38] kinds join the contract and the schema
+  convergence: {
+    kind: 'convergence',
+    fault: { cut: { a: 'R1', b: 'R2' } },
+    protocol: 'routing',
+    only: 'ospf',
+    withinMs: 25000,
+    atLeastMs: 1000,
+    windowMs: 120000,
+    feedback: 'f',
+    misconception: 'm',
+  },
+  packetSeen: {
+    kind: 'packetSeen',
+    at: { device: 'SW1', port: 'Fa0/24' },
+    filter: 'snmp.community == "NMS-RO"',
+    dir: 'both',
+    expect: 'seen',
+    min: 1,
+    drive: { snmp: { from: 'PC1', to: 'R1', community: 'NMS-RO', oid: '1.3.6.1.2.1.1.5.0' }, runMs: 5000 },
+    includeBackground: false,
+    after: [{ powerOff: 'PC2' }],
+    settleMs: 1000,
     feedback: 'f',
     misconception: 'm',
   },
@@ -414,8 +442,9 @@ function everyKindDoc(): LabDocument {
 }
 
 describe('every assertion kind of §2.10, each with every member', () => {
-  it('lists all 23 kinds', () => {
-    expect(Object.keys(EVERY_KIND)).toHaveLength(23);
+  it('lists all 25 kinds', () => {
+    // 23 at P3a; ARCHITECTURE-P3C §2.10 (W0) adds [S8] convergence and [S38] packetSeen
+    expect(Object.keys(EVERY_KIND)).toHaveLength(25);
   });
 
   it('passes the schema unchanged, through JSON, and through scenarioOf', () => {
@@ -474,7 +503,7 @@ function errorsAfter(edit: (d: Json) => void): string[] {
 }
 
 const KIND_LIST =
-  'config, port, table, process, link, counter, traceSeen, vlan, switchport, stp, etherchannel, portSecurity, route, nat, fhrp, neighbor, fact, acl, aclDecision, service, path, traffic, connectivity';
+  'config, port, table, process, link, counter, traceSeen, vlan, switchport, stp, etherchannel, portSecurity, route, nat, fhrp, neighbor, fact, acl, aclDecision, service, path, traffic, connectivity, convergence, packetSeen';
 /** The kinds a follow-up check (`connectivity.then`) may be: no connectivity and no clone kind (W5 fix #26). */
 const FOLLOW_UP_KIND_LIST = 'config, port, table, process, link, counter, traceSeen, vlan, switchport, stp, etherchannel, portSecurity, route, nat, fhrp, neighbor, fact, acl, aclDecision';
 const FOLLOW_UP_REFUSAL = `must be one of ${FOLLOW_UP_KIND_LIST} (a follow-up check reads state in the same clone, so it cannot be a connectivity, service, path or traffic check)`;
@@ -499,7 +528,7 @@ describe('wrong documents are refused with readable messages', () => {
     expect(errorsAfter((d) => (d.meta.version = 1.5))).toEqual(['meta.version: must be an integer (got float)']);
     expect(errorsAfter((d) => (d.meta.seed = '7'))).toEqual(['meta.seed: must be a number (got string)']);
     expect(errorsAfter((d) => (d.meta.title = ''))).toEqual(['meta.title: must not be empty']);
-    expect(errorsAfter((d) => (d.meta.concept = 'trigonometry'))).toEqual(['meta.concept: must be one of subnetting, ipv6, queueing, data-formats, wildcard']);
+    expect(errorsAfter((d) => (d.meta.concept = 'trigonometry'))).toEqual(['meta.concept: must be one of subnetting, ipv6, queueing, data-formats, wildcard, wan, yang, sdn']);
     expect(errorsAfter((d) => (d.meta.author = 'me'))).toEqual(['meta: unknown keys: author']);
   });
 
@@ -533,9 +562,9 @@ describe('wrong documents are refused with readable messages', () => {
     ]);
     expect(errorsAfter((d) => (d.tasks[0].assertions[0] = { kind: 'vlan', device: 'R1', vlan: 5000 }))).toEqual([`${at}.vlan: must be between 1 and 4094`]);
     expect(errorsAfter((d) => (d.tasks[0].assertions[0] = { kind: 'fact', device: 'R1', fact: 'ospf.area' }))[0]).toMatch(
-      new RegExp(`^${at.replace(/[[\]]/g, '\\$&')}\\.fact: must be one of ospf\\.routerId, .*, ipsec\\.sa$`),
+      new RegExp(`^${at.replace(/[[\]]/g, '\\$&')}\\.fact: must be one of ospf\\.routerId, .*, ipsec\\.sa, ospf\\.abr, ospf\\.asbr, ospfv3\\.routerId, ospfv3\\.ifaceArea, ospfv3\\.ifaceCost, ipsg\\.enabled, storage\\.file, device\\.imageVersion, device\\.configRegister$`),
     );
-    expect(errorsAfter((d) => (d.tasks[1].assertions[0].dropReason = 'firewall'))[0]).toMatch(/^tasks\[1\]\.assertions\[0\]\.dropReason: must be one of link-down, .*, ipsec-no-sa$/);
+    expect(errorsAfter((d) => (d.tasks[1].assertions[0].dropReason = 'firewall'))[0]).toMatch(/^tasks\[1\]\.assertions\[0\]\.dropReason: must be one of link-down, .*, ipsec-no-sa, ip-source-guard, storm-control, span-destination$/);
     expect(errorsAfter((d) => (d.tasks[1].assertions[0].family = 5))).toEqual(['tasks[1].assertions[0].family: must be 4 or 6']);
   });
 
@@ -553,7 +582,7 @@ describe('wrong documents are refused with readable messages', () => {
   });
 
   it('refuses a follow-up check that pings again, and a grader fault that is not exactly one fault', () => {
-    expect(KIND_LIST.replace(', service, path, traffic, connectivity', '')).toBe(FOLLOW_UP_KIND_LIST);
+    expect(KIND_LIST.replace(', service, path, traffic, connectivity, convergence, packetSeen', '')).toBe(FOLLOW_UP_KIND_LIST);
     expect(errorsAfter((d) => (d.tasks[1].assertions[0].then = [{ kind: 'connectivity', from: 'PC1', to: 'R1', expect: 'success' }]))).toEqual([
       `tasks[1].assertions[0].then[0].kind: ${FOLLOW_UP_REFUSAL}`,
     ]);
@@ -593,7 +622,7 @@ describe('wrong documents are refused with readable messages', () => {
       'tasks[0].assertions[0].filter.devices[0]: unknown device id "R1" (a trace filter names devices by id)',
     ]);
     expect(errorsAfter((d) => (d.tasks[0].assertions[0] = { kind: 'traceSeen', filter: { machines: ['bgp'] } }))[0]).toMatch(
-      /^tasks\[0\]\.assertions\[0\]\.filter\.machines\[0\]: must be one of stp-port, .*, ike$/,
+      /^tasks\[0\]\.assertions\[0\]\.filter\.machines\[0\]: must be one of stp-port, .*, ike, ospf6-if, ospf6-nbr$/,
     );
   });
 

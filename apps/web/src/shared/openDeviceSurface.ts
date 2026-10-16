@@ -54,6 +54,10 @@ export const SURFACE_PANEL_TAB: Readonly<Record<GuiPanelId, InspectorTab>> = Obj
   // P3 (ARCHITECTURE-P3 §5.9, §9.2 W0 item 1; the architect's W0 stub, final values): Desktop apps of hosts.
   'desktop.traffic': 'desktop',
   'desktop.automation': 'desktop',
+  // P3c (ARCHITECTURE-P3C §2.1, §9.2 W0 item 1; the architect's W0 stub, final values): the [S33] SNMP manager and the
+  // [S27] API client are Desktop apps of hosts (stage P3c: derived only after the W4b flip).
+  'desktop.snmp-manager': 'desktop',
+  'desktop.api-client': 'desktop',
 });
 
 const INSPECTOR_TABS: readonly InspectorTab[] = ['overview', 'ports', 'config', 'tables', 'processes', 'physical', 'desktop', 'wireless', 'services'];
