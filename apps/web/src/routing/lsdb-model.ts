@@ -22,21 +22,21 @@
  * memoised per device object (`lsdbOf`), like the canvas overlay models. The SPF model (`canvas/overlays/spf-model.ts`)
  * builds on the same per-device data.
  */
-import {
-  ospfLsaKey,
-  type DeviceId,
-  type DeviceSnapshot,
-  type Ipv4Address,
-  type LinkId,
-  type OspfAreaId,
-  type OspfInterfaceRow,
-  type OspfLsaRow,
-  type OspfLsaType,
-  type OspfRouterLink,
-  type PortId,
-  type SimSnapshot,
-  type SimTime,
+import type {
+  DeviceId,
+  DeviceSnapshot,
+  Ipv4Address,
+  LinkId,
+  OspfAreaId,
+  OspfInterfaceRow,
+  OspfLsaRow,
+  OspfLsaType,
+  OspfRouterLink,
+  PortId,
+  SimSnapshot,
+  SimTime,
 } from '@netforge/engine';
+import { ospfLsaKey } from '@netforge/engine/contracts';
 import { compareLsaInstances, ipv4ToU32, lsaAgeAt, LSA_MAX_AGE_S, maskToPrefixLen, u32ToIpv4 } from '@netforge/engine/pure';
 import { areaLabel } from '../canvas/overlays/ospf-model';
 

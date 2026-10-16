@@ -11,7 +11,8 @@
  * per-tunnel counters (display only, rule 20). A port without a `tunnels` row shows nothing. Every state keeps a text
  * channel next to its glyph; wording is original (§0 rule 6).
  */
-import { formatSimTime, walkConfigText } from '@netforge/engine';
+import { formatSimTime } from '@netforge/engine/contracts';
+import { walkConfigText } from '@netforge/engine/web';
 import type { DeviceSnapshot, IpsecSaRow, PortId, PortSnapshot, TunnelRow } from '@netforge/engine';
 import { tunnelReasonText } from '../canvas/overlays/wan-model';
 import { extraTableRows } from './SwitchportSection';

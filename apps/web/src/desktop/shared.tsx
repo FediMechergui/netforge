@@ -6,7 +6,7 @@
  * Nothing here branches on device kind; apps find their ports by kind and role (D2/D3). Wording is original.
  */
 import type { ReactNode } from 'react';
-import { RF } from '@netforge/engine';
+import { RF } from '@netforge/engine/contracts';
 import type { DeviceId, DeviceSnapshot, PortRef, SimSnapshot } from '@netforge/engine';
 import { engine } from '../bridge/client';
 import { useStore } from '../store/store';

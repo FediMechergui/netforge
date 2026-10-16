@@ -38,18 +38,18 @@
  * trails of a stream's overlapping legs would fill the cable). Every other leg is placed at `now` as before.
  */
 import { Container, Graphics, type Text } from 'pixi.js';
-import {
-  inflightKey,
-  samePort,
-  type InflightFrame,
-  type LinkId,
-  type LinkSnapshot,
-  type PduId,
-  type PduSummary,
-  type PortRef,
-  type ProtoName,
-  type SimTime,
+import type {
+  InflightFrame,
+  LinkId,
+  LinkSnapshot,
+  PduId,
+  PduSummary,
+  PortRef,
+  ProtoName,
+  SimTime,
 } from '@netforge/engine';
+import { samePort } from '@netforge/engine/contracts';
+import { inflightKey } from '@netforge/engine/web';
 import { isTrafficDatagram } from '../bridge/protocol';
 import { protocolVocab, type PacketShape } from '../vocab/protocols';
 import { encryptedPulseAlpha, tunnelLegStyle } from './overlays/wan-model';

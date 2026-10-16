@@ -20,7 +20,7 @@
  * Every encoding keeps a non-colour channel (letters, ✓ and ✗, the padlock, words); nothing is a dash pattern.
  * Pure: no Pixi, no store. `deriveDeviceWan` depends on one device object only, so the W3 registry entry memoises it.
  */
-import { cidr } from '@netforge/engine';
+import { cidr } from '@netforge/engine/contracts';
 import type {
   DeviceId,
   DeviceSnapshot,

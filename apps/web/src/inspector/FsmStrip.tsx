@@ -16,7 +16,7 @@
  */
 import { useCallback, useMemo, useState } from 'react';
 import type { KeyboardEvent } from 'react';
-import { formatSimTime } from '@netforge/engine';
+import { formatSimTime } from '@netforge/engine/contracts';
 import type { DeviceId, FsmMachine, PduId, PortId, SimTime, TraceEvent } from '@netforge/engine';
 import { store, useStore } from '../store/store';
 import { FSM_MACHINES, fsmLabel, fsmStateIndex, isFsmMachine, FSM_VOCAB } from '../vocab/fsm';

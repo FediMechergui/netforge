@@ -31,16 +31,9 @@ import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { castDraft, setAutoFreeze, type Draft } from 'immer';
 import type { StoreApi } from 'zustand';
-import {
-  inflightKey,
-  selectionKey,
-  type DeviceSnapshot,
-  type InflightFrame,
-  type LaneId,
-  type SessionId,
-  type SimSnapshot,
-  type TraceEvent,
-} from '@netforge/engine';
+import type { DeviceSnapshot, InflightFrame, LaneId, SessionId, SimSnapshot, TraceEvent } from '@netforge/engine';
+import { selectionKey } from '@netforge/engine/contracts';
+import { inflightKey } from '@netforge/engine/web';
 import { DEFAULT_SIM_FILTERS, type EngineBatch, type SnapshotDelta } from '../bridge/protocol';
 import { effectiveCableMedia } from '../app/cable/cable-compat';
 import { attachPersistence, loadPersistedUi, RECENT_LIMIT, savePersistedUi, persistedSliceOf } from './persist';

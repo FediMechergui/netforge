@@ -15,7 +15,7 @@
  * Escape closes the flyout and returns focus to the button. Wording is original (§1.6).
  */
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
-import { portKey } from '@netforge/engine';
+import { portKey } from '@netforge/engine/contracts';
 import type { DeviceSnapshot, MediaType, PortRef, PortSnapshot, SimSnapshot } from '@netforge/engine';
 import { engine } from '../../bridge/client';
 import { store, useStore } from '../../store/store';

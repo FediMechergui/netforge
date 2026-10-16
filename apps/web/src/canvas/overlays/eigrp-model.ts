@@ -18,7 +18,7 @@
  * never a dash pattern (P2 D20). Pure: no Pixi, no store. `deriveDeviceEigrp` depends on one device object only, so
  * the W3 registry entry memoises it per device object.
  */
-import { EIGRP_INFINITY } from '@netforge/engine';
+import { EIGRP_INFINITY } from '@netforge/engine/contracts';
 import type { DeviceId, DeviceSnapshot, EigrpPath, EigrpTopologyRow, Ipv4Address, LinkId, PortId, SimSnapshot } from '@netforge/engine';
 
 // ── chips and text ───────────────────────────────────────────────────────────

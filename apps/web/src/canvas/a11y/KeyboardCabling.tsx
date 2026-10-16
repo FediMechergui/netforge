@@ -13,7 +13,7 @@
  */
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
-import { samePort } from '@netforge/engine';
+import { samePort } from '@netforge/engine/contracts';
 import type { CableValidation, DeviceId, MediaType, PortRef } from '@netforge/engine';
 import { engine } from '../../bridge/client';
 import { store, useStore } from '../../store/store';

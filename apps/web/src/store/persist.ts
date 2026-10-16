@@ -14,7 +14,8 @@
  * values are untrusted, so every field is validated and unknown or malformed values fall back to the defaults.
  * The theme keeps its P0 key; the rest lives in one versioned JSON record.
  */
-import { MEDIA, type MediaType } from '@netforge/engine';
+import type { MediaType } from '@netforge/engine';
+import { MEDIA } from '@netforge/engine/contracts';
 import type { StoreApi } from 'zustand';
 import { MEDIA_PICKER_ORDER } from '../vocab/media';
 import { DOCK_OPEN_HEIGHT, INSPECTOR_OPEN_WIDTH, isDockTabAvailable } from '../dock/registry';

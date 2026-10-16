@@ -15,7 +15,8 @@
  * rate, or the reason the link is down in plain words. All wording is original (§1.6); nothing relies on colour.
  */
 import { useId } from 'react';
-import { CHANNELS, MAX_DISTANCE_M } from '@netforge/engine';
+import { CHANNELS } from '@netforge/engine/contracts';
+import { MAX_DISTANCE_M } from '@netforge/engine/web';
 import type { AddLinkSpec, DeviceId, DeviceSnapshot, LinkSnapshot, PortSnapshot, RadioPortSpec, RfBand } from '@netforge/engine';
 import { engine } from '../bridge/client';
 import type { EngineApi } from '../bridge/protocol';

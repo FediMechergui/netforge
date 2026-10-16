@@ -7,6 +7,8 @@
  * protocols carry the badge letter and the shape name from `vocab/protocols.ts` — no second vocabulary is
  * invented here and no meaning rests on colour alone.
  *
+ * P3c [C32] (b): a VLAN row (`TraceFilter.vlans`), offered from the VLAN tags the loaded rows carry.
+ *
  * ponytail: no counts of its own, no search box — the kind rows come straight from the vocabulary's groups, and
  * device and message chips are the ones the caller found in the loaded rows.
  */
@@ -39,6 +41,8 @@ export function chipTitle(group: ChipGroup, value: string, on: boolean): string 
     }
     case 'devices':
       return `${verb} events that mention ${value}`;
+    case 'vlans':
+      return `${verb} frames tagged for VLAN ${value} (the 802.1Q tag a trunk carries)`;
     default:
       return `${verb} packets tagged ${value}`;
   }
@@ -79,13 +83,15 @@ export interface FilterChipsProps {
   onBackground(next: boolean): void;
   devices: readonly ChipDevice[];
   tags: readonly string[];
+  /** @since P3c [C32] (b) The VLAN ids the VLAN chips offer (the tags seen in the loaded rows); none: a hint. */
+  vlans?: readonly number[];
   /** Matching rows per trace kind in the loaded page, shown on the kind chips. */
   counts?: ReadonlyMap<string, number>;
   /** Height of the scrolling chip area in CSS pixels. */
   maxHeight?: number;
 }
 
-export function FilterChips({ idPrefix, selection, onToggle, onBackground, devices, tags, counts, maxHeight = 160 }: FilterChipsProps) {
+export function FilterChips({ idPrefix, selection, onToggle, onBackground, devices, tags, vlans = [], counts, maxHeight = 160 }: FilterChipsProps) {
   const rowId = (name: string): string => `${idPrefix}-${name}`;
   return (
     <div style={{ maxHeight, overflowY: 'auto' }}>
@@ -162,6 +168,19 @@ export function FilterChips({ idPrefix, selection, onToggle, onBackground, devic
         >
           {selection.background ? '●' : '○'} Keepalives
         </button>
+      </div>
+
+      <div className="dock-toolbar" role="group" aria-labelledby={rowId('vlans')}>
+        <span className="mode-label" id={rowId('vlans')}>
+          {CHIP_GROUP_LABELS.vlans}
+        </span>
+        {vlans.length === 0 ? (
+          <span className="dock-hint">VLANs appear here once a trunk carries tagged frames.</span>
+        ) : (
+          vlans.map((v) => (
+            <Chip key={v} group="vlans" value={String(v)} text={`VLAN ${v}`} on={chipIsOn(selection, 'vlans', String(v))} onToggle={onToggle} />
+          ))
+        )}
       </div>
     </div>
   );

@@ -12,7 +12,8 @@
  * Views outside the visible world rectangle are hidden and not redrawn (culling).
  */
 import { Container, Graphics, type Text } from 'pixi.js';
-import { portKey, type LinkId, type LinkSnapshot, type MediaType, type Selection } from '@netforge/engine';
+import type { LinkId, LinkSnapshot, MediaType, Selection } from '@netforge/engine';
+import { portKey } from '@netforge/engine/contracts';
 import { MEDIA_VOCAB, type MediaStroke } from '../vocab/media';
 import { isRadioLink, type Layout, type PortAnchor } from './ports';
 import { inflateRect, makeText, rectsIntersect, setText, type Lod, type Rect, type ThemeColors } from './scene';

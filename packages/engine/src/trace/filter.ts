@@ -20,6 +20,8 @@
  *   (`frameRx`, `drop` when both are set, `portState`, `backoff`, `carrierDefer`, @since P3 `frameQueued`).
  * - `tables`: `tableWrite`/`tableExpire` `table`.
  * - `tags`: `PduSummary.tag`, exact string equality.
+ * - `vlans` @since P3c [C32]: `PduSummary.vlan` (the outermost 802.1Q VID) is listed. Events without a PduSummary, and
+ *   untagged frames (no `vlan`), never match while the key is set.
  * - `includeBackground`: unless it is `true`, a `frameTx` flagged `background` never matches (keepalives, beacons),
  *   whatever the other keys say; @since P2 (ARCHITECTURE-P2 §2.7) the same holds for a `drop` flagged `background`
  *   (a keepalive, beacon, BPDU or HSRP hello dropped at a device).
@@ -165,6 +167,11 @@ export function matchesTraceFilter(filter: TraceFilter, ev: TraceEvent): boolean
       if (!have.some((p) => wanted.includes(p))) return false;
     }
     if (filter.tags !== undefined && (pdu.tag === undefined || !filter.tags.includes(pdu.tag))) return false;
+  }
+
+  if (filter.vlans !== undefined) {
+    const pdu = pduOf(ev);
+    if (pdu === undefined || pdu.vlan === undefined || !filter.vlans.includes(pdu.vlan)) return false;
   }
 
   if (filter.devices !== undefined) {

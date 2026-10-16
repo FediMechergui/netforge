@@ -12,7 +12,8 @@
  * ponytail: one flat list of level cards, in catalogue order. No hero image, no marketing section, no router —
  * the shell owns which surface is up, this page only says what there is to pick.
  */
-import { COURSES, lessonsOf, type Course } from '@netforge/engine';
+import type { Course } from '@netforge/engine';
+import { COURSES, lessonsOf } from '@netforge/engine/curriculum';
 
 export interface LandingProps {
   readonly courses?: readonly Course[];

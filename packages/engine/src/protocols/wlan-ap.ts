@@ -44,8 +44,9 @@
  *    the station's first frame can reach the controller; only when capwap-wtp runs on the device. Local BSSs never send
  *    it, so P1 wireless traces are unchanged;
  *  • an 802.11 data frame of a central BSS (handed over unchanged by the air, `frameArrival.central`) goes to
- *    capwap-wtp with `deliver`: the pipeline's demux reaches this daemon's key-less dot11 selector first until the
- *    `DemuxSelector.frame` key is honoured, so the hand-over is explicit here (a local BSS never sees such a frame).
+ *    capwap-wtp with `deliver`: the pipeline's demux reaches this daemon's key-less dot11 selector first (the
+ *    `DemuxSelector.frame` key was deleted in P3c W0h, [C32]), so the hand-over is explicit here (a local BSS never
+ *    sees such a frame).
  *
  * `stateSnapshot()`:
  *   { process: 'wlan-ap', state: { radios: [{ port, security, up, beacons, clients: [{ station, state, aid? }], ssid?,

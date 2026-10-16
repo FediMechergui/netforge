@@ -21,7 +21,7 @@
  * @since P3 (ARCHITECTURE-P3 §9.2 ruling R57(b); W6 web-inspector) The port also reads the mark the engine put on a
  * live frame's PDU (`pduMeta`, through `EngineApi.pdu`), so the frame detail can show the TLS, SSH and IKE banners.
  */
-import { CAPTURE_QUERY_SCAN_BUDGET } from '@netforge/engine';
+import { CAPTURE_QUERY_SCAN_BUDGET } from '@netforge/engine/web';
 import type {
   CaptureExportOptions,
   CaptureId,

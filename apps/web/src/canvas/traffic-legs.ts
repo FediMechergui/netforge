@@ -21,7 +21,8 @@
  *
  * Every other leg is placed at `now` exactly as before. Pure (no pixi): the packet layer draws what `step` returns.
  */
-import { inflightKey, type InflightFrame, type SimTime } from '@netforge/engine';
+import type { InflightFrame, SimTime } from '@netforge/engine';
+import { inflightKey } from '@netforge/engine/web';
 import { DEFAULT_CLOCK_POLICY, isTrafficDatagram } from '../bridge/protocol';
 
 /** Wall ms a traffic leg takes to cross its link on screen: what the clamp gives every other leg. */

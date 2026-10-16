@@ -120,6 +120,19 @@ function copyLayer(l: LayerView): LayerView {
   return out;
 }
 
+/**
+ * [S40] The layer a clone carries: the source's own LayerView when none of its fields is a `Uint8Array`, else a deep copy.
+ * A LayerView is never written after decode (every write path replaces the whole array, file header), so the only
+ * state a clone could share with its source is a binary field's buffer (`corrupt` flips the source's bytes in place);
+ * those layers are still copied. Everything else in a layer is an immutable primitive, and `copyLayer` copied nested
+ * values by reference anyway, so sharing changes no byte a reader can see.
+ */
+function cloneLayer(l: LayerView): LayerView {
+  const fields = l.fields;
+  for (const k in fields) if (fields[k] instanceof Uint8Array) return copyLayer(l);
+  return l;
+}
+
 /** A parsed field path: `"ipv4.ttl"` or (P2 [S9]) `"ipv4[3].src"` (the layer at index 3). */
 interface FieldPath {
   readonly proto: ProtoName;
@@ -222,6 +235,15 @@ export class PduImpl implements Pdu {
   #bytes: Uint8Array;
   #layers: LayerView[];
   readonly #provenance: Mutation[];
+  /**
+   * [S40] `summary()` / `topProto()` and the layer array each was computed from. Every write path replaces `#layers`
+   * (the PDU's mutation version: a mutation never edits the array in place), so a cache whose array is not the live
+   * one is stale and is recomputed; the values are pure functions of the layers (and of the size when there are none).
+   */
+  #summaryLayers: readonly LayerView[] | undefined;
+  #summary = '';
+  #topLayers: readonly LayerView[] | undefined;
+  #topProto: ProtoName = 'payload';
 
   /**
    * @param id fresh id from the factory counter
@@ -329,9 +351,16 @@ export class PduImpl implements Pdu {
     return best;
   }
 
-  /** One-line human summary from the meaningful layer's codec (with its CodecContext). */
+  /** One-line human summary from the meaningful layer's codec (with its CodecContext). Cached per layer array. */
   summary(): string {
-    const i = this.#meaningfulIndex();
+    if (this.#summaryLayers !== this.#layers) {
+      this.#summary = this.#computeSummary(this.#meaningfulIndex());
+      this.#summaryLayers = this.#layers;
+    }
+    return this.#summary;
+  }
+
+  #computeSummary(i: number): string {
     if (i < 0) {
       const only = this.#layers[0];
       if (!only) return `${this.#bytes.length} bytes`;
@@ -343,8 +372,12 @@ export class PduImpl implements Pdu {
 
   /** Innermost meaningful protocol (see `#meaningfulIndex`), `payload` when none. */
   topProto(): ProtoName {
-    const i = this.#meaningfulIndex();
-    return i < 0 ? 'payload' : this.#layers[i]!.proto;
+    if (this.#topLayers !== this.#layers) {
+      const i = this.#meaningfulIndex();
+      this.#topProto = i < 0 ? 'payload' : this.#layers[i]!.proto;
+      this.#topLayers = this.#layers;
+    }
+    return this.#topProto;
   }
 
   /** Structured-clone-safe snapshot sharing nothing with the PDU. */
@@ -656,7 +689,7 @@ export class PduImpl implements Pdu {
   clone(newId: PduId, at: SimTime): Pdu {
     const meta: PduMeta = { ...this.meta, born: at, parent: this.id };
     const provenance = this.#provenance.map((m) => ({ ...m }));
-    return new PduImpl(newId, this.#bytes.slice(), this.#layers.map(copyLayer), meta, provenance);
+    return new PduImpl(newId, this.#bytes.slice(), this.#layers.map(cloneLayer), meta, provenance);
   }
 
   /** Flip raw bits (link corruption); recorded as a Corruption mutation; FCS is not recomputed. */

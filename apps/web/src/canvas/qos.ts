@@ -25,7 +25,8 @@
  * is also said.
  */
 import { Container, Graphics, type Text } from 'pixi.js';
-import { portKey, type DeviceId, type LinkId } from '@netforge/engine';
+import type { DeviceId, LinkId } from '@netforge/engine';
+import { portKey } from '@netforge/engine/contracts';
 import { CABLE_WIDTH, bezierAt, bezierTangent, geomBounds, type CableGeom, type Pt } from './cables';
 import type { OverlayFact } from './l2';
 import {

@@ -18,7 +18,7 @@
  * TIMELINE_QUERY_MS).
  */
 import { memo } from 'react';
-import { formatSimTime } from '@netforge/engine';
+import { formatSimTime } from '@netforge/engine/contracts';
 import type { LaneId, SimTime } from '@netforge/engine';
 import { LANE_VOCAB } from '../vocab/lanes';
 import type { ColorToken } from '../vocab/protocols';

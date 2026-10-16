@@ -25,15 +25,15 @@
  * own stamp, newest first.
  */
 import { useId, useState } from 'react';
+import { DNS_DEFAULT_TTL_S } from '@netforge/engine/contracts';
 import {
-  DNS_DEFAULT_TTL_S,
   DNS_RECORD_TYPES,
   NTP_MASTER_DEFAULT_STRATUM,
   SERVICE_POOL_NAME,
   SYSLOG_FACILITY_NAMES,
   SYSLOG_SEVERITY_NAMES,
   walkConfigText,
-} from '@netforge/engine';
+} from '@netforge/engine/web';
 import type { CliGrammar, DeviceSnapshot, SyslogMessageRow } from '@netforge/engine';
 import { engine } from '../bridge/client';
 import { PANEL_CONFIGURE_OPTIONS } from '../gui/commands';

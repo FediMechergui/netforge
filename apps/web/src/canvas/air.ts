@@ -15,15 +15,8 @@
  * line so it stays visible and selectable.
  */
 import { Container, Graphics, type Text } from 'pixi.js';
-import {
-  portKey,
-  type AssociationSnapshot,
-  type LinkId,
-  type LinkSnapshot,
-  type MediaSnapshot,
-  type PortRef,
-  type Selection,
-} from '@netforge/engine';
+import type { AssociationSnapshot, LinkId, LinkSnapshot, MediaSnapshot, PortRef, Selection } from '@netforge/engine';
+import { portKey } from '@netforge/engine/contracts';
 import type { WirelessOverlayState } from '../store/types';
 import { bezierAt, distSqToSegment, drawDownBadge, geomBounds, straightGeometry, type CableGeom, type Pt } from './cables';
 import { anchorOf, isRadioLink, type Layout } from './ports';

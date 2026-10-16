@@ -21,8 +21,8 @@
  * ponytail: "negotiation off" is graded by the absence of a `dtp` row — a `switchport nonegotiate` port keeps none,
  * while a static trunk that still negotiates has one from link-up and an access port has one as soon as it hears a
  * neighbour (§3.3, §4.3). Reading the tag in the provenance view is a guided step of the trunk lab, not a graded
- * one: a trace filter cannot select frames by VLAN (TraceFilter has no VLAN key, and trace summaries carry no layer
- * stack for `protos: ['dot1q']` to match), so the tag is graded through what it implies — the native VLAN is 99 on
+ * one: the lab was written when a trace filter could not select frames by VLAN (P3c [C32] added `TraceFilter.vlans`;
+ * the lab keeps its P2 tasks unchanged), so the tag is graded through what it implies — the native VLAN is 99 on
  * both ends and VLANs 10 and 20 still reach the far switch.
  */
 import type { ScenarioInfo } from '../../../contracts/scenario.js';

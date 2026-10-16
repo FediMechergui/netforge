@@ -39,8 +39,8 @@
  *     it), issued only when a radio's assignment changes;
  *   • `wlan.grant` events from wlan-ap (§2.5) → one WTP Event Request (9) each, `stations = '<add|del>:<station>:<bssid>:
  *     <wlanId>'` (the NF vendor element), answered by 10;
- *   • uplink: an 802.11 to-DS data frame of a central BSS (handed over by wlan-ap, or by the demux selector
- *     `{layer: 'dot11', frame: 'data'}`) is rewrapped IN PLACE — `{strip: 1, push: [ipv4 {AP → controller, protocol 17},
+ *   • uplink: an 802.11 to-DS data frame of a central BSS (handed over by wlan-ap with `deliver`; the key-less
+ *     `{layer: 'dot11'}` selector never wins the demux over wlan-ap's) is rewrapped IN PLACE — `{strip: 1, push: [ipv4 {AP → controller, protocol 17},
  *     udp {5247 → 5247}, capwap {tbit, radioId}, dot11 {the same header, no FCS}]}`, cause 'controller tunnel' — and
  *     handed to ipv4 (`ipv4.send`; arp adds Ethernet): the station's PduId continues to the controller;
  *   • downlink: a datagram on the data (tunnel) socket from the joined controller is NOT consumed by udp: its 802.11
@@ -893,7 +893,7 @@ export function createCapwapWtp(): Process {
 
   return {
     name: CAPWAP_WTP_NAME,
-    handles: [{ layer: 'dot11', frame: 'data', roles: ['wireless-bss'] }],
+    handles: [{ layer: 'dot11', roles: ['wireless-bss'] }],
 
     init(ctx: ProcessCtx): Action[] {
       return evaluate(ctx);

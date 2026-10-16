@@ -14,7 +14,8 @@
  * it declares). Every state keeps a text channel next to its glyph. Wording is original (§0 rule 6).
  */
 import { useId, useState } from 'react';
-import { DEFAULT_SWITCHPORT, isVlanAware, isVlanId, parseVlanList } from '@netforge/engine';
+import { DEFAULT_SWITCHPORT, isVlanAware } from '@netforge/engine/contracts';
+import { isVlanId, parseVlanList } from '@netforge/engine/web';
 import type {
   ChannelMemberState,
   DeviceId,

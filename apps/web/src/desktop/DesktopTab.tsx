@@ -9,7 +9,7 @@
  * opens one. Nothing here branches on device kind: the app list is data. Wording and glyphs are original (§1.6).
  */
 import { Suspense, lazy, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
-import { GUI_PANELS } from '@netforge/engine';
+import { GUI_PANELS } from '@netforge/engine/contracts';
 import type { DeviceSnapshot, GuiPanelId } from '@netforge/engine';
 import { useStore } from '../store/store';
 import type { DesktopWindow } from '../store/types';

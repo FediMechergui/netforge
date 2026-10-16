@@ -5,7 +5,7 @@
  * rate below the requested one (P3 R57(a): or while the engine cannot keep up with it).
  */
 import { useEffect, useState } from 'react';
-import { MS } from '@netforge/engine';
+import { MS } from '@netforge/engine/contracts';
 import { engine, fmtSimTime } from '../bridge/client';
 import { RATE_PRESETS } from '../bridge/protocol';
 import { extrapolatedNow } from '../store/selectors';

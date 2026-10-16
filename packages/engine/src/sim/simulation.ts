@@ -535,13 +535,24 @@ export function createSimulation(opts: SimulationOptions): Simulation {
     const scheduler = createTrackedScheduler();
     const rng = createRng(seed);
     const registry = new Map<PduId, Pdu>();
+    // [S40] The registry's insertion order, kept beside it: `registry.keys().next()` walks every deleted slot V8's
+    // ordered hash table holds at its front, which made each eviction cost O(evicted so far) in a storm. The queue
+    // evicts the same key (the oldest inserted; eviction is the registry's only delete) in O(1).
+    let order: PduId[] = [];
+    let orderHead = 0;
     const pdus = createPduFactory({
       onCreate: (pdu) => {
+        const fresh = !registry.has(pdu.id);
         registry.set(pdu.id, pdu);
+        if (fresh) order.push(pdu.id);
         if (registry.size > pduRegistryLimit) {
           // ids are monotonic, so the first key in insertion order is the oldest
-          const oldest = registry.keys().next();
-          if (oldest.done !== true) registry.delete(oldest.value);
+          registry.delete(order[orderHead]!);
+          orderHead++;
+          if (orderHead >= 4096 && orderHead * 2 >= order.length) {
+            order = order.slice(orderHead);
+            orderHead = 0;
+          }
         }
       },
     });

@@ -8,7 +8,7 @@
  * Everything comes from the port's `ppp` row (§2.6, `PppRow`), so a port without one shows nothing. Every state keeps a
  * text channel next to its glyph; wording is original (§0 rule 6).
  */
-import { formatSimTime } from '@netforge/engine';
+import { formatSimTime } from '@netforge/engine/contracts';
 import type { DeviceSnapshot, PortId, PortSnapshot, PppFsmState, PppPhase, PppRow } from '@netforge/engine';
 import { pppRail, PPP_DONE_GLYPH, PPP_FAILED_GLYPH, PPP_RAIL_SEPARATOR, type PppStepState } from '../canvas/overlays/wan-model';
 import { extraTableRows } from './SwitchportSection';

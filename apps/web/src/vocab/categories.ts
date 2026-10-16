@@ -7,7 +7,7 @@
  * never disagree; this file only adds hints. Tables are exhaustive over the engine unions. All wording is
  * original (§1.6).
  */
-import { CAPABILITIES, DEVICE_CATEGORIES, GUI_PANELS, ROLE_TRAITS } from '@netforge/engine';
+import { CAPABILITIES, DEVICE_CATEGORIES, GUI_PANELS, ROLE_TRAITS } from '@netforge/engine/contracts';
 import type { Capability, CategoryGroup, DeviceCategory, GuiPanelId, PortKind, PortRole } from '@netforge/engine';
 
 /** Presentation data for one palette category. */

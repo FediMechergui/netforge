@@ -13,12 +13,25 @@ import type { Scheduler, SimEvent, SimEventBody } from '../contracts/events.js';
 import { assertSimTime, type SimTime } from '../contracts/time.js';
 
 /** `a` should fire before `b`. */
-function before(a: SimEvent, b: SimEvent): boolean {
+/**
+ * [S40] A heap slot: the event's `(at, seq)` key beside the event. Every slot has this one shape, so the comparisons
+ * of `push`/`pop` stay monomorphic; the events themselves have one shape per body kind (the spread in `schedule`), and
+ * comparing them directly made every heap step a megamorphic property load. The order is the same `(at, seq)` order.
+ */
+class Slot {
+  constructor(
+    readonly at: SimTime,
+    readonly seq: number,
+    readonly ev: SimEvent,
+  ) {}
+}
+
+function before(a: Slot, b: Slot): boolean {
   return a.at < b.at || (a.at === b.at && a.seq < b.seq);
 }
 
 class HeapScheduler implements Scheduler {
-  private heap: SimEvent[] = [];
+  private heap: Slot[] = [];
   /** seqs scheduled and neither fired nor cancelled. Membership only — never iterated for ordering. */
   private readonly pending = new Set<number>();
   /** seqs cancelled while still in the heap; removed when the entry is popped. */
@@ -42,7 +55,7 @@ class HeapScheduler implements Scheduler {
     const seq = ++this.seqCounter;
     const ev = { ...body, at, seq } as SimEvent;
     this.pending.add(seq);
-    this.push(ev);
+    this.push(new Slot(at, seq, ev));
     return seq;
   }
 
@@ -54,7 +67,7 @@ class HeapScheduler implements Scheduler {
 
   next(): SimEvent | undefined {
     this.purge();
-    const ev = this.pop();
+    const ev = this.pop()?.ev;
     if (ev === undefined) return undefined;
     this.pending.delete(ev.seq);
     this._now = ev.at;
@@ -91,7 +104,7 @@ class HeapScheduler implements Scheduler {
     }
   }
 
-  private push(ev: SimEvent): void {
+  private push(ev: Slot): void {
     const heap = this.heap;
     heap.push(ev);
     let i = heap.length - 1;
@@ -105,7 +118,7 @@ class HeapScheduler implements Scheduler {
     heap[i] = ev;
   }
 
-  private pop(): SimEvent | undefined {
+  private pop(): Slot | undefined {
     const heap = this.heap;
     const n = heap.length;
     if (n === 0) return undefined;

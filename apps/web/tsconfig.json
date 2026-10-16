@@ -7,6 +7,9 @@
     "paths": {
       "@netforge/engine": ["../../packages/engine/src/index.ts"],
       "@netforge/engine/pure": ["../../packages/engine/src/pure.ts"],
+      "@netforge/engine/contracts": ["../../packages/engine/src/contracts/index.ts"],
+      "@netforge/engine/curriculum": ["../../packages/engine/src/curriculum-entry.ts"],
+      "@netforge/engine/web": ["../../packages/engine/src/web.ts"],
       "@/*": ["./src/*"]
     },
     "baseUrl": "."

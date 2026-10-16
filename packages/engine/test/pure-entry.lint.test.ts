@@ -90,8 +90,24 @@ describe('pure entry import lint', () => {
 });
 
 describe('package exports', () => {
-  it('declares the "." and "./pure" subpaths', () => {
+  // P3c W0h (ARCHITECTURE-P3C §7 W0h web-shell, the bundle split): the narrow entries the web main thread reads
+  // ('./contracts', './curriculum', './web') join '.' and './pure'; the pin stays exact.
+  it('declares the "." and "./pure" subpaths, and the P3c W0h narrow entries', () => {
     const pkg = JSON.parse(readFileSync(resolve(SRC, '../package.json'), 'utf8')) as { exports: Record<string, string> };
-    expect(pkg.exports).toEqual({ '.': './src/index.ts', './pure': './src/pure.ts' });
+    expect(pkg.exports).toEqual({
+      '.': './src/index.ts',
+      './pure': './src/pure.ts',
+      './contracts': './src/contracts/index.ts',
+      './curriculum': './src/curriculum-entry.ts',
+      './web': './src/web.ts',
+    });
+  });
+
+  it('the contracts entry reaches only contracts, and the curriculum entry only contracts and the course data', () => {
+    const contracts = Array.from(closure(resolve(SRC, 'contracts/index.ts')).keys()).map((f) => relative(SRC, f).split(sep).join('/'));
+    expect(contracts.filter((f) => !f.startsWith('contracts/'))).toEqual([]);
+    const curriculum = Array.from(closure(resolve(SRC, 'curriculum-entry.ts')).keys()).map((f) => relative(SRC, f).split(sep).join('/'));
+    expect(curriculum.filter((f) => f !== 'curriculum-entry.ts' && !f.startsWith('contracts/') && !f.startsWith('curriculum/'))).toEqual([]);
+    expect(curriculum).toContain('curriculum/index.ts');
   });
 });

@@ -21,7 +21,7 @@
  */
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { KeyboardEvent } from 'react';
-import { formatClock } from '@netforge/engine';
+import { formatClock } from '@netforge/engine/contracts';
 import type {
   DeviceClockSnapshot,
   DeviceClockView,

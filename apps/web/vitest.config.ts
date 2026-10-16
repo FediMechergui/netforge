@@ -23,6 +23,8 @@ export default mergeConfig(
     test: {
       minWorkers: 1,
       maxWorkers: 4,
+      // P3c W0h: the course catalogue is a lazy chunk in the app; tests read it synchronously (test/setup.curriculum.ts)
+      setupFiles: ['./test/setup.curriculum.ts'],
     },
   }),
 );

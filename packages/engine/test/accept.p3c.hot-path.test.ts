@@ -18,8 +18,8 @@
  *     normalised by normalizeP0Event>`, test/profile-digests.harness.ts `eventLine`), joined by '\n';
  *   • `windows` — the same digest per 10 ms slice (`<count>:<16 hex>`), so a mismatch names where it starts.
  * The wall time of the window is recorded in the wave report (W0h: ≥ 3× faster), never asserted. The benchmark script
- * `packages/engine/bench/loop-storm.ts` and its exclusion from every project arrive with [S40] at W0h, which extends
- * this file with that check.
+ * `packages/engine/bench/loop-storm.ts` arrived with [S40] at W0h; the last case checks that it exists and that no
+ * vitest project and no tsconfig include reaches it (ARCHITECTURE-P3C RC3 (c)).
  *
  * Regenerating (the architect only; [S40] is byte-neutral by definition, so a moved window is a defect, not a
  * re-record): `NF_RECORD_P3C_STORM_WINDOW=1 npx vitest run --root packages/engine test/accept.p3c.hot-path.test.ts`.
@@ -166,4 +166,17 @@ describe('accept P3c hot-path [S40]: the loop-storm 100 ms window equals the cad
     expect(canonicalJson(run.record)).toBe(canonicalJson({ dispatched: g.dispatched, eventCount: g.eventCount, kinds: g.kinds, eventsDigest: g.eventsDigest, windows: g.windows }));
     // Advisory timeout (P3 R61(c)): the body is synchronous, so vitest arms its timer only after it returns.
   }, 900_000);
+});
+
+describe('accept P3c [S40]: the benchmark lives outside every project (RC3 (c))', () => {
+  it('bench/loop-storm.ts exists; no vitest project glob and no tsconfig include reaches it', () => {
+    const root = new URL('..', import.meta.url);
+    expect(existsSync(new URL('bench/loop-storm.ts', root))).toBe(true);
+    const workspace = readFileSync(new URL('vitest.workspace.ts', root), 'utf8');
+    expect(workspace).not.toMatch(/['"]bench\//);
+    // every project includes only *.test.ts under test/ or src/ (ALL_TESTS), or named test/ files
+    expect(workspace).toContain("const ALL_TESTS = ['test/**/*.test.ts', 'src/**/*.test.ts'];");
+    const tsconfig = JSON.parse(readFileSync(new URL('tsconfig.json', root), 'utf8')) as { include?: string[] };
+    for (const inc of tsconfig.include ?? []) expect(inc.startsWith('bench')).toBe(false);
+  });
 });

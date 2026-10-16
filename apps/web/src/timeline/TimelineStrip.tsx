@@ -21,8 +21,8 @@
  * Disabled states the strip respects (the slider is `aria-disabled`, bars and listed events do nothing, and a note says
  * why): no timeline yet (the engine is starting, or no batch has carried a timeline head); and HISTORY OFF — a seek the
  * worker rejected with a replay fault (`ReplayDivergenceError`/`ReplayExhaustedError`: the time machine drops its
- * replayers and refuses every seek until the next world, §3.13 step 6, time-machine.ts `faulted`), or an engine with no
- * time machine at all. A new world (epoch) clears it. The lanes keep working while history is off: they come from the
+ * replayers and refuses every seek until the next world, §3.13 step 6, time-machine.ts `faulted`). A new world (epoch)
+ * clears it. The lanes keep working while history is off: they come from the
  * lane index, not from the replayers.
  *
  * The container (`TimelineStrip`) owns the hooks; `TimelineStripView` is a plain function of its props and the seek
@@ -30,7 +30,7 @@
  */
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent, Ref } from 'react';
-import { formatSimTime } from '@netforge/engine';
+import { formatSimTime } from '@netforge/engine/contracts';
 import type { DeviceSnapshot, LaneBucket, LaneId, SeekTarget, SimTime, TimelineMarkQuery, TimelineQuery } from '@netforge/engine';
 import { engine } from '../bridge/client';
 import type { EngineApi, ReviewInfo } from '../bridge/protocol';
@@ -67,8 +67,6 @@ export const TIMELINE_WAITING_TEXT = 'The timeline starts once the simulation is
 /** The note once a replay fault turned history off (original wording). */
 export const HISTORY_OFF_TEXT =
   'History is off for this network: replaying its recording gave a different result, so earlier moments cannot be shown. A new or reloaded network starts a fresh history.';
-/** The note for an engine without a time machine. */
-export const TIMELINE_UNAVAILABLE_TEXT = 'Going back in time is not available in this simulator build.';
 /** Said (politely) when review starts and ends. */
 export const REVIEW_STARTED_TEXT = 'Viewing the past. The network cannot be changed until you return to now.';
 export const REVIEW_ENDED_TEXT = 'Back to the present.';
@@ -81,12 +79,10 @@ export const TIMELINE_ZOOM_STEP = 2;
 // ── the controller: seeks, return to now, queries ───────────────────────────
 
 /**
- * The part of the engine the strip uses. The worker implements all four (EngineApi requires them since the W8 exit
- * gate); they stay optional HERE because the controller also runs over an engine without a time machine and then says
- * so (TIMELINE_UNAVAILABLE_TEXT) instead of throwing — the file header's last disabled state, pinned by
- * test/timeline.strip.test.ts "says so when the engine has no time machine".
+ * The part of the engine the strip uses. EngineApi requires all four since the P2 W8 exit gate, so the controller has
+ * no "engine without a time machine" path (P3c [C32] (c), ARCHITECTURE-P3C §9.2: its dead guards and note were removed).
  */
-export type TimelineEngine = Partial<Pick<EngineApi, 'seek' | 'leaveReview' | 'timelineBuckets' | 'timelineMarks'>>;
+export type TimelineEngine = Pick<EngineApi, 'seek' | 'leaveReview' | 'timelineBuckets' | 'timelineMarks'>;
 
 /** What a seek resolves with. */
 export type SeekReply = Awaited<ReturnType<EngineApi['seek']>>;
@@ -163,7 +159,6 @@ export function createTimelineController(api: TimelineEngine, hooks: TimelineCon
 
   const queue = createSeekQueue<SeekReply>((target) => {
     if (generationOf.get(target) !== generation) return Promise.reject(new SeekCancelledError());
-    if (typeof api.seek !== 'function') return Promise.reject(Object.assign(new Error(TIMELINE_UNAVAILABLE_TEXT), { name: 'TimelineUnavailable' }));
     return api.seek(target);
   });
 
@@ -184,7 +179,6 @@ export function createTimelineController(api: TimelineEngine, hooks: TimelineCon
     const wasBusy = queue.busy || queue.pending !== null;
     hooks.setPreview(null);
     if (!wasBusy && !hooks.isReviewing()) return;
-    if (typeof api.leaveReview !== 'function') return;
     try {
       await api.leaveReview();
     } catch (err) {
@@ -199,10 +193,6 @@ export function createTimelineController(api: TimelineEngine, hooks: TimelineCon
       if (action.kind === 'none') return;
       if (action.kind === 'live') return returnToNow();
       if (offReason !== null) return;
-      if (typeof api.seek !== 'function') {
-        turnOff(TIMELINE_UNAVAILABLE_TEXT);
-        return;
-      }
       const target = action.target;
       generationOf.set(target, generation);
       hooks.setPreview('time' in target ? target.time : (hintT ?? null));
@@ -210,14 +200,14 @@ export function createTimelineController(api: TimelineEngine, hooks: TimelineCon
       const outcome = await queue.request(target);
       settle();
       if (outcome.status !== 'failed' || isQuietSeekFailure(outcome.error)) return;
-      const reason = nameOf(outcome.error) === 'TimelineUnavailable' ? TIMELINE_UNAVAILABLE_TEXT : historyOffReason(outcome.error);
+      const reason = historyOffReason(outcome.error);
       if (reason !== null) turnOff(reason);
       else hooks.report(messageOf(outcome.error));
     },
     returnToNow,
     async buckets(q, revision) {
       const key = bucketsKey(q, revision);
-      if (key === lastKey || fetching || typeof api.timelineBuckets !== 'function') return undefined;
+      if (key === lastKey || fetching) return undefined;
       fetching = true;
       try {
         const answer = await api.timelineBuckets(q);
@@ -232,7 +222,6 @@ export function createTimelineController(api: TimelineEngine, hooks: TimelineCon
       }
     },
     async marks(q) {
-      if (typeof api.timelineMarks !== 'function') return [];
       return api.timelineMarks(q);
     },
     reset() {

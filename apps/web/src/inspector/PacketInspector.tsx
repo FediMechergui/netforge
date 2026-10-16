@@ -30,7 +30,8 @@
  * owns a fixed file list.
  */
 import { memo, useCallback, useEffect, useMemo, useState, useSyncExternalStore, type CSSProperties } from 'react';
-import { ETHERTYPE_VLAN, createPduFactory, qosDscpText, vtySshCrypt, vtySshKey, vtyText } from '@netforge/engine';
+import { ETHERTYPE_VLAN } from '@netforge/engine/contracts';
+import { createPduFactory, qosDscpText, vtySshCrypt, vtySshKey, vtyText } from '@netforge/engine/web';
 import type {
   DeviceId,
   DeviceSnapshot,

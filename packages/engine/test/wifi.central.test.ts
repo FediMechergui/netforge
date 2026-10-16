@@ -59,7 +59,7 @@ function centralProfile(keyTag = passphraseTag(SSID, PASS)): BssSettings[] {
 function fakeWtp(log: WtpLog, profile: BssSettings[]): ProcessFactory {
   return (): Process => ({
     name: 'capwap-wtp',
-    handles: [{ layer: 'dot11', frame: 'data', roles: ['wireless-bss'] }],
+    handles: [{ layer: 'dot11', roles: ['wireless-bss'] }],
     init(ctx): Action[] {
       log.ctx = ctx;
       return [{ type: 'radio-profile', port: 'Wlan0', bss: profile, controller: 'WLC-TEST' }];

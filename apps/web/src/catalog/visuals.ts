@@ -6,15 +6,8 @@
  * duplicated or unknown id throws so a broken registry can never ship silently. `DeviceModel.kind`
  * only picks the icon family here (D2); nothing in this file drives behaviour.
  */
-import {
-  DEVICE_CATEGORIES,
-  DEVICE_ICONS,
-  hasCapability,
-  type Capability,
-  type DeviceCategory,
-  type DeviceIconId,
-  type DeviceKind,
-} from '@netforge/engine';
+import type { Capability, DeviceCategory, DeviceIconId, DeviceKind } from '@netforge/engine';
+import { DEVICE_CATEGORIES, DEVICE_ICONS, hasCapability } from '@netforge/engine/contracts';
 import type { IconDef } from './icon-types.js';
 import { ICON_GENERIC } from '../icons/generic.js';
 import { ICONS_ROUTERS } from '../icons/routers.js';

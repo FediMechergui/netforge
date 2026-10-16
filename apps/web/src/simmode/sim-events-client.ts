@@ -59,11 +59,14 @@ export const SIM_RUN_HORIZON_NS = 60_000_000_000;
 
 // ── chips ───────────────────────────────────────────────────────────────────
 
-/** The chip rows a learner can compose; each maps to one `TraceFilter` key. */
-export type ChipGroup = 'kinds' | 'protos' | 'devices' | 'tags';
+/**
+ * The chip rows a learner can compose; each maps to one `TraceFilter` key. `vlans` @since P3c [C32] (b)
+ * (`TraceFilter.vlans`: frames whose outermost 802.1Q tag carries a listed VID).
+ */
+export type ChipGroup = 'kinds' | 'protos' | 'devices' | 'tags' | 'vlans';
 
 /** Chip rows in display order. */
-export const CHIP_GROUPS: readonly ChipGroup[] = Object.freeze(['kinds', 'protos', 'devices', 'tags'] as const);
+export const CHIP_GROUPS: readonly ChipGroup[] = Object.freeze(['kinds', 'protos', 'devices', 'tags', 'vlans'] as const);
 
 /** Row headings (original wording). */
 export const CHIP_GROUP_LABELS: Readonly<Record<ChipGroup, string>> = Object.freeze({
@@ -71,6 +74,7 @@ export const CHIP_GROUP_LABELS: Readonly<Record<ChipGroup, string>> = Object.fre
   protos: 'Protocol',
   devices: 'Device',
   tags: 'Message',
+  vlans: 'VLAN',
 });
 
 /** What the chips of one filter are switched on to. Empty group = that key is left out (it matches everything). */
@@ -79,6 +83,8 @@ export interface ChipSelection {
   readonly protos: readonly ProtoName[];
   readonly devices: readonly DeviceId[];
   readonly tags: readonly string[];
+  /** @since P3c [C32] (b) VLAN ids (`TraceFilter.vlans`). */
+  readonly vlans: readonly number[];
   /** Let background traffic through (`TraceFilter.includeBackground`): keepalives and beacons, and (P2) their drops. */
   readonly background: boolean;
 }
@@ -97,7 +103,7 @@ export function listsBackground(sel: Pick<ChipSelection, 'background'>, ev: Trac
 }
 
 /** Nothing switched on: matches every foreground event. */
-export const NO_CHIPS: ChipSelection = Object.freeze({ kinds: [], protos: [], devices: [], tags: [], background: false });
+export const NO_CHIPS: ChipSelection = Object.freeze({ kinds: [], protos: [], devices: [], tags: [], vlans: [], background: false });
 
 /** The list filter simulation mode starts with (§4.11 item 1). */
 export const DEFAULT_LIST_CHIPS: ChipSelection = Object.freeze({ ...NO_CHIPS, kinds: SIM_MODE_LIST_KINDS });
@@ -106,7 +112,17 @@ function toggled<T extends string>(cur: readonly T[], v: T): T[] {
   return cur.includes(v) ? cur.filter((x) => x !== v) : [...cur, v];
 }
 
-/** Switch one chip on or off. Unknown trace kinds are ignored (the vocabulary is the closed set). */
+/** A VLAN chip's value as a VID (1–4094), or undefined for anything else. */
+export function chipVlan(value: string): number | undefined {
+  if (!/^[0-9]{1,4}$/.test(value)) return undefined;
+  const v = Number(value);
+  return v >= 1 && v <= 4094 ? v : undefined;
+}
+
+/**
+ * Switch one chip on or off. Unknown trace kinds are ignored (the vocabulary is the closed set), and so is a VLAN chip
+ * whose value is not a VID.
+ */
 export function toggleChip(sel: ChipSelection, group: ChipGroup, value: string): ChipSelection {
   switch (group) {
     case 'kinds':
@@ -115,6 +131,11 @@ export function toggleChip(sel: ChipSelection, group: ChipGroup, value: string):
       return { ...sel, protos: toggled(sel.protos, value) };
     case 'devices':
       return { ...sel, devices: toggled(sel.devices, value) };
+    case 'vlans': {
+      const v = chipVlan(value);
+      if (v === undefined) return sel;
+      return { ...sel, vlans: sel.vlans.includes(v) ? sel.vlans.filter((x) => x !== v) : [...sel.vlans, v] };
+    }
     default:
       return { ...sel, tags: toggled(sel.tags, value) };
   }
@@ -122,12 +143,16 @@ export function toggleChip(sel: ChipSelection, group: ChipGroup, value: string):
 
 /** True when `value` is switched on in `group`. */
 export function chipIsOn(sel: ChipSelection, group: ChipGroup, value: string): boolean {
+  if (group === 'vlans') {
+    const v = chipVlan(value);
+    return v !== undefined && sel.vlans.includes(v);
+  }
   return (sel[group] as readonly string[]).includes(value);
 }
 
 /** True when at least one chip is switched on (an all-off selection filters nothing). */
 export function hasChips(sel: ChipSelection): boolean {
-  return CHIP_GROUPS.some((g) => (sel[g] as readonly string[]).length > 0);
+  return CHIP_GROUPS.some((g) => (sel[g] as readonly unknown[]).length > 0);
 }
 
 /**
@@ -140,6 +165,7 @@ export function buildTraceFilter(sel: ChipSelection): TraceFilter {
   if (sel.protos.length > 0) f.protos = sel.protos;
   if (sel.devices.length > 0) f.devices = sel.devices;
   if (sel.tags.length > 0) f.tags = sel.tags;
+  if (sel.vlans.length > 0) f.vlans = sel.vlans;
   return f;
 }
 
@@ -151,6 +177,7 @@ export function chipsFromFilter(f: TraceFilter | null | undefined): ChipSelectio
     protos: f.protos ?? [],
     devices: f.devices ?? [],
     tags: f.tags ?? [],
+    vlans: f.vlans ?? [],
     background: f.includeBackground === true,
   };
 }
@@ -159,7 +186,9 @@ export function chipsFromFilter(f: TraceFilter | null | undefined): ChipSelectio
 export function filterKey(f: TraceFilter | null): string {
   if (f === null) return 'off';
   const part = (name: string, vs: readonly string[] | undefined): string => (vs === undefined ? '' : `${name}:${[...vs].sort().join(',')};`);
-  return `${part('k', f.kinds)}${part('p', f.protos)}${part('d', f.devices)}${part('t', f.tags)}bg:${f.includeBackground === true ? '1' : '0'}`;
+  // [C32] (b): written only when present, so every filter without VLANs keeps its key
+  const vlans = f.vlans === undefined ? '' : `v:${[...f.vlans].sort((a, b) => a - b).join(',')};`;
+  return `${part('k', f.kinds)}${part('p', f.protos)}${part('d', f.devices)}${part('t', f.tags)}${vlans}bg:${f.includeBackground === true ? '1' : '0'}`;
 }
 
 /** One line naming what a filter keeps (chip summary, screen-reader label). */
@@ -170,6 +199,7 @@ export function describeFilter(f: TraceFilter | null, deviceName?: (id: DeviceId
   if (f.protos !== undefined) parts.push(`protocol ${f.protos.map(protocolLabel).join(' or ')}`);
   if (f.devices !== undefined) parts.push(`device ${f.devices.map((d) => (deviceName ? deviceName(d) : d)).join(' or ')}`);
   if (f.tags !== undefined) parts.push(`message ${f.tags.join(' or ')}`);
+  if (f.vlans !== undefined) parts.push(`VLAN ${f.vlans.join(' or ')}`);
   if (f.includeBackground === true) parts.push('keepalives included');
   return parts.length === 0 ? 'Every event except keepalives.' : parts.join('; ');
 }
@@ -330,6 +360,31 @@ export function tagsOf(page: EventPage, also: readonly string[] = []): string[] 
     }
   }
   return [...out].sort();
+}
+
+/**
+ * @since P3c [C32] (b) Distinct `PduSummary.vlan`s among the loaded rows plus `also` (the VLANs already switched on),
+ * ascending — the VLAN chips offer the tags the run actually put on a trunk.
+ */
+export function vlansOf(page: EventPage, also: readonly number[] = []): number[] {
+  const out = new Set<number>(also);
+  for (const row of page.rows) {
+    const ev = row.event;
+    switch (ev.kind) {
+      case 'frameTx':
+      case 'frameRx':
+      case 'drop':
+      case 'pduCreated':
+      case 'pduConsumed':
+      case 'frameAbort':
+      case 'frameQueued':
+        if (ev.pdu.vlan !== undefined) out.add(ev.pdu.vlan);
+        break;
+      default:
+        break;
+    }
+  }
+  return [...out].sort((a, b) => a - b);
 }
 
 // ── virtual rows ────────────────────────────────────────────────────────────

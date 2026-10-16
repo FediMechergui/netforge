@@ -20,7 +20,8 @@
  * @since course `CoursesButton` is the door back to the course layer (learn/LearnShell): the lesson that was open,
  * or the landing page.
  */
-import { DEFAULT_METRES_PER_UNIT, type SimSnapshot } from '@netforge/engine';
+import type { SimSnapshot } from '@netforge/engine';
+import { DEFAULT_METRES_PER_UNIT } from '@netforge/engine/contracts';
 import { engine, defaultSeed } from '../bridge/client';
 import type { PlaybackMode } from '../bridge/protocol';
 import { ROUTING_OVERLAY_MODULES, SWITCHING_OVERLAY_MODULES, VLAN_OVERLAY, type OverlayId } from '../canvas/overlays/registry';
@@ -28,7 +29,7 @@ import { eigrpPrefixesOf } from '../canvas/overlays/eigrp-model';
 import { ospfAreasOf } from '../canvas/overlays/ospf-model';
 import { CONCEPT_TOOLS, isConceptToolBuilt } from '../concept/ConceptView';
 import { DOCK_MIN_HEIGHT, DOCK_OPEN_HEIGHT, DOCK_TABS, INSPECTOR_HIDDEN_BELOW, INSPECTOR_OPEN_WIDTH } from '../dock/registry';
-import { profileForCourse } from '../learn/course-profile';
+import { courseProfile } from '../learn/course-profile';
 import { showDockTab } from '../shared/openDeviceSurface';
 import { store, useStore } from '../store/store';
 import type { ConceptTool, TopoOverlayState, WirelessOverlayState } from '../store/types';
@@ -271,7 +272,7 @@ function CoursesButton() {
  */
 export async function resetWithNewSeed(): Promise<void> {
   try {
-    await engine.reset(defaultSeed(), profileForCourse(store.getState().learn.lastCourse));
+    await engine.reset(defaultSeed(), await courseProfile(store.getState().learn.lastCourse));
     store.getState().select(null);
     store.getState().toast('Workspace reset with a fresh seed.');
   } catch (err) {

@@ -6,8 +6,9 @@
  * a P2P cable one entry per frame. The registry never touches the scheduler or the trace; strategies cancel
  * arrivals and emit drops themselves.
  *
- * Determinism: legs live in an insertion-ordered Map; `on(scope)` returns insertion order and `visible(now)` sorts
- * explicitly by `(txStart, pdu.id, link, portKey(to))` with ordinal string comparison.
+ * Determinism: legs live in insertion-ordered sets (since [S40] of the leg objects themselves, with no string keys);
+ * `on(scope)` returns insertion order and `visible(now)` sorts explicitly by `(txStart, pdu.id, link, portKey(to))`
+ * with ordinal string comparison.
  *
  * P3 (ARCHITECTURE-P3 D16, §2.8; W2 media): `queued(from, now)` lists the legs an egress port has committed but not
  * started yet (`txStart > now`, the virtual FIFO of `link/media/p2p.ts`), oldest first in the `visible` order, each with
@@ -95,99 +96,114 @@ export function clearScope(registry: InflightRegistry, scope: LinkId | MediumId)
 
 /** Create an empty in-flight registry. */
 export function createInflightRegistry(): InflightRegistry {
-  /** Every leg, insertion ordered. */
-  const legs = new Map<string, InflightLeg>();
-  /** `${pdu}|${portKey(to)}` → leg keys (normally one). */
-  const byTarget = new Map<string, string[]>();
-  /** scope → leg keys, insertion ordered. */
-  const byScope = new Map<string, Set<string>>();
-  /** @since P3 portKey(from) → leg keys, insertion ordered (the sender index `queued` reads). */
-  const byFrom = new Map<string, Set<string>>();
+  // [S40] The indexes hold the leg objects themselves, keyed by the PDU id and by the parts of the port refs: no
+  // `inflightKey` / `portKey` string is built or hashed per leg (they were the registry's whole cost in a storm). The
+  // orders are the ones the string-keyed indexes had: a replaced leg leaves every index and re-enters at its end.
+  /** Every leg, insertion ordered (`visible` and `sweep` scan it). */
+  const legs = new Set<InflightLeg>();
+  /** PDU id → its legs, insertion ordered (normally one). */
+  const byPdu = new Map<PduId, InflightLeg[]>();
+  /** scope → legs, insertion ordered. */
+  const byScope = new Map<string, Set<InflightLeg>>();
+  /** @since P3 sender device → sender port → legs, insertion ordered (the sender index `queued` reads). */
+  const byFrom = new Map<string, Map<string, Set<InflightLeg>>>();
   let sweepAt = INFLIGHT_SWEEP_MIN;
 
-  const targetKey = (pdu: PduId, to: PortRef): string => `${pdu}|${portKey(to)}`;
+  const samePort = (a: PortRef, b: PortRef): boolean => a.device === b.device && a.port === b.port;
 
-  const unlink = (key: string, leg: InflightLeg): void => {
-    legs.delete(key);
-    const tk = targetKey(leg.pdu.id, leg.to);
-    const list = byTarget.get(tk);
+  /** The leg of identity `(pdu, link, to)`, if held. */
+  const find = (pdu: PduId, link: LinkId | MediumId, to: PortRef): InflightLeg | undefined => {
+    const list = byPdu.get(pdu);
+    if (list === undefined) return undefined;
+    for (let i = 0; i < list.length; i++) {
+      const leg = list[i]!;
+      if (leg.link === link && samePort(leg.to, to)) return leg;
+    }
+    return undefined;
+  };
+
+  const unlink = (leg: InflightLeg): void => {
+    legs.delete(leg);
+    const id = leg.pdu.id;
+    const list = byPdu.get(id);
     if (list) {
-      const i = list.indexOf(key);
+      const i = list.indexOf(leg);
       if (i >= 0) list.splice(i, 1);
-      if (list.length === 0) byTarget.delete(tk);
+      if (list.length === 0) byPdu.delete(id);
     }
     const scope = byScope.get(leg.link);
     if (scope) {
-      scope.delete(key);
+      scope.delete(leg);
       if (scope.size === 0) byScope.delete(leg.link);
     }
-    const fk = portKey(leg.from);
-    const sender = byFrom.get(fk);
-    if (sender) {
-      sender.delete(key);
-      if (sender.size === 0) byFrom.delete(fk);
+    const ports = byFrom.get(leg.from.device);
+    const sender = ports?.get(leg.from.port);
+    if (ports && sender) {
+      sender.delete(leg);
+      if (sender.size === 0) {
+        ports.delete(leg.from.port);
+        if (ports.size === 0) byFrom.delete(leg.from.device);
+      }
     }
   };
 
   const registry: InflightRegistry = {
     add(leg) {
-      const key = inflightKey(leg.pdu.id, leg.link, leg.to);
-      const old = legs.get(key);
-      if (old) unlink(key, old);
-      legs.set(key, leg);
-      const tk = targetKey(leg.pdu.id, leg.to);
-      const list = byTarget.get(tk);
-      if (list) list.push(key);
-      else byTarget.set(tk, [key]);
+      const old = find(leg.pdu.id, leg.link, leg.to);
+      if (old) unlink(old);
+      legs.add(leg);
+      const list = byPdu.get(leg.pdu.id);
+      if (list) list.push(leg);
+      else byPdu.set(leg.pdu.id, [leg]);
       let scope = byScope.get(leg.link);
       if (!scope) {
         scope = new Set();
         byScope.set(leg.link, scope);
       }
-      scope.add(key);
-      const fk = portKey(leg.from);
-      let sender = byFrom.get(fk);
+      scope.add(leg);
+      let ports = byFrom.get(leg.from.device);
+      if (!ports) {
+        ports = new Map();
+        byFrom.set(leg.from.device, ports);
+      }
+      let sender = ports.get(leg.from.port);
       if (!sender) {
         sender = new Set();
-        byFrom.set(fk, sender);
+        ports.set(leg.from.port, sender);
       }
-      sender.add(key);
+      sender.add(leg);
     },
 
     remove(pdu, to) {
-      const list = byTarget.get(targetKey(pdu, to));
-      const key = list?.[0];
-      if (key === undefined) return undefined;
-      const leg = legs.get(key);
-      if (!leg) return undefined;
-      unlink(key, leg);
-      return leg;
+      const list = byPdu.get(pdu);
+      if (list === undefined) return undefined;
+      for (let i = 0; i < list.length; i++) {
+        const leg = list[i]!;
+        if (samePort(leg.to, to)) {
+          unlink(leg);
+          return leg;
+        }
+      }
+      return undefined;
     },
 
     on(scope) {
-      const keys = byScope.get(scope);
-      if (!keys) return [];
-      const out: InflightLeg[] = [];
-      for (const k of keys) {
-        const leg = legs.get(k);
-        if (leg) out.push(leg);
-      }
-      return out;
+      const set = byScope.get(scope);
+      return set ? [...set] : [];
     },
 
     delete(pdu, link, to) {
-      const key = inflightKey(pdu, link, to);
-      const leg = legs.get(key);
+      const leg = find(pdu, link, to);
       if (!leg) return undefined;
-      unlink(key, leg);
+      unlink(leg);
       return leg;
     },
 
     visible(now) {
       const out: InflightFrame[] = [];
-      for (const [key, leg] of [...legs]) {
+      for (const leg of [...legs]) {
         if (leg.arrive <= now) {
-          unlink(key, leg);
+          unlink(leg);
           continue;
         }
         if (leg.txStart > now) continue;
@@ -198,20 +214,17 @@ export function createInflightRegistry(): InflightRegistry {
     },
 
     queued(from, now) {
-      const keys = byFrom.get(portKey(from));
-      if (!keys) return [];
+      const set = byFrom.get(from.device)?.get(from.port);
+      if (!set) return [];
       const out: QueuedFrame[] = [];
-      for (const k of keys) {
-        const leg = legs.get(k);
-        if (leg !== undefined && leg.txStart > now) out.push(queuedFrame(leg));
-      }
+      for (const leg of set) if (leg.txStart > now) out.push(queuedFrame(leg));
       out.sort(compareInflight);
       return out;
     },
 
     sweep(now) {
       if (legs.size < sweepAt) return;
-      for (const [key, leg] of [...legs]) if (leg.arrive <= now) unlink(key, leg);
+      for (const leg of [...legs]) if (leg.arrive <= now) unlink(leg);
       sweepAt = Math.max(INFLIGHT_SWEEP_MIN, legs.size * 2);
     },
 

@@ -16,10 +16,10 @@
  * §6; `with-timeline` in timeline/timeline.css). While the past is shown the grid carries `data-review`, which frames
  * the canvas and writes "Viewing the past" over it; the strip's banner says the same in words and holds the way back.
  */
-import { useEffect, type CSSProperties } from 'react';
+import { Suspense, lazy, useEffect, type CSSProperties } from 'react';
 import { DOCK_MIN_HEIGHT } from '../dock/registry';
 import { Inspector } from '../inspector/Inspector';
-import { LearnShell } from '../learn/LearnShell';
+import { loadCurriculum } from '../curriculum-loader';
 import { applyThemeAttribute, startPersistence, store, useStore } from '../store/store';
 import { isLearnView } from '../store/types';
 import { TimelineStrip } from '../timeline/TimelineStrip';
@@ -32,6 +32,14 @@ import { StatusBar } from './StatusBar';
 import { Toast } from './Toast';
 import { TopBar } from './TopBar';
 import { Workspace } from './Workspace';
+
+/**
+ * @since P3c W0h (the bundle split) The course layer is a lazy chunk: `LearnShell`, the learn surfaces and the course
+ * catalogue they read (with every lesson's text) load the first time a learn view is shown. The catalogue is loaded
+ * through `loadCurriculum` first, so the synchronous course lookups (`profileForCourse`) find it.
+ */
+export const loadLearnShell = () => loadCurriculum().then(() => import('../learn/LearnShell'));
+const LearnShell = lazy(() => loadLearnShell().then((m) => ({ default: m.LearnShell })));
 
 const WALL_TICK_MS = 100;
 const INSPECTOR_MIN = 0;
@@ -108,7 +116,18 @@ export function App() {
         </section>
         <StatusBar />
       </div>
-      {learning && <LearnShell />}
+      {learning && (
+        <Suspense
+          fallback={
+            <div className="boot" role="status">
+              <div className="spinner" aria-hidden="true" />
+              <div>Loading the course…</div>
+            </div>
+          }
+        >
+          <LearnShell />
+        </Suspense>
+      )}
       {/* Fixed to the viewport, so it is outside the grid and a notification is seen from either side. */}
       <Toast />
     </>

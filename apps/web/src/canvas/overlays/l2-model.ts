@@ -22,7 +22,7 @@
  * Pure: no Pixi, no store, no clock. Engine constants are read at call time (§0 rule 12). `deriveDeviceL2` depends on
  * one device object only, so the registry memoises it per device object (registry.ts `memoPerDevice`).
  */
-import { DEFAULT_SWITCHPORT } from '@netforge/engine';
+import { DEFAULT_SWITCHPORT } from '@netforge/engine/contracts';
 import type { DeviceId, DeviceSnapshot, LinkId, PortId, PortL2View, PortSnapshot, SimSnapshot } from '@netforge/engine';
 
 // ── VLAN lists ───────────────────────────────────────────────────────────────

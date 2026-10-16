@@ -22,8 +22,9 @@
  * Pure: no store, no engine call. The store keeps `learn.lastCourse` (persisted) and hands it in. Engine constants and
  * the course catalogue are read at call time (§0 rule 12).
  */
-import { DEFAULTS_PROFILES, LATEST_DEFAULTS_PROFILE, courseById } from '@netforge/engine';
+import { DEFAULTS_PROFILES, LATEST_DEFAULTS_PROFILE } from '@netforge/engine/contracts';
 import type { DefaultsProfile, SimSnapshot } from '@netforge/engine';
+import { loadCurriculum, loadedCurriculum } from '../curriculum-loader';
 
 /** The one course whose lessons open worlds with the classic defaults (the CCNA 1 course id, `COURSES[0].id`). */
 export const CLASSIC_COURSE_ID = 'ccna1';
@@ -31,10 +32,22 @@ export const CLASSIC_COURSE_ID = 'ccna1';
 /**
  * The profile a new world takes from the course context (P3 W7): the course's own `profile` ('P1' for CCNA 1, 'P2' for
  * CCNA 2, 'P3' for CCNA 3), or `LATEST_DEFAULTS_PROFILE` when there is no course or none with that id.
+ *
+ * P3c W0h (the bundle split): the catalogue is a lazy chunk (curriculum-loader.ts). With no course id the answer needs
+ * no catalogue; with one, the catalogue must already be loaded (`courseProfile` loads it first). It throws rather than
+ * guess, since a guessed 'P3' for a CCNA 1 lesson would silently open the wrong world.
  */
 export function profileForCourse(courseId: string | null | undefined): DefaultsProfile {
-  const course = courseId ? courseById(courseId) : undefined;
-  return course?.profile ?? LATEST_DEFAULTS_PROFILE;
+  if (!courseId) return LATEST_DEFAULTS_PROFILE;
+  const curriculum = loadedCurriculum();
+  if (curriculum === undefined) throw new Error('profileForCourse: the course catalogue is not loaded yet (call courseProfile).');
+  return curriculum.courseById(courseId)?.profile ?? LATEST_DEFAULTS_PROFILE;
+}
+
+/** `profileForCourse`, loading the course catalogue first when a course id needs it (P3c W0h). */
+export async function courseProfile(courseId: string | null | undefined): Promise<DefaultsProfile> {
+  if (courseId) await loadCurriculum();
+  return profileForCourse(courseId);
 }
 
 /** The profile a snapshot reports ('P2' and 'P3' are written, 'P1' is the absent default). */

@@ -15,7 +15,8 @@
  * explains. Marks are words and glyphs, never colour alone. Wording is original.
  */
 import { useId, useState } from 'react';
-import { TRAFFIC_MAX_DURATION_MS, TRAFFIC_VOICE_PRESETS, planTrafficFlow } from '@netforge/engine';
+import { TRAFFIC_MAX_DURATION_MS } from '@netforge/engine/contracts';
+import { TRAFFIC_VOICE_PRESETS, planTrafficFlow } from '@netforge/engine/web';
 import type { DeviceId, DeviceSnapshot, FlowRow, SimSnapshot, TrafficFlowSpec } from '@netforge/engine';
 import { engine } from '../../bridge/client';
 import { useStore } from '../../store/store';

@@ -23,7 +23,8 @@
  * keyboard outline reads the text forms (`wanPortFacts`, `wanDeviceFacts`, `wanLinkFacts`).
  */
 import { Container, Graphics, type Text } from 'pixi.js';
-import { portKey, type DeviceId, type LinkId } from '@netforge/engine';
+import type { DeviceId, LinkId } from '@netforge/engine';
+import { portKey } from '@netforge/engine/contracts';
 import { airArc } from './air';
 import { bezierAt, geomBounds, sampleBezier, type CableGeom, type Pt } from './cables';
 import { boxExit, tunnelBox } from './capwap';

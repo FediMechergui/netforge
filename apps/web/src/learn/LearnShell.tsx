@@ -20,17 +20,8 @@
  * no worker round trip and nothing of it copied into the store, which holds two ids and nothing more.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import {
-  COURSES,
-  courseById,
-  lessonById,
-  lessonsOf,
-  type Course,
-  type DefaultsProfile,
-  type Lesson,
-  type ScenarioMeta,
-  type SimSnapshot,
-} from '@netforge/engine';
+import type { Course, DefaultsProfile, Lesson, ScenarioMeta, SimSnapshot } from '@netforge/engine';
+import { COURSES, courseById, lessonById, lessonsOf } from '@netforge/engine/curriculum';
 import { defaultSeed, engine } from '../bridge/client';
 import { loadLab } from '../labs/LabPanel';
 import { showDockTab } from '../shared/openDeviceSurface';

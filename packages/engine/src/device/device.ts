@@ -1123,7 +1123,9 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
       this.debugRings.set(ev.process, ring);
     }
     ring.push({ seq: this.debugSeq++, ev });
-    if (ring.length > DEBUG_RING_CAPACITY) ring.splice(0, ring.length - DEBUG_RING_CAPACITY);
+    // [S40] Trimmed in batches (one splice per DEBUG_RING_CAPACITY pushes, not one per push); readers see only the
+    // newest DEBUG_RING_CAPACITY entries of each ring (`recentDebug`), exactly what a per-push trim kept.
+    if (ring.length >= 2 * DEBUG_RING_CAPACITY) ring.splice(0, ring.length - DEBUG_RING_CAPACITY);
   }
 
   // ── accessors ───────────────────────────────────────────────────────────
@@ -1157,7 +1159,9 @@ class DeviceRuntimeImpl implements DeviceRuntime, ProcessHost {
 
   recentDebug(limit = 50): DebugEvent[] {
     const all: { seq: number; ev: DebugEvent }[] = [];
-    for (const ring of this.debugRings.values()) for (const e of ring) all.push(e);
+    for (const ring of this.debugRings.values()) {
+      for (let i = Math.max(0, ring.length - DEBUG_RING_CAPACITY); i < ring.length; i++) all.push(ring[i]!);
+    }
     all.sort((a, b) => a.seq - b.seq); // emission order across processes
     const tail = limit >= all.length ? all : all.slice(all.length - Math.max(0, limit));
     return tail.map((e) => e.ev);

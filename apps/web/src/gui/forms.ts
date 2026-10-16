@@ -23,7 +23,15 @@
  * `wlan` sections of the rendered running config) and their checks, which mirror the controller grammar's limits
  * (`WLC_ARG_LIMITS`, read at call time: ARCHITECTURE-P2 §0 rule 12).
  */
-import { CHANNELS, WLC_ARG_LIMITS, isIpv4Multicast, maskToPrefixLen, parseIpv4, prefixLenToMask, prefixLenToMaskU32, walkConfigText } from '@netforge/engine';
+import {
+  CHANNELS,
+  isIpv4Multicast,
+  maskToPrefixLen,
+  parseIpv4,
+  prefixLenToMask,
+  prefixLenToMaskU32,
+} from '@netforge/engine/contracts';
+import { WLC_ARG_LIMITS, walkConfigText } from '@netforge/engine/web';
 import type { CliGrammar, ConfigureResult, DeviceSnapshot, PortId, PortSnapshot, RadioPortSpec, RfBand, WifiSecurity } from '@netforge/engine';
 import type { CommandPlan } from './commands.js';
 

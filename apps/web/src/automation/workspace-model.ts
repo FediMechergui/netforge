@@ -19,7 +19,13 @@
  * Nothing here branches on device kind: a device shows the workspace when its `gui` lists `desktop.automation`
  * (the `programmable` capability). Wording is original.
  */
-import { MAX_TOPOLOGY_FILE_CHARS, MAX_TOPOLOGY_FILE_NAME_CHARS, MAX_TOPOLOGY_FILES_PER_DEVICE, SCRIPT_HOST_NAME, isTopologyFileName } from '@netforge/engine';
+import {
+  MAX_TOPOLOGY_FILE_CHARS,
+  MAX_TOPOLOGY_FILE_NAME_CHARS,
+  MAX_TOPOLOGY_FILES_PER_DEVICE,
+  SCRIPT_HOST_NAME,
+  isTopologyFileName,
+} from '@netforge/engine/web';
 import type {
   DeviceId,
   DeviceSnapshot,

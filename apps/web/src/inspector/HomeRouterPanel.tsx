@@ -12,7 +12,7 @@
  * the field that produced them (`lan.*`, `wan.*`, `radios.<i>.*`). All wording is original (§1.6).
  */
 import { Fragment, useId } from 'react';
-import { maskToPrefixLen, parseIpv4, prefixLenToMaskU32 } from '@netforge/engine';
+import { maskToPrefixLen, parseIpv4, prefixLenToMaskU32 } from '@netforge/engine/contracts';
 import type { DeviceId, DeviceSnapshot, PortId, PortSnapshot, RadioPortSpec } from '@netforge/engine';
 import { engine } from '../bridge/client';
 import { homeRouterCommands } from '../gui/commands';

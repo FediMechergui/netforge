@@ -16,7 +16,7 @@
  * in words. Positions are percentages of the track, so nothing is measured to draw.
  */
 import type { KeyboardEvent, PointerEvent, Ref } from 'react';
-import { formatSimTime } from '@netforge/engine';
+import { formatSimTime } from '@netforge/engine/contracts';
 import type { SimTime } from '@netforge/engine';
 import type { ReviewInfo } from '../bridge/protocol';
 import { formatDurationNs } from '../vocab/fields';

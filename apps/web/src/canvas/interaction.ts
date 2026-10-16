@@ -24,7 +24,8 @@
  * Hit testing is geometric (see the layers' `hit` methods); Pixi's event system is not used.
  */
 import { Graphics } from 'pixi.js';
-import { portKey, samePort, type CableValidation, type DeviceId, type LinkId, type PduId, type PortRef, type Selection } from '@netforge/engine';
+import type { CableValidation, DeviceId, LinkId, PduId, PortRef, Selection } from '@netforge/engine';
+import { portKey, samePort } from '@netforge/engine/contracts';
 import {
   addLinkSpecFor,
   serialDceHint,

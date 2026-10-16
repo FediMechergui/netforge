@@ -2213,6 +2213,42 @@ did not match the code. The ruling accepts each fix it made:
 8. Bundle split: web tests that import engine values from `'@netforge/engine'` in `src/` paths move to the pure or
    subpath entry, assertions unchanged.
 
+**W0h as built: ruling RC3 (architect, 2026-10-16), [S40].**
+- (a) The speed-up is measured on the bundled engine: `bench/loop-storm.ts` run with node over an esbuild bundle, the
+  form the web app ships. The storm window went from 15.0 s to 3.3 s (median of 3), about 4.5×, so the ≥ 3× target is
+  met. Under vitest's module runner the gain is about 1.8×, because every imported call pays the runner's per-export
+  getter. That cost is outside the engine, and §14 records it.
+- (b) Three files the bullet does not name are accepted as part of the dispatch path:
+  - `core/scheduler.ts`: one-shape heap slots, with the `(at, seq)` order unchanged;
+  - `link/inflight.ts`: leg-object indexes, with insertion order kept;
+  - `pdu/pdu.ts`: clone reuse of immutable layers, and `summary()`/`topProto()` cached on the identity of the layers
+    array.
+- (c) The lead adds the check that `accept.p3c.hot-path` needs, that the bench exists and is excluded from every
+  project, when committing W0h.
+- (d) The next frames (`readAllSwitchports` per frame, and the trace volume of the window) are left for a later item.
+  Caching switchports needs a version counter on the running-config AST.
+
+**W0h as built: ruling RC4 (architect, 2026-10-16), [C32] and the bundle split.**
+- (a) [C32]:
+  - `wifi.central.test.ts`'s fake capwap-wtp loses `frame: 'data'`.
+  - `contracts.optional-by-meaning`'s P2 member count goes from 53 to 52.
+  - `TraceFilter.vlans` matches only events whose PDU summary carries a listed VLAN.
+  - The comment in lab file `ccna2/trunks.ts` is updated; no byte of the lab changes.
+- (b) The bundle split adds three subpath entries to `packages/engine/package.json`:
+  - `./contracts`;
+  - `./curriculum` (`src/curriculum-entry.ts`);
+  - `./web` (`src/web.ts`): 33 named re-exports of the helpers the main thread needs, each from the module the main
+    entry uses.
+
+  `pure-entry.lint` pins the five-entry set exactly, and checks that `/contracts` and `/curriculum` reach only
+  contracts and course data.
+- (c) §6's `src/labs/lab-loader.ts` is not needed and is dropped. Lab text reaches the main thread only through the
+  worker (`listScenarios`), so `SCENARIOS` lives in the worker chunk alone. The course layer is lazy: `LearnShell`
+  loads through `loadCurriculum()`.
+- (d) `profileForCourse` throws if it is asked before the catalogue has loaded, and the async `courseProfile` is the
+  safe call. A failed course chunk shows the Fatal screen rather than opening a world with the wrong profile.
+- (e) Result: the main chunk is 1,523 kB (gzip 472 kB), down from 4,094 kB. The worker chunk is unchanged.
+
 **W1a**
 
 9. [S39] `accept.p3.grader-bounded`: the documented EtherChannel exception is replaced by an exact deterministic

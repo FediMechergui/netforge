@@ -8,7 +8,6 @@
  * All wording is original (§1.6).
  */
 import {
-  BAND_GENERATIONS,
   BRIDGING_CAPABILITIES,
   CAPABILITY_PROCESSES,
   CLI_MESSAGES,
@@ -16,8 +15,8 @@ import {
   MCS_TABLES,
   ROLE_TRAITS,
   SLOT_ACCEPTS,
-  mcsRateBps,
-} from '@netforge/engine';
+} from '@netforge/engine/contracts';
+import { BAND_GENERATIONS, mcsRateBps } from '@netforge/engine/web';
 import type {
   AssociationSnapshot,
   BssSnapshot,

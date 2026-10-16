@@ -19,7 +19,7 @@
  * table row or view exists: [S20] Policy (the held class queues), [S1] OSPF, [S19] PPP and [S18]/[C13] Tunnel.
  */
 import { Fragment, useState } from 'react';
-import { QOS_CLASS_DEFAULT, walkConfigText } from '@netforge/engine';
+import { QOS_CLASS_DEFAULT, walkConfigText } from '@netforge/engine/web';
 import type { DeviceSnapshot, PortCounters, PortId, PortQosView, PortRef, PortSnapshot } from '@netforge/engine';
 import { engine } from '../bridge/client';
 import { portAdminCommands } from '../gui/commands';

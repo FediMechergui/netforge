@@ -38,7 +38,6 @@ import {
   HISTORY_OFF_TEXT,
   REVIEW_ENDED_TEXT,
   REVIEW_STARTED_TEXT,
-  TIMELINE_UNAVAILABLE_TEXT,
   TIMELINE_WAITING_TEXT,
   TimelineStrip,
   TimelineStripView,
@@ -291,15 +290,6 @@ describe('the seek controller', () => {
     expect(h.report).toHaveBeenCalledTimes(1);
     expect(h.historyOff).not.toHaveBeenCalled();
     expect(c.disabledReason).toBeNull();
-  });
-
-  it('says so when the engine has no time machine', async () => {
-    const h = hooks();
-    const c = createTimelineController({}, h);
-    await c.act({ kind: 'seek', target: { time: 10 * SEC } });
-    expect(h.historyOff).toHaveBeenCalledWith(TIMELINE_UNAVAILABLE_TEXT);
-    expect(await c.buckets({ from: 0, to: SEC, buckets: 10 }, 1)).toBeUndefined();
-    expect(await c.marks({ lane: 'stp', from: 0, to: SEC, limit: 5 })).toEqual([]);
   });
 
   it('asks for buckets only when the query or the head moved, one query at a time', async () => {

@@ -22,7 +22,8 @@
  * so every fact drawn here is also said (`ospfPortFacts`, `ospfDeviceFacts`, `ospfLinkFacts`).
  */
 import { Container, Graphics, type Text } from 'pixi.js';
-import { portKey, type DeviceId, type LinkId, type OspfAreaId, type OspfNsmState } from '@netforge/engine';
+import type { DeviceId, LinkId, OspfAreaId, OspfNsmState } from '@netforge/engine';
+import { portKey } from '@netforge/engine/contracts';
 import { bezierAt, geomBounds, sampleBezier, type CableGeom, type Pt } from './cables';
 import type { OverlayFact } from './l2';
 import { OSPF_REFUSED_GLYPH, areaLabel, type OspfAreaZone, type OspfLinkMark, type OspfLinkWeight, type OspfOverlayModel, type OspfPortMark } from './overlays/ospf-model';

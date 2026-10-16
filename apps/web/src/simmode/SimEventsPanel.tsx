@@ -57,6 +57,7 @@ import {
   selectionForEvent,
   tagsOf,
   toggleChip,
+  vlansOf,
   type ChipGroup,
   type ChipSelection,
   type EventPage,
@@ -128,6 +129,7 @@ export function SimEventsPanel() {
     [snapshotDevices],
   );
   const tags = useMemo(() => tagsOf(page, listSel.tags.concat(breakSel.tags)), [page, listSel.tags, breakSel.tags]);
+  const vlans = useMemo(() => vlansOf(page, listSel.vlans.concat(breakSel.vlans)), [page, listSel.vlans, breakSel.vlans]);
   const counts = useMemo(() => {
     const c = new Map<string, number>();
     for (const row of page.rows) c.set(row.event.kind, (c.get(row.event.kind) ?? 0) + 1);
@@ -344,6 +346,7 @@ export function SimEventsPanel() {
         onBackground={(next) => setListSel({ ...listSel, background: next })}
         devices={devices}
         tags={tags}
+        vlans={vlans}
         counts={counts}
       />
 
@@ -358,6 +361,7 @@ export function SimEventsPanel() {
           busy={busy}
           devices={devices}
           tags={tags}
+          vlans={vlans}
           deviceName={(id) => deviceName(index, id)}
         />
       )}

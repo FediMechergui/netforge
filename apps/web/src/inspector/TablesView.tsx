@@ -7,7 +7,7 @@
  * struck-through "ghost" rows rebuilt from the `tableExpire` event. Countdowns tick at 4 Hz, never per frame.
  */
 import { memo, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { routeSourceCode } from '@netforge/engine';
+import { routeSourceCode } from '@netforge/engine/web';
 import type { ArpRow, CamRow, DeviceSnapshot, RouteRow, SimTime, TableColumn, TableSnapshot } from '@netforge/engine';
 import { fmtSimTime } from '../bridge/client';
 import { extrapolatedNow } from '../store/selectors';

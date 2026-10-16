@@ -42,7 +42,7 @@
 import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { FocusEvent as ReactFocusEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react';
 import type { DeviceId, LinkId, PortRef, Selection, SimSnapshot } from '@netforge/engine';
-import { selectionKey } from '@netforge/engine';
+import { selectionKey } from '@netforge/engine/contracts';
 import * as canvasModule from '../Canvas';
 import { dockPaneShown } from '../../dock/registry';
 import { store, useStore } from '../../store/store';

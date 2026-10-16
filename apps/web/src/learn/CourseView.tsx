@@ -9,7 +9,8 @@
  * ponytail: the row is one button with the whole row inside it, not a heading plus a separate "open" control —
  * one tab stop per lesson, and the accessible name is the title and the outcome, which is what you are choosing.
  */
-import { lessonsOf, type Course, type Lesson } from '@netforge/engine';
+import type { Course, Lesson } from '@netforge/engine';
+import { lessonsOf } from '@netforge/engine/curriculum';
 import { courseFactsText } from './Landing';
 
 export interface CourseViewProps {

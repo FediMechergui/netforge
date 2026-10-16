@@ -50,7 +50,8 @@
  * nested type literal); the transition members of §2.13 (`CliRuntime.sendBreak`) keep their `?` until the item that
  * implements them; and two closing checks hold the set: no member whose own JSDoc says `@since P3c` is optional without
  * being listed, and every member whose own JSDoc says "@since P3c (optional by meaning" has its `?`.
- * `DemuxSelector.frame` stays in the P2 list until W0h ([C32]).
+ * P3c W0h ([C32] (a), §9.2 W0h item 7): `DemuxSelector.frame` left the P2 list, in the same change that deleted the
+ * member from the contract and from capwap-wtp's `handles`.
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -69,7 +70,7 @@ import type { LinkModel, LinkModelDeps, PolicerSpec, TransmitFn } from '../src/c
 import type { BssSnapshot } from '../src/contracts/medium.js';
 import type { PduMeta, RewrapOp } from '../src/contracts/pdu.js';
 import type { PortCounters, PortL3, PortSpec, PortState } from '../src/contracts/port.js';
-import type { Action, DebugEvent, DemuxSelector, LoggerStateView, PacketTuple, PacketTuple6, ProcessCtx, ProcessRequest, SnmpV3User } from '../src/contracts/process.js';
+import type { Action, DebugEvent, LoggerStateView, PacketTuple, PacketTuple6, ProcessCtx, ProcessRequest, SnmpV3User } from '../src/contracts/process.js';
 import type { RadioPortView, RadioSettings } from '../src/contracts/rf.js';
 import type { LabAssertion, LabAssertionNotes, LabCheckResult, LabFault } from '../src/contracts/scenario.js';
 import type { RunToIdleOptions, Simulation, SimulationOptions, TraceFilter } from '../src/contracts/simulation.js';
@@ -152,7 +153,6 @@ const MEMBERS: readonly OptionalMember[] = [
   optional<PduMeta, 'protected'>('pdu.ts', 'pdu.ts', 'PduMeta', 'protected', true),
   // process.ts
   optional<DebugEvent, 'fsm'>('process.ts', 'process.ts', 'DebugEvent', 'fsm', true),
-  optional<DemuxSelector, 'frame'>('process.ts', 'process.ts', 'DemuxSelector', 'frame', true),
   optional<ProcessCtx, 'radioSettings'>('process.ts', 'process.ts', 'ProcessCtx', 'radioSettings', true),
   optional<ArpGratuitous, 'address'>('process.ts', 'process.ts', 'ProcessRequest', 'address', true, ['kind', 'arp.gratuitous']),
   optional<ArpGratuitous, 'mac'>('process.ts', 'process.ts', 'ProcessRequest', 'mac', true, ['kind', 'arp.gratuitous']),
@@ -362,7 +362,8 @@ describe('contracts: members optional by meaning (ARCHITECTURE-P2 §2.15, W8)', 
   it('lists each member once', () => {
     const keys = MEMBERS.map(label);
     expect(new Set(keys).size).toBe(keys.length);
-    expect(MEMBERS).toHaveLength(53);
+    // 53 until P3c W0h, when [C32] (a) removed `DemuxSelector.frame` (ARCHITECTURE-P3C §9.2 W0h item 7)
+    expect(MEMBERS).toHaveLength(52);
   });
 
   describe.each(MEMBERS.map((m) => [label(m), m] as const))('%s', (_name, m) => {

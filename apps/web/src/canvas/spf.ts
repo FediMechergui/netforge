@@ -18,7 +18,8 @@
  * forms so every fact drawn here is also said (`spfPortFacts`, `spfDeviceFacts`, `spfLinkFacts`).
  */
 import { Container, Graphics, type Text } from 'pixi.js';
-import { portKey, type DeviceId, type LinkId } from '@netforge/engine';
+import type { DeviceId, LinkId } from '@netforge/engine';
+import { portKey } from '@netforge/engine/contracts';
 import { geomBounds, sampleBezier, type CableGeom, type Pt } from './cables';
 import type { OverlayFact } from './l2';
 import type { SpfLinkMark, SpfOverlayModel, SpfPlace, SpfVertexMark } from './overlays/spf-model';

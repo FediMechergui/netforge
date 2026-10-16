@@ -4,9 +4,10 @@
  */
 import { Component, StrictMode, type ErrorInfo, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { App } from './app/App';
+import { App, loadLearnShell } from './app/App';
 import { initEngine } from './bridge/client';
 import { applyThemeAttribute, store } from './store/store';
+import { isLearnView } from './store/types';
 import './styles.css';
 
 interface BoundaryState {
@@ -67,6 +68,9 @@ function mount(): void {
   applyThemeAttribute(store.getState().theme);
   const root: Root = createRoot(el);
   root.render(<Boot text="Starting the simulation engine…" />);
+  // P3c W0h: the course layer is a lazy chunk; when the app opens on a learn view, fetch it while the engine starts.
+  // A failure here is not reported: the lazy mount retries and shows its own error.
+  if (isLearnView(store.getState().view)) void loadLearnShell().catch(() => undefined);
 
   initEngine()
     .then(() => {

@@ -14,7 +14,7 @@
  */
 import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { CHANNELS } from '@netforge/engine';
+import { CHANNELS } from '@netforge/engine/contracts';
 import type {
   AssociationSnapshot,
   DeviceId,

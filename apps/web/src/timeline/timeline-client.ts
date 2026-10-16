@@ -29,7 +29,8 @@
  * synchronised, a log a server received, a tunnel, a PPP link or an IPsec SA changing state — instead of the generic
  * "<table> <key> written" with keys such as `GigabitEthernet0/1|R2`.
  */
-import { REPLAY_READ_ONLY_MESSAGE, TABLE_DESCRIPTORS, formatSimTime, laneOfTable } from '@netforge/engine';
+import { REPLAY_READ_ONLY_MESSAGE, TABLE_DESCRIPTORS, formatSimTime } from '@netforge/engine/contracts';
+import { laneOfTable } from '@netforge/engine/web';
 import type { LaneBucket, LaneId, SeekTarget, SimTime, TimelineMarkQuery, TimelineQuery, TraceEvent } from '@netforge/engine';
 import type { ReviewInfo } from '../bridge/protocol';
 import { dropLabel } from '../vocab/drops';

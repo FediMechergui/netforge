@@ -13,7 +13,7 @@
  *
  * Nothing here branches on device kind (D2/D3) or touches the DOM, so it is unit-tested directly.
  */
-import { portKey, samePort } from '@netforge/engine';
+import { portKey, samePort } from '@netforge/engine/contracts';
 import type {
   AssociationSnapshot,
   DeviceId,

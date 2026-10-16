@@ -19,7 +19,8 @@
  * and the keyboard outline (`a11y/CanvasOutline.tsx`) use: every fact the overlay draws has a text form here.
  */
 import { Container, Graphics, type Text } from 'pixi.js';
-import { portKey, type DeviceId, type LinkId, type PortRef } from '@netforge/engine';
+import type { DeviceId, LinkId, PortRef } from '@netforge/engine';
+import { portKey } from '@netforge/engine/contracts';
 import { bezierAt, geomBounds, sampleBezier, type CableGeom, type Pt } from './cables';
 import { formatVlanRanges, isAllVlans, vlanHue, type DeviceL2, type L2End, type L2OverlayModel, type L2PortMark } from './overlays/l2-model';
 import type { Layout, PortAnchor } from './ports';

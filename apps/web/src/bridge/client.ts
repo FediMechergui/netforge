@@ -7,7 +7,7 @@
 import * as Comlink from 'comlink';
 import './errors';
 import type { DefaultsProfile, DeviceId, SimTime } from '@netforge/engine';
-import { profileForCourse } from '../learn/course-profile';
+import { courseProfile, profileForCourse } from '../learn/course-profile';
 import { setResyncHandler, store } from '../store/store';
 import type { EngineApi, EngineBatch } from './protocol';
 
@@ -82,17 +82,22 @@ export function startupProfile(): DefaultsProfile {
 /**
  * Create the worker, initialise the simulation with `seed` (and, since P2, the `profile` of the course context) and
  * subscribe the store's `applyBatch` to the batch stream. Loads no topology. Idempotent.
+ *
+ * P3c W0h (the bundle split): with no `profile` passed, the app-start profile is read once the course catalogue (a lazy
+ * chunk) is loaded, which only happens when the restored `learn.lastCourse` names a course; the worker starts loading
+ * meanwhile.
  */
-export function initEngine(seed = defaultSeed(), profile: DefaultsProfile = startupProfile()): Promise<void> {
+export function initEngine(seed = defaultSeed(), profile?: DefaultsProfile): Promise<void> {
   if (!initPromise) {
     initPromise = (async () => {
       const api = connect();
+      const startProfile = profile ?? (await courseProfile(store.getState().learn.lastCourse));
       const onBatch = (batch: EngineBatch): void => {
         store.getState().applyBatch(batch);
       };
       setResyncHandler(() => void resync(api));
       await api.subscribe(Comlink.proxy(onBatch), { watchDevices: watchedDevicesOf(store.getState()) });
-      const init = await api.init({ seed, profile });
+      const init = await api.init({ seed, profile: startProfile });
       store.getState().setReady(init);
 
       // Background frames only clamp the clock (and so stay on screen long enough to draw) when the overlay is on.

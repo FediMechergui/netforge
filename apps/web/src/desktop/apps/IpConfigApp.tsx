@@ -16,7 +16,8 @@
  * these two values; the P1 form and its builders are unchanged.
  */
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
-import { ROLE_TRAITS, isVlanId } from '@netforge/engine';
+import { ROLE_TRAITS } from '@netforge/engine/contracts';
+import { isVlanId } from '@netforge/engine/web';
 import type { CliGrammar, DeviceSnapshot, PortId, PortSnapshot } from '@netforge/engine';
 import { IPV6_ADDRESS_MODES, ipConfigCommands, ipv6ModeCommands, mergePlans, portAdminCommands, voiceVlanCommands } from '../../gui/commands.js';
 import type { CommandPlan, Ipv6AddressMode } from '../../gui/commands.js';

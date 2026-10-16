@@ -21,7 +21,8 @@
  * said (`stpPortFacts`, `stpDeviceFacts`, `stpLinkFacts`).
  */
 import { Container, Graphics, type Text } from 'pixi.js';
-import { portKey, type DeviceId, type LinkId, type PortId } from '@netforge/engine';
+import type { DeviceId, LinkId, PortId } from '@netforge/engine';
+import { portKey } from '@netforge/engine/contracts';
 import { bezierTangent, geomBounds, sampleBezier, type CableGeom, type Pt } from './cables';
 import type { OverlayFact } from './l2';
 import { starburstPoints } from './markers';

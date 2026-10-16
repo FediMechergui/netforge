@@ -19,7 +19,8 @@
  * dependency; the keyboard outline reads the text forms (`eigrpPortFacts`, `eigrpDeviceFacts`, `eigrpLinkFacts`).
  */
 import { Container, Graphics, type Text } from 'pixi.js';
-import { portKey, type DeviceId, type LinkId } from '@netforge/engine';
+import type { DeviceId, LinkId } from '@netforge/engine';
+import { portKey } from '@netforge/engine/contracts';
 import { geomBounds, sampleBezier, type CableGeom, type Pt } from './cables';
 import type { OverlayFact } from './l2';
 import { eigrpMetricText, type EigrpOverlayModel, type EigrpPathMark, type EigrpRouterMark, type EigrpWeight } from './overlays/eigrp-model';

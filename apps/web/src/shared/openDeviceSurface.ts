@@ -14,7 +14,7 @@
  * Hidden panes are revealed (a collapsed dock opens, a hidden inspector gets its width back) and every outcome is
  * announced to screen readers.
  */
-import { CLI_MESSAGES, GUI_PANELS } from '@netforge/engine';
+import { CLI_MESSAGES, GUI_PANELS } from '@netforge/engine/contracts';
 import type { DeviceId, DeviceSnapshot, GuiPanelId } from '@netforge/engine';
 import { engine } from '../bridge/client';
 import { DOCK_MIN_HEIGHT, DOCK_OPEN_HEIGHT, INSPECTOR_HIDDEN_BELOW, INSPECTOR_OPEN_WIDTH } from '../dock/registry';

@@ -10,7 +10,7 @@
  *
  * All wording is original (§1.6). Command names inside quotes ("clock rate", "no shutdown") are syntax.
  */
-import { MEDIA } from '@netforge/engine';
+import { MEDIA } from '@netforge/engine/contracts';
 import type { CableProblem, LinkDownCode, MediaClass, MediaType } from '@netforge/engine';
 import type { ColorToken } from './protocols.js';
 

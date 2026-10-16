@@ -9,7 +9,7 @@
  * rule 20), so a port without a row shows nothing. Every state keeps a text channel next to its glyph; wording is
  * original (§0 rule 6).
  */
-import { formatSimTime } from '@netforge/engine';
+import { formatSimTime } from '@netforge/engine/contracts';
 import type {
   DeviceSnapshot,
   OspfInterfaceRow,

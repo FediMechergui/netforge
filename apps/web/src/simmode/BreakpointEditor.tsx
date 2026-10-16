@@ -40,10 +40,12 @@ export interface BreakpointEditorProps {
   busy: boolean;
   devices: readonly ChipDevice[];
   tags: readonly string[];
+  /** @since P3c [C32] (b) The VLAN ids the VLAN chips offer. */
+  vlans?: readonly number[];
   deviceName(id: DeviceId): string;
 }
 
-export function BreakpointEditor({ id, selection, onSelection, armed, onArm, onRun, busy, devices, tags, deviceName }: BreakpointEditorProps) {
+export function BreakpointEditor({ id, selection, onSelection, armed, onArm, onRun, busy, devices, tags, vlans, deviceName }: BreakpointEditorProps) {
   const filter = buildTraceFilter(selection);
   const ready = hasChips(selection);
   const current = presetOf(filter);
@@ -77,6 +79,7 @@ export function BreakpointEditor({ id, selection, onSelection, armed, onArm, onR
         onBackground={(next) => onSelection({ ...selection, background: next })}
         devices={devices}
         tags={tags}
+        vlans={vlans}
         maxHeight={140}
       />
 

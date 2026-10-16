@@ -31,20 +31,12 @@
  * defaults" is offered to P1 and P2 worlds, since the current defaults are now 'P3'.
  */
 import { useRef, useState } from 'react';
-import {
-  NETFORGE_FORMAT_VERSION,
-  readNetforge,
-  topologyFromJson,
-  topologyToJson,
-  writeNetforge,
-  type NetforgeManifest,
-  type ScenarioMeta,
-  type Topology,
-  type TopologyLoadProblem,
-} from '@netforge/engine';
+import type { NetforgeManifest, ScenarioMeta, Topology, TopologyLoadProblem } from '@netforge/engine';
+import { NETFORGE_FORMAT_VERSION } from '@netforge/engine/contracts';
+import { readNetforge, topologyFromJson, topologyToJson, writeNetforge } from '@netforge/engine/web';
 import { defaultSeed, engine } from '../bridge/client';
 import type { EngineError } from '../bridge/errors';
-import { currentDefaultsItem, currentDefaultsToast, profileForCourse, profileOfSnapshot } from '../learn/course-profile';
+import { courseProfile, currentDefaultsItem, currentDefaultsToast, profileOfSnapshot } from '../learn/course-profile';
 import { store, useStore } from '../store/store';
 import { Menu, MenuHeading, MenuItem, MenuSeparator } from './Menu';
 import { reportError } from './PlaybackControls';
@@ -186,7 +178,7 @@ async function openFile(file: File): Promise<void> {
 async function newEmpty(): Promise<void> {
   try {
     // D2: the empty world takes the defaults of the course the learner is in (classic after a CCNA 1 lesson).
-    await engine.reset(defaultSeed(), profileForCourse(store.getState().learn.lastCourse));
+    await engine.reset(defaultSeed(), await courseProfile(store.getState().learn.lastCourse));
     store.getState().select(null);
     store.getState().setTool('select');
     store.getState().toast('New empty workspace.');

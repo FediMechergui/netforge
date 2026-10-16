@@ -13,7 +13,8 @@
  * focused device) and a constant-size locator dot marks each device.
  */
 import { Container, Graphics, type Text } from 'pixi.js';
-import { portKey, type DeviceId, type PortRef, type Selection } from '@netforge/engine';
+import type { DeviceId, PortRef, Selection } from '@netforge/engine';
+import { portKey } from '@netforge/engine/contracts';
 import type { PortCompat } from '../app/cable/cable-compat';
 import type { IconDef } from '../catalog/icon-types';
 import { badgeLayout, drawIcon } from '../catalog/render-pixi';

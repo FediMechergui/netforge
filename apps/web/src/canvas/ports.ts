@@ -15,16 +15,16 @@
  * Nothing here branches on device kind (D2/D3); everything is pure and unit-tested.
  */
 import type { Graphics } from 'pixi.js';
-import {
-  portKey,
-  type DeviceId,
-  type DeviceSnapshot,
-  type LinkId,
-  type LinkSnapshot,
-  type PortRef,
-  type PortSnapshot,
-  type SimSnapshot,
+import type {
+  DeviceId,
+  DeviceSnapshot,
+  LinkId,
+  LinkSnapshot,
+  PortRef,
+  PortSnapshot,
+  SimSnapshot,
 } from '@netforge/engine';
+import { portKey } from '@netforge/engine/contracts';
 import { isPickablePort } from '../app/cable/cable-compat';
 import type { IconDef } from '../catalog/icon-types';
 import { visualForModel } from '../catalog/visuals';

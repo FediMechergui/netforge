@@ -72,11 +72,8 @@ export interface DemuxSelector {
   ethertype?: number;
   /** @since P0.5 */
   roles: readonly PortRole[];
-  /**
-   * @since P2 (optional by meaning; wireless) dot11 only: matches 802.11 data frames (+1 score). EAPOL still reaches
-   * wlan-ap via the PROCESS_ORDER tie (both score 2).
-   */
-  frame?: 'data';
+  // P3c W0h [C32] (a): the P2 `frame?: 'data'` key was deleted (no matcher ever read it, device/pipeline.ts
+  // `buildDemuxIndex`); capwap-wtp's selector dropped it in the same change.
 }
 
 export type Severity = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7; // syslog: 0 emerg … 7 debug

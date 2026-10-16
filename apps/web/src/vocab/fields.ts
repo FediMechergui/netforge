@@ -8,7 +8,7 @@
  * `DISPATCH_TABLE`; this file adds the human rendering. Every formatter is pure and total: unknown protocols,
  * fields and values fall back to a plain rendering instead of throwing. All wording is original (§1.6).
  */
-import { DISPATCH_TABLE, ETH_LENGTH_MAX, NF_OUI, PROTO_FIELDS, formatSimTime } from '@netforge/engine';
+import { DISPATCH_TABLE, ETH_LENGTH_MAX, NF_OUI, PROTO_FIELDS, formatSimTime } from '@netforge/engine/contracts';
 import type { FieldSpec, FieldValue, MutationReason, SimTime, TableColumn } from '@netforge/engine';
 import { protocolLabel } from './protocols.js';
 import { CELL_ATTACH_STATE_VOCAB, WIFI_ASSOC_STATE_VOCAB } from './trace-kinds.js';

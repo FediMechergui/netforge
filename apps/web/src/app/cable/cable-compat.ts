@@ -14,7 +14,8 @@
  * The canvas and the flyout (CablePicker.tsx, W6) render these results; nothing here branches on device kind
  * (D2/D3). All wording is original (§1.6).
  */
-import { MEDIA, ROLE_TRAITS, checkCable, linkKindOf, portKey } from '@netforge/engine';
+import { MEDIA, ROLE_TRAITS, linkKindOf, portKey } from '@netforge/engine/contracts';
+import { checkCable } from '@netforge/engine/web';
 import type {
   AddLinkSpec,
   CableProblem,
