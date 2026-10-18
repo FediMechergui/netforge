@@ -271,7 +271,8 @@ export const CONTROLLER_PORT_SWITCHPORT: SwitchportConfig = Object.freeze({
  * ERR_DISABLE_CAUSES gained them, in this order, in the W2 l2 change that raises them (eth-switch steps 7b/7c; the
  * pre-approved contract edit), so `show errdisable recovery` lists them (§9.2 item 24).
  * 'storm-control' @since P3c [S16] (ARCHITECTURE-P3C §2.2): the union in W0 (with its `ERR_DISABLE_CAUSE_TEXT` row as a
- * compile stub); the runtime list ERR_DISABLE_CAUSES gains it only in the W2a l2 change that raises it (P3a rule 3).
+ * compile stub); the runtime list ERR_DISABLE_CAUSES gained it, last, in the W2a l2 change that raises it (eth-switch's
+ * storm-control ingress check, `action shutdown`), so `show errdisable recovery` lists it on every profile (§4.4).
  */
 export type ErrDisableCause =
   | 'psecure-violation'
@@ -281,7 +282,10 @@ export type ErrDisableCause =
   | 'dhcp-rate-limit'
   | 'arp-inspection'
   | 'storm-control';
-/** @since P2 Every err-disable cause, in the order `show errdisable recovery` lists them ('dhcp-rate-limit', 'arp-inspection' @since P3). */
+/**
+ * @since P2 Every err-disable cause, in the order `show errdisable recovery` lists them ('dhcp-rate-limit',
+ * 'arp-inspection' @since P3; 'storm-control' @since P3c [S16]).
+ */
 export const ERR_DISABLE_CAUSES: readonly ErrDisableCause[] = Object.freeze([
   'psecure-violation',
   'bpduguard',
@@ -289,6 +293,7 @@ export const ERR_DISABLE_CAUSES: readonly ErrDisableCause[] = Object.freeze([
   'fault',
   'dhcp-rate-limit',
   'arp-inspection',
+  'storm-control',
 ]);
 
 /** @since P2 A virtual IPv4 address answered on a port (HSRP virtual IP, NAT pool / static inside-global address). */

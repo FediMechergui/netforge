@@ -187,13 +187,15 @@ describe('errdisable recovery', () => {
     expect(out[3]).toMatch(/^channel-misconfig\s+off$/);
     expect(out[4]).toMatch(/^dhcp-rate-limit\s+off$/);
     expect(out[5]).toMatch(/^arp-inspection\s+off$/);
-    expect(out[7]).toBe('Recovery interval: 30 s');
-    expect(out[9]).toBe(MSG_NO_ERR_DISABLED_PORT);
+    // P3c [S16] (ARCHITECTURE-P3C §9.2 W2a item 16): storm-control is listed last, on every profile
+    expect(out[6]).toMatch(/^storm-control\s+off$/);
+    expect(out[8]).toBe('Recovery interval: 30 s');
+    expect(out[10]).toBe(MSG_NO_ERR_DISABLED_PORT);
     expect(run(r, P2_HANDLERS.configErrdisableRecoveryCause, { cause: 'bpduguard' }, true)).toEqual({});
     expect(r.running.render()).not.toContain('cause bpduguard');
     expect(r.running.render()).toContain('cause psecure-violation');
     expect(run(r, P2_HANDLERS.configErrdisableRecoveryInterval, {}, true)).toEqual({});
-    expect(lines(run(r, P2_HANDLERS.showErrdisableRecovery).output)[7]).toBe('Recovery interval: 300 s');
+    expect(lines(run(r, P2_HANDLERS.showErrdisableRecovery).output)[8]).toBe('Recovery interval: 300 s');
   });
 
   it('lists the error-disabled ports with their cause and whether they come back by themselves', () => {
@@ -201,10 +203,10 @@ describe('errdisable recovery', () => {
     const r = commandCtxFor(SW, { ports });
     r.running.set([], ['errdisable', 'recovery', 'cause', 'psecure-violation']);
     const out = lines(run(r, P2_HANDLERS.showErrdisableRecovery).output);
-    expect(out[9]).toMatch(/^Port\s+Cause\s+Comes back$/);
-    expect(out[10]).toMatch(/^FastEthernet0\/1\s+port security violation\s+by itself, within 300 s$/);
-    expect(out[11]).toMatch(/^FastEthernet0\/2\s+BPDU guard\s+after shutdown \/ no shutdown$/);
+    expect(out[10]).toMatch(/^Port\s+Cause\s+Comes back$/);
+    expect(out[11]).toMatch(/^FastEthernet0\/1\s+port security violation\s+by itself, within 300 s$/);
+    expect(out[12]).toMatch(/^FastEthernet0\/2\s+BPDU guard\s+after shutdown \/ no shutdown$/);
     r.running.set([], ['errdisable', 'recovery', 'cause', 'all']);
-    expect(lines(run(r, P2_HANDLERS.showErrdisableRecovery).output)[11]).toMatch(/by itself, within 300 s$/);
+    expect(lines(run(r, P2_HANDLERS.showErrdisableRecovery).output)[12]).toMatch(/by itself, within 300 s$/);
   });
 });

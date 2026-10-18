@@ -177,17 +177,40 @@ describe('wan.gre [S18]: the underlay evaluation and the tunnels row (§3.10 ste
     expect(tunnelRow(sim, 'r1')).toMatchObject({ state: 'down', reason: 'no-source' });
     line(sim, 'r1', [['interface', SE0]], ['shutdown'], true);
     expect(tunnelRow(sim, 'r1')).toMatchObject({ state: 'up' });
-    // recursive routing: a host route to the destination through Tunnel0; one log; it stays down (no flap)
+    // recursive routing: a host route to the destination through Tunnel0; one log per down transition. P3c [S36a]
+    // (ARCHITECTURE-P3C §3.9, §9.2 W2a item 15): the recursion hold makes the classic flap — down at T; at T + 10 s the
+    // hold expires, the static through the (down) tunnel is gone, so the tunnel comes up; the static returns with it and
+    // the tunnel goes down again at once, re-arming the hold; and so on every 10 s.
+    const t = sim.now;
     const evs = line(sim, 'r1', [], ['ip', 'route', '209.165.200.230', '255.255.255.255', TU0]);
-    expect(tunnelRow(sim, 'r1')).toMatchObject({ state: 'down', reason: 'recursive-routing' });
+    const recursiveLog = `${TU0} is down: its destination 209.165.200.230 is routed through a tunnel (recursive routing)`;
+    expect(tunnelRow(sim, 'r1')).toMatchObject({ state: 'down', reason: 'recursive-routing', holdUntil: t + 10 * SEC });
     expect(evs.filter((e) => e.kind === 'log' && e.device === 'r1' && e.facility === 'TUNNEL').map((e) => (e as { severity: number; message: string }))).toEqual([
-      expect.objectContaining({ severity: 5, message: `${TU0} is down: its destination 209.165.200.230 is routed through a tunnel (recursive routing)` }),
+      expect.objectContaining({ severity: 5, message: recursiveLog }),
     ]);
-    expect(evs.filter((e) => e.kind === 'portState' && e.device === 'r1' && e.port === TU0).map((e) => (e as { operUp: boolean }).operUp)).toEqual([false]);
+    expect(evs.filter((e) => e.kind === 'portState' && e.device === 'r1' && e.port === TU0).map((e) => [e.t, (e as { operUp: boolean }).operUp])).toEqual([[t, false]]);
+    const cursor = sim.trace(0).next;
     sim.runFor(30 * SEC);
+    const flap = sim.trace(cursor).events;
+    expect(flap.filter((e) => e.kind === 'portState' && e.device === 'r1' && e.port === TU0).map((e) => [e.t - t, (e as { operUp: boolean }).operUp])).toEqual([
+      [10 * SEC, true],
+      [10 * SEC, false],
+      [20 * SEC, true],
+      [20 * SEC, false],
+      [30 * SEC, true],
+      [30 * SEC, false],
+    ]);
+    expect(flap.filter((e) => e.kind === 'log' && e.device === 'r1' && e.facility === 'TUNNEL').map((e) => [e.t - t, (e as { message: string }).message])).toEqual([
+      [10 * SEC, recursiveLog],
+      [20 * SEC, recursiveLog],
+      [30 * SEC, recursiveLog],
+    ]);
     expect(tunnelUp(sim, 'r1')).toBe(false);
+    expect(tunnelRow(sim, 'r1')).toMatchObject({ state: 'down', reason: 'recursive-routing', holdUntil: t + 40 * SEC });
+    // removing the static resolves the recursion: up, and the hold stops
     line(sim, 'r1', [], ['ip', 'route', '209.165.200.230', '255.255.255.255', TU0], true);
     expect(tunnelRow(sim, 'r1')).toMatchObject({ state: 'up' });
+    expect(tunnelRow(sim, 'r1')!.holdUntil).toBeUndefined();
     expect(tunnelUp(sim, 'r1')).toBe(true);
   });
 

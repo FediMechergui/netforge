@@ -429,13 +429,14 @@ describe('step 7b rate limit → err-disable dhcp-rate-limit (§3.4 step 5)', ()
 
     const { session } = console(sim, 'sw1', ['enable']);
     const shown = sim.cli.exec(session, 'show errdisable recovery').output.split('\n');
-    expect(shown.slice(0, 6).map((l) => l.trimEnd())).toEqual([
+    expect(shown.slice(0, 7).map((l) => l.trimEnd())).toEqual([
       expect.stringMatching(/^Cause\s+Automatic recovery$/),
       expect.stringMatching(/^psecure-violation\s+off$/),
       expect.stringMatching(/^bpduguard\s+off$/),
       expect.stringMatching(/^channel-misconfig\s+off$/),
       expect.stringMatching(/^dhcp-rate-limit\s+on$/),
       expect.stringMatching(/^arp-inspection\s+off$/),
+      expect.stringMatching(/^storm-control\s+off$/), // P3c [S16] (§9.2 W2a item 16)
     ]);
     expect(shown.find((l) => l.startsWith(FA24))).toMatch(/by itself, within 30 s$/);
 

@@ -354,8 +354,7 @@ export const ERR_DISABLE_CAUSE_TEXT: Readonly<Record<ErrDisableCause, string>> =
   // also appended them to ERR_DISABLE_CAUSES).
   'dhcp-rate-limit': 'the DHCP snooping rate limit',
   'arp-inspection': 'dynamic ARP inspection',
-  // P3c (ARCHITECTURE-P3C §2.2, §9.2 W0 item 1): the final text; the W2a l2 [S16] item raises it and appends it to
-  // ERR_DISABLE_CAUSES in that change.
+  // P3c [S16] (ARCHITECTURE-P3C §2.2): raised by eth-switch storm control, and in ERR_DISABLE_CAUSES since W2a.
   'storm-control': 'storm control',
 });
 

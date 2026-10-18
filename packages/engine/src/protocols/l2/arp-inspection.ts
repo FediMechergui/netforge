@@ -1,6 +1,6 @@
 /**
  * protocols/l2/arp-inspection.ts — the dynamic ARP inspection decision (ARCHITECTURE-P3 D13, §3.0 (b) "eth-switch
- * steps 7b/7c", §3.4 steps 6–8, §4.3, §4.5, §5.3).
+ * steps 7b/7c", §3.4 steps 6–8, §4.3, §4.5, §5.3; @since P3c [S14] ARP ACLs and `validate`, ARCHITECTURE-P3C §3.7).
  *
  * eth-switch runs step 7c in its VLAN-aware per-frame path, after port security (step 7) and step 7b, for an ARP whose
  * VLAN is inspected; it keeps the per-port rate windows and the per-VLAN log windows, and writes the `arp-inspection`
@@ -8,17 +8,30 @@
  *
  *  • `readArpInspection(config)` — the §5.3 lines: `ip arp inspection vlan <list>` (each stored line kept with its
  *    tokens) and per interface `ip arp inspection trust` and `ip arp inspection limit rate <pps> [burst interval <s>]`
- *    or `ip arp inspection limit none`. ([S14] ARP ACLs and `validate` are not approved, so `droppedAcl` stays 0.)
+ *    or `ip arp inspection limit none`. @since P3c [S14] the ARP access lists, `ip arp inspection filter …` and
+ *    `ip arp inspection validate …` are read by `arp-acl.ts` (`readArpAclInspection`) and passed in as `acl`.
  *  • `arpInspectionLimit(cfg, port)` — the effective limit: the configured one; else 15 packets per second on an
  *    untrusted port and none on a trusted one. A limit of N pps with a burst interval of S s allows N·S packets in
  *    windows of S seconds aligned to sim time (`rate-window.ts`).
- *  • `decideArpInspection(check)` — for an ARP arriving on logical port L in inspected VLAN V:
- *      1. a limit on L: count the ARP in L's window; more than allowed → err-disable L (`arp-inspection`) and drop it;
- *      2. a trusted L → forwarded, not inspected (no row write);
- *      3. an untrusted L → valid when a `dhcp-snooping` binding (V, sender MAC) exists, unexpired, with IP = sender IP
- *         and port = L (requiring the port to match is a listed deviation) → forwarded (`forwarded + 1`); otherwise
- *         dropped `arp-inspection` (`dropped + 1`, `droppedNoBinding + 1`), with a severity-4 log (facility `DAI`) while
- *         V's log window holds at most 5 lines in its second (§3.4 step 6).
+ *  • `decideArpInspection(check)` — for an ARP arriving on logical port L in inspected VLAN V, in the IOS order
+ *    (ARCHITECTURE-P3C §3.7; the W2a l2 item wired steps 3–4):
+ *      1. rate limit — a limit on L: count the ARP in L's window; more than allowed → err-disable L (`arp-inspection`)
+ *         and drop it;
+ *      2. trusted port — a trusted L → forwarded, not inspected (no row write; neither `validate` nor an ACL applies);
+ *      3. `validate` (@since P3c [S14], `arp-acl.ts`) — with `ip arp inspection validate src-mac|dst-mac|ip`, an ARP
+ *         failing a check (order src-mac, dst-mac, ip) → `refused` (`dropped + 1`, and `droppedSrcMac`,
+ *         `droppedDstMac` or `droppedIp` + 1);
+ *      4. the VLAN's ARP ACL (@since P3c [S14]) — with `ip arp inspection filter <acl> vlan <V> [static]` (the last line
+ *         naming V wins): an explicit permit → forwarded without a binding (`forwarded + 1`, `aclPermitted + 1`); an
+ *         explicit deny, or no match under `static` → `refused` (`dropped + 1`, `droppedAcl + 1`); no match without
+ *         `static` → step 5;
+ *      5. bindings — valid when a `dhcp-snooping` binding (V, sender MAC) exists, unexpired, with IP = sender IP and
+ *         port = L (requiring the port to match is a listed deviation) → forwarded (`forwarded + 1`); otherwise dropped
+ *         `arp-inspection` (`dropped + 1`, `droppedNoBinding + 1`).
+ *    Every drop of steps 3–5 logs at severity 4 (facility `DAI`) while V's log window holds at most 5 lines in its
+ *    second (§3.4 step 6). Without `acl` (or with no filter for V and no `validate` line) steps 3–4 do nothing and every
+ *    verdict is exactly the P3a one (`l2.arp-inspection.test.ts` pins it); the new row counters are optional by meaning
+ *    and appear only once nonzero.
  *  • `applyArpInspectionVerdict(prev, vlan, verdict, now)` — the VLAN's row after a verdict: one write per ARP inspected
  *    on an untrusted port; undefined (no write) otherwise.
  *
@@ -40,6 +53,8 @@ import type { SimTime } from '../../contracts/time.js';
 import { configTextLinesOf } from '../../cli/config-text.js';
 import { dhcpSnoopingKey, parseSnoopingVlanTokens, vlanLineFor } from './dhcp-snooping.js';
 import type { SnoopingVlanLine } from './dhcp-snooping.js';
+import { applyArpValidateAclOutcome, decideArpValidateAndAcl } from './arp-acl.js';
+import type { ArpAclInspectionConfig, ArpValidateAclOutcome } from './arp-acl.js';
 import { countInRateWindow, rateExceeded } from './rate-window.js';
 import type { RateWindow } from './rate-window.js';
 import { interfaceOfContext } from './switchport-config.js';
@@ -230,6 +245,13 @@ export interface ArpInspectionCheck {
   readonly binding?: DhcpSnoopingRow;
   /** The VLAN's log window so far (kept by the caller). */
   readonly logWindow?: RateWindow;
+  /**
+   * @since P3c [S14] The ARP ACLs, filters and `validate` line (`readArpAclInspection`). Steps 3–4 run only when it and
+   * `eth` are both given; absent = the P3a decision exactly.
+   */
+  readonly acl?: ArpAclInspectionConfig;
+  /** @since P3c [S14] The frame's Ethernet source and destination (`arpEthernetOf`), for `validate`. */
+  readonly eth?: { readonly src: MacAddress; readonly dst: MacAddress };
 }
 
 /** A log line to emit: `Action log {severity, facility, message}`. */
@@ -243,8 +265,16 @@ export interface ArpInspectionLog {
 export type ArpInspectionVerdict =
   /** The VLAN is not inspected: the frame takes the P2 path, nothing is counted or written. */
   | { readonly kind: 'skip' }
-  /** The ARP goes on; `inspected` (an untrusted port) makes the VLAN row count it as forwarded. */
-  | { readonly kind: 'forward'; readonly window?: RateWindow; readonly inspected: boolean }
+  /**
+   * The ARP goes on; `inspected` (an untrusted port) makes the VLAN row count it as forwarded. @since P3c [S14]
+   * `permit` is present when an explicit ARP ACL permit forwarded it (step 4; the row also counts `aclPermitted`).
+   */
+  | {
+      readonly kind: 'forward';
+      readonly window?: RateWindow;
+      readonly inspected: boolean;
+      readonly permit?: Extract<ArpValidateAclOutcome, { kind: 'permit' }>;
+    }
   /** `Action drop {reason: 'arp-inspection', detail, rule}`; `log` only while the VLAN's log window allows it. */
   | {
       readonly kind: 'drop';
@@ -253,6 +283,22 @@ export type ArpInspectionVerdict =
       readonly detail: string;
       readonly rule: DropRule;
       readonly noBinding: true;
+      readonly logWindow: RateWindow;
+      readonly log?: ArpInspectionLog;
+      readonly debug: string;
+    }
+  /**
+   * @since P3c [S14] Steps 3–4: a `validate` check failed, or the VLAN's ARP ACL denied the ARP (explicitly, or by the
+   * implicit deny of `static`): `Action drop {reason: 'arp-inspection', detail, rule}`, with `log` as for a
+   * no-binding drop.
+   */
+  | {
+      readonly kind: 'refused';
+      readonly window?: RateWindow;
+      readonly reason: 'arp-inspection';
+      readonly detail: string;
+      readonly rule: DropRule;
+      readonly outcome: Extract<ArpValidateAclOutcome, { kind: 'drop' }>;
       readonly logWindow: RateWindow;
       readonly log?: ArpInspectionLog;
       readonly debug: string;
@@ -280,6 +326,21 @@ export function daiNoBindingDetail(op: number, sha: MacAddress, spa: Ipv4Address
 /** The log line of an invalid ARP (severity 4, facility DAI). */
 export function daiInvalidLogMessage(op: number, sha: MacAddress, spa: Ipv4Address, port: PortId, vlan: number): string {
   return `Refused an ARP ${arpOpWord(op)} on ${port}, vlan ${vlan}: ${sha} claims ${spa}, which no DHCP snooping binding confirms.`;
+}
+
+/** @since P3c [S14] The log line of an ARP refused by `validate` or an ARP ACL (severity 4, facility DAI). */
+export function daiRefusedLogMessage(
+  outcome: Extract<ArpValidateAclOutcome, { kind: 'drop' }>,
+  arp: ArpInspectView,
+  port: PortId,
+  vlan: number,
+): string {
+  const why = outcome.cause === 'acl-deny'
+    ? 'an ARP access list denies it'
+    : outcome.cause === 'acl-static'
+      ? 'no entry of the static ARP access list permits it'
+      : `it fails the ${outcome.cause} validation`;
+  return `Refused an ARP ${arpOpWord(arp.op)} on ${port}, vlan ${vlan}: ${arp.sha} claims ${arp.spa}, and ${why}.`;
 }
 
 /** `one second` / `N seconds`. */
@@ -342,7 +403,29 @@ export function decideArpInspection(check: ArpInspectionCheck): ArpInspectionVer
   // 2. trusted ports are not inspected
   if (!inspected) return { ...counted, kind: 'forward', inspected: false };
 
-  // 3. untrusted: a binding must confirm the sender
+  // 3–4. @since P3c [S14] `validate`, then the VLAN's ARP ACL (only with the ACL configuration and the Ethernet addresses)
+  if (check.acl !== undefined && check.eth !== undefined) {
+    const outcome = decideArpValidateAndAcl({ config: check.acl, port, vlan, eth: check.eth, arp });
+    if (outcome.kind === 'permit') return { ...counted, kind: 'forward', inspected: true, permit: outcome };
+    if (outcome.kind === 'drop') {
+      const logWindow = countInRateWindow(check.logWindow, now);
+      const refused = {
+        ...counted,
+        kind: 'refused' as const,
+        reason: outcome.reason,
+        detail: outcome.detail,
+        rule: outcome.rule,
+        outcome,
+        logWindow,
+        debug: outcome.debug,
+      };
+      if (rateExceeded(logWindow, ARP_INSPECTION_LOG_LINES_PER_SECOND)) return refused;
+      const message = daiRefusedLogMessage(outcome, arp, port, vlan);
+      return { ...refused, log: { severity: ARP_INSPECTION_LOG_SEVERITY, facility: ARP_INSPECTION_LOG_FACILITY, message } };
+    }
+  }
+
+  // 5. untrusted: a binding must confirm the sender
   if (bindingConfirms(check.binding, arp, vlan, port, now)) return { ...counted, kind: 'forward', inspected: true };
   const logWindow = countInRateWindow(check.logWindow, now);
   const verdict = {
@@ -374,9 +457,10 @@ export function arpInspectionRowOf(vlan: number, now: SimTime): ArpInspectionRow
 }
 
 /**
- * The VLAN's row after `verdict` (one write per ARP inspected on an untrusted port): forwarded + 1; a drop: dropped + 1
- * and droppedNoBinding + 1; a rate-limit drop on an untrusted port: dropped + 1. Undefined when nothing is written
- * (skip, a trusted port).
+ * The VLAN's row after `verdict` (one write per ARP inspected on an untrusted port): forwarded + 1 (@since P3c [S14]
+ * and aclPermitted + 1 for an ACL permit); a drop: dropped + 1 and droppedNoBinding + 1; @since P3c a `refused` ARP:
+ * dropped + 1 and its validate or ACL counter + 1 (`applyArpValidateAclOutcome`); a rate-limit drop on an untrusted
+ * port: dropped + 1. Undefined when nothing is written (skip, a trusted port).
  */
 export function applyArpInspectionVerdict(
   prev: ArpInspectionRow | undefined,
@@ -385,6 +469,8 @@ export function applyArpInspectionVerdict(
   now: SimTime,
 ): ArpInspectionRow | undefined {
   if (verdict.kind === 'skip') return undefined;
+  if (verdict.kind === 'refused') return applyArpValidateAclOutcome(prev, vlan, verdict.outcome, now);
+  if (verdict.kind === 'forward' && verdict.permit !== undefined) return applyArpValidateAclOutcome(prev, vlan, verdict.permit, now);
   if (verdict.kind !== 'drop' && !verdict.inspected) return undefined;
   const row = prev ?? arpInspectionRowOf(vlan, now);
   if (verdict.kind === 'forward') return { ...row, forwarded: row.forwarded + 1, updatedAt: now };

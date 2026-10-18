@@ -2035,6 +2035,7 @@ list item by item. Row ids keep the first draft's numbering (X from map 05 and t
 
 | # | Decision | Ruling (decided value) | Recorded |
 |---|---|---|---|
+| S6-CP | The S6 keep-or-cut checkpoint (end of W2a, §7) | **Keep S6.** The refactor and the IPv6 plumbing cost about 1 h 40 min of builder time against 1.8 ew planned, and no contingency was drawn (RC8 (g)). | architect, 2026-10-18 |
 | X-7 | The loop-storm case (D-C7) | Keep `runFor(1 s)` (R61 (c)), move it to the explicit `GATE_TESTS` list, speed it up with S40 | architect |
 | X-8 | C32 (a) (D-C8) | Delete `DemuxSelector.frame`, contract and capwap-wtp together in W0h | architect |
 | X-10 | The P3 golden's world list (D-C10) | The 21 labs (frozen by lab id per shard), the P3 sandbox, the 9 templates as P3 worlds, two synthetic guard worlds (D3); guard world 1 re-recorded at W1b | architect |
@@ -2390,6 +2391,55 @@ did not match the code. The ruling accepts each fix it made:
     `cli/handlers/errdisable` tests) gains the `storm-control` row last, on every profile (§4.4).
 17. [S11] none: the `AclRow`, `DropRule`, `acl.filter`/`acl.check` and `aclKey` changes are value widenings, so every
     family-4 row, key, drop and fixture keeps its bytes (asserted by `accept.p3.acl-*` unchanged).
+
+**W2a as built: ruling RC8 (architect, 2026-10-18).**
+- **(a) [S5]/[C7] OSPF.**
+  - Authentication is real keyed MD5 (RFC 2328 D.4.3), with the cryptographic sequence ⌊sim now / 1 s⌋. It is
+    checked on every packet type before dispatch through the optional `OspfFamily` hooks `seal?`/`authenticate?`.
+  - The DBD announces `ip mtu`, else the port MTU, but a tunnel always announces its port MTU. A larger peer MTU is
+    refused unless `mtu-ignore` is set. Which side sticks follows router-id order.
+  - W3a1 cli-routing widens `ip mtu` from tunnels to routed, subinterface and serial ports. It also adds the
+    `ospfAuthKeyTooLong`/`ipMtuRange` messages and the `show ip ospf interface` auth lines.
+- **(b) [S6] l3.** `ipv6.routes` / `ipv6.group` / `Route6Row.owner` / `IPV6_UPPER` 89 are byte-neutral: every
+  P1/P2/P3 shard and both determinism tests are unchanged. The `ip.upper` pin gains `[89, 'ospfv3']`. W3a1 switches
+  `renderRoute6` to `route6SourceCode` and adds the conditional `O`/`OI`/`OE2` legend.
+- **(c) [S11]/[S12] acl.**
+  - The ACL state is keyed by family.
+  - ICMPv6 1/1 has its own 500 ms gate, never for ND.
+  - `log-input` lines name the input interface and the source MAC.
+  - `no ip unreachables` is read on the interface the error leaves by (IPv4 only).
+  - `ICMPV6_UNREACH_ADMIN` stays exported from `protocols/acl.ts`.
+  - Handoffs:
+    - W2b l3: the IPv6 hooks send `acl.filter {family: 6}`, with `inPort` on outbound;
+    - W3a1 svc: the vty sends `acl.check {family: 6}`, and an implicit row answers `seq: 'implicit'`;
+    - W3a1 cli: `clear ipv6 access-list` sends `acl.clear {family: 6}`, and the acl6 handler enforces RC6 (e).
+- **(d) [S14]–[S16] l2.**
+  - Storm control is ingress step 1b on the physical arrival port, using a per-config cache: one Map lookup when
+    unconfigured. IP source guard is step 7d. The DAI order is rate limit, trusted, validate, ARP ACL, bindings.
+  - `ERR_DISABLE_CAUSES` gains `storm-control` last. `cli.port-security` and `l2.snooping` pins moved, as §9.2 W2a
+    item 16 says.
+  - Loop-storm took 53.7 s and hot-path 30.9 s (count and digest unchanged) on a loaded machine.
+  - RC7 (a) is closed: the CSU and the cloud run only eth-switch, so no HDLC keepalive is sent on a PPP access line.
+  - W3a1 cli adds `errdisable recovery cause storm-control` and the `ERR_DISABLE_REASON_TEXT` rows. The new DAI log
+    wording is checked under rule 6.
+- **(e) [S36a]/[C17] GRE.**
+  - At expiry the recursion hold re-arms once with delay 0, so the evaluation runs after the other events due at the
+    same instant: OSPF's 10 s SPF hold coincides with it. This keeps `runToIdle` returning in OSPF-over-tunnel worlds,
+    and the flap stays exactly 10 s.
+  - A keepalive miss is counted at the tick after an unanswered keepalive. W4a's `accept.p3c.gre-keepalive` cuts the
+    link just before a tick, giving 30 s ± 1 ms.
+  - A key mismatch drops with reason `other` and an original detail.
+  - W3a1 cli makes a bare `keepalive` on a Tunnel store as `keepalive 10 3`.
+- **(f) [S29] tftp.** The tftp daemon is built; its owner row is in `DORMANT_TRANSPORT_OWNERS`, with the
+  `ip.switch-transport` pin moved. W2b device adds:
+  - `ProcessCtx.hasFileStore(fs)`, optional by meaning, replacing the daemon's local copy of the rule;
+  - a device path to read and replace the startup configuration (`nvram:startup-config`), for §3.4 step 3.
+
+  W3a2 cli stores `service tftp on|off` and `tftp-server`. Capture (W3b) adds conversation tracking for DATA/ACK.
+- **(g) S6 keep-or-cut checkpoint (§7 W2a, rule 27).** The refactor (W1a, W1c) and the IPv6 plumbing (W2a) cost about
+  1 h 40 min of builder time, against 1.8 ew planned, and no contingency was drawn. **S6 continues**: the v3 daemon,
+  CLI, adapter, web switch and lab 09 stay in the plan and are not cut again. The decision is recorded here and in
+  §8.5b.
 
 **W2b**
 

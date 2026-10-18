@@ -15,9 +15,14 @@
  *      down `no-source`;
  *   2. `tunnel destination <a>`, else down `no-destination`;
  *   3. the longest match for the destination exists, else down `no-route`, and leaves through a non-tunnel interface,
- *      else down `recursive-routing` (with a severity-5 log). Without [S36]'s hold timer (not approved) a tunnel
- *      down for recursive routing is NOT brought back by a RIB change (that would flap in the same dispatch); the
- *      next configuration or link change evaluates it again;
+ *      else down `recursive-routing` (with a severity-5 log, one per transition). P3c [S36a] (ARCHITECTURE-P3C §3.9,
+ *      §4.2): going down `recursive-routing` arms the periodic `recursion-hold:<port>` timer (10 s,
+ *      `GRE_RECURSION_HOLD_NS`; the row carries `holdUntil` while it is armed). While it is armed, RIB-change (and
+ *      keepalive) evaluations skip that tunnel, so the flap never happens inside one dispatch. At expiry (after the
+ *      other work due at that instant, `holdExpired`) the tunnel is evaluated once: up if the destination now leaves through a non-tunnel interface, else down again and the hold
+ *      re-arms. A configuration or link change that resolves the recursion stops the timer. With a route learned
+ *      through the tunnel (or a static one through it) the classic flap is periodic and bounded under `runFor`, and
+ *      `runToIdle` still returns (the timer is periodic, D10);
  *   4. up: `transportMtu` = the MTU of the interface the destination is routed through, `ipMtu` = transportMtu −
  *      `GRE_OVERHEAD` (1476 on a 1500-byte port), or `ip mtu <n>` when it is smaller (fragmentation is not
  *      simulated, D15, so a larger IP MTU cannot be carried).
@@ -55,7 +60,20 @@
  * source, up, strips the framing, the outer IPv4 and GRE (one rewrap, cause `interface Tunnel0`), clamps the MSS, and
  * injects the inner packet as `ingress {port: 'Tunnel0', layer: 'ipv4'}` (it counts on the tunnel).
  *
- * Debug category `tunnel` (§5.8). No timer, no randomness (§4.1, §4.2).
+ * P3c [C17] (ARCHITECTURE-P3C §2.3, §2.6, §4.2, §5). `tunnel key <n>`: the head writes the GRE key word (K set,
+ * `key n`); the tail accepts a packet only when its key equals the tunnel's (absent on both, or the same value), else
+ * drop `other` with `greKeyMismatchDetail`. `keepalive [<s> [<n>]]` (GRE mode only; default 10 s and 3 retries;
+ * `keepalive 0` or `no keepalive` disables) arms the periodic `gre-keepalive:<port>` timer. Each firing, while the
+ * underlay is ready: the previous keepalive still unanswered counts one more miss; `retries` consecutive misses take
+ * the tunnel down `keepalive-missed`; then a keepalive is sent — `[ipv4 {source → destination, 47}, gre, ipv4
+ * {destination → source, 47}, gre {protocolType 0}]` through the underlay (`ipv4.send`, tag `gre-keepalive`,
+ * background). The peer's tail recognises the inner GRE packet addressed back to the sender and returns it with
+ * `ipv4.send` whatever its own tunnel's state (keepalives need no configuration on the peer). Its arrival at the sender
+ * (GRE protocol type 0, nothing inside) resets the misses and brings a `keepalive-missed` tunnel up. The row carries
+ * `keepalive {periodS, retries, missed}` and `tunnelKey`. Nothing is sent without the `keepalive` line (§4.3).
+ *
+ * Debug category `tunnel` (§5.8). Timers: `recursion-hold:<port>` [S36a] and `gre-keepalive:<port>` [C17], both
+ * periodic; no randomness (§4.1, §4.2).
  * stateSnapshot(): { tunnels: [{ port, mode, state, encaps, decaps, mtuDrops, mssClamped }] } (port order); an
  * ipsec-mode entry also carries `IpsecTunnelCounters`' `seqOut`, `lastSeqIn` and `noSa` ([C13], §2.17).
  *
@@ -79,6 +97,7 @@ import {
 import type { Action, DebugEvent, FsmTransition, Process, ProcessCtx, ProcessRequest, StateView } from '../contracts/process.js';
 import type { IpsecTunnelCounters, RouteRow, Table, TunnelDownReason, TunnelRow } from '../contracts/tables.js';
 import type { ProcessEvent } from '../contracts/transport.js';
+import { SEC, type SimTime } from '../contracts/time.js';
 import { configTextLinesOf } from '../cli/config-text.js';
 import { ESP_NEXT_HEADER_IPV4, espIcvKeyMatches } from '../pdu/codecs/esp.js';
 
@@ -97,6 +116,28 @@ export const GRE_OUTER_TTL = 255;
 export const GRE_IPV4_DF = 0x2;
 /** The MTU a tunnel assumes when its transport is unknown (no usable source or route). */
 export const GRE_DEFAULT_TRANSPORT_MTU = 1500;
+
+/** @since P3c [S36a] The recursion hold (ARCHITECTURE-P3C §4.2: 10 s, fixed). */
+export const GRE_RECURSION_HOLD_NS = 10 * SEC;
+/** @since P3c [S36a] Prefix of the periodic recursion-hold timer key (`recursion-hold:<port>`). */
+export const GRE_RECURSION_HOLD_TIMER_PREFIX = 'recursion-hold:';
+/** @since P3c [C17] `keepalive` without arguments: 10 s and 3 retries. */
+export const GRE_KEEPALIVE_DEFAULT_S = 10;
+export const GRE_KEEPALIVE_DEFAULT_RETRIES = 3;
+/** @since P3c [C17] Prefix of the periodic keepalive timer key (`gre-keepalive:<port>`). */
+export const GRE_KEEPALIVE_TIMER_PREFIX = 'gre-keepalive:';
+/** @since P3c [C17] `PduMeta.tag` of a GRE keepalive (and of its return). */
+export const GRE_KEEPALIVE_TAG = 'gre-keepalive';
+/** @since P3c [C17] The GRE protocol type of a keepalive's inner header (nothing follows it). */
+export const GRE_KEEPALIVE_PROTOCOL_TYPE = 0;
+/** Misses are counted up to this bound (rule 19: no unbounded counter in a row). */
+const KEEPALIVE_MISSED_CAP = 255;
+
+/** @since P3c [C17] The drop detail of a GRE packet whose key does not match its tunnel's `tunnel key`. */
+export function greKeyMismatchDetail(port: PortId, received: number | undefined, expected: number | undefined): string {
+  const k = (v: number | undefined): string => (v === undefined ? 'no key' : `key ${v}`);
+  return `GRE key mismatch on ${port}: received ${k(received)}, expected ${k(expected)}`;
+}
 
 /** The D15 drop detail of a packet larger than the tunnel's IP MTU. */
 export function greMtuDetail(ipMtu: number): string {
@@ -123,6 +164,10 @@ export interface GreTunnelConfig {
   readonly adjustMss?: number;
   /** [C13] `tunnel protection ipsec profile <p>` (stored on an ipsec-mode tunnel only; the CLI refuses it in GRE mode). */
   readonly protection?: string;
+  /** @since P3c [C17] `keepalive [<s> [<n>]]` (GRE mode only; absent: none, `keepalive 0` or `no keepalive`). */
+  readonly keepalive?: { readonly periodS: number; readonly retries: number };
+  /** @since P3c [C17] `tunnel key <n>`. */
+  readonly key?: number;
 }
 
 /** [C13] The `tunnel.sa` down reasons: the tunnel's underlay is ready, the SA is not up. */
@@ -146,7 +191,10 @@ const posInt = (t: string | undefined, lo: number, hi: number): number | undefin
 
 /** Every `interface Tunnel<n>` section of `root` naming a tunnel port in `isTunnel`, with its tunnel lines. */
 export function readGreTunnels(root: ConfigNode, isTunnel: (port: PortId) => boolean): GreTunnelConfig[] {
-  const acc = new Map<PortId, { sourceIface?: PortId; sourceAddress?: Ipv4Address; destination?: Ipv4Address; mode: 'gre' | 'ipsec'; ipMtu?: number; adjustMss?: number; protection?: string }>();
+  const acc = new Map<
+    PortId,
+    { sourceIface?: PortId; sourceAddress?: Ipv4Address; destination?: Ipv4Address; mode: 'gre' | 'ipsec'; ipMtu?: number; adjustMss?: number; protection?: string; keepalive?: { periodS: number; retries: number }; key?: number }
+  >();
   for (const n of root.children) {
     if (n.key === 'interface' && n.args[0] !== undefined && isTunnel(n.args[0]) && !acc.has(n.args[0])) acc.set(n.args[0], { mode: 'gre' });
   }
@@ -173,9 +221,24 @@ export function readGreTunnels(root: ConfigNode, isTunnel: (port: PortId) => boo
     } else if (t[0] === 'ip' && t[1] === 'tcp' && t[2] === 'adjust-mss') {
       const v = posInt(t[3], 500, 1460);
       if (v !== undefined) c.adjustMss = v;
+    } else if (t[0] === 'tunnel' && t[1] === 'key') {
+      // [C17]
+      const v = posInt(t[2], 0, 0xffffffff);
+      if (v !== undefined) c.key = v;
+    } else if (t[0] === 'keepalive') {
+      // [C17] `keepalive` (10 s, 3), `keepalive <s>` (3 retries), `keepalive <s> <n>`; 0 seconds disables
+      const periodS = t[1] === undefined ? GRE_KEEPALIVE_DEFAULT_S : posInt(t[1], 0, 32767);
+      const retries = t[2] === undefined ? GRE_KEEPALIVE_DEFAULT_RETRIES : posInt(t[2], 1, 255);
+      if (periodS === undefined || retries === undefined) continue;
+      if (periodS === 0) delete c.keepalive;
+      else c.keepalive = { periodS, retries };
     }
   }
-  return [...acc].map(([port, c]) => ({ port, ...c }));
+  return [...acc].map(([port, c]) => {
+    // keepalives on GRE mode only (a listed deviation, ARCHITECTURE-P3C §12)
+    if (c.mode !== 'gre') delete c.keepalive;
+    return { port, ...c };
+  });
 }
 
 /** The static IPv4 address stored on `port` (`ip address A M`), `'dhcp'`, or undefined. */
@@ -202,6 +265,25 @@ interface Verdict {
   reason?: TunnelDownReason;
   transportMtu: number;
   ipMtu: number;
+  /** [C17] the row's `keepalive` (configured, with the misses so far). */
+  keepalive?: { periodS: number; retries: number; missed: number };
+  /** [C17] the row's `tunnelKey`. */
+  tunnelKey?: number;
+  /** [S36a] the row's `holdUntil` (while the recursion hold is armed). */
+  holdUntil?: SimTime;
+}
+
+/** [C17] One tunnel's keepalive exchange. */
+interface KeepaliveState {
+  /** The period the timer is armed with (seconds). */
+  periodS: number;
+  retries: number;
+  /** Consecutive keepalives unanswered. */
+  missed: number;
+  /** The last keepalive sent has had no answer yet. */
+  outstanding: boolean;
+  /** `retries` misses reached: the tunnel is down `keepalive-missed` until the next answer. */
+  down: boolean;
 }
 
 interface Counters {
@@ -229,6 +311,14 @@ export function createGre(): Process {
   const connected = new Map<PortId, string>();
   /** port → the ipsec-only counters of the StateView. */
   const ipsecCounters = new Map<PortId, { lastSeqIn: number; noSa: number }>();
+  // ── P3c ──
+  /**
+   * [S36a] port → the recursion hold (present while `recursion-hold:<port>` is armed): the instant it expires, and
+   * `due` once it has expired and its evaluation waits for the other work due at that instant.
+   */
+  const holds = new Map<PortId, { until: SimTime; due: boolean }>();
+  /** [C17] port → its keepalive exchange (present while `gre-keepalive:<port>` is armed). */
+  const kas = new Map<PortId, KeepaliveState>();
 
   function debug(ctx: ProcessCtx, message: string, data?: Record<string, unknown>): void {
     ctx.debug(GRE_DEBUG, message, data);
@@ -344,10 +434,69 @@ export function createGre(): Process {
   }
 
   const fingerprint = (v: Verdict): string =>
-    JSON.stringify([v.mode, v.source ?? null, v.sourceIface ?? null, v.destination ?? null, v.state, v.reason ?? null, v.transportMtu, v.ipMtu]);
+    JSON.stringify([
+      v.mode, v.source ?? null, v.sourceIface ?? null, v.destination ?? null, v.state, v.reason ?? null, v.transportMtu, v.ipMtu,
+      v.keepalive ?? null, v.tunnelKey ?? null, v.holdUntil ?? null,
+    ]);
 
-  /** Evaluate every tunnel; write changed rows; keep the RIB watch; `fromRib`: a recursive-routing tunnel stays down. */
-  function evaluateAll(ctx: ProcessCtx, fromRib: boolean): Action[] {
+  const holdKey = (port: PortId): string => `${GRE_RECURSION_HOLD_TIMER_PREFIX}${port}`;
+  const kaKey = (port: PortId): string => `${GRE_KEEPALIVE_TIMER_PREFIX}${port}`;
+
+  /** [C17] Keep `gre-keepalive:<port>` in step with the configuration: armed (re-armed on a new period) or cancelled. */
+  function syncKeepalive(c: GreTunnelConfig, out: Action[]): void {
+    const k = kas.get(c.port);
+    if (c.keepalive === undefined) {
+      if (k === undefined) return;
+      kas.delete(c.port);
+      out.push({ type: 'cancelTimer', key: kaKey(c.port) });
+      return;
+    }
+    if (k !== undefined && k.periodS === c.keepalive.periodS) {
+      k.retries = c.keepalive.retries;
+      if (k.missed < k.retries) k.down = false;
+      return;
+    }
+    kas.set(c.port, { periodS: c.keepalive.periodS, retries: c.keepalive.retries, missed: k?.missed ?? 0, outstanding: false, down: k?.down ?? false });
+    out.push({ type: 'timer', key: kaKey(c.port), delay: c.keepalive.periodS * SEC, periodic: true });
+  }
+
+  /** [S36a] Arm the recursion hold of a tunnel down `recursive-routing` (kept when armed); stop it otherwise. */
+  function syncHold(ctx: ProcessCtx, port: PortId, v: Verdict, out: Action[]): void {
+    if (v.reason === 'recursive-routing') {
+      if (!holds.has(port)) {
+        holds.set(port, { until: ctx.now + GRE_RECURSION_HOLD_NS, due: false });
+        out.push({ type: 'timer', key: holdKey(port), delay: GRE_RECURSION_HOLD_NS, periodic: true });
+      }
+    } else if (holds.delete(port)) {
+      out.push({ type: 'cancelTimer', key: holdKey(port) });
+    }
+  }
+
+  /** [C17] [S36a] The P3c columns of a verdict: keepalive-missed, the keepalive, the key and the hold. */
+  function withP3c(ctx: ProcessCtx, c: GreTunnelConfig, base: Verdict, out: Action[]): Verdict {
+    let v = base;
+    const k = kas.get(c.port);
+    if (k !== undefined) {
+      if (v.state !== 'up' && v.reason !== 'keepalive-missed') {
+        // the underlay is not ready: nothing is sent or counted until it is
+        k.missed = 0;
+        k.outstanding = false;
+        k.down = false;
+      }
+      if (k.down && v.state === 'up') v = { ...v, state: 'down', reason: 'keepalive-missed' };
+      v = { ...v, keepalive: { periodS: k.periodS, retries: k.retries, missed: k.missed } };
+    }
+    if (c.key !== undefined) v = { ...v, tunnelKey: c.key };
+    syncHold(ctx, c.port, v, out);
+    const hold = holds.get(c.port);
+    return hold !== undefined ? { ...v, holdUntil: hold.until } : v;
+  }
+
+  /**
+   * Evaluate every tunnel; write changed rows; keep the RIB watch. `skipHeld` (RIB changes, keepalive signals, a hold
+   * expiry): a tunnel whose recursion hold is armed is not evaluated ([S36a]).
+   */
+  function evaluateAll(ctx: ProcessCtx, skipHeld: boolean): Action[] {
     const out: Action[] = [];
     let changed = false;
     portOrder = new Map([...ctx.ports.keys()].map((id, i) => [id, i]));
@@ -359,19 +508,23 @@ export function createGre(): Process {
       counters.delete(port);
       ipsecCounters.delete(port);
       out.push(...release(ctx, port, 'the tunnel was removed'));
+      if (holds.delete(port)) out.push({ type: 'cancelTimer', key: holdKey(port) });
+      if (kas.delete(port)) out.push({ type: 'cancelTimer', key: kaKey(port) });
       table(ctx)?.delete(port, 'cleared');
       debug(ctx, `${port} removed`, { port });
       changed = true;
     }
     for (const c of tunnels) {
       const prev = rows.get(c.port);
-      if (fromRib && prev !== undefined && prev.verdict.reason === 'recursive-routing' && prev.cfg.destination === c.destination) continue;
+      syncKeepalive(c, out);
+      if (skipHeld && holds.has(c.port)) continue;
       let v = evaluate(ctx, c);
       const sync = syncProtection(ctx, c, v);
       if (sync.again) {
         out.push(...sync.out);
         v = evaluate(ctx, c);
       }
+      v = withP3c(ctx, c, v, out);
       const fp = fingerprint(v);
       if (prev !== undefined && fingerprint(prev.verdict) === fp) {
         prev.cfg = c;
@@ -385,6 +538,9 @@ export function createGre(): Process {
       if (v.sourceIface !== undefined) row.sourceIface = v.sourceIface;
       if (v.destination !== undefined) row.destination = v.destination;
       if (v.reason !== undefined) row.reason = v.reason;
+      if (v.keepalive !== undefined) row.keepalive = v.keepalive;
+      if (v.tunnelKey !== undefined) row.tunnelKey = v.tunnelKey;
+      if (v.holdUntil !== undefined) row.holdUntil = v.holdUntil;
       table(ctx)?.set(row);
       if (prev === undefined || prev.verdict.state !== v.state || prev.verdict.reason !== v.reason) changed = true;
       const from = prev?.verdict.state ?? 'down';
@@ -456,7 +612,7 @@ export function createGre(): Process {
     if (t.verdict.mode === 'ipsec') return espHead(ctx, pdu, port, t.verdict, i, dscp);
     const push: LayerSpec[] = [
       { proto: 'ipv4', fields: { src: t.verdict.source, dst: t.verdict.destination, protocol: IPPROTO_GRE, ttl: GRE_OUTER_TTL, dscp } },
-      { proto: 'gre', fields: { protocolType: ETHERTYPE_IPV4 } },
+      { proto: 'gre', fields: greFields(ETHERTYPE_IPV4, t.cfg.key) },
     ];
     const cause = greTunnelCause(port);
     ctx.rewrap(pdu, { strip: i, push }, cause);
@@ -542,6 +698,75 @@ export function createGre(): Process {
     return c;
   };
 
+  /** [C17] A keepalive came back: the misses reset, and a `keepalive-missed` tunnel is evaluated again (up). */
+  function keepaliveAnswered(ctx: ProcessCtx, pdu: Pdu, port: PortId): Action[] {
+    const k = kas.get(port)!;
+    const out: Action[] = [{ type: 'consume', pdu }];
+    const was = { missed: k.missed, down: k.down };
+    k.outstanding = false;
+    k.missed = 0;
+    k.down = false;
+    debug(ctx, `${port}: keepalive answered`, { pdu: pdu.id, port });
+    if (was.missed !== 0 || was.down) out.push(...evaluateAll(ctx, true));
+    return out;
+  }
+
+  /** [C17] One keepalive period: count a miss, maybe go down `keepalive-missed`, send the next keepalive. */
+  function keepaliveTick(ctx: ProcessCtx, port: PortId): Action[] {
+    const k = kas.get(port);
+    if (k === undefined) return [];
+    const out: Action[] = [{ type: 'timer', key: kaKey(port), delay: k.periodS * SEC, periodic: true }];
+    const t = rows.get(port);
+    const ready = t !== undefined && t.verdict.source !== undefined && t.verdict.destination !== undefined && (t.verdict.state === 'up' || t.verdict.reason === 'keepalive-missed');
+    if (!ready || holds.has(port)) return out;
+    let moved = false;
+    if (k.outstanding && k.missed < KEEPALIVE_MISSED_CAP) {
+      k.missed++;
+      moved = true;
+    }
+    k.outstanding = false;
+    if (k.missed >= k.retries && !k.down) {
+      k.down = true;
+      debug(ctx, `${port}: ${k.missed} keepalives missed`, { port, missed: k.missed });
+    }
+    if (moved) out.push(...evaluateAll(ctx, true));
+    const source = t.verdict.source!;
+    const destination = t.verdict.destination!;
+    const cause = greTunnelCause(port);
+    const pdu = ctx.newPdu(
+      [
+        { proto: 'ipv4', fields: { src: source, dst: destination, protocol: IPPROTO_GRE, ttl: GRE_OUTER_TTL } },
+        { proto: 'gre', fields: greFields(ETHERTYPE_IPV4, t.cfg.key) },
+        { proto: 'ipv4', fields: { src: destination, dst: source, protocol: IPPROTO_GRE, ttl: GRE_OUTER_TTL } },
+        { proto: 'gre', fields: greFields(GRE_KEEPALIVE_PROTOCOL_TYPE, t.cfg.key) },
+      ],
+      { tag: GRE_KEEPALIVE_TAG, background: true },
+    );
+    k.outstanding = true;
+    debug(ctx, `${port}: keepalive to ${destination} (${k.missed} missed)`, { pdu: pdu.id, port, missed: k.missed });
+    out.push({ type: 'request', to: 'ipv4', req: { kind: 'ipv4.send', pdu, cause } });
+    return out;
+  }
+
+  /**
+   * [S36a] The hold expired: evaluate the tunnel once (up, or down again with the hold re-armed). The evaluation is
+   * deferred by a zero-delay re-arm of the same periodic timer, so it runs after every other event already due at that
+   * instant (the exact instant is unchanged). Without it, an SPF whose 10 s hold started with the same down would be
+   * due at the same instant but run after the tunnel came up, so live routing work would span every expiry and
+   * `runToIdle` would never see only periodic timers pending (rule 19).
+   */
+  function holdExpired(ctx: ProcessCtx, port: PortId): Action[] {
+    const hold = holds.get(port);
+    if (hold === undefined) return [];
+    if (!hold.due) {
+      hold.due = true;
+      return [{ type: 'timer', key: holdKey(port), delay: 0, periodic: true }];
+    }
+    holds.delete(port);
+    debug(ctx, `${port}: recursion hold expired`, { port });
+    return evaluateAll(ctx, true);
+  }
+
   /** Tail (§3.10 step 4): find the tunnel, strip, inject on the tunnel port. */
   function tail(ctx: ProcessCtx, pdu: Pdu, port: PortId): Action[] {
     const o = pdu.layers.findIndex((l) => l.proto === 'ipv4');
@@ -561,8 +786,24 @@ export function createGre(): Process {
     }
     if (match === undefined) return [{ type: 'drop', pdu, reason: 'unsupported-protocol', detail: `no tunnel from ${src} to ${dst}`, port }];
     const t = rows.get(match)!;
-    if (t.verdict.state !== 'up') return [{ type: 'drop', pdu, reason: 'link-down', detail: `${match} is down`, port }];
+    // [C17] the key word must match the tunnel's `tunnel key` (absent on both, or equal)
+    const got = g.fields.keyPresent === true && typeof g.fields.key === 'number' ? g.fields.key : undefined;
+    if (got !== t.cfg.key) {
+      const detail = greKeyMismatchDetail(match, got, t.cfg.key);
+      debug(ctx, `${match}: dropped a GRE packet from ${src} (${detail})`, { pdu: pdu.id, port: match });
+      return [{ type: 'drop', pdu, reason: 'other', detail, port }];
+    }
     const inner = pdu.layers[o + 2];
+    // [C17] a keepalive's return: protocol type 0 with nothing inside, on a tunnel running keepalives
+    if (g.fields.protocolType === GRE_KEEPALIVE_PROTOCOL_TYPE && inner === undefined && kas.has(match)) return keepaliveAnswered(ctx, pdu, match);
+    // [C17] a peer's keepalive: the inner GRE packet goes back to its sender whatever this tunnel's state
+    if (g.fields.protocolType === ETHERTYPE_IPV4 && inner !== undefined && inner.proto === 'ipv4' && Number(inner.fields.protocol) === IPPROTO_GRE && inner.fields.dst === src && inner.fields.src === dst) {
+      const cause = greTunnelCause(match);
+      ctx.rewrap(pdu, { strip: o + 2, push: [] }, cause);
+      debug(ctx, `${match}: returned a keepalive to ${src}`, { pdu: pdu.id, port: match });
+      return [{ type: 'request', to: 'ipv4', req: { kind: 'ipv4.send', pdu, cause } }];
+    }
+    if (t.verdict.state !== 'up') return [{ type: 'drop', pdu, reason: 'link-down', detail: `${match} is down`, port }];
     if (g.fields.protocolType !== ETHERTYPE_IPV4 || inner === undefined || inner.proto !== 'ipv4') {
       return [{ type: 'drop', pdu, reason: 'unsupported-ethertype', detail: `${match} carries IPv4 only`, port }];
     }
@@ -618,7 +859,9 @@ export function createGre(): Process {
       return evaluateAll(ctx, false);
     },
 
-    onTimer(): Action[] {
+    onTimer(ctx: ProcessCtx, key: string): Action[] {
+      if (key.startsWith(GRE_RECURSION_HOLD_TIMER_PREFIX)) return holdExpired(ctx, key.slice(GRE_RECURSION_HOLD_TIMER_PREFIX.length));
+      if (key.startsWith(GRE_KEEPALIVE_TIMER_PREFIX)) return keepaliveTick(ctx, key.slice(GRE_KEEPALIVE_TIMER_PREFIX.length));
       return [];
     },
 
@@ -644,6 +887,11 @@ export function createGre(): Process {
       return ring;
     },
   };
+}
+
+/** The GRE layer's fields: the protocol type, and [C17] the key word when the tunnel has `tunnel key` (else P3a bytes). */
+function greFields(protocolType: number, key: number | undefined): Record<string, number | boolean> {
+  return key === undefined ? { protocolType } : { protocolType, keyPresent: true, key };
 }
 
 /** A u32 as 8 lower-case hex digits (SPIs in debug lines). */

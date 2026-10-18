@@ -25,7 +25,8 @@ describe('ip-upper table', () => {
     expect(IPV4_UPPER.map((e) => [e.protocol, e.process])).toEqual([
       [1, 'icmpv4'], [6, 'tcp'], [17, 'udp'], [47, 'gre'], [50, 'gre'], [88, 'eigrp'], [89, 'ospf'],
     ]);
-    expect(IPV6_UPPER.map((e) => [e.protocol, e.process])).toEqual([[6, 'tcp'], [17, 'udp'], [58, 'icmpv6']]);
+    // ARCHITECTURE-P3C §2.3 [S6]: IPv6 next header 89 → ospfv3.
+    expect(IPV6_UPPER.map((e) => [e.protocol, e.process])).toEqual([[6, 'tcp'], [17, 'udp'], [58, 'icmpv6'], [89, 'ospfv3']]);
     expect(ipv4UpperEntry(17)).toEqual({ protocol: 17, process: 'udp', label: 'udp' });
     expect(ipv4UpperEntry(89)).toEqual({ protocol: 89, process: 'ospf', label: 'ospf' });
     expect(ipv4UpperEntry(253)).toBeUndefined();
@@ -50,6 +51,9 @@ describe('ip-upper table', () => {
     expect(ipv6UpperProcess(all, 17)).toBe('udp');
     expect(ipv6UpperProcess(all, 6)).toBe('tcp');
     expect(ipv6UpperProcess(all, 59)).toBeUndefined();
+    // [S6] 89 is inert unless the device runs ospfv3 (ARCHITECTURE-P3C §3.3 step 8).
+    expect(ipv6UpperProcess(all, 89)).toBeUndefined();
+    expect(ipv6UpperProcess({ processes: ['ospfv3'] }, 89)).toBe('ospfv3');
     expect(ipv6UpperProcess({ processes: ['icmpv6'] }, 58, 135)).toBeUndefined();
   });
 

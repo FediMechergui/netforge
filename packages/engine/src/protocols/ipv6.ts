@@ -58,6 +58,21 @@
  *    link-local and multicast destinations need `iface`; `iface` forces egress and skips the RIB unless the
  *    destination is off-link; otherwise the rib6 route decides. No hop-limit decrement.
  *
+ *  • @since P3c [S6] Routing plumbing (ARCHITECTURE-P3C §2.4, §3.3; P3a D8 mirrored for IPv6). Every path below runs
+ *    only when a request arrives, so every P1/P2/P3a world keeps its bytes:
+ *      `ipv6.routes {owner, rows}` REPLACES the owner's candidate set: rows sharing a key are equal-cost paths in path
+ *      order; the arbiter owner is `${owner}|${slot}` (`route6SlotOwner`), so a changed next hop is a re-offer in
+ *      place (one tableWrite). Keys are applied in ascending (network, prefix length) order (`compareRoute6Keys`):
+ *      re-offer changed slots, offer new ones, withdraw vanished ones; `settleStatics` once; no decision event; one
+ *      'ipv6 routing' line per installed-row change. Each offered row carries `owner` (`Route6Row.owner`). `O` rows
+ *      are multipath-eligible (up to `IPV6_MAX_PATHS`) and one owner's paths install in its batch order. At
+ *      link-down every batch path through the port is withdrawn before the owner recomputes.
+ *      `ipv6.group {join|leave, iface, group, owner}` merges by (owner, group); the joined groups follow the derived
+ *      ones in `groups6` (ascending address order), so ff02::5 / ff02::6 traffic is delivered locally.
+ *      Next header 89 is delivered through the `IPV6_UPPER` table to ospfv3 when the model runs it.
+ *    Renderers: `route6SourceCode` (`O`, `OI`, `OE2`) and `route6Cause` (`ospfv3 1: O 2001:db8:3::/64 [110/3] via
+ *    fe80::2`, the process number read from `ipv6 router ospf <pid>`).
+ *
  * Timer keys: `life:<iface>` (periodic; SLAAC and ND-default lifetimes).
  * Debug categories: 'ipv6 packet' (rx / deliver / forward / send / drop), 'ipv6 routing' (routes, addresses, DAD).
  *
@@ -83,6 +98,7 @@ import {
   ICMPV6_PARAM_PROBLEM,
   ICMPV6_TIME_EXCEEDED,
   ICMPV6_UNREACH_NO_ROUTE,
+  IPPROTO_ICMPV6,
   IPPROTO_NONE,
   IPPROTO_TCP,
   IPPROTO_UDP,
@@ -105,6 +121,7 @@ import {
   solicitedNodeMulticast,
 } from '../core/addr6.js';
 import { createRibArbiter, type RibArbiter, type RibRemoveReason } from '../core/rib-arbiter.js';
+import { ipv6UpperProcess } from './ip-upper.js';
 
 /** Process name, as registered in the protocol registry. */
 const NAME = 'ipv6';
@@ -439,8 +456,14 @@ export function readIface6Config(ctx: ProcessCtx, port: PortId, mac: string): If
  * Render a rib6 row as the configuration or event responsible for it — the `cause` of the hop-limit decrement and
  * of the neighbour send. Static: `ipv6 route P/len [IF] [NH] [AD]` (the distance only when it is not the default 1,
  * so a P1 row's text is unchanged); ND: `router advertisement from R on IF`; connected / local: `connected via IF`.
+ * P3c [S6]: an OSPFv3 row renders `ospfv3 1: O 2001:db8:3::/64 [110/3] via fe80::2` (`OI` / `OE2` by its route type),
+ * the process number from `ctx`'s `ipv6 router ospf <pid>` (left out without a ctx or a section).
  */
-export function route6Cause(route: Route6Row): string {
+export function route6Cause(route: Route6Row, ctx?: Pick<ProcessCtx, 'config'>): string {
+  if (route.source === 'O') {
+    const id = ctx === undefined ? undefined : ipv6RoutingProcessId(ctx, 'ospf');
+    return `ospfv3${id === undefined ? '' : ` ${id}`}: ${route6SourceCode(route)} ${route.network}/${route.prefixLen} [${route.ad}/${route.metric}] via ${route.nextHop ?? route.iface ?? '?'}`;
+  }
   if (route.source === 'S') {
     const via = [route.iface, route.nextHop].filter((x): x is string => x !== undefined).join(' ');
     const ad = route.ad !== AD_STATIC ? ` ${route.ad}` : '';
@@ -448,6 +471,155 @@ export function route6Cause(route: Route6Row): string {
   }
   if (route.source === 'ND') return `router advertisement from ${route.nextHop ?? '?'} on ${route.iface ?? '?'}`;
   return `connected via ${route.iface ?? '?'}`;
+}
+
+/**
+ * @since P3c [S6] The `show ipv6 route` code of a rib6 row: `O` (intra-area), `OI` (inter-area), `OE2` (external type
+ * 2) for an OSPFv3 row; every other source keeps today's code with `*` on a default route (`S*`, `ND*`), so a P1/P2 row
+ * renders exactly as before. An OSPFv3 default carries no star (`OE2  ::/0`).
+ */
+export function route6SourceCode(route: Pick<Route6Row, 'source' | 'routeType' | 'isDefault'>): string {
+  if (route.source === 'O') return route.routeType ?? 'O';
+  return route.source + (route.isDefault === true ? '*' : '');
+}
+
+/**
+ * @since P3c [S6] The number of the configured IPv6 routing process of `protocol` (`ipv6 router ospf 1` → '1'), read
+ * from the running configuration; undefined when no such section is stored.
+ */
+export function ipv6RoutingProcessId(ctx: Pick<ProcessCtx, 'config'>, protocol: 'ospf'): string | undefined {
+  for (const node of ctx.config.root.children) {
+    if (node.key === 'ipv6' && node.args[0] === 'router' && node.args[1] === protocol && node.args[2] !== undefined) return node.args[2];
+  }
+  return undefined;
+}
+
+/** @since P3c [S6] Arbiter owner of slot `slot` of `owner`'s `ipv6.routes` set (P3a D8 mirrored). */
+export const route6SlotOwner = (owner: ProcessName, slot: number): string => `${owner}|${slot}`;
+
+/** Byte order of two IPv6 address texts; invalid text sorts first, then by text. */
+function compareAddr6(a: string, b: string): number {
+  const ba = parseIpv6(a);
+  const bb = parseIpv6(b);
+  if (ba === null || bb === null) {
+    if (ba !== bb) return ba === null ? -1 : 1;
+  } else {
+    for (let i = 0; i < 16; i++) {
+      const d = (ba[i] as number) - (bb[i] as number);
+      if (d !== 0) return d;
+    }
+  }
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/**
+ * @since P3c [S6] Ascending (network as a 128-bit number, prefix length), then the key text: the total, deterministic
+ * order in which an `ipv6.routes` batch is applied.
+ */
+export function compareRoute6Keys(a: string, b: string): number {
+  const sa = a.lastIndexOf('/');
+  const sb = b.lastIndexOf('/');
+  const na = sa < 0 ? a : a.slice(0, sa);
+  const nb = sb < 0 ? b : b.slice(0, sb);
+  const ba = parseIpv6(na);
+  const bb = parseIpv6(nb);
+  if (ba === null || bb === null) {
+    if (ba !== bb) return ba === null ? -1 : 1;
+  } else {
+    for (let i = 0; i < 16; i++) {
+      const d = (ba[i] as number) - (bb[i] as number);
+      if (d !== 0) return d;
+    }
+  }
+  const la = sa < 0 ? 128 : Number(a.slice(sa + 1));
+  const lb = sb < 0 ? 128 : Number(b.slice(sb + 1));
+  if (Number.isFinite(la) && Number.isFinite(lb) && la !== lb) return la - lb;
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/** A row's content, key order independent, without its timestamp, owner stamp and paths ('' for none). */
+function row6Fingerprint(row: Route6Row | undefined): string {
+  if (row === undefined) return '';
+  const rec = row as unknown as Record<string, unknown>;
+  const parts: string[] = [];
+  for (const k of Object.keys(rec).sort()) {
+    if (k === 'updatedAt' || k === 'owner' || k === 'paths' || rec[k] === undefined) continue;
+    parts.push(`${k}=${JSON.stringify(rec[k])}`);
+  }
+  return parts.join('|');
+}
+
+/** One batch key's slot plan (see `plan6Slots`). */
+interface Slot6Plan {
+  slots: (Route6Row | undefined)[];
+  order: (number | undefined)[];
+  reoffer: number[];
+  offer: number[];
+  withdraw: number[];
+}
+
+/**
+ * The slots of one key after a batch (P3a D8, as ipv4's `planSlots`): a new row identical to a stored one keeps that
+ * stored slot (no write); every other new row takes its own index when that slot is free, else the lowest free slot.
+ * Returns the new slots, each slot's batch position and the steps: re-offers, offers, withdrawals.
+ */
+function plan6Slots(old: readonly (Route6Row | undefined)[], fresh: readonly Route6Row[]): Slot6Plan {
+  const oldFp = old.map((r) => (r === undefined ? undefined : row6Fingerprint(r)));
+  const newFp = fresh.map((r) => row6Fingerprint(r));
+  const claimed = new Set<number>();
+  const placed: (number | undefined)[] = fresh.map(() => undefined);
+  for (let j = 0; j < fresh.length; j++) {
+    if (oldFp[j] !== undefined && oldFp[j] === newFp[j] && !claimed.has(j)) {
+      placed[j] = j;
+      claimed.add(j);
+    }
+  }
+  for (let j = 0; j < fresh.length; j++) {
+    if (placed[j] !== undefined) continue;
+    const k = oldFp.findIndex((fp, i) => fp !== undefined && fp === newFp[j] && !claimed.has(i));
+    if (k >= 0) {
+      placed[j] = k;
+      claimed.add(k);
+    }
+  }
+  for (let j = 0; j < fresh.length; j++) {
+    if (placed[j] !== undefined) continue;
+    let k = claimed.has(j) ? -1 : j;
+    if (k < 0) for (k = 0; claimed.has(k); k++);
+    placed[j] = k;
+    claimed.add(k);
+  }
+  const size = Math.max(old.length, ...placed.map((k) => (k ?? 0) + 1));
+  const slots: (Route6Row | undefined)[] = Array.from({ length: size }, () => undefined);
+  const order: (number | undefined)[] = Array.from({ length: size }, () => undefined);
+  const reoffer: number[] = [];
+  const offer: number[] = [];
+  for (let j = 0; j < fresh.length; j++) {
+    const k = placed[j]!;
+    slots[k] = fresh[j];
+    order[k] = j;
+    if (oldFp[k] === newFp[j]) continue;
+    if (oldFp[k] !== undefined) reoffer.push(k);
+    else offer.push(k);
+  }
+  const withdraw: number[] = [];
+  for (let k = 0; k < old.length; k++) if (oldFp[k] !== undefined && !claimed.has(k)) withdraw.push(k);
+  reoffer.sort((a, b) => a - b);
+  offer.sort((a, b) => a - b);
+  while (slots.length > 0 && slots[slots.length - 1] === undefined) slots.pop();
+  order.length = slots.length;
+  return { slots, order, reoffer, offer, withdraw };
+}
+
+/** `fe80::2` or, for a multipath row, every path's next hop (or interface), comma-joined. */
+function hops6Of(row: Route6Row): string {
+  if (row.paths !== undefined && row.paths.length > 1) return row.paths.map((p) => p.nextHop ?? p.iface ?? '?').join(', ');
+  return row.nextHop ?? row.iface ?? '?';
+}
+
+/** `O 2001:db8:3::/64 via fe80::2 [110/3]` — one installed row in an 'ipv6 routing' line. */
+function installed6Text(row: Route6Row): string {
+  return `${route6SourceCode(row)} ${row.key} via ${hops6Of(row)} [${row.ad}/${row.metric}]`;
 }
 
 /** `"2001:db8::1 > 2001:db8::2 hlim 64 nh 58"` — the packet half of every 'ipv6 packet' line. */
@@ -575,6 +747,15 @@ export function createIpv6(): Process {
   const ports = new Map<PortId, Port6>();
   /** Static route lines by canonical text, in configuration order (D13). */
   const statics = new Map<string, Static6Entry>();
+  /**
+   * @since P3c [S6] `ipv6.routes` candidate sets: owner → key → the rows by slot as the owner sent them (a slot is
+   * `undefined` after its path was withdrawn at link-down). Owners in first-batch order. Empty in every P1/P2 world.
+   */
+  const routeSets = new Map<ProcessName, Map<string, (Route6Row | undefined)[]>>();
+  /** @since P3c [S6] owner → key → each slot's position in the owner's latest batch (the arbiter's `pathOrder`). */
+  const routeOrder = new Map<ProcessName, Map<string, (number | undefined)[]>>();
+  /** @since P3c [S6] `ipv6.group` joins per port: (owner, group) pairs in request order. Empty in every P1/P2 world. */
+  const joins = new Map<PortId, { owner: ProcessName; group: Ipv6Address }[]>();
   const ring: DebugEvent[] = [];
   let arbiter: RibArbiter<Route6Row> | undefined;
   let routing = false;
@@ -612,13 +793,30 @@ export function createIpv6(): Process {
       const opts = {
         stampOwner: false,
         maxPaths: IPV6_MAX_PATHS,
-        // [S6] only `ipv6 route` lines share a prefix; C, L and ND rows install alone
-        multipathEligible: (row: Route6Row) => row.source === 'S',
-        pathCause: (row: Route6Row) => route6Cause(row),
+        // [S6] `ipv6 route` lines share a prefix, and (P3c) so do the OSPFv3 paths of an `ipv6.routes` batch; C, L
+        // and ND rows install alone
+        multipathEligible: (row: Route6Row) => (row.source === 'S' && row.owner === undefined) || row.source === 'O',
+        pathCause: (row: Route6Row) => route6Cause(row, ctx),
+        // P3c [S6]: two paths of one `ipv6.routes` owner install in its batch order; every other pair keeps the P1/P2
+        // offer order (no batch in a P1/P2 world, so their bytes are unchanged)
+        pathOrder: (a: Route6Row, aOwner: ProcessName, b: Route6Row, bOwner: ProcessName) => {
+          if (a.owner === undefined || a.owner !== b.owner) return 0;
+          const pa = batchPosition(a, aOwner);
+          const pb = batchPosition(b, bOwner);
+          return pa === undefined || pb === undefined ? 0 : pa - pb;
+        },
       };
       arbiter = createRibArbiter<Route6Row>(table === undefined ? opts : { table, ...opts });
     }
     return arbiter;
+  }
+
+  /** P3c [S6]: the batch position of an `ipv6.routes` slot candidate (`${owner}|${slot}`), else undefined. */
+  function batchPosition(row: Route6Row, arbOwner: ProcessName): number | undefined {
+    const owner = row.owner;
+    if (owner === undefined || !arbOwner.startsWith(`${owner}|`)) return undefined;
+    const slot = Number(arbOwner.slice(owner.length + 1));
+    return Number.isInteger(slot) ? routeOrder.get(owner)?.get(row.key)?.[slot] : undefined;
   }
 
   function isForwarding(ctx: ProcessCtx): boolean {
@@ -759,7 +957,7 @@ export function createIpv6(): Process {
       const extra = paths !== undefined && paths.length > 1 ? ` (equal-cost path ${paths.length} of ${paths.length})` : '';
       debug(ctx, CAT_ROUTING, `add S ${s.key} via ${via}${s.ad !== AD_STATIC ? ` (distance ${s.ad})` : ''}${extra}`, data);
     } else {
-      debug(ctx, CAT_ROUTING, `S ${s.key} via ${via} kept as a candidate: ${d.after ? route6Cause(d.after) : 'another route'} is installed`, data);
+      debug(ctx, CAT_ROUTING, `S ${s.key} via ${via} kept as a candidate: ${d.after ? route6Cause(d.after, ctx) : 'another route'} is installed`, data);
     }
   }
 
@@ -816,6 +1014,133 @@ export function createIpv6(): Process {
     settleStatics(ctx);
   }
 
+  // ── P3c [S6]: route batches and group joins ─────────────────────────────
+
+  /** One 'ipv6 routing' line for a change of the installed row of `key` (none when it did not change). */
+  function reportInstalled(ctx: ProcessCtx, key: string, before: Route6Row | undefined, after: Route6Row | undefined, why: string): void {
+    if (before === after) return;
+    if (after === undefined && before !== undefined) {
+      debug(ctx, CAT_ROUTING, `remove ${installed6Text(before)} (${why})`, { key, source: before.source, nextHop: before.nextHop, iface: before.iface, reason: why });
+    } else if (after !== undefined && before === undefined) {
+      debug(ctx, CAT_ROUTING, `add ${installed6Text(after)} (${why})`, { key, source: after.source, nextHop: after.nextHop, iface: after.iface, ad: after.ad, metric: after.metric });
+    } else if (after !== undefined && before !== undefined) {
+      debug(ctx, CAT_ROUTING, `change ${installed6Text(after)} (${why}; was ${installed6Text(before)})`, {
+        key, source: after.source, nextHop: after.nextHop, iface: after.iface, ad: after.ad, metric: after.metric,
+      });
+    }
+  }
+
+  /** The row `owner` offers for one slot: the owner's row stamped with the owner and now, never carrying `paths`. */
+  function slotRow(ctx: ProcessCtx, owner: ProcessName, r: Route6Row): Route6Row {
+    const row: Route6Row = { ...r, owner, updatedAt: ctx.now };
+    if ('paths' in row) delete row.paths;
+    return row;
+  }
+
+  /** A row `ipv6.routes` can offer: a canonical network and key for its prefix length, finite AD and metric. */
+  function validBatchRow(r: Route6Row): boolean {
+    if (!Number.isInteger(r.prefixLen) || r.prefixLen < 0 || r.prefixLen > 128) return false;
+    if (typeof r.network !== 'string' || normalizeIpv6(r.network) !== r.network) return false;
+    const network = ipv6NetworkOf(r.network, r.prefixLen);
+    return network === r.network && r.key === route6Key(network, r.prefixLen) && Number.isFinite(r.ad) && Number.isFinite(r.metric);
+  }
+
+  /**
+   * `ipv6.routes {owner, rows}` (P3a D8 mirrored): replace `owner`'s candidate set. Keys in `compareRoute6Keys` order;
+   * per key, re-offer the changed slots, offer the new ones, withdraw the vanished ones; `settleStatics` once; no
+   * decision event.
+   */
+  function routesRequest(ctx: ProcessCtx, req: Extract<ProcessRequest, { kind: 'ipv6.routes' }>): Action[] {
+    const owner = req.owner;
+    const arb = rib(ctx);
+    const next = new Map<string, Route6Row[]>();
+    for (const r of req.rows) {
+      if (!validBatchRow(r)) {
+        debug(ctx, CAT_ROUTING, `ignored route ${String(r.key)} from ${owner}: invalid network, prefix length or distance`, { key: r.key, owner });
+        continue;
+      }
+      const copy: Route6Row = { ...r };
+      const list = next.get(r.key);
+      if (list === undefined) next.set(r.key, [copy]);
+      else list.push(copy);
+    }
+    const prev = routeSets.get(owner) ?? new Map<string, (Route6Row | undefined)[]>();
+    const set = new Map<string, (Route6Row | undefined)[]>();
+    const order = new Map<string, (number | undefined)[]>();
+    routeOrder.set(owner, order);
+    const keys = Array.from(new Set([...prev.keys(), ...next.keys()])).sort(compareRoute6Keys);
+    for (const key of keys) {
+      const plan = plan6Slots(prev.get(key) ?? [], next.get(key) ?? []);
+      // the batch positions first, so every settle of this key orders the owner's paths by the new batch
+      if (plan.slots.length > 0) order.set(key, plan.order);
+      const before = arb.installed(key);
+      for (const k of plan.reoffer) arb.offer(slotRow(ctx, owner, plan.slots[k]!), route6SlotOwner(owner, k));
+      for (const k of plan.offer) arb.offer(slotRow(ctx, owner, plan.slots[k]!), route6SlotOwner(owner, k));
+      for (const k of plan.withdraw) arb.withdraw(key, route6SlotOwner(owner, k), ctx.now, 'cleared');
+      reportInstalled(ctx, key, before, arb.installed(key), owner);
+      if (plan.slots.length > 0) set.set(key, plan.slots);
+    }
+    if (set.size === 0) {
+      routeSets.delete(owner);
+      routeOrder.delete(owner);
+    } else routeSets.set(owner, set);
+    settleStatics(ctx);
+    return [];
+  }
+
+  /**
+   * At link-down, withdraw every `ipv6.routes` path through `port` (before the owner recomputes); the slot is
+   * forgotten, so the owner's next batch offers it again if it still carries it.
+   */
+  function withdrawPathsVia(ctx: ProcessCtx, port: PortId): void {
+    if (routeSets.size === 0) return;
+    const arb = rib(ctx);
+    let changed = false;
+    for (const [owner, set] of routeSets) {
+      for (const key of Array.from(set.keys()).sort(compareRoute6Keys)) {
+        const slots = set.get(key)!;
+        const before = arb.installed(key);
+        let hit = false;
+        for (let i = 0; i < slots.length; i++) {
+          if (slots[i]?.iface !== port) continue;
+          slots[i] = undefined;
+          arb.withdraw(key, route6SlotOwner(owner, i), ctx.now, 'link-down');
+          hit = true;
+        }
+        if (!hit) continue;
+        changed = true;
+        reportInstalled(ctx, key, before, arb.installed(key), `${owner}: ${port} went down`);
+      }
+    }
+    if (changed) settleStatics(ctx);
+  }
+
+  /** The groups joined on `port` by other daemons, unique, in ascending address order. */
+  function joinedGroups(port: PortId): Ipv6Address[] {
+    const list = joins.get(port);
+    if (list === undefined) return [];
+    return Array.from(new Set(list.map((j) => j.group))).sort(compareAddr6);
+  }
+
+  /**
+   * `ipv6.group {join|leave}`: merge by (owner, group); the port's `groups6` is rewritten when IPv6 runs on it (a
+   * join on a port without IPv6 is kept and applied when IPv6 starts there).
+   */
+  function groupRequest(ctx: ProcessCtx, req: Extract<ProcessRequest, { kind: 'ipv6.group' }>): Action[] {
+    const group = normalizeIpv6(req.group);
+    if (!ctx.ports.has(req.iface) || group === null || !isMulticast6(group)) {
+      debug(ctx, CAT_ROUTING, `ignored group ${req.group} on ${req.iface}: ${ctx.ports.has(req.iface) ? 'not a multicast group' : 'unknown interface'}`, { port: req.iface, group: req.group });
+      return [];
+    }
+    const list = (joins.get(req.iface) ?? []).filter((j) => !(j.owner === req.owner && j.group === group));
+    if (req.op === 'join') list.push({ owner: req.owner, group });
+    if (list.length === 0) joins.delete(req.iface);
+    else joins.set(req.iface, list);
+    debug(ctx, CAT_ROUTING, `${req.owner} ${req.op === 'join' ? 'joined' : 'left'} group ${group} on ${req.iface}`, { port: req.iface, group, owner: req.owner, groups: joinedGroups(req.iface) });
+    const p = ports.get(req.iface);
+    return p === undefined ? [] : writePort(ctx, p);
+  }
+
   // ── addresses ───────────────────────────────────────────────────────────
 
   function groupsOf(ctx: ProcessCtx, p: Port6): Ipv6Address[] {
@@ -828,6 +1153,8 @@ export function createIpv6(): Process {
       const g = solicitedNodeMulticast(a.address);
       if (!out.includes(g)) out.push(g);
     }
+    // P3c [S6]: groups joined by other daemons (ospfv3 ff02::5 / ff02::6), after the derived ones
+    for (const g of joinedGroups(p.port)) if (!out.includes(g)) out.push(g);
     return out;
   }
 
@@ -1259,6 +1586,16 @@ export function createIpv6(): Process {
       }
       break;
     }
+    // P3c [S6]: the rest of the upper-layer table (next header 89 → ospfv3), only to a daemon the model runs, so a
+    // device without it keeps the parameter-problem answer below
+    if (nextHeader !== IPPROTO_ICMPV6 && TRANSPORT_PROCESSES[nextHeader] === undefined) {
+      const to = ipv6UpperProcess(ctx.model, nextHeader);
+      if (to !== undefined) {
+        delivered++;
+        debug(ctx, CAT_PACKET, `deliver ${describe(ip)} to ${to}`, { pdu: pdu.id, port, to });
+        return [{ type: 'deliver', to, pdu, port }];
+      }
+    }
     if (nextHeader === IPPROTO_NONE) {
       delivered++;
       debug(ctx, CAT_PACKET, `consume ${describe(ip)}: no next header`, { pdu: pdu.id, port });
@@ -1300,9 +1637,9 @@ export function createIpv6(): Process {
     const paths = route.paths;
     if (paths !== undefined && paths.length > 1) {
       const path = paths[ecmpIndex6(src, dst, paths.length)]!;
-      return { egress: resolveVia(ctx, route.key, path.nextHop ?? dst, path.iface, 0), cause: path.cause ?? route6Cause(route) };
+      return { egress: resolveVia(ctx, route.key, path.nextHop ?? dst, path.iface, 0), cause: path.cause ?? route6Cause(route, ctx) };
     }
-    return { egress: resolveVia(ctx, route.key, route.nextHop ?? dst, route.iface, 0), cause: route6Cause(route) };
+    return { egress: resolveVia(ctx, route.key, route.nextHop ?? dst, route.iface, 0), cause: route6Cause(route, ctx) };
   }
 
   /** Transit forwarding of a packet received on `port`. */
@@ -1378,7 +1715,7 @@ export function createIpv6(): Process {
         const viaIface = h.lpm6(dst).candidates.find((r) => r.iface === req.iface && r.source !== 'L');
         if (viaIface !== undefined) {
           egress = { nextHop: viaIface.nextHop ?? dst, iface: req.iface };
-          cause ??= route6Cause(viaIface);
+          cause ??= route6Cause(viaIface, ctx);
         }
       }
       if (egress === undefined) return [drop(ctx, pdu, 'no-route', `no IPv6 route to ${dst} out ${req.iface}`, req.iface)];
@@ -1478,7 +1815,10 @@ export function createIpv6(): Process {
         p.llDuplicate = false;
         p.dadPending.clear();
       }
-      return reconcile(ctx, port, up);
+      const out = reconcile(ctx, port, up);
+      // P3c [S6]: the batch paths through a port that went down are withdrawn at once (none in a P1/P2 world)
+      if (!up) withdrawPathsVia(ctx, port);
+      return out;
     },
 
     onRequest(ctx: ProcessCtx, req: ProcessRequest): Action[] {
@@ -1491,6 +1831,10 @@ export function createIpv6(): Process {
           return onRaLearned(ctx, req);
         case 'ipv6.lease':
           return onLease(ctx, req);
+        case 'ipv6.routes':
+          return routesRequest(ctx, req);
+        case 'ipv6.group':
+          return groupRequest(ctx, req);
         default:
           return [];
       }

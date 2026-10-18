@@ -517,7 +517,8 @@ export type ProcessRequest =
  *    protocols/tcp.ts);
  *  - `ext.ipv4.transportHold {owner, key, hold}` — vty-client (and a grader clone's probe) → ipv4 ([S13], rulings
  *    R17, R27): an outbound session keeps a dormant switch transport awake while it lasts (`transportHoldRequest`,
- *    protocols/ip-upper.ts);
+ *    protocols/ip-upper.ts); @since P3c [S29] tftp too: a `copy … tftp:` job holds it for its lifetime (key = the
+ *    job's token, ARCHITECTURE-P3C §3.4 step 4, §4.3);
  *  - `ext.logging.clear` — cli → logger ([S24]): `clear logging` empties the buffer's lines and used bytes and keeps
  *    the counters (`LOGGER_CLEAR_REQUEST`, protocols/logger.ts).
  * The slot's earlier user is unchanged (P2: `ext.stp.clear-detected-protocols`, protocols/stp/mixed.ts). A new

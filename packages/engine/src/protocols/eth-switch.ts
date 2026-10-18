@@ -44,6 +44,16 @@
  *
  * VLAN-aware behaviour (§3.0 steps 1–12, only on a device running `vlan`):
  *  1. not bridged → drop; hdlc → relay; no ethernet → drop (as above);
+ *  1b. STORM CONTROL (@since P3c [S16], ARCHITECTURE-P3C §3.7) — at ingress, on the ARRIVAL port, before anything
+ *     else reads the frame: a port with a `storm-control <class> level …` line counts the frame in its class's
+ *     one-second window (`protocols/l2/storm-control.ts`, lazy windows, no timer) and drops it `storm-control` above
+ *     the rising level (the rest of the second, and every later second until one stays at or below the falling
+ *     level); `action shutdown` err-disables the port (cause `storm-control`, recovered by `errdisable recovery cause
+ *     storm-control`), `action trap` logs once per exceedance (severity 3, facility `STORM_CONTROL`), both together do
+ *     both. The `storm-control` row (key `<port>|<class>`) is written when the line is stored and when the port comes
+ *     up, then only on a state change or a closed window that had drops (rule 20). With no level line on the port
+ *     the cost is one Map lookup in a cache the daemon rebuilds after a configuration change (the loop-storm budget);
+ *     without the `storm-control` table (a model before stage P3c) nothing is counted, written or dropped;
  *  2. PHYSICAL CONTROL — `classifyControl` (protocols/l2/control.ts): lacp, dtp, pagp and reserved frames are
  *     delivered to their daemon (or dropped per the table) on the ARRIVAL port, before member translation;
  *  3. MEMBER TRANSLATION — an `etherchannel` row `bundled` → the logical port L is the bundle; `waiting` or
@@ -67,7 +77,16 @@
  *     drop and err-disable L, cause `arp-inspection`); a trusted L passes uninspected; an untrusted L needs a binding
  *     (V, sender MAC, sender IP, L) in `dhcp-snooping`, else drop `arp-inspection` with its rule and a severity-4 log
  *     (facility DAI, at most five per VLAN per second). The VLAN's `arp-inspection` row counts each ARP inspected on an
- *     untrusted port. Steps 7b/7c are skipped for a frame that only learns (step 6);
+ *     untrusted port. @since P3c [S14] between the trusted-port test and the bindings, `ip arp inspection validate …`
+ *     and the VLAN's ARP ACL (`ip arp inspection filter …`, `protocols/l2/arp-acl.ts`) run in the IOS order (rate limit,
+ *     trusted port, validate, ARP ACL, bindings); an ACL permit forwards without a binding, a validate failure or an ACL
+ *     deny drops `arp-inspection` with its rule; with neither line the step is the P3a one byte for byte;
+ *  7d. IP SOURCE GUARD (@since P3c [S15], ARCHITECTURE-P3C §3.7) — on L with `ip verify source [port-security]`
+ *     (`protocols/l2/source-guard.ts`): in a VLAN with snooping on, an IPv4 frame passes only when an unexpired
+ *     `dhcp-snooping` binding of (V, L) holds its source address (and, with `port-security`, its Ethernet source); ARP,
+ *     non-IPv4 frames and DHCP client messages are exempt; everything else drops `ip-source-guard` with a rule pointing
+ *     at the line. Without snooping on V nothing is filtered (a debug line says why). Steps 7b–7d are skipped for a
+ *     frame that only learns (step 6);
  *  8. LEARN `camKey(V, src)` → L (static and secure rows are never overwritten; group sources never learned);
  *  9. SVI — a unicast for the MAC of `Vlan<V>` (or one of its `virtual4` MACs): down → drop `<svi> is down`; up →
  *     the tag is popped (cause `interface Vlan<V>`) and the frame re-enters on the SVI (`ingress`);
@@ -94,6 +113,7 @@
  * configured, arms the periodic timer `errdisable:<port>` (§4.2) that issues `errRecover`. @since P3 the same timer
  * recovers the two causes of steps 7b/7c (`errdisable recovery cause dhcp-rate-limit|arp-inspection`): the timer
  * recovers whichever of the three causes the port holds (one cause per port at a time; step 7 runs first, D13).
+ * @since P3c [S16] the same timer recovers `storm-control` (`errdisable recovery cause storm-control`).
  *
  * SNOOPING STATE (@since P3, D13). The `dhcp-snooping` bindings (key `${vlan}|${mac}`) and the per-VLAN
  * `arp-inspection` counters are tables this daemon writes; a model declares them only from stage P3 and only with
@@ -111,13 +131,14 @@
  *
  * Debug categories: 'ethernet switching' (matches `debug ethernet switching`; every bridging message, unchanged),
  * 'port-security' (the port-security messages only, §5.4), @since P3 'ip dhcp snooping' and 'ip arp inspection' (the
- * snooping and DAI messages only, ARCHITECTURE-P3 §5.8).
+ * snooping and DAI messages only, ARCHITECTURE-P3 §5.8), @since P3c 'ip verify source' and 'storm-control' (the
+ * step-7d and storm-control messages only).
  */
 import { MAC_BROADCAST } from '../contracts/addr.js';
 import type { MacAddress } from '../contracts/addr.js';
 import { BRIDGED_ROLES, KIND_ENCAP, ROLE_TRAITS, defaultRoleFor, isVlanAware } from '../contracts/catalog.js';
 import type { PortEncap, PortRole } from '../contracts/catalog.js';
-import type { ConfigDelta } from '../contracts/config.js';
+import type { ConfigAst, ConfigDelta } from '../contracts/config.js';
 import type { PortId } from '../contracts/ids.js';
 import type { Pdu } from '../contracts/pdu.js';
 import type { ErrDisableCause, PortView, SwitchportConfig } from '../contracts/port.js';
@@ -131,6 +152,7 @@ import type {
   DtpRow,
   EtherchannelRow,
   PortSecurityRow,
+  StormControlRow,
   StpBridgeRow,
   StpPortRow,
   Table,
@@ -140,6 +162,7 @@ import type { ProcessEvent } from '../contracts/transport.js';
 import { SEC } from '../contracts/time.js';
 import type { SimTime } from '../contracts/time.js';
 import { vlanPopOp, vlanPushOp } from '../pdu/vlan.js';
+import { arpEthernetOf, readArpAclInspection } from './l2/arp-acl.js';
 import {
   ARP_INSPECTION_DEBUG_CATEGORY,
   applyArpInspectionVerdict,
@@ -188,6 +211,20 @@ import {
   stickyConfigLine,
 } from './l2/port-security.js';
 import type { RateWindow } from './l2/rate-window.js';
+import { SOURCE_GUARD_DEBUG_CATEGORY, decideSourceGuard, readSourceGuard, sourceGuardViewOf } from './l2/source-guard.js';
+import type { SourceGuardConfig, SourceGuardPortConfig } from './l2/source-guard.js';
+import {
+  STORM_CONTROL_DEBUG_CATEGORY,
+  formatStormLevel,
+  readStormControl,
+  stormClassOf,
+  stormControlArrive,
+  stormControlInitialRow,
+  stormControlKey,
+  stormControlRows,
+  stormLevelFor,
+} from './l2/storm-control.js';
+import type { StormControlConfig, StormControlPortConfig, StormWindowState } from './l2/storm-control.js';
 import { interfaceOfContext, isControllerModel, isMembershipLine, readAllSwitchports, readSwitchport, readVoiceVlan } from './l2/switchport-config.js';
 
 /** Process name registered by the catalog for bridging models. */
@@ -328,6 +365,16 @@ const NON_INDIVIDUAL_MEMBER: readonly EtherchannelRow['state'][] = ['bundled', '
 /** Timer key prefix of the port-security err-disable recovery timer. */
 const ERRDISABLE_TIMER_PREFIX = 'errdisable:';
 
+/**
+ * @since P3c [S15] [S16] The per-port access-layer lines the per-frame path reads, parsed once per configuration (the
+ * cache is dropped on every `onConfig` and when the running configuration object changes). A port with no line is
+ * absent, so with no line anywhere the storm-control check is one Map lookup and step 7d one size test.
+ */
+interface AccessLayerConfig {
+  readonly storm: StormControlConfig;
+  readonly guard: SourceGuardConfig;
+}
+
 // [S4] ── the IP phone's voice VLAN (ARCHITECTURE-P2 §5.5 `voice vlan <v>`) ──────────────────────────────────────
 // A host with a built-in transparent bridge (the phone) tags its OWN frames with its voice VLAN on its network port
 // (the `uplink` port) and takes frames tagged with that VLAN on that port as its own; the computer behind the
@@ -369,6 +416,11 @@ class EthSwitch implements Process {
   private readonly arpWindows = new Map<PortId, RateWindow>();
   /** @since P3 Step 7c: the invalid-ARP log window of each inspected VLAN (at most five lines per second). */
   private readonly daiLogWindows = new Map<number, RateWindow>();
+  /** @since P3c [S15] [S16] The parsed access-layer lines, and the running configuration they were read from. */
+  private access: AccessLayerConfig | undefined;
+  private accessFrom: ConfigAst | undefined;
+  /** @since P3c [S16] The storm-control window of each (port, class), by row key; reset when the row is (re)written. */
+  private readonly stormWindows = new Map<string, StormWindowState>();
 
   init(ctx: ProcessCtx): Action[] {
     this.capture(ctx);
@@ -555,6 +607,7 @@ class EthSwitch implements Process {
 
   onConfig(ctx: ProcessCtx, delta?: ConfigDelta): Action[] {
     this.capture(ctx);
+    this.access = undefined; // P3c [S15] [S16] re-read the access-layer lines on the next frame
     if (delta === undefined || !isVlanAware(ctx.model)) return [];
     return this.onConfigVlanAware(ctx, delta);
   }
@@ -889,6 +942,14 @@ class EthSwitch implements Process {
       this.emit(ctx, `dropped pdu ${pdu.id} from ${port}: ${DETAIL_NO_ETHERNET}`, { port, pdu: pdu.id });
       return [{ type: 'drop', pdu, reason: 'other', detail: DETAIL_NO_ETHERNET, port }];
     }
+
+    // 1b. P3c [S16] storm control at ingress, on the arrival port (one Map lookup when the port has no level line)
+    const storm = this.accessLayer(ctx).storm.get(port);
+    if (storm !== undefined) {
+      const stopped = this.stormControlStep(ctx, pdu, port, storm, eth.fields.dst as MacAddress);
+      if (stopped !== undefined) return stopped;
+    }
+
     const w = this.world(ctx);
 
     // 2. physical control dispatch (before member translation)
@@ -973,9 +1034,16 @@ class EthSwitch implements Process {
     }
 
     // 7b / 7c. DHCP snooping, dynamic ARP inspection (ARCHITECTURE-P3 D13); not for a frame that only learns
+    // 7d. P3c [S15] IP source guard (one size test when no port has the line)
     if (!learnOnly) {
       const hardened = this.dhcpSnoopingStep(ctx, pdu, logical, port, vlan) ?? this.arpInspectionStep(ctx, pdu, logical, port, vlan);
       if (hardened !== undefined) return [...prefix, ...hardened];
+      const guard = this.accessLayer(ctx).guard;
+      if (guard.size !== 0) {
+        const pc = guard.get(logical);
+        const guarded = pc === undefined ? undefined : this.sourceGuardStep(ctx, pdu, logical, port, vlan, pc, guard);
+        if (guarded !== undefined) return [...prefix, ...guarded];
+      }
     }
 
     // 8. learn
@@ -1135,6 +1203,7 @@ class EthSwitch implements Process {
         this.rekeySecureRows(ctx, port);
       }
       if (isPortSecurityLine(line)) return this.syncPortSecurity(ctx, port);
+      if (line[0] === 'storm-control') this.syncStormRows(ctx, port, 'its line was stored');
       return [];
     }
     if (delta.context.length !== 0) return [];
@@ -1160,6 +1229,8 @@ class EthSwitch implements Process {
       this.removeBindingsOnLinkDown(ctx, port);
     }
     this.refreshPortSecurityRow(ctx, port, up);
+    // P3c [S16] a port that comes up starts its storm-control rows and windows afresh
+    if (up && this.accessLayer(ctx).storm.has(port)) this.syncStormRows(ctx, port, 'the port came up');
     return [];
   }
 
@@ -1470,6 +1541,9 @@ class EthSwitch implements Process {
     if (arp === undefined) return undefined;
     const config = readArpInspection(ctx.config);
     if (!arpInspectionActive(config, vlan)) return undefined;
+    // P3c [S14] steps 3–4 (validate, the VLAN's ARP ACL) read their lines here; with neither line they do nothing
+    const acl = readArpAclInspection(ctx.config);
+    const eth = acl.validate !== undefined || acl.filters.length !== 0 ? arpEthernetOf(pdu) : undefined;
     const verdict = decideArpInspection({
       config,
       port,
@@ -1479,22 +1553,137 @@ class EthSwitch implements Process {
       window: this.arpWindows.get(port),
       binding: bindings.get(dhcpSnoopingKey(vlan, arp.sha)),
       logWindow: this.daiLogWindows.get(vlan),
+      ...(eth === undefined ? {} : { acl, eth }),
     });
     if (verdict.kind === 'skip') return undefined;
     if (verdict.window !== undefined) this.arpWindows.set(port, verdict.window);
-    if (verdict.kind === 'drop') this.daiLogWindows.set(vlan, verdict.logWindow);
+    if (verdict.kind === 'drop' || verdict.kind === 'refused') this.daiLogWindows.set(vlan, verdict.logWindow);
     const row = applyArpInspectionVerdict(rows.get(vlanKey(vlan)), vlan, verdict, ctx.now);
     if (row !== undefined) rows.set(row);
-    if (verdict.kind === 'forward') return undefined;
-    this.emit(ctx, verdict.debug, { port, vlan, pdu: pdu.id, sender: arp.sha, claims: arp.spa }, ARP_INSPECTION_DEBUG_CATEGORY);
+    const data = { port, vlan, pdu: pdu.id, sender: arp.sha, claims: arp.spa };
+    if (verdict.kind === 'forward') {
+      if (verdict.permit !== undefined) this.emit(ctx, verdict.permit.debug, data, ARP_INSPECTION_DEBUG_CATEGORY);
+      return undefined;
+    }
+    this.emit(ctx, verdict.debug, data, ARP_INSPECTION_DEBUG_CATEGORY);
     const actions: Action[] = [{ type: 'drop', pdu, reason: verdict.reason, detail: verdict.detail, port: physical, rule: verdict.rule }];
-    if (verdict.kind === 'drop') {
+    if (verdict.kind === 'drop' || verdict.kind === 'refused') {
       if (verdict.log !== undefined) actions.push({ type: 'log', severity: verdict.log.severity, facility: verdict.log.facility, message: verdict.log.message });
       return actions;
     }
     actions.push({ type: 'errDisable', port, cause: verdict.errDisable.cause, detail: verdict.errDisable.detail });
     actions.push(...this.recoveryFor(ctx, port, true, verdict.errDisable.cause));
     return actions;
+  }
+
+  // ─────────────────────────────── IP source guard and storm control (ARCHITECTURE-P3C §3.7) ───────────────────────────────
+
+  /** @since P3c [S15] [S16] The access-layer lines of the running configuration, parsed once per configuration. */
+  private accessLayer(ctx: ProcessCtx): AccessLayerConfig {
+    const config = ctx.config;
+    const cached = this.access;
+    if (cached !== undefined && this.accessFrom === config) return cached;
+    const fresh: AccessLayerConfig = { storm: readStormControl(config), guard: readSourceGuard(config) };
+    this.access = fresh;
+    this.accessFrom = config;
+    return fresh;
+  }
+
+  /**
+   * @since P3c [S15] Step 7d for a frame on guarded logical port `port` (arrival port `physical`) in `vlan`. Undefined
+   * = the frame goes on; otherwise the `ip-source-guard` drop with its rule. Without the `dhcp-snooping` table (a
+   * model before stage P3) nothing is read or filtered.
+   */
+  private sourceGuardStep(
+    ctx: ProcessCtx,
+    pdu: Pdu,
+    port: PortId,
+    physical: PortId,
+    vlan: number,
+    pc: SourceGuardPortConfig,
+    config: SourceGuardConfig,
+  ): Action[] | undefined {
+    const bindings = ctx.tables.get<DhcpSnoopingRow>('dhcp-snooping');
+    if (bindings === undefined) return undefined;
+    const verdict = decideSourceGuard({
+      config,
+      port,
+      vlan,
+      snooping: dhcpSnoopingActive(readDhcpSnooping(ctx.config), vlan),
+      view: sourceGuardViewOf(pdu),
+      bindings: bindings.rows(),
+      now: ctx.now,
+    });
+    if (verdict.kind === 'unfiltered') {
+      this.emit(ctx, verdict.debug, { port, vlan, pdu: pdu.id, filter: pc.filter }, SOURCE_GUARD_DEBUG_CATEGORY);
+      return undefined;
+    }
+    if (verdict.kind !== 'drop') return undefined;
+    this.emit(ctx, verdict.debug, { port, vlan, pdu: pdu.id, filter: pc.filter }, SOURCE_GUARD_DEBUG_CATEGORY);
+    return [{ type: 'drop', pdu, reason: verdict.reason, detail: verdict.detail, port: physical, rule: verdict.rule }];
+  }
+
+  /**
+   * @since P3c [S16] The storm-control check of a frame arriving on `port` (a port with a level line) for `dst`.
+   * Undefined = the frame goes on (after any row write); otherwise the `storm-control` drop with its rule, and on the
+   * first exceedance the trap log and/or the err-disable of the port with its recovery timer. Without the
+   * `storm-control` table (a model before stage P3c), or for a class with no level, nothing is counted.
+   */
+  private stormControlStep(ctx: ProcessCtx, pdu: Pdu, port: PortId, pc: StormControlPortConfig, dst: MacAddress): Action[] | undefined {
+    const table = ctx.tables.get<StormControlRow>('storm-control');
+    if (table === undefined) return undefined;
+    const kind = stormClassOf(dst);
+    const level = stormLevelFor(pc, kind);
+    if (level === undefined) return undefined;
+    const key = stormControlKey(port, kind);
+    const view = ctx.ports.get(port);
+    const step = stormControlArrive({
+      config: pc,
+      level,
+      speedBps: view?.speedBps ?? view?.spec.speedBps ?? 0,
+      frameBytes: pdu.size,
+      now: ctx.now,
+      state: this.stormWindows.get(key),
+      row: table.get(key) ?? stormControlInitialRow(pc, level, ctx.now),
+    });
+    this.stormWindows.set(key, step.state);
+    if (step.row !== undefined) table.set(step.row);
+    if (step.drop === undefined) return undefined;
+    const data = { port, pdu: pdu.id, kind, dropped: step.state.dropped };
+    if (step.debug !== undefined) this.emit(ctx, step.debug, data, STORM_CONTROL_DEBUG_CATEGORY);
+    const actions: Action[] = [{ type: 'drop', pdu, reason: step.drop.reason, detail: step.drop.detail, port, rule: step.drop.rule }];
+    if (step.log !== undefined) actions.push({ type: 'log', severity: step.log.severity, facility: step.log.facility, message: step.log.message });
+    if (step.errDisable !== undefined) {
+      actions.push({ type: 'errDisable', port, cause: step.errDisable.cause, detail: step.errDisable.detail });
+      actions.push(...this.recoveryFor(ctx, port, true, step.errDisable.cause));
+    }
+    return actions;
+  }
+
+  /**
+   * @since P3c [S16] (Re)write the `storm-control` rows of `port` from the running configuration — once when a
+   * storm-control line is stored and when the port comes up (§3.7, A-16): one fresh row per configured class (state
+   * `forwarding`, `current` 0, `dropped` 0, `windowStart` = now), its window restarted; a class with no level line
+   * any more loses its row. Without the table nothing is written.
+   */
+  private syncStormRows(ctx: ProcessCtx, port: PortId, why: string): void {
+    const table = ctx.tables.get<StormControlRow>('storm-control');
+    if (table === undefined) return;
+    const pc = this.accessLayer(ctx).storm.get(port);
+    for (const row of table.find((r) => r.port === port)) {
+      if (pc !== undefined && stormLevelFor(pc, row.kind) !== undefined) continue;
+      table.delete(row.key, 'cleared');
+      this.stormWindows.delete(row.key);
+      this.emit(ctx, `storm control for ${row.kind} traffic removed on ${port}`, { port, kind: row.kind }, STORM_CONTROL_DEBUG_CATEGORY);
+    }
+    if (pc === undefined) return;
+    for (const row of stormControlRows(pc, ctx.now)) {
+      table.set(row);
+      this.stormWindows.delete(row.key);
+      this.emit(ctx, `storm control on ${port} for ${row.kind} traffic: rising ${formatStormLevel(row.unit, row.rise)}, falling ${formatStormLevel(row.unit, row.fall)}, action ${row.action} (${why})`, {
+        port, kind: row.kind, unit: row.unit, rise: row.rise, fall: row.fall, action: row.action,
+      }, STORM_CONTROL_DEBUG_CATEGORY);
+    }
   }
 
   /** @since P3 The `cam-sweep` also ends the learned bindings whose lease is over (D13, §4.2). */
@@ -1549,20 +1738,27 @@ class EthSwitch implements Process {
   }
 }
 
-/** @since P3 The err-disable causes this daemon raises and recovers (step 7, D13 steps 7b/7c); undefined for any other. */
+/**
+ * @since P3 The err-disable causes this daemon raises and recovers (step 7, D13 steps 7b/7c, @since P3c [S16]
+ * storm control); undefined for any other.
+ */
 function ownErrDisableCause(cause: string | undefined): ErrDisableCause | undefined {
   return cause === 'psecure-violation' || isSnoopingCause(cause) ? (cause as ErrDisableCause) : undefined;
 }
 
-/** @since P3 True for the causes of steps 7b/7c (`dhcp-rate-limit`, `arp-inspection`). */
+/**
+ * @since P3 True for this daemon's causes other than port security's: those of steps 7b/7c (`dhcp-rate-limit`,
+ * `arp-inspection`) and @since P3c [S16] `storm-control` (switching port security off keeps their recovery timer).
+ */
 function isSnoopingCause(cause: string | undefined): boolean {
-  return cause === 'dhcp-rate-limit' || cause === 'arp-inspection';
+  return cause === 'dhcp-rate-limit' || cause === 'arp-inspection' || cause === 'storm-control';
 }
 
 /** @since P3 The debug category of a cause's recovery lines (port security's for `psecure-violation`, as in P2). */
 function recoveryCategory(cause: ErrDisableCause): string {
   if (cause === 'dhcp-rate-limit') return DHCP_SNOOPING_DEBUG_CATEGORY;
   if (cause === 'arp-inspection') return ARP_INSPECTION_DEBUG_CATEGORY;
+  if (cause === 'storm-control') return STORM_CONTROL_DEBUG_CATEGORY;
   return PORT_SECURITY_DEBUG_CATEGORY;
 }
 

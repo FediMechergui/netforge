@@ -274,7 +274,8 @@ describe('accept.p3.gre [S18]: the exact down reasons (§3.10 steps 1 and 5)', (
     downTo(line(sim, 'r1', [['interface', SE0]], ['shutdown']), 'no-source');
     line(sim, 'r1', [['interface', SE0]], ['shutdown'], true);
     backUp();
-    // the destination routed through the tunnel itself → recursive-routing, with one log ([S36]'s flap is not approved)
+    // the destination routed through the tunnel itself → recursive-routing, with one log (P3c [S36a]'s recursion hold
+    // flaps it every 10 s under runFor; runToIdle does not wait for the periodic hold, so this check sees the first down)
     evs = line(sim, 'r1', [], ['ip', 'route', R2_WAN, '255.255.255.255', TU0]);
     downTo(evs, 'recursive-routing');
     expect(evs.filter((e) => e.kind === 'log' && e.device === 'r1' && e.facility === GRE_LOG_FACILITY).map((e) => (e as { message: string }).message)).toEqual([

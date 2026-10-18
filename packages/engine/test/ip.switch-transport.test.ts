@@ -172,6 +172,7 @@ describe('ip.switch-transport (D22): the wake-up lines', () => {
       ['vty', '', 'crypto key generate rsa', '', ''],
       ['logger', '', 'logging host', '', ''],
       ['logger', '', 'logging', '', '<address>'],
+      ['tftp', '', 'tftp-server', '', ''], // P3c [S29] (ARCHITECTURE-P3C §4.3)
     ]);
     expect(Object.isFrozen(DORMANT_TRANSPORT_OWNERS)).toBe(true);
   });

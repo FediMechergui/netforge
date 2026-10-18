@@ -10,7 +10,9 @@
  * IPv4 (RFC 791 / RFC 790 numbers):   1 → icmpv4, 6 → tcp, 17 → udp; P3 (ARCHITECTURE-P3 §2.3): 89 → ospf, and the
  *                                     approved items' rows [S18] 47 → gre, [C13] 50 → gre (the tunnel owner, D27),
  *                                     [C1] 88 → eigrp.
- * IPv6 (RFC 8200, RFC 4443, RFC 4861): 58 with type 133–137 → nd, other 58 → icmpv6, 6 → tcp, 17 → udp.
+ * IPv6 (RFC 8200, RFC 4443, RFC 4861): 58 with type 133–137 → nd, other 58 → icmpv6, 6 → tcp, 17 → udp; P3c
+ *                                     [S6] (ARCHITECTURE-P3C §2.3): 89 → ospfv3 (RFC 5340), inert on every device
+ *                                     that does not run ospfv3 (§3.3 step 8).
  *
  * Anything without a target is the caller's `unsupported-protocol` case: ICMP protocol unreachable (3/2) for IPv4,
  * parameter problem (4/1, pointer 6) for IPv6, never for broadcast or multicast destinations. A P3 row whose daemon a
@@ -74,11 +76,18 @@ export const IPV4_UPPER: readonly IpUpperEntry[] = Object.freeze([
   Object.freeze({ protocol: IPPROTO_OSPF, process: 'ospf', label: 'ospf' }),
 ]);
 
-/** IPv6 upper-layer table, in protocol-number order (ICMPv6 neighbour discovery types are split off to `nd`). */
+/**
+ * IPv6 upper-layer table, in protocol-number order (ICMPv6 neighbour discovery types are split off to `nd`).
+ * @since P3c [S6] 89 → ospfv3 (ARCHITECTURE-P3C §2.3): a device without the ospfv3 daemon (every P1/P2/P3a world)
+ * treats next header 89 as unsupported, exactly as before the row existed.
+ */
 export const IPV6_UPPER: readonly IpUpperEntry[] = Object.freeze([
   Object.freeze({ protocol: IPPROTO_TCP, process: 'tcp', label: 'tcp' }),
   Object.freeze({ protocol: IPPROTO_UDP, process: 'udp', label: 'udp' }),
   Object.freeze({ protocol: IPPROTO_ICMPV6, process: 'icmpv6', label: 'icmpv6' }),
+  // ── [S6] OSPFv3 ──
+  Object.freeze({ protocol: IPPROTO_OSPF, process: 'ospfv3', label: 'ospfv3' }),
+  // ── end [S6] ──
 ]);
 
 /** First ICMPv6 type handled by `nd` (router solicitation, RFC 4861 §4.1). */
@@ -179,6 +188,10 @@ export const DORMANT_TRANSPORT_OWNERS: readonly DormantTransportOwner[] = Object
   Object.freeze({ service: 'logger', context: Object.freeze([]), lines: Object.freeze([Object.freeze(['logging', 'host'])]) }),
   Object.freeze({ service: 'logger', context: Object.freeze([]), lines: Object.freeze([Object.freeze(['logging'])]), address: true }),
   // ── end [S25] ──
+  // ── P3c [S29] the TFTP server of a switch: `tftp-server flash:<f>` (ARCHITECTURE-P3C §4.3; a copy job holds the
+  //    transport through `transportHold` instead, protocols/tftp.ts) ──
+  Object.freeze({ service: 'tftp', context: Object.freeze([]), lines: Object.freeze([Object.freeze(['tftp-server'])]) }),
+  // ── end [S29] ──
 ] as DormantTransportOwner[]);
 
 /** The capability whose transport rows are dormant (D22). */

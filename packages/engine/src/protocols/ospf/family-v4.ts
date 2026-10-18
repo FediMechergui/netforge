@@ -28,6 +28,7 @@ import type { ProcessEvent } from '../../contracts/transport.js';
 import { lsaChecksumAndLength } from '../../core/ospf-lsa.js';
 import { ospfPacketText } from '../../pdu/codecs/ospf.js';
 import { ipRoutingSwitchedOff } from '../ipv4.js';
+import { OSPF_AUTH_NONE, ospfAuthCheck, ospfAuthOf, ospfAuthType, ospfSealLayers, type OspfAuth } from './auth.js';
 import {
   isOspfPassive,
   ospfEnabledInterfaces,
@@ -40,7 +41,7 @@ import {
 } from './config.js';
 import { ospfInterfaceCost, routingBandwidthKbps } from './cost.js';
 import { OSPF_NO_DR } from './dr.js';
-import { num, OSPF_DEBUG, OSPF_PROCESS, str, type Iface, type IfaceWant, type Nbr, type OspfEngine, type OspfFamily, type OspfLsaOps, type OspfOriginView, type Out, type Proc } from './engine.js';
+import { num, OSPF_DEBUG, OSPF_PROCESS, str, type Iface, type IfaceWant, type Nbr, type OspfAdmit, type OspfEngine, type OspfFamily, type OspfLsaOps, type OspfOriginView, type OspfPacketIn, type Out, type Proc } from './engine.js';
 import { checkOspfHello, OSPF_OPTION_E } from './hello-check.js';
 import {
   isOspfLsaType,
@@ -121,6 +122,9 @@ export const OSPF_V4_LSA: OspfLsaOps = Object.freeze({
 /** @since P3c The OSPFv2 family (the module header): one instance per daemon instance. */
 export function createOspfFamilyV4(): OspfFamily {
   let ipId = 0;
+  /** [S5] The authentication of every running interface, resolved at each resync (protocols/ospf/auth.ts). */
+  const auths = new Map<PortId, OspfAuth>();
+  const authOf = (port: PortId): OspfAuth => auths.get(port) ?? OSPF_AUTH_NONE;
 
   // ── the daemon half: configuration, interfaces, RIB watch ───────────────────
 
@@ -163,6 +167,9 @@ export function createOspfFamilyV4(): OspfFamily {
         silent: passive || role === 'virtual',
         up: view.operUp && a !== undefined,
         ...(a !== undefined ? { address: a.address, prefixLen: a.prefixLen } : {}),
+        // [C7] a tunnel keeps announcing its port MTU (a listed fidelity gap, ARCHITECTURE-P3C D7)
+        ...(icfg?.ipMtu !== undefined && role !== 'tunnel' ? { ipMtu: icfg.ipMtu } : {}),
+        ...(icfg?.mtuIgnore === true ? { mtuIgnore: true } : {}),
       };
       out.push(w);
     }
@@ -177,6 +184,7 @@ export function createOspfFamilyV4(): OspfFamily {
     if (p === undefined || ipRoutingSwitchedOff(ctx)) {
       eng.stop(ctx, out, p === undefined ? 'no router ospf' : 'ip routing is switched off');
       eng.noRidLogged = false;
+      auths.clear();
       return;
     }
     if (eng.proc !== undefined && eng.proc.pid !== p.pid) eng.stop(ctx, out, `process ${eng.proc.pid} replaced by ${p.pid}`);
@@ -203,8 +211,14 @@ export function createOspfFamilyV4(): OspfFamily {
       // `maximum-paths` changes no LSA, only how many equal-cost paths each route keeps: recompute (the SPF throttle)
       eng.scheduleSpf(ctx, out, `maximum-paths changed to ${p.maximumPaths}`);
     }
-    // interfaces
-    eng.reconcile(ctx, out, wants(ctx, c));
+    // interfaces (their authentication first: reconcile may send hellos)
+    const wanted = wants(ctx, c);
+    auths.clear();
+    for (const w of wanted) {
+      const auth = ospfAuthOf(c, w.port, w.area);
+      if (auth.mode !== 'none') auths.set(w.port, auth);
+    }
+    eng.reconcile(ctx, out, wanted);
     syncWatch(eng, ctx, out);
   }
 
@@ -279,6 +293,19 @@ export function createOspfFamilyV4(): OspfFamily {
       ];
     },
 
+    seal(ctx: ProcessCtx, _proc: Proc, i: Iface, layers: readonly LayerSpec[]): readonly LayerSpec[] {
+      const auth = auths.get(i.port);
+      return auth === undefined ? layers : ospfSealLayers(layers, auth, ctx.now);
+    },
+
+    authenticate(_ctx: ProcessCtx, i: Iface, pdu: Pdu, p: OspfPacketIn, lastSeq: number | undefined): OspfAdmit {
+      const auth = authOf(i.port);
+      const o = pdu.layer('ospf');
+      if (auth.mode === 'none' && num(p.fields.auType) === 0) return { ok: true };
+      const v = ospfAuthCheck(auth, p.fields, o === undefined ? new Uint8Array(0) : pdu.bytes.subarray(o.offset, o.offset + o.length), lastSeq);
+      return v.ok ? (v.seq === undefined ? { ok: true } : { ok: true, seq: v.seq }) : { ok: false, text: v.text };
+    },
+
     flowOf(i: Iface, dst: string): string {
       return `ipv4:${i.address}>${dst}:ospf`;
     },
@@ -314,7 +341,7 @@ export function createOspfFamilyV4(): OspfFamily {
         authType: num(f.auType),
       };
       return checkOspfHello(
-        { routerId: proc.routerId, area: i.area, networkType: i.networkType, address: i.address, prefixLen: i.prefixLen, helloS: i.helloS, deadS: i.deadS, options: OSPF_OPTION_E, authType: 0 },
+        { routerId: proc.routerId, area: i.area, networkType: i.networkType, address: i.address, prefixLen: i.prefixLen, helloS: i.helloS, deadS: i.deadS, options: OSPF_OPTION_E, authType: ospfAuthType(authOf(i.port)) },
         hello,
       );
     },
@@ -392,6 +419,9 @@ export function createOspfFamilyV4(): OspfFamily {
       }
       if (i.waitUntil !== undefined) row.waitUntil = i.waitUntil;
       if (i.rejected !== undefined) row.rejected = { ...i.rejected };
+      const auth = authOf(i.port);
+      if (auth.mode !== 'none') row.auth = auth.mode;
+      if (auth.mode === 'md5') row.authKeyId = auth.youngest.id;
       return row;
     },
 

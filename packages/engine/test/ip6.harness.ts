@@ -9,7 +9,7 @@
  * device clock like the Simulation facade.
  */
 import type { PortRef, ProcessName, SessionId } from '../src/contracts/ids.js';
-import type { DeviceRuntime, DeviceSpec } from '../src/contracts/device.js';
+import type { DeviceCatalog, DeviceModel, DeviceRuntime, DeviceSpec } from '../src/contracts/device.js';
 import type { LinkId } from '../src/contracts/ids.js';
 import type { LayerSpec, Pdu, PduMeta } from '../src/contracts/pdu.js';
 import type { Action, DebugEvent, Process, ProcessRequest, StateView } from '../src/contracts/process.js';
@@ -153,7 +153,14 @@ function tokens(line: string): { negate: boolean; toks: string[] } {
 }
 
 /** Build a world. `delayNs` is the one-way bus latency; `lose` silently loses a transmitted frame (still in `sent`). */
-export function createWorld6(opts: { seed?: number; delayNs?: SimTime; extra?: Record<ProcessName, () => Process>; lose?: (s: Sent) => boolean } = {}): World6 {
+export function createWorld6(opts: {
+  seed?: number;
+  delayNs?: SimTime;
+  extra?: Record<ProcessName, () => Process>;
+  lose?: (s: Sent) => boolean;
+  /** @since P3c [S6] Daemons appended to the router model's process list (ip.ipv6-group: a recorder `ospfv3`). */
+  routerProcesses?: readonly ProcessName[];
+} = {}): World6 {
   const seed = opts.seed ?? 1;
   const delayNs = opts.delayNs ?? 10_000;
   const scheduler = createScheduler();
@@ -161,7 +168,12 @@ export function createWorld6(opts: { seed?: number; delayNs?: SimTime; extra?: R
   const sink = { emit: (ev: TraceEvent) => void events.push(ev) };
   const pdus = createPduFactory();
   const root = createRng(seed);
-  const catalog = createCatalog({ ...IP6_REGISTRY, ...(opts.extra ?? {}) }, { models: [P1_PC, P1_ROUTER], modules: [], stage: 'P1' });
+  const base = createCatalog({ ...IP6_REGISTRY, ...(opts.extra ?? {}) }, { models: [P1_PC, P1_ROUTER], modules: [], stage: 'P1' });
+  // the validated P1 catalog, with the router model's process list widened after validation (a P1 stage refuses a
+  // daemon of a later stage, which is what these tests need on purpose)
+  const extraRouter = opts.routerProcesses;
+  const router: DeviceModel = extraRouter === undefined ? P1_ROUTER : { ...P1_ROUTER, processes: [...P1_ROUTER.processes, ...extraRouter] };
+  const catalog: DeviceCatalog = extraRouter === undefined ? base : { ...base, get: (type) => (type === router.type ? router : base.get(type)), list: () => [P1_PC, router] };
   const devices = new Map<string, DeviceRuntime>();
   const buses: Bus[] = [];
   const sent: Sent[] = [];

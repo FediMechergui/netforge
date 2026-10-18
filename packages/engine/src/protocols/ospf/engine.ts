@@ -145,6 +145,8 @@ export interface Nbr {
   readonly sentBack: Map<string, SimTime>;
   /** Fingerprint of the last row written. */
   rowFp?: string;
+  /** @since P3c [S5] The last cryptographic sequence number accepted from it (kept until it goes Down, RFC 2328 D.5). */
+  authSeq?: number;
 }
 
 export interface Iface {
@@ -179,6 +181,10 @@ export interface Iface {
   replyArmed: boolean;
   drHelloArmed: boolean;
   rowFp?: string;
+  /** @since P3c [C7] The `ip mtu` a database description announces and checks against (absent: the port MTU). */
+  ipMtu?: number;
+  /** @since P3c [C7] `ip ospf mtu-ignore`: a received database description's MTU is not checked. */
+  mtuIgnore?: boolean;
 }
 
 /** What one interface should look like after a resync. */
@@ -197,7 +203,14 @@ export interface IfaceWant {
   readonly passive: boolean;
   readonly silent: boolean;
   readonly up: boolean;
+  /** @since P3c [C7] As `Iface.ipMtu` (absent: the port MTU). */
+  readonly ipMtu?: number;
+  /** @since P3c [C7] As `Iface.mtuIgnore`. */
+  readonly mtuIgnore?: boolean;
 }
+
+/** @since P3c [S5] A family's authentication verdict on a received packet (`OspfFamily.authenticate`). */
+export type OspfAdmit = { readonly ok: true; readonly seq?: number } | { readonly ok: false; readonly text: string };
 
 /** The work of one handler call: actions in order, then the bundled updates and acknowledgements. */
 export interface Out {
@@ -336,6 +349,17 @@ export interface OspfFamily {
   groupAction(op: 'join' | 'leave', port: PortId, group: string): Action;
   /** The outer layers of a received packet, or undefined when it is not one of this family's packets. */
   decode(pdu: Pdu): OspfPacketIn | undefined;
+  /**
+   * @since P3c [S5] Authenticate the complete layers of one packet out `i` (the single packet build, `sendPacket`):
+   * v2 adds the type-1 key or the type-2 fields and keyed-MD5 digest (protocols/ospf/auth.ts), and returns `layers`
+   * itself when `i` has no authentication. Absent (v3: no OSPF authentication, IPsec is P4): the layers as built.
+   */
+  seal?(ctx: ProcessCtx, proc: Proc, i: Iface, layers: readonly LayerSpec[]): readonly LayerSpec[];
+  /**
+   * @since P3c [S5] Check a received packet of any type against `i`'s authentication, before it is dispatched;
+   * `lastSeq` is the sending neighbour's last accepted cryptographic sequence number. Absent: every packet passes.
+   */
+  authenticate?(ctx: ProcessCtx, i: Iface, pdu: Pdu, p: OspfPacketIn, lastSeq: number | undefined): OspfAdmit;
 
   // ── origination and routes ──
   /** Every self LSA this router wants now, by key. */
@@ -506,7 +530,8 @@ export function createOspfEngine(family: OspfFamily): OspfEngine {
     if (proc === undefined || i.address === undefined) return undefined;
     const tag = type === OSPF_PACKET.hello ? 'ospf-hello' : type === OSPF_PACKET.dbd ? 'ospf-dbd' : type === OSPF_PACKET.lsr ? 'ospf-lsr' : type === OSPF_PACKET.lsu ? 'ospf-lsu' : 'ospf-lsack';
     const meta: Partial<PduMeta> = { tag, flow: family.flowOf(i, dst), ...(type === OSPF_PACKET.hello ? { background: true } : {}) };
-    const layers: LayerSpec[] = [...family.packetLayers(proc, i, dst, type, fields), ...inner];
+    const built: LayerSpec[] = [...family.packetLayers(proc, i, dst, type, fields), ...inner];
+    const layers = family.seal === undefined ? built : family.seal(ctx, proc, i, built);
     const pdu = ctx.newPdu(layers, meta);
     debug(ctx, OSPF_DEBUG.packet, `${i.port}: sent ${ospfPacketText(type)} to ${dst}${detail === '' ? '' : `, ${detail}`} (pdu ${pdu.id})`, { port: i.port, dst, type, pdu: pdu.id });
     out.actions.push(family.sendAction(proc, i, dst, type, pdu));
@@ -522,6 +547,11 @@ export function createOspfEngine(family: OspfFamily): OspfEngine {
     sendPacket(ctx, out, i, ALL_ROUTERS, OSPF_PACKET.hello, fields, [], `DR ${i.dr} BDR ${i.bdr}`);
   }
 
+  /** [C7] The IP MTU of `i` a database description announces and checks against: `ip mtu`, else the port MTU. */
+  function ifaceMtu(ctx: ProcessCtx, i: Iface): number {
+    return i.ipMtu ?? ctx.ports.get(i.port)?.mtu ?? OSPF_DBD_MTU_DEFAULT;
+  }
+
   function sendDbd(ctx: ProcessCtx, out: Out, i: Iface, n: Nbr, flags: number, headers: LayerSpec[]): void {
     n.lastSent = { flags, ddSeq: n.ddSeq, headers };
     resendDbd(ctx, out, i, n);
@@ -530,7 +560,7 @@ export function createOspfEngine(family: OspfFamily): OspfEngine {
   function resendDbd(ctx: ProcessCtx, out: Out, i: Iface, n: Nbr): void {
     const s = n.lastSent;
     if (s === undefined) return;
-    const mtu = ctx.ports.get(i.port)?.mtu ?? OSPF_DBD_MTU_DEFAULT;
+    const mtu = ifaceMtu(ctx, i);
     sendPacket(ctx, out, i, groupOf(directDestination(i.networkType, n.address)), OSPF_PACKET.dbd, { mtu, options: family.dbdOptions, flags: s.flags, ddSeq: s.ddSeq >>> 0 }, s.headers, `seq ${s.ddSeq}, flags ${ddFlagsText(s.flags)}, ${s.headers.length} headers`);
   }
 
@@ -972,8 +1002,35 @@ export function createOspfEngine(family: OspfFamily): OspfEngine {
     out.actions.push({ type: 'consume', pdu });
   }
 
+  /**
+   * [S5] A packet the family's authentication refused (ARCHITECTURE-P3C §3.2 step 2): dropped `other` with the reason;
+   * a refused hello also sets the interface row's `rejected` and writes an `ip ospf hello` line, any other packet an
+   * `ip ospf packet` line.
+   */
+  function rxRefused(ctx: ProcessCtx, out: Out, i: Iface, pdu: Pdu, src: string, routerId: Ipv4Address, type: number, text: string): void {
+    const what = ospfPacketText(type);
+    if (type === OSPF_PACKET.hello) {
+      i.rejected = { from: src, routerId, reason: text, at: ctx.now };
+      debug(ctx, OSPF_DEBUG.hello, `${i.port}: hello from ${routerId} (${src}) refused: ${text}`, { port: i.port, from: src, routerId, reason: 'auth' });
+      writeIfRow(ctx, i);
+    } else {
+      debug(ctx, OSPF_DEBUG.packet, `${i.port}: ${what} from ${routerId} (${src}) refused: ${text}`, { port: i.port, from: src, routerId, type, reason: 'auth' });
+    }
+    out.actions.push({ type: 'drop', pdu, reason: 'other', detail: `OSPF ${what} refused: ${text}`, port: i.port });
+  }
+
   function rxDbd(ctx: ProcessCtx, out: Out, i: Iface, n: Nbr, pdu: Pdu, f: Readonly<Record<string, FieldValue>>, lsas: readonly LayerView[]): void {
     if (proc === undefined) return;
+    // [C7] RFC 2328 §10.6: a DBD announcing an MTU larger than this interface's IP MTU is discarded (always on, real
+    // IOS behaviour), unless `ip ospf mtu-ignore`; the stuck neighbour stays in ExStart (ARCHITECTURE-P3C §3.2 step 4)
+    const theirMtu = num(f.mtu);
+    const ownMtu = ifaceMtu(ctx, i);
+    if (i.mtuIgnore !== true && theirMtu > ownMtu) {
+      const text = `its database description MTU ${theirMtu} is larger than this interface's IP MTU ${ownMtu}`;
+      debug(ctx, OSPF_DEBUG.adj, `${i.port}: database description from ${n.routerId} (${n.address}) refused: ${text}`, { port: i.port, neighbor: n.routerId, mtu: theirMtu, ownMtu });
+      out.actions.push({ type: 'drop', pdu, reason: 'other', detail: `OSPF database description refused: ${text}`, port: i.port });
+      return;
+    }
     if (n.state === 'init') {
       // §3.1 step 7, RFC 2328 §10.6: a DBD from a neighbour in Init is 2-WayReceived first
       setNbrState(ctx, out, i, n, '2way', OSPF_NSM_EVENT_NAMES['2-way-received'], pdu);
@@ -1412,6 +1469,8 @@ export function createOspfEngine(family: OspfFamily): OspfEngine {
       replyArmed: false,
       drHelloArmed: false,
       ...(w.address !== undefined ? { address: w.address, prefixLen: w.prefixLen } : {}),
+      ...(w.ipMtu !== undefined ? { ipMtu: w.ipMtu } : {}),
+      ...(w.mtuIgnore === true ? { mtuIgnore: true } : {}),
     };
   }
 
@@ -1489,6 +1548,11 @@ export function createOspfEngine(family: OspfFamily): OspfEngine {
         i.deadS = w.deadS;
         i.passive = w.passive;
         i.silent = w.silent;
+        // [C7] not structural: the next database description announces the new MTU, the next one received is checked
+        if (w.ipMtu !== undefined) i.ipMtu = w.ipMtu;
+        else delete i.ipMtu;
+        if (w.mtuIgnore === true) i.mtuIgnore = true;
+        else delete i.mtuIgnore;
         if (timersChanged && i.state !== 'down' && !i.silent) {
           i.helloDueAt = ctx.now + i.helloS * SEC;
           out.actions.push(timer(`hello:${i.port}`, i.helloS * SEC, true));
@@ -1708,6 +1772,7 @@ export function createOspfEngine(family: OspfFamily): OspfEngine {
     reconcile,
     onTimerKey,
     rxHello,
+    rxRefused,
     rxDbd,
     rxLsr,
     rxLsu,
@@ -1747,6 +1812,8 @@ export interface OspfEngine {
   reconcile(ctx: ProcessCtx, out: Out, wanted: readonly IfaceWant[]): void;
   onTimerKey(ctx: ProcessCtx, out: Out, key: string): void;
   rxHello(ctx: ProcessCtx, out: Out, i: Iface, pdu: Pdu, src: string, f: Readonly<Record<string, FieldValue>>): void;
+  /** @since P3c [S5] A packet the family's authentication refused: dropped, logged, a hello also marks the row. */
+  rxRefused(ctx: ProcessCtx, out: Out, i: Iface, pdu: Pdu, src: string, routerId: Ipv4Address, type: number, text: string): void;
   rxDbd(ctx: ProcessCtx, out: Out, i: Iface, n: Nbr, pdu: Pdu, f: Readonly<Record<string, FieldValue>>, lsas: readonly LayerView[]): void;
   rxLsr(ctx: ProcessCtx, out: Out, i: Iface, n: Nbr, pdu: Pdu, f: Readonly<Record<string, FieldValue>>): void;
   rxLsu(ctx: ProcessCtx, out: Out, i: Iface, n: Nbr, pdu: Pdu, lsas: readonly LayerView[]): void;
@@ -1764,6 +1831,40 @@ export interface OspfEngine {
 export function createOspfProcess(family: OspfFamily): Process {
   const eng = createOspfEngine(family);
   const resync = (ctx: ProcessCtx, out: Out): void => family.resync(eng, ctx, out);
+
+  /** Hand an accepted packet to the engine by type (hellos first; every other type needs the area and a neighbour). */
+  function dispatch(ctx: ProcessCtx, out: Out, i: Iface, pdu: Pdu, p: OspfPacketIn, port: PortId): void {
+    const { src, type, lsas } = p;
+    if (type === OSPF_PACKET.hello) {
+      eng.rxHello(ctx, out, i, pdu, src, p.fields);
+      return;
+    }
+    if (p.area !== i.area) {
+      out.actions.push({ type: 'drop', pdu, reason: 'other', detail: `OSPF area ${p.area} does not match ${port}'s area ${i.area}`, port });
+      return;
+    }
+    const n = i.nbrs.get(p.routerId);
+    if (n === undefined) {
+      out.actions.push({ type: 'drop', pdu, reason: 'other', detail: `no OSPF neighbour ${p.routerId} on ${port}`, port });
+      return;
+    }
+    switch (type) {
+      case OSPF_PACKET.dbd:
+        eng.rxDbd(ctx, out, i, n, pdu, p.fields, lsas);
+        return;
+      case OSPF_PACKET.lsr:
+        eng.rxLsr(ctx, out, i, n, pdu, p.fields);
+        return;
+      case OSPF_PACKET.lsu:
+        eng.rxLsu(ctx, out, i, n, pdu, lsas);
+        return;
+      case OSPF_PACKET.lsack:
+        eng.rxAck(ctx, out, i, n, pdu, lsas);
+        return;
+      default:
+        out.actions.push({ type: 'drop', pdu, reason: 'other', detail: `unknown OSPF packet type ${type}`, port });
+    }
+  }
 
   return {
     name: family.name,
@@ -1803,34 +1904,21 @@ export function createOspfProcess(family: OspfFamily): Process {
         }
         const lsas = p.lsas;
         eng.debug(ctx, OSPF_DEBUG.packet, `${port}: received ${ospfPacketText(type)} from ${p.routerId} (${src})${lsas.length > 0 ? `, ${lsas.length} LSAs` : ''} (pdu ${pdu.id})`, { port, from: src, type, pdu: pdu.id });
-        if (type === OSPF_PACKET.hello) {
-          eng.rxHello(ctx, out, i, pdu, src, p.fields);
-          return;
+        // [S5] every packet type is authenticated before it is dispatched (ARCHITECTURE-P3C §3.2 step 2); the accepted
+        // cryptographic sequence number is kept on the neighbour (created by this very packet when it is a hello)
+        let authSeq: number | undefined;
+        if (family.authenticate !== undefined) {
+          const v = family.authenticate(ctx, i, pdu, p, i.nbrs.get(p.routerId)?.authSeq);
+          if (!v.ok) {
+            eng.rxRefused(ctx, out, i, pdu, src, p.routerId, type, v.text);
+            return;
+          }
+          authSeq = v.seq;
         }
-        if (p.area !== i.area) {
-          out.actions.push({ type: 'drop', pdu, reason: 'other', detail: `OSPF area ${p.area} does not match ${port}'s area ${i.area}`, port });
-          return;
-        }
-        const n = i.nbrs.get(p.routerId);
-        if (n === undefined) {
-          out.actions.push({ type: 'drop', pdu, reason: 'other', detail: `no OSPF neighbour ${p.routerId} on ${port}`, port });
-          return;
-        }
-        switch (type) {
-          case OSPF_PACKET.dbd:
-            eng.rxDbd(ctx, out, i, n, pdu, p.fields, lsas);
-            return;
-          case OSPF_PACKET.lsr:
-            eng.rxLsr(ctx, out, i, n, pdu, p.fields);
-            return;
-          case OSPF_PACKET.lsu:
-            eng.rxLsu(ctx, out, i, n, pdu, lsas);
-            return;
-          case OSPF_PACKET.lsack:
-            eng.rxAck(ctx, out, i, n, pdu, lsas);
-            return;
-          default:
-            out.actions.push({ type: 'drop', pdu, reason: 'other', detail: `unknown OSPF packet type ${type}`, port });
+        dispatch(ctx, out, i, pdu, p, port);
+        if (authSeq !== undefined) {
+          const nb = i.nbrs.get(p.routerId);
+          if (nb !== undefined && (nb.authSeq === undefined || authSeq > nb.authSeq)) nb.authSeq = authSeq;
         }
       });
     },

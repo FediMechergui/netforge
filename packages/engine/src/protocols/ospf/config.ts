@@ -9,6 +9,13 @@
  *              [always]`, `maximum-paths <n>`;
  *   interface  `ip ospf <pid> area <area>`, `ip ospf cost|priority|hello-interval|dead-interval <n>`, `ip ospf network
  *              point-to-point|broadcast`, `bandwidth <kb/s>`.
+ * @since P3c (ARCHITECTURE-P3C §3.2, §5; W2a ospf [S5] [C7]):
+ *   router     `area <area> authentication [message-digest]` (one per area; the last line of an area wins);
+ *   interface  `ip ospf authentication [message-digest|null]`, `ip ospf authentication-key <k>`, `ip ospf
+ *              message-digest-key <1-255> md5 <k>` (one per key id, configuration order: the last is the youngest),
+ *              `ip mtu <68-9216>` (the IP MTU a database description announces, protocols/ospf/engine.ts) and `ip ospf
+ *              mtu-ignore`. The keys are read as stored (the CLI masks them on display only); protocols/ospf/auth.ts
+ *              resolves the authentication of an interface from these lines.
  * An area is typed as an integer (0–4294967295) or dotted; it is always returned dotted (`OspfAreaId`). Interface
  * lines may be stored as full-token nodes or under an `ip` group node: both are read.
  *
@@ -64,7 +71,26 @@ export interface OspfProcessConfig {
   readonly referenceBandwidthMbps: number;
   readonly defaultOriginate?: 'on' | 'always';
   readonly maximumPaths: number;
+  /** @since P3c [S5] The `area <a> authentication [message-digest]` lines, one per area; absent without any. */
+  readonly areaAuth?: readonly OspfAreaAuthLine[];
 }
+
+/** @since P3c [S5] One `area <a> authentication [message-digest]` line: `simple` without the keyword. */
+export interface OspfAreaAuthLine {
+  readonly area: OspfAreaId;
+  readonly mode: 'simple' | 'md5';
+}
+
+/** @since P3c [S5] One `ip ospf message-digest-key <id> md5 <key>` line. */
+export interface OspfMd5KeyLine {
+  readonly id: number;
+  readonly key: string;
+}
+
+/** @since P3c [C7] The largest `ip mtu` this reader takes (the CLI enforces the per-port range, `ipMtuRange`). */
+export const OSPF_IP_MTU_MAX = 9216;
+/** @since P3c [C7] The smallest `ip mtu`. */
+export const OSPF_IP_MTU_MIN = 68;
 
 /** @since P3 The OSPF lines of one interface. */
 export interface OspfInterfaceConfig {
@@ -77,6 +103,16 @@ export interface OspfInterfaceConfig {
   readonly networkType?: 'point-to-point' | 'broadcast';
   /** The `bandwidth` line, kb/s. */
   readonly bandwidthKbps?: number;
+  /** @since P3c [S5] `ip ospf authentication` (`simple`), `… message-digest` (`md5`) or `… null` (`null`: none). */
+  readonly authentication?: 'simple' | 'md5' | 'null';
+  /** @since P3c [S5] `ip ospf authentication-key <k>`, as stored (protocols/ospf/auth.ts cuts it to 8 bytes). */
+  readonly authKey?: string;
+  /** @since P3c [S5] The `ip ospf message-digest-key` lines in configuration order (the last is the youngest). */
+  readonly md5Keys?: readonly OspfMd5KeyLine[];
+  /** @since P3c [C7] The `ip mtu <bytes>` line. */
+  readonly ipMtu?: number;
+  /** @since P3c [C7] `ip ospf mtu-ignore`. */
+  readonly mtuIgnore?: true;
 }
 
 /** @since P3 Everything OSPF reads from a running configuration. */
@@ -131,6 +167,7 @@ function readProcess(node: ConfigNode, pid: number): OspfProcessConfig {
   let referenceBandwidthMbps = OSPF_REFERENCE_MBPS_DEFAULT;
   let defaultOriginate: 'on' | 'always' | undefined;
   let maximumPaths = OSPF_MAXIMUM_PATHS_DEFAULT;
+  const areaAuth: OspfAreaAuthLine[] = [];
   for (const t of linesOf(node)) {
     const [k, a, b, c, d] = t;
     if (k === 'router-id' && t.length === 2) {
@@ -158,6 +195,14 @@ function readProcess(node: ConfigNode, pid: number): OspfProcessConfig {
     } else if (k === 'maximum-paths' && t.length === 2) {
       const v = int(a, 1, OSPF_MAXIMUM_PATHS_MAX);
       if (v !== undefined) maximumPaths = v;
+    } else if (k === 'area' && b === 'authentication' && (t.length === 3 || (t.length === 4 && c === 'message-digest'))) {
+      const area = parseOspfArea(a);
+      if (area !== undefined) {
+        const mode = t.length === 4 ? 'md5' : 'simple';
+        const at = areaAuth.findIndex((l) => l.area === area);
+        if (at >= 0) areaAuth.splice(at, 1);
+        areaAuth.push({ area, mode });
+      }
     }
   }
   return {
@@ -170,6 +215,7 @@ function readProcess(node: ConfigNode, pid: number): OspfProcessConfig {
     referenceBandwidthMbps,
     ...(defaultOriginate === undefined ? {} : { defaultOriginate }),
     maximumPaths,
+    ...(areaAuth.length === 0 ? {} : { areaAuth }),
   };
 }
 
@@ -185,9 +231,32 @@ function readInterface(port: PortId, node: ConfigNode): OspfInterfaceConfig | un
       }
       continue;
     }
+    if (t[0] === 'ip' && t[1] === 'mtu' && t.length === 3) {
+      const v = int(t[2], OSPF_IP_MTU_MIN, OSPF_IP_MTU_MAX);
+      if (v !== undefined) {
+        cfg.ipMtu = v;
+        seen = true;
+      }
+      continue;
+    }
     if (t[0] !== 'ip' || t[1] !== 'ospf') continue;
     const [, , a, b, c] = t;
-    if (t.length === 5 && b === 'area') {
+    if (a === 'authentication' && (t.length === 3 || t.length === 4)) {
+      if (t.length === 3) cfg.authentication = 'simple';
+      else if (b === 'message-digest') cfg.authentication = 'md5';
+      else if (b === 'null') cfg.authentication = 'null';
+      else continue;
+    } else if (a === 'authentication-key' && t.length === 4 && b !== undefined) {
+      cfg.authKey = b;
+    } else if (a === 'message-digest-key' && t.length === 6 && c === 'md5' && t[5] !== undefined) {
+      const id = int(b, 1, 255);
+      if (id === undefined) continue;
+      const keys = (cfg.md5Keys ?? []).filter((k) => k.id !== id);
+      keys.push({ id, key: t[5] });
+      cfg.md5Keys = keys;
+    } else if (a === 'mtu-ignore' && t.length === 3) {
+      cfg.mtuIgnore = true;
+    } else if (t.length === 5 && b === 'area') {
       const pid = int(a, 1, 65535);
       const area = parseOspfArea(c);
       if (pid === undefined || area === undefined) continue;

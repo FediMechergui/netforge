@@ -42,7 +42,7 @@ import type { ArpInspectionRow } from '../../contracts/tables.js';
 import type { SimTime } from '../../contracts/time.js';
 import { configTextLinesOf } from '../../cli/config-text.js';
 import type { VlanRange } from '../../core/vlan-list.js';
-// Type-only: arp-inspection.ts will import this module when W2a wires steps (3) and (4), so no value import back.
+// Type-only: arp-inspection.ts imports this module's values (W2a wired steps (3) and (4)), so no value import back.
 import type { ArpInspectView } from './arp-inspection.js';
 import { parseSnoopingVlanTokens } from './dhcp-snooping.js';
 
