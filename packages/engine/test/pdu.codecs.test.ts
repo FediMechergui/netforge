@@ -66,6 +66,8 @@ describe('pdu/codecs registry', () => {
       'telnet', 'ssh', 'gre', 'ppp', 'lcp', 'pap', 'chap', 'ipcp', 'ipv6cp', 'syslog', 'eigrp', 'esp', 'ikev2',
       // ARCHITECTURE-P3C §7 W1a pdu: the P3c codecs follow
       'ospf6', 'ospf6-lsa',
+      // ARCHITECTURE-P3C §7 W1b pdu
+      'tftp', 'snmp',
     ]);
     expect(getCodec('ethernet')).toBe(ethernetCodec);
     expect(getCodec('arp')).toBe(arpCodec);
@@ -345,7 +347,8 @@ describe('pdu/codecs dispatch tables (P0.5)', () => {
     expect(lookupNext('ethertype', 0x86dd)).toBe('ipv6');
     expect(lookupNext('ipproto', 1)).toBe('icmpv4');
     expect(lookupNext('ipproto', 17)).toBe('udp');
-    expect(lookupNext('udp.port', 69)).toBeUndefined(); // reserved tftp
+    expect(lookupNext('udp.port', 69)).toBe('tftp'); // un-reserved in P3c W1b
+    expect(lookupNext('tcp.port', 21)).toBeUndefined(); // reserved ftp
     expect(nextProto('ethertype', 0x88b5)).toBe('payload');
     expect(nextProto('ethertype', 0x88b5, 'raw')).toBe('raw');
     expect(keyForProto('udp.port', 'dhcp')).toBe(67);

@@ -60,6 +60,9 @@ export * from './automation/yang/model.js';
 export * from './automation/yang/path.js';
 export * from './automation/py/lexer.js';
 export * from './automation/py/parser.js';
+// P3c W1b [S33] the MIB subset and [C22] the playbook model (pure data and planners)
+export * from './automation/mib/model.js';
+export * from './automation/playbook/model.js';
 
 // ── formatters ──────────────────────────────────────────────────────────────
 export { HOUR, MIN, MS, NS, SEC, US, formatSimTime, type SimTime } from './contracts/time.js';

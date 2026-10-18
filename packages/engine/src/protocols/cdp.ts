@@ -40,6 +40,21 @@
  * `{ process: 'cdp', state: { running, timerS, holdtimeS, advertiseV2, disabled: [ports with no cdp enable,
  * ascending], nextTxAt?, sent, received, errors } }`. `clear cdp counters` sends `cdp.clearCounters` (ruling R39, the
  * W3 fix step): the three counters start again from zero, silently; the rows stay.
+ *
+ * @since P3c [S41] Mismatch logs (ARCHITECTURE-P3C D9, §4.3). On receipt only (no timer): a frame whose `nativeVlan`
+ * differs from the native VLAN of the receiving port, when that port is an operational trunk (never on an access
+ * port), logs `cdpNativeMismatchText` at severity 4; a frame whose `duplex` differs from the receiving port's (any
+ * CDP port) logs `cdpDuplexMismatchText` at severity 4. Each kind logs at most once per port per
+ * `CDP_MISMATCH_LOG_INTERVAL` (60 s, exact to the ns). The rate-limit state is private (no StateView member).
+ *
+ * @since P3c [S35] Voice VLAN (ARCHITECTURE-P3C D9, §3.9). A switch adds `voiceVlan` (NF TLV 9) to its frames on a port
+ * with `switchport voice vlan <v>`, and nowhere else. A `voice-endpoint` model (the IP phone) runs the daemon in its
+ * answer-driven mode (`discoveryAnswerOnly`): only on its `group: 'uplink'` port, and silent until it has heard CDP
+ * there; the first frame heard wakes it, it answers at once with capabilities `H P` and then every `cdp timer`. A
+ * link-down of the uplink (or CDP turned off) puts it back to sleep. The neighbour row records the `voiceVlan` heard.
+ * When the voice VLAN the phone has learned (`phoneLearnedVoiceVlan`: CDP first, else LLDP-MED) changes to a new value
+ * and no `voice vlan` line is typed on the phone (the typed line wins, W-3), the daemon asks `dhcp-client` to restart
+ * on the phone's adapter (`dhcp.restart`). Only the phone's `cdp` StateView carries `awake`.
  */
 import type { MacAddress } from '../contracts/addr.js';
 import { ROLE_TRAITS, defaultRoleFor, profileIncludes, type DefaultsProfile, type PortRole } from '../contracts/catalog.js';
@@ -49,10 +64,10 @@ import type { PortId } from '../contracts/ids.js';
 import { NF_L2_CONTROL_MAC, NF_OUI, NF_PID_CDP, type FieldValue, type LayerSpec, type Pdu } from '../contracts/pdu.js';
 import type { PortView } from '../contracts/port.js';
 import type { Action, DebugEvent, Process, ProcessCtx, ProcessRequest, StateView } from '../contracts/process.js';
-import type { CdpNeighbourRow, DtpRow, Table, TableRow } from '../contracts/tables.js';
+import type { CdpNeighbourRow, DtpRow, LldpNeighbourRow, Table, TableRow } from '../contracts/tables.js';
 import { SEC, type SimTime } from '../contracts/time.js';
 import { operOf } from './l2/membership.js';
-import { readSwitchport } from './l2/switchport-config.js';
+import { readSwitchport, readVoiceVlan } from './l2/switchport-config.js';
 
 // ── names and constants ────────────────────────────────────────────────────────────────────────────────────────
 
@@ -88,6 +103,25 @@ export const CDP_DETAIL_NOT_A_MESSAGE = 'not a CDP message';
 export function cdpPortOffDetail(port: PortId): string {
   return `CDP is off on ${port}`;
 }
+
+/** @since P3c [S41] Syslog facility of the mismatch logs. */
+export const CDP_LOG_FACILITY = 'CDP';
+/** @since P3c [S41] Severity of both mismatch logs (warning). */
+export const CDP_MISMATCH_SEVERITY = 4;
+/** @since P3c [S41] Each mismatch kind logs at most once per port per this interval (60 s), checked on receipt. */
+export const CDP_MISMATCH_LOG_INTERVAL = 60 * SEC;
+/** @since P3c [S41] The native-VLAN mismatch log (original wording). */
+export function cdpNativeMismatchText(port: PortId, ours: number, neighbour: string, theirPort: string, theirs: number): string {
+  return `Native VLAN differs on ${port}: ours is ${ours}, ${neighbour} sends ${theirs} from its ${theirPort}`;
+}
+/** @since P3c [S41] The duplex mismatch log (original wording). */
+export function cdpDuplexMismatchText(port: PortId, ours: 'full' | 'half', neighbour: string, theirPort: string, theirs: 'full' | 'half'): string {
+  return `Duplex differs on ${port}: ours is ${ours}, ${neighbour} runs ${theirs} duplex on its ${theirPort}`;
+}
+/** @since P3c [S35] The process a learned voice VLAN asks to restart its DHCP client (`dhcp.restart`). */
+export const DHCP_CLIENT_PROCESS = 'dhcp-client';
+/** @since P3c [S35] The table LLDP writes (named here because protocols/lldp.ts imports this module). */
+const LLDP_NEIGHBOURS_TABLE = 'lldp-neighbours';
 
 /** The software text a NetForge device advertises (CDP `software`, LLDP `systemDescription`; original wording). */
 export function discoverySoftwareText(model: Pick<DeviceModel, 'model'>): string {
@@ -183,6 +217,66 @@ export function discoveryPorts(ctx: Pick<ProcessCtx, 'model' | 'ports'>): PortVi
 }
 
 /**
+ * @since P3c [S35] True on a `voice-endpoint` model (the IP phone): its discovery daemons run on the `group: 'uplink'`
+ * port only and stay silent until they have heard a neighbour there (D9; RC2 (d)).
+ */
+export function discoveryAnswerOnly(model: Pick<DeviceModel, 'capabilities'>): boolean {
+  return (model.capabilities ?? []).includes('voice-endpoint');
+}
+
+/** @since P3c [S35] The phone's network port: its first taking-part port in the `uplink` group, canonical order. */
+export function discoveryUplink(ctx: Pick<ProcessCtx, 'model' | 'ports'>): PortView | undefined {
+  for (const view of discoveryPorts(ctx)) if (view.spec.group === 'uplink') return view;
+  return undefined;
+}
+
+/**
+ * @since P3c [S35] The ports a discovery daemon speaks and listens on: every taking-part port, or only the uplink on an
+ * answer-only model.
+ */
+export function discoveryActivePorts(ctx: Pick<ProcessCtx, 'model' | 'ports'>): PortView[] {
+  if (!discoveryAnswerOnly(ctx.model)) return discoveryPorts(ctx);
+  const uplink = discoveryUplink(ctx);
+  return uplink === undefined ? [] : [uplink];
+}
+
+/**
+ * @since P3c [S35] The voice VLAN a phone has learned on its uplink: the first CDP neighbour row there carrying
+ * `voiceVlan`, else the first LLDP neighbour row there carrying `medVlan`; undefined when none (or not a phone).
+ */
+export function phoneLearnedVoiceVlan(ctx: Pick<ProcessCtx, 'model' | 'ports' | 'tables'>): number | undefined {
+  if (!discoveryAnswerOnly(ctx.model)) return undefined;
+  const uplink = discoveryUplink(ctx)?.id;
+  if (uplink === undefined) return undefined;
+  for (const row of ctx.tables.get<CdpNeighbourRow>(CDP_TABLE)?.rows() ?? []) {
+    if (row.localPort === uplink && row.voiceVlan !== undefined) return row.voiceVlan;
+  }
+  for (const row of ctx.tables.get<LldpNeighbourRow>(LLDP_NEIGHBOURS_TABLE)?.rows() ?? []) {
+    if (row.localPort === uplink && row.medVlan !== undefined) return row.medVlan;
+  }
+  return undefined;
+}
+
+/** @since P3c [S35] The phone's host adapter (its first SVI, canonical order), where `dhcp-client` runs. */
+export function phoneAdapter(ctx: Pick<ProcessCtx, 'model' | 'ports'>): PortId | undefined {
+  for (const view of ctx.ports.values()) if (discoveryRoleOf(ctx.model, view) === 'svi') return view.id;
+  return undefined;
+}
+
+/**
+ * @since P3c [S35] What a phone's discovery daemon does after it stored a row: when the learned voice VLAN moved from
+ * `before` to a new defined value and no `voice vlan` line is typed on the phone, ask `dhcp-client` to restart on the
+ * phone's adapter; else nothing.
+ */
+export function phoneVoiceVlanRestart(ctx: Pick<ProcessCtx, 'model' | 'ports' | 'tables' | 'config'>, before: number | undefined): Action[] {
+  const after = phoneLearnedVoiceVlan(ctx);
+  if (after === undefined || after === before || readVoiceVlan(ctx.config) !== undefined) return [];
+  const iface = phoneAdapter(ctx);
+  if (iface === undefined) return [];
+  return [{ type: 'request', to: DHCP_CLIENT_PROCESS, req: { kind: 'dhcp.restart', iface } }];
+}
+
+/**
  * The management address a port advertises: the port's own IPv4 address; else (ruling R47, W5) the address of its
  * native subinterface, which carries the port's untagged traffic — read whether or not that subinterface is up yet,
  * because the frame at the port's link-up is built before the subinterface comes up with it (an administratively down
@@ -212,9 +306,13 @@ export function discoveryDuplexOf(view: PortView): 'full' | 'half' {
   return view.duplex === 'half' ? 'half' : 'full';
 }
 
-/** The CDP capability letters of a model (R routing, S switching, I a managed switch's IGMP snooping; else H host). */
+/**
+ * The CDP capability letters of a model (R routing, S switching, I a managed switch's IGMP snooping; else H host);
+ * `H P` (host, phone) on a `voice-endpoint` model ([S35]).
+ */
 export function cdpCapabilitiesOf(model: Pick<DeviceModel, 'capabilities'>): string {
   const caps = model.capabilities ?? [];
+  if (caps.includes('voice-endpoint')) return 'H P';
   const out: string[] = [];
   if (caps.includes('routing')) out.push('R');
   if (caps.includes('switching')) out.push('S');
@@ -235,6 +333,8 @@ export interface CdpAdvertisement {
   readonly software: string;
   readonly duplex: 'full' | 'half';
   readonly nativeVlan?: number;
+  /** @since P3c [S35] The port's voice VLAN (NF TLV 9), only on a port with `switchport voice vlan`. */
+  readonly voiceVlan?: number;
 }
 
 /** Layer specs of one frame from port MAC `mac` carrying `adv` (§3.6 step 2). */
@@ -251,6 +351,7 @@ export function cdpFrameSpecs(mac: MacAddress, adv: CdpAdvertisement): LayerSpec
   };
   if (adv.addresses !== undefined) cdp.addresses = adv.addresses;
   if (adv.nativeVlan !== undefined) cdp.nativeVlan = adv.nativeVlan;
+  if (adv.voiceVlan !== undefined) cdp.voiceVlan = adv.voiceVlan;
   return [
     { proto: 'ethernet', fields: { dst: NF_L2_CONTROL_MAC, src: mac, type: 0 } },
     { proto: 'llc', fields: { oui: NF_OUI, type: NF_PID_CDP } },
@@ -293,6 +394,8 @@ export function cdpNeighbourRow(localPort: PortId, fields: Readonly<Record<strin
   if (vlan !== undefined) row.nativeVlan = vlan;
   const duplex = fields.duplex;
   if (duplex === 'full' || duplex === 'half') row.duplex = duplex;
+  const voice = int(fields.voiceVlan);
+  if (voice !== undefined) row.voiceVlan = voice;
   return row;
 }
 
@@ -363,14 +466,20 @@ class CdpDaemon implements Process {
   private sent = 0;
   private received = 0;
   private errors = 0;
+  /** [S35] A `voice-endpoint` model: uplink only, silent until it has heard CDP there. */
+  private answerOnly = false;
+  /** [S35] On an answer-only model: CDP has been heard on the uplink since the last link-down (or CDP off). */
+  private awake = false;
+  /** [S41] When each `${kind}|${port}` mismatch last logged (private: no StateView member). */
+  private readonly mismatchLoggedAt = new Map<string, SimTime>();
 
   init(ctx: ProcessCtx): Action[] {
     // silent at boot (§4.3): read the configuration; a port already up (none, normally: ports come up after boot) is
     // started like a link-up, without any "CDP is on" line
     this.readConfig(ctx);
-    if (!this.running) return [];
+    if (!this.running || !this.speaks()) return [];
     const actions: Action[] = [];
-    for (const view of discoveryPorts(ctx)) if (view.operUp && !this.disabled.has(view.id)) actions.push(this.advertise(ctx, view.id));
+    for (const view of discoveryActivePorts(ctx)) if (view.operUp && !this.disabled.has(view.id)) actions.push(this.advertise(ctx, view.id));
     if (actions.length > 0) actions.push(...this.armTx(ctx));
     return actions;
   }
@@ -383,7 +492,7 @@ class CdpDaemon implements Process {
     }
     if (!this.running) return [{ type: 'drop', pdu, reason: 'not-for-me', detail: CDP_DETAIL_OFF, port }];
     const view = ctx.ports.get(port);
-    if (view === undefined || !discoveryPortEligible(ctx.model, view) || this.disabled.has(port)) {
+    if (view === undefined || !this.takesPart(ctx, view) || this.disabled.has(port)) {
       return [{ type: 'drop', pdu, reason: 'not-for-me', detail: cdpPortOffDetail(port), port }];
     }
     const table = this.table(ctx);
@@ -397,6 +506,7 @@ class CdpDaemon implements Process {
     this.packet(ctx, `received CDP v${row.cdpVersion} from ${row.deviceId} on ${port}, ${n} address${n === 1 ? '' : 'es'}, holdtime ${row.holdtimeS} s`, {
       port, from: row.deviceId, pdu: pdu.id,
     });
+    const learnedBefore = this.answerOnly ? phoneLearnedVoiceVlan(ctx) : undefined;
     const prev = table.get(row.key);
     table.set(row);
     if (prev === undefined) {
@@ -404,7 +514,10 @@ class CdpDaemon implements Process {
     } else if (discoveryRowChanged(prev, row)) {
       this.event(ctx, `neighbour ${row.deviceId} on ${port} changed its advertisement`, { port, neighbour: row.deviceId });
     }
-    return [{ type: 'consume', pdu }, ...this.armAge(ctx, table)];
+    const actions: Action[] = [{ type: 'consume', pdu }];
+    if (this.answerOnly) actions.push(...this.answer(ctx, view, row, learnedBefore));
+    else actions.push(...this.mismatchLogs(ctx, view, row));
+    return [...actions, ...this.armAge(ctx, table)];
   }
 
   onTimer(ctx: ProcessCtx, key: string): Action[] {
@@ -427,14 +540,14 @@ class CdpDaemon implements Process {
     }
     if (!wasRunning) {
       this.event(ctx, `CDP is now running (${cause})`, { cause });
-      for (const view of discoveryPorts(ctx)) if (view.operUp && !this.disabled.has(view.id)) actions.push(this.advertise(ctx, view.id));
+      if (this.speaks()) for (const view of discoveryActivePorts(ctx)) if (view.operUp && !this.disabled.has(view.id)) actions.push(this.advertise(ctx, view.id));
       if (actions.length > 0) actions.push(...this.armTx(ctx));
       return actions;
     }
     // per port: a port turned off loses its rows; a port turned on speaks at once when it is up
     const table = this.table(ctx);
     let sentNow = false;
-    for (const view of discoveryPorts(ctx)) {
+    for (const view of discoveryActivePorts(ctx)) {
       const off = this.disabled.has(view.id);
       if (off === wasDisabled.has(view.id)) continue;
       if (off) {
@@ -442,7 +555,7 @@ class CdpDaemon implements Process {
         if (table !== undefined) this.removePortRows(ctx, table, view.id, 'cleared');
       } else {
         this.event(ctx, `CDP is on again on ${view.id}`, { port: view.id });
-        if (view.operUp) {
+        if (view.operUp && this.speaks()) {
           actions.push(this.advertise(ctx, view.id));
           sentNow = true;
         }
@@ -460,14 +573,22 @@ class CdpDaemon implements Process {
   onLinkChange(ctx: ProcessCtx, port: PortId, up: boolean): Action[] {
     if (!this.running) return [];
     const view = ctx.ports.get(port);
-    if (view === undefined || !discoveryPortEligible(ctx.model, view)) return [];
+    if (view === undefined || !this.takesPart(ctx, view)) return [];
     if (!up) {
+      const out: Action[] = [];
+      if (this.answerOnly && this.awake) {
+        // [S35] the phone goes back to sleep until it hears CDP again
+        this.awake = false;
+        this.event(ctx, `${port} went down: silent until a neighbour is heard again`, { port });
+        if (this.nextTxAt !== undefined) out.push({ type: 'cancelTimer', key: CDP_TX_TIMER });
+        this.nextTxAt = undefined;
+      }
       const table = this.table(ctx);
-      if (table === undefined) return [];
+      if (table === undefined) return out;
       this.removePortRows(ctx, table, port, 'link-down');
-      return this.armAge(ctx, table);
+      return [...out, ...this.armAge(ctx, table)];
     }
-    if (this.disabled.has(port)) return [];
+    if (this.disabled.has(port) || !this.speaks()) return [];
     const actions: Action[] = [this.advertise(ctx, port)];
     if (this.nextTxAt === undefined) actions.push(...this.armTx(ctx));
     return actions;
@@ -495,6 +616,7 @@ class CdpDaemon implements Process {
       errors: this.errors,
     };
     if (this.nextTxAt !== undefined) state.nextTxAt = this.nextTxAt;
+    if (this.answerOnly) state.awake = this.awake; // [S35] the phone only
     return { process: CDP_PROCESS, state };
   }
 
@@ -505,13 +627,87 @@ class CdpDaemon implements Process {
   // ── configuration and timers ──
 
   private readConfig(ctx: ProcessCtx): void {
-    this.running = cdpRunning(ctx.config, ctx.profile, ctx.model);
+    this.answerOnly = discoveryAnswerOnly(ctx.model);
+    // [S35] the phone listens in every profile unless `no cdp run` is stored; it speaks only once it has heard CDP
+    this.running = this.answerOnly ? globalLine(ctx.config, ['no', 'cdp', 'run']) === undefined : cdpRunning(ctx.config, ctx.profile, ctx.model);
     this.timerS = cdpTimerS(ctx.config);
     this.holdtimeS = cdpHoldtimeS(ctx.config);
     this.advertiseV2 = cdpAdvertisesV2(ctx.config);
     const disabled = new Set<PortId>();
-    for (const view of discoveryPorts(ctx)) if (!cdpPortEnabled(ctx.config, view.id)) disabled.add(view.id);
+    for (const view of discoveryActivePorts(ctx)) if (!cdpPortEnabled(ctx.config, view.id)) disabled.add(view.id);
     this.disabled = disabled;
+  }
+
+  /** [S35] May the daemon send? Always, except on an answer-only model that has not heard CDP yet. */
+  private speaks(): boolean {
+    return !this.answerOnly || this.awake;
+  }
+
+  /** Does `view` take part: an eligible port, and on an answer-only model the uplink only ([S35]). */
+  private takesPart(ctx: ProcessCtx, view: PortView): boolean {
+    if (!discoveryPortEligible(ctx.model, view)) return false;
+    return !this.answerOnly || discoveryUplink(ctx)?.id === view.id;
+  }
+
+  /**
+   * [S35] The phone's answer after storing `row` on its uplink: the first frame heard wakes it (one frame at once, then
+   * every `cdp timer`); a newly learned voice VLAN restarts its DHCP unless `voice vlan` is typed.
+   */
+  private answer(ctx: ProcessCtx, view: PortView, row: CdpNeighbourRow, learnedBefore: number | undefined): Action[] {
+    const out: Action[] = [];
+    if (!this.awake) {
+      this.awake = true;
+      this.event(ctx, `heard ${row.deviceId} on ${view.id}: answering`, { port: view.id, neighbour: row.deviceId });
+      if (view.operUp) {
+        out.push(this.advertise(ctx, view.id));
+        if (this.nextTxAt === undefined) out.push(...this.armTx(ctx));
+      }
+    }
+    const restart = phoneVoiceVlanRestart(ctx, learnedBefore);
+    if (restart.length > 0) {
+      const vlan = phoneLearnedVoiceVlan(ctx);
+      this.event(ctx, `voice VLAN ${vlan} learned from ${row.deviceId} on ${view.id}; restarting DHCP in it`, { port: view.id, neighbour: row.deviceId, vlan });
+      out.push(...restart);
+    }
+    return out;
+  }
+
+  /** The native VLAN of `port` when it is an operational trunk of a switch, else undefined. */
+  private trunkNative(ctx: ProcessCtx, view: PortView): number | undefined {
+    if (discoveryRoleOf(ctx.model, view) !== 'switched') return undefined;
+    const config = readSwitchport(ctx.config, view.id, ctx.model);
+    const dtp = ctx.tables.get<DtpRow>('dtp')?.get(view.id);
+    return operOf(config, dtp) === 'trunk' ? config.nativeVlan : undefined;
+  }
+
+  /**
+   * [S41] The mismatch logs a received `row` raises on `view`: native VLAN (an operational trunk only) and duplex (any
+   * CDP port), each at most once per port per `CDP_MISMATCH_LOG_INTERVAL`.
+   */
+  private mismatchLogs(ctx: ProcessCtx, view: PortView, row: CdpNeighbourRow): Action[] {
+    const out: Action[] = [];
+    if (row.nativeVlan !== undefined) {
+      const ours = this.trunkNative(ctx, view);
+      if (ours !== undefined && ours !== row.nativeVlan && this.mayLog(ctx, 'native', view.id)) {
+        out.push({ type: 'log', severity: CDP_MISMATCH_SEVERITY, facility: CDP_LOG_FACILITY, message: cdpNativeMismatchText(view.id, ours, row.deviceId, row.remotePort, row.nativeVlan) });
+      }
+    }
+    if (row.duplex !== undefined) {
+      const ours = discoveryDuplexOf(view);
+      if (ours !== row.duplex && this.mayLog(ctx, 'duplex', view.id)) {
+        out.push({ type: 'log', severity: CDP_MISMATCH_SEVERITY, facility: CDP_LOG_FACILITY, message: cdpDuplexMismatchText(view.id, ours, row.deviceId, row.remotePort, row.duplex) });
+      }
+    }
+    return out;
+  }
+
+  /** [S41] The rate limit: true (and the time recorded) when `kind` on `port` has not logged in the last 60 s. */
+  private mayLog(ctx: ProcessCtx, kind: 'native' | 'duplex', port: PortId): boolean {
+    const key = `${kind}|${port}`;
+    const last = this.mismatchLoggedAt.get(key);
+    if (last !== undefined && ctx.now - last < CDP_MISMATCH_LOG_INTERVAL) return false;
+    this.mismatchLoggedAt.set(key, ctx.now);
+    return true;
   }
 
   private table(ctx: ProcessCtx): Table<CdpNeighbourRow> | undefined {
@@ -528,6 +724,7 @@ class CdpDaemon implements Process {
     if (this.ageAt !== undefined) actions.push({ type: 'cancelTimer', key: CDP_AGE_TIMER });
     this.nextTxAt = undefined;
     this.ageAt = undefined;
+    this.awake = false;
   }
 
   private armTx(ctx: ProcessCtx): Action[] {
@@ -539,9 +736,9 @@ class CdpDaemon implements Process {
   /** `cdp-tx`: one frame on every taking-part up port, canonical order; re-armed while such a port is up. */
   private onTx(ctx: ProcessCtx): Action[] {
     this.nextTxAt = undefined;
-    if (!this.running) return [];
+    if (!this.running || !this.speaks()) return [];
     const actions: Action[] = [];
-    for (const view of discoveryPorts(ctx)) if (view.operUp && !this.disabled.has(view.id)) actions.push(this.advertise(ctx, view.id));
+    for (const view of discoveryActivePorts(ctx)) if (view.operUp && !this.disabled.has(view.id)) actions.push(this.advertise(ctx, view.id));
     if (actions.length > 0) actions.push(...this.armTx(ctx));
     return actions;
   }
@@ -586,10 +783,12 @@ class CdpDaemon implements Process {
     const view = ctx.ports.get(port) as PortView;
     const address = discoveryManagementAddress(ctx, port);
     let nativeVlan: number | undefined;
-    if (discoveryRoleOf(ctx.model, view) === 'switched') {
+    let voiceVlan: number | undefined;
+    if (!this.answerOnly && discoveryRoleOf(ctx.model, view) === 'switched') {
       const config = readSwitchport(ctx.config, port, ctx.model);
       const dtp = ctx.tables.get<DtpRow>('dtp')?.get(port);
       if (operOf(config, dtp) === 'trunk') nativeVlan = config.nativeVlan;
+      voiceVlan = config.voiceVlan; // [S35] only on a port with a voice VLAN
     }
     const adv: { -readonly [K in keyof CdpAdvertisement]: CdpAdvertisement[K] } = {
       version: this.advertiseV2 ? 2 : 1,
@@ -603,6 +802,7 @@ class CdpDaemon implements Process {
     };
     if (address !== undefined) adv.addresses = address;
     if (nativeVlan !== undefined) adv.nativeVlan = nativeVlan;
+    if (voiceVlan !== undefined) adv.voiceVlan = voiceVlan;
     return adv;
   }
 

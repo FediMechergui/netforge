@@ -404,7 +404,7 @@ describe('NTP codec (RFC 5905, D19)', () => {
 // ── dispatch rows, field tables (§9.2 item 14, ruling R11) ─────────────────────────────────────────────────────────
 
 describe('P3 dispatch rows and field tables', () => {
-  it('dispatches the MUST protocols and HTTP on 443; the reserved list is exactly tftp, snmp, ftp, smtp, pop3 and imap', () => {
+  it('dispatches the MUST protocols and HTTP on 443; the reserved list is exactly ftp, smtp, pop3 and imap (P3C §9.2 item 11)', () => {
     expect(lookupNext('ipproto', IPPROTO_OSPF)).toBe('ospf');
     expect(lookupNext('nf.pid', NF_PID_CDP)).toBe('cdp');
     expect(lookupNext('ethertype', ETHERTYPE_LLDP)).toBe('lldp');
@@ -413,8 +413,15 @@ describe('P3 dispatch rows and field tables', () => {
     expect(keyForProto('tcp.port', 'http')).toBe(80); // the reverse lookup still fills 80
     expect(keyForProto('ipproto', 'ospf')).toBe(89);
     expect(DISPATCH_TABLE.filter((e) => e.reserved).map((e) => `${e.space} ${e.key} ${e.proto}`)).toEqual([
-      'udp.port 69 tftp', 'udp.port 161 snmp', 'tcp.port 21 ftp', 'tcp.port 25 smtp', 'tcp.port 110 pop3', 'tcp.port 143 imap',
+      'tcp.port 21 ftp', 'tcp.port 25 smtp', 'tcp.port 110 pop3', 'tcp.port 143 imap',
     ]);
+    // P3C §9.2 item 11: 69 and 161 dispatch with their 'P1' stage kept, 162 is added, IPv6 next header 89 is ospf6
+    expect(DISPATCH_TABLE.filter((e) => e.space === 'udp.port' && [69, 161, 162].includes(e.key)).map((e) => `${e.key} ${e.proto} ${e.since}`))
+      .toEqual(['69 tftp P1', '161 snmp P1', '162 snmp P3c']);
+    expect(lookupNext('udp.port', 69)).toBe('tftp');
+    expect(lookupNext('udp.port', 161)).toBe('snmp');
+    expect(lookupNext('udp.port', 162)).toBe('snmp');
+    expect(lookupNext('ipv6.nh', 89)).toBe('ospf6');
     const get = new TextEncoder().encode('GET /restconf/data HTTP/1.1\r\nHost: 10.0.99.11\r\n\r\n');
     const b = encodeLayers([
       { proto: 'ipv4', fields: { src: '10.0.99.10', dst: '10.0.99.11', protocol: 6 } },

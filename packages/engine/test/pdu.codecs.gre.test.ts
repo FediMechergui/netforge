@@ -80,4 +80,20 @@ describe('GRE codec [S18]', () => {
     expect(() => greCodec.encode({ version: 9, protocolType: 0x0800 }, new Uint8Array(0))).toThrow(/version out of range/);
     expect(() => greCodec.encode({}, new Uint8Array(0))).toThrow(/gre.protocolType is required/);
   });
+
+  it('[C17] carries the key word when K is set (after the checksum word), and no key field without K', () => {
+    const k = encodeLayers([{ proto: 'gre', fields: { keyPresent: true, key: 1234 } }, ...inner()]);
+    expect(Array.from(k.slice(0, 8))).toEqual(hex('2000 0800 000004d2'));
+    const d = decodeLayers(k, 'gre');
+    expect(d[0]!.fields).toEqual({ checksumPresent: false, keyPresent: true, seqPresent: false, version: 0, protocolType: 0x0800, key: 1234 });
+    expect(d[0]!.fieldRanges.key).toEqual([4, 4]);
+    expect(greCodec.summarize(d[0]!.fields)).toBe('GRE protocol 0x0800, key 1234');
+    // with the checksum: C K, checksum 0x532d (RFC 1071 over the header with the key, and the inner packet), key 1234
+    const ck = encodeLayers([{ proto: 'gre', fields: { checksumPresent: true, keyPresent: true, key: 1234 } }, ...inner()]);
+    expect(Array.from(ck.slice(0, 12))).toEqual(hex('a000 0800 532d 0000 000004d2'));
+    expect(decodeLayers(ck, 'gre')[0]!.fields.key).toBe(1234);
+    expect(Object.keys(decodeLayers(Uint8Array.from(hex(GRE_PACKET)), 'ipv4')[1]!.fields)).not.toContain('key'); // the P3a tunnel header
+    expect(PROTO_FIELDS.gre!.fields.map((x) => x.name)).toContain('key');
+    expect(() => greCodec.encode({ keyPresent: true, key: 2 ** 32, protocolType: 0x0800 }, new Uint8Array(0))).toThrow(/gre.key out of range/);
+  });
 });

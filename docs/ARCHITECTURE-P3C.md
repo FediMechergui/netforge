@@ -2324,6 +2324,37 @@ did not match the code. The ruling accepts each fix it made:
 14. The P3 golden's guard world 1 (decode-only: its UDP 69/161 probes now decode as `tftp`/`snmp`), re-recorded by the
     architect in the W1b fix run (§9.5).
 
+**W1b as built: ruling RC6 (architect, 2026-10-18).**
+- **(a) §9.5 re-record.** Guard world 1 (`guard-udp-69-161/P3`) was re-recorded by the architect: 20 events, the
+  window [90 s, 100 s) and the trace digest. Only the probes' `proto`/`summary` changed (they now read `tftp` and
+  `snmp`); the event count (3256) and the per-kind counts are unchanged. Every other P1/P2/P3 shard is unmoved.
+- **(b) TFTP.** DATA and ACK between ephemeral ports are not port-dispatched. The W2a svc daemon decodes its own
+  transfer packets, and capture (W3b) adds the §3.4/§3.5 filter aliases and may add conversation tracking.
+- **(c) SNMP.** `SNMP_MAX_BULK` (32) lives in `automation/mib/model.ts`, and `MIB_ENTERPRISE_NUMBER = 32473` is the
+  one constant to change when NetForge's own enterprise number arrives (legal L1). The model index in `sysObjectID` is
+  the model's position in the catalog's model list, with NF models only; the W2b svc agent item implements it. The MIB
+  and playbook models are exported from `index.ts` and `/pure`.
+- **(d) Playbook dialect.** It is NetForge's own: inventory with groups, plays, and the `nf.hostname`, `nf.banner`,
+  `nf.vlan`, `nf.interface` and `nf.save_config` modules, idempotent over RESTCONF. W3b's script host pumps
+  `runPlaybook`, and confirms that RESTCONF accepts a PATCH merge on an interface entry.
+- **(e) Config rules.** A name used by an IPv4 access list and an IPv6 access list would share sequence numbering,
+  because `config-ast`'s list key is the section's last token. The W3a acl6 handler refuses an IPv6 list name an
+  IPv4 list already uses (and the reverse), with a test. Moved pins: `cli.modes-rules` (`ftp-server username`) and
+  `device.runtime` (`no ip ftp username`), each as strong as before.
+- **(f) Discovery.**
+  - The mismatch logs are rate-limited privately; no StateView member is added.
+  - The phone's daemons are tested on a fake uplink until the W2b l2 item (the phone's transparent path) and the W4b
+    flip give NF-IPPHONE its daemons.
+  - `dhcp.restart` takes effect with the W3a1 svc item.
+  - The phone emits no mismatch logs, because it has no NF-OS logger.
+- **(g) Concept tools.** WAN (27 kB), SDN (20 kB) and YANG (12 kB) are lazy chunks; the built-tool list is `wan`,
+  `yang`, `sdn` after the five P3 tools.
+- **(h) Main chunk.** 1,523 → 1,578 kB. The growth is the new codecs in the registry, which the main thread uses to
+  decode packets (`ospf6`, `snmp`, `tftp` and the OSPF additions). This is expected, not an import leak:
+  `bundle.engine-imports.lint` passes.
+- **(i) Process.** One builder chained the preflight and a build with `;`, so a load refusal did not stop the build.
+  Preflights must gate their command with `if ($?)` or `&&`.
+
 **W2a**
 
 15. [S36a] `test/wan.gre.test.ts:180-191` ("it stays down (no flap)"): becomes the flap — down at T, up at T + 10 s,

@@ -287,12 +287,13 @@ describe('the [S2] routingUi slice', () => {
 });
 
 describe('concept-view routing by ConceptToolId (D24)', () => {
-  // ARCHITECTURE-P3C §2.10 (W0): [S22] 'wan', [S28] 'yang' and [C26] 'sdn' join the contract as stub entries (not built)
+  // ARCHITECTURE-P3C §2.10 (W0): [S22] 'wan', [S28] 'yang' and [C26] 'sdn' join the contract as stub entries; W1b
+  // web-concept (a) and (b) build all three, as lazy chunks
   const ALL: readonly ConceptToolId[] = ['subnetting', 'ipv6', 'queueing', 'data-formats', 'wildcard', 'wan', 'yang', 'sdn'];
 
   it('has one registry entry per ConceptToolId; every tool is built (the P3 tools since W3)', () => {
     expect(Object.keys(CONCEPT_TOOL_VIEWS).sort()).toEqual([...ALL].sort());
-    expect(ALL.filter((t) => isConceptToolBuilt(t))).toEqual(['subnetting', 'ipv6', 'queueing', 'data-formats', 'wildcard']);
+    expect(ALL.filter((t) => isConceptToolBuilt(t))).toEqual(['subnetting', 'ipv6', 'queueing', 'data-formats', 'wildcard', 'wan', 'yang', 'sdn']);
     expect(CONCEPT_TOOLS.every((t) => CONCEPT_TOOL_VIEWS[t.id] !== null)).toBe(true);
   });
 
@@ -300,7 +301,7 @@ describe('concept-view routing by ConceptToolId (D24)', () => {
     const ipv6 = renderToStaticMarkup(createElement<ConceptViewProps>(ConceptView, { tool: 'ipv6' }));
     expect(ipv6).toContain('Shorten or write out');
     // the P3 tools are lazy chunks (D24): a server render shows the Suspense line, never the note
-    for (const t of ['queueing', 'data-formats', 'wildcard'] as const) {
+    for (const t of ['queueing', 'data-formats', 'wildcard', 'wan', 'sdn'] as const) {
       const html = renderToStaticMarkup(createElement<ConceptViewProps>(ConceptView, { tool: t }));
       expect(html, t).toContain('Loading the tool…');
       expect(html, t).not.toContain('This concept tool is not available in this build.');
@@ -315,6 +316,6 @@ describe('concept-view routing by ConceptToolId (D24)', () => {
     const entries = conceptMenuEntries();
     expect(entries.slice(0, CONCEPT_MENU.length)).toEqual([...CONCEPT_MENU]);
     for (const e of entries) expect(isConceptToolBuilt(e.tool), e.tool).toBe(true);
-    expect(entries.map((e) => e.tool)).toEqual(['subnetting', 'ipv6', 'queueing', 'data-formats', 'wildcard']);
+    expect(entries.map((e) => e.tool)).toEqual(['subnetting', 'ipv6', 'queueing', 'data-formats', 'wildcard', 'wan', 'yang', 'sdn']);
   });
 });

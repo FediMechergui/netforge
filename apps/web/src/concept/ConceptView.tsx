@@ -26,6 +26,11 @@ import { SubnetWorkbench } from './subnetting/SubnetWorkbench';
 const QueueingTool = lazy(() => import('./queueing/QueueingTool').then((m) => ({ default: m.QueueingTool })));
 const DataFormatsTool = lazy(() => import('./data-formats/DataFormatsTool').then((m) => ({ default: m.DataFormatsTool })));
 const WildcardTool = lazy(() => import('./wildcard/WildcardTool').then((m) => ({ default: m.WildcardTool })));
+// P3c [S28] (W1b web-concept (b)): the YANG browser, a lazy chunk
+const YangBrowser = lazy(() => import('./yang/YangBrowser').then((m) => ({ default: m.YangBrowser })));
+// P3c [S22] [C26] (W1b web-concept (a)): the WAN and VPN explorer and the controller explorer, lazy chunks
+const WanExplorer = lazy(() => import('./wan/WanExplorer').then((m) => ({ default: m.WanExplorer })));
+const SdnExplorer = lazy(() => import('./sdn/SdnExplorer').then((m) => ({ default: m.SdnExplorer })));
 
 /** The concept tools, in display order, with what each one is for. */
 export const CONCEPT_TOOLS: readonly { readonly id: ConceptTool; readonly label: string; readonly hint: string }[] = Object.freeze([
@@ -35,6 +40,9 @@ export const CONCEPT_TOOLS: readonly { readonly id: ConceptTool; readonly label:
   { id: 'queueing', label: 'Queueing', hint: 'Watch FIFO, WFQ, CBWFQ and LLQ share a busy link, packet by packet.' },
   { id: 'data-formats', label: 'Data formats', hint: 'Read JSON, YAML and XML, find key paths and convert between them.' },
   { id: 'wildcard', label: 'Wildcards', hint: 'See which address bits a wildcard checks, count the matches and build one.' },
+  { id: 'wan', label: 'WAN and VPN', hint: 'Compare WAN kinds, see the bytes each VPN adds and follow a label stack across a provider core.' },
+  { id: 'yang', label: 'YANG browser', hint: 'Walk the data model a device serves: each node, its RESTCONF address and the CLI lines behind it.' },
+  { id: 'sdn', label: 'Controllers and SDN', hint: 'Sort jobs into planes, break an underlay under its overlay and watch an intent being delivered and checked.' },
 ]);
 
 /** @since P3 How a registered tool is drawn: called at render time; null = not built in this build. */
@@ -50,11 +58,11 @@ export const CONCEPT_TOOL_VIEWS: Readonly<Record<ConceptTool, ConceptToolView>> 
   queueing: () => <QueueingTool />,
   'data-formats': () => <DataFormatsTool />,
   wildcard: () => <WildcardTool />,
-  // P3c (ARCHITECTURE-P3C §2.10, §9.2 W0 item 1): stub entries, not built in this build; [S22] 'wan' and [C26] 'sdn'
-  // arrive with W1b web-concept, [S28] 'yang' with its item, each with its `CONCEPT_TOOLS` row
-  wan: null,
-  yang: null,
-  sdn: null,
+  // P3c (ARCHITECTURE-P3C §2.10, §9.2 W0 item 1): W0's stub entries, built in W1b as lazy chunks: [S22] 'wan' and
+  // [C26] 'sdn' by web-concept (a), [S28] 'yang' by web-concept (b), each with its `CONCEPT_TOOLS` row
+  wan: () => <WanExplorer />,
+  yang: () => <YangBrowser />,
+  sdn: () => <SdnExplorer />,
 });
 
 /** @since P3 Whether this build has the tool (a registered view and a `CONCEPT_TOOLS` row to name it). */

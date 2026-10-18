@@ -145,7 +145,7 @@ describe('udp codec', () => {
     expect(chain(49152, 53, new Uint8Array(12)).slice(0, 4)).toEqual(['ethernet', 'ipv4', 'udp', 'dns']);
     expect(chain(53, 49152, new Uint8Array(12)).slice(0, 4)).toEqual(['ethernet', 'ipv4', 'udp', 'dns']);
     expect(chain(68, 67, new Uint8Array(4))[3]).toBe('dhcp');
-    expect(chain(40000, 69, new Uint8Array(4))[3]).toBe('payload'); // reserved tftp decodes as payload
+    expect(chain(40000, 69, new Uint8Array(4))[3]).toBe('tftp'); // un-reserved in P3c W1b (the zero opcode decodes with an error)
     expect(chain(40000, 40001, new Uint8Array(4))[3]).toBe('payload');
     expect(chain(40000, 53, new Uint8Array(0))).toEqual(['ethernet', 'ipv4', 'udp']);
   });

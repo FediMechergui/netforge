@@ -34,6 +34,16 @@
  * `stateSnapshot()` (display only; read by the W3 `show lldp`, `show lldp interface`, `show lldp traffic`):
  * `{ process: 'lldp', state: { running, timerS, holdtimeS, reinitS, noTransmit: [ports], noReceive: [ports],
  * nextTxAt?, sent, received, errors } }`.
+ *
+ * @since P3c [S35] LLDP-MED (ARCHITECTURE-P3C D9, §2.3, §3.9). The neighbour row records `medVlan` (Network Policy,
+ * voice) and `medCapabilities` when the frame carries them. A switch adds the Network Policy TLV (`medVlan` = the
+ * port's `switchport voice vlan`) on a port with a voice VLAN only while that port has a neighbour that advertised
+ * the MED capability TLV; the first such neighbour heard there gets a frame at once. A `voice-endpoint` model (the IP
+ * phone, `discoveryAnswerOnly`) listens on its uplink only, in every profile and without `lldp run`, and is silent
+ * until it has heard LLDP there; it then answers at once and every `lldp timer`, with the IEEE telephone bit and the
+ * MED capability TLV (`LLDP_PHONE_MED_CAPABILITIES`, device type class III), and goes back to sleep on a link-down of
+ * the uplink. A newly learned voice VLAN restarts its DHCP as for CDP (`phoneVoiceVlanRestart`, protocols/cdp.ts).
+ * Only the phone's `lldp` StateView carries `awake`.
  */
 import type { MacAddress } from '../contracts/addr.js';
 import type { ConfigAst, ConfigDelta } from '../contracts/config.js';
@@ -43,18 +53,25 @@ import { ETHERTYPE_LLDP, LLDP_NEAREST_BRIDGE_MAC, type FieldValue, type LayerSpe
 import type { Action, DebugEvent, Process, ProcessCtx, StateView } from '../contracts/process.js';
 import type { LldpNeighbourRow, Table } from '../contracts/tables.js';
 import { SEC, type SimTime } from '../contracts/time.js';
-import { LLDP_CAPABILITY } from '../pdu/codecs/lldp.js';
+import type { PortView } from '../contracts/port.js';
+import { LLDP_CAPABILITY, LLDP_MED_CAPABILITY, LLDP_MED_DEVICE } from '../pdu/codecs/lldp.js';
 import {
   DiscoveryDebugRing,
+  discoveryActivePorts,
+  discoveryAnswerOnly,
   discoveryInterfaceSection,
   discoveryManagementAddress,
   discoveryPortEligible,
-  discoveryPorts,
+  discoveryRoleOf,
   discoveryRowChanged,
   discoverySoftwareText,
   discoveryEarliestExpiry,
   discoveryInterfaceNegates,
+  discoveryUplink,
+  phoneLearnedVoiceVlan,
+  phoneVoiceVlanRestart,
 } from './cdp.js';
+import { readSwitchport } from './l2/switchport-config.js';
 
 // ── names and constants ────────────────────────────────────────────────────────────────────────────────────────
 
@@ -91,6 +108,8 @@ export const LLDP_DETAIL_NOT_A_FRAME = 'not an LLDP frame';
 export function lldpReceiveOffDetail(port: PortId): string {
   return `LLDP receive is off on ${port}`;
 }
+/** @since P3c [S35] The MED capabilities the phone advertises: the capabilities TLV itself and network policy. */
+export const LLDP_PHONE_MED_CAPABILITIES = LLDP_MED_CAPABILITY.capabilities | LLDP_MED_CAPABILITY.networkPolicy;
 
 /** IEEE capability letters by bit, in bit order (other, repeater, bridge, WLAN access point, router, telephone, DOCSIS, station). */
 export const LLDP_CAPABILITY_LETTERS: readonly (readonly [number, string])[] = Object.freeze([
@@ -158,12 +177,16 @@ export function lldpInterfaceDescription(config: ConfigAst, port: PortId): strin
 
 // ── frames and rows (pure) ─────────────────────────────────────────────────────────────────────────────────────
 
-/** The IEEE system capability bits of a model: bridge (switching), router (routing); a station when neither. */
+/**
+ * The IEEE system capability bits of a model: bridge (switching), router (routing), telephone (`voice-endpoint`,
+ * [S35]); a station when none.
+ */
 export function lldpCapabilityBits(model: Pick<DeviceModel, 'capabilities'>): number {
   const caps = model.capabilities ?? [];
   let bits = 0;
   if (caps.includes('switching')) bits |= LLDP_CAPABILITY.bridge;
   if (caps.includes('routing')) bits |= LLDP_CAPABILITY.router;
+  if (caps.includes('voice-endpoint')) bits |= LLDP_CAPABILITY.telephone;
   return bits === 0 ? LLDP_CAPABILITY.station : bits;
 }
 
@@ -189,6 +212,11 @@ export interface LldpAdvertisement {
   readonly capabilities: number;
   readonly enabledCapabilities: number;
   readonly mgmtAddress?: string;
+  /** @since P3c [S35] LLDP-MED capabilities and device type (the phone). */
+  readonly medCapabilities?: number;
+  readonly medDeviceType?: number;
+  /** @since P3c [S35] LLDP-MED Network Policy voice VLAN (a switch, to a MED neighbour on a voice port). */
+  readonly medVlan?: number;
 }
 
 /** Layer specs of one frame from port MAC `mac` carrying `adv` (chassis subtype 4, port subtype 5). */
@@ -206,6 +234,9 @@ export function lldpFrameSpecs(mac: MacAddress, adv: LldpAdvertisement): LayerSp
   };
   if (adv.portDescription !== undefined) lldp.portDescription = adv.portDescription;
   if (adv.mgmtAddress !== undefined) lldp.mgmtAddress = adv.mgmtAddress;
+  if (adv.medCapabilities !== undefined) lldp.medCapabilities = adv.medCapabilities;
+  if (adv.medDeviceType !== undefined) lldp.medDeviceType = adv.medDeviceType;
+  if (adv.medVlan !== undefined) lldp.medVlan = adv.medVlan;
   return [
     { proto: 'ethernet', fields: { dst: LLDP_NEAREST_BRIDGE_MAC, src: mac, type: ETHERTYPE_LLDP } },
     { proto: 'lldp', fields: lldp },
@@ -251,6 +282,10 @@ export function lldpNeighbourRow(localPort: PortId, fields: Readonly<Record<stri
   if (enabled !== undefined) row.enabled = lldpCapabilityText(enabled);
   const mgmt = str(fields.mgmtAddress);
   if (mgmt !== undefined) row.mgmtAddress = mgmt;
+  const medVlan = int(fields.medVlan);
+  if (medVlan !== undefined) row.medVlan = medVlan;
+  const medCapabilities = int(fields.medCapabilities);
+  if (medCapabilities !== undefined) row.medCapabilities = medCapabilities;
   return row;
 }
 
@@ -272,12 +307,16 @@ class LldpDaemon implements Process {
   private sent = 0;
   private received = 0;
   private errors = 0;
+  /** [S35] A `voice-endpoint` model: uplink only, silent until it has heard LLDP there. */
+  private answerOnly = false;
+  /** [S35] On an answer-only model: LLDP has been heard on the uplink since the last link-down. */
+  private awake = false;
 
   init(ctx: ProcessCtx): Action[] {
     this.readConfig(ctx);
-    if (!this.running) return [];
+    if (!this.running || !this.speaks()) return [];
     const actions: Action[] = [];
-    for (const view of discoveryPorts(ctx)) if (view.operUp && !this.noTransmit.has(view.id)) actions.push(this.advertise(ctx, view.id));
+    for (const view of discoveryActivePorts(ctx)) if (view.operUp && !this.noTransmit.has(view.id)) actions.push(this.advertise(ctx, view.id));
     if (actions.length > 0) actions.push(...this.armTx(ctx));
     return actions;
   }
@@ -290,7 +329,7 @@ class LldpDaemon implements Process {
     }
     if (!this.running) return [{ type: 'drop', pdu, reason: 'not-for-me', detail: LLDP_DETAIL_OFF, port }];
     const view = ctx.ports.get(port);
-    if (view === undefined || !discoveryPortEligible(ctx.model, view) || this.noReceive.has(port)) {
+    if (view === undefined || !this.takesPart(ctx, view) || this.noReceive.has(port)) {
       return [{ type: 'drop', pdu, reason: 'not-for-me', detail: lldpReceiveOffDetail(port), port }];
     }
     const table = this.table(ctx);
@@ -311,10 +350,20 @@ class LldpDaemon implements Process {
       }
       return [{ type: 'consume', pdu }, ...this.armAge(ctx, table)];
     }
+    const learnedBefore = this.answerOnly ? phoneLearnedVoiceVlan(ctx) : undefined;
+    const medBefore = this.answerOnly ? false : this.hasMedNeighbour(table, port);
     table.set(row);
     if (prev === undefined) this.emit(ctx, `new neighbour ${who} on ${port} (its ${row.portId})`, { port, neighbour: who });
     else if (discoveryRowChanged(prev, row)) this.emit(ctx, `neighbour ${who} on ${port} changed its advertisement`, { port, neighbour: who });
-    return [{ type: 'consume', pdu }, ...this.armAge(ctx, table)];
+    const actions: Action[] = [{ type: 'consume', pdu }];
+    if (this.answerOnly) {
+      actions.push(...this.answer(ctx, view, who, learnedBefore));
+    } else if (!medBefore && row.medCapabilities !== undefined && view.operUp && !this.noTransmit.has(port) && this.voiceVlanOf(ctx, view) !== undefined) {
+      // [S35] the first MED neighbour on a voice port gets the network policy at once
+      this.emit(ctx, `${who} on ${port} speaks LLDP-MED: sending the voice policy`, { port, neighbour: who });
+      actions.push(this.advertise(ctx, port));
+    }
+    return [...actions, ...this.armAge(ctx, table)];
   }
 
   onTimer(ctx: ProcessCtx, key: string): Action[] {
@@ -338,13 +387,13 @@ class LldpDaemon implements Process {
     }
     if (!wasRunning) {
       this.emit(ctx, `LLDP is now running (${cause})`, { cause });
-      for (const view of discoveryPorts(ctx)) if (view.operUp && !this.noTransmit.has(view.id)) actions.push(this.advertise(ctx, view.id));
+      if (this.speaks()) for (const view of discoveryActivePorts(ctx)) if (view.operUp && !this.noTransmit.has(view.id)) actions.push(this.advertise(ctx, view.id));
       if (actions.length > 0) actions.push(...this.armTx(ctx));
       return actions;
     }
     const table = this.table(ctx);
     let sentNow = false;
-    for (const view of discoveryPorts(ctx)) {
+    for (const view of discoveryActivePorts(ctx)) {
       const rxOff = this.noReceive.has(view.id);
       if (rxOff !== wasNoReceive.has(view.id)) {
         this.emit(ctx, `LLDP receive is ${rxOff ? 'off' : 'on again'} on ${view.id}`, { port: view.id });
@@ -353,7 +402,7 @@ class LldpDaemon implements Process {
       const txOff = this.noTransmit.has(view.id);
       if (txOff !== wasNoTransmit.has(view.id)) {
         this.emit(ctx, `LLDP transmit is ${txOff ? 'off' : 'on again'} on ${view.id}`, { port: view.id });
-        if (!txOff && view.operUp) {
+        if (!txOff && view.operUp && this.speaks()) {
           actions.push(this.advertise(ctx, view.id));
           sentNow = true;
         }
@@ -371,14 +420,22 @@ class LldpDaemon implements Process {
   onLinkChange(ctx: ProcessCtx, port: PortId, up: boolean): Action[] {
     if (!this.running) return [];
     const view = ctx.ports.get(port);
-    if (view === undefined || !discoveryPortEligible(ctx.model, view)) return [];
+    if (view === undefined || !this.takesPart(ctx, view)) return [];
     if (!up) {
+      const out: Action[] = [];
+      if (this.answerOnly && this.awake) {
+        // [S35] the phone goes back to sleep until it hears LLDP again
+        this.awake = false;
+        this.emit(ctx, `${port} went down: silent until a neighbour is heard again`, { port });
+        if (this.nextTxAt !== undefined) out.push({ type: 'cancelTimer', key: LLDP_TX_TIMER });
+        this.nextTxAt = undefined;
+      }
       const table = this.table(ctx);
-      if (table === undefined) return [];
+      if (table === undefined) return out;
       this.removePortRows(ctx, table, port, 'link-down');
-      return this.armAge(ctx, table);
+      return [...out, ...this.armAge(ctx, table)];
     }
-    if (this.noTransmit.has(port)) return [];
+    if (this.noTransmit.has(port) || !this.speaks()) return [];
     const actions: Action[] = [this.advertise(ctx, port)];
     if (this.nextTxAt === undefined) actions.push(...this.armTx(ctx));
     return actions;
@@ -397,6 +454,7 @@ class LldpDaemon implements Process {
       errors: this.errors,
     };
     if (this.nextTxAt !== undefined) state.nextTxAt = this.nextTxAt;
+    if (this.answerOnly) state.awake = this.awake; // [S35] the phone only
     return { process: LLDP_PROCESS, state };
   }
 
@@ -407,18 +465,65 @@ class LldpDaemon implements Process {
   // ── configuration and timers ──
 
   private readConfig(ctx: ProcessCtx): void {
-    this.running = lldpRunning(ctx.config);
+    this.answerOnly = discoveryAnswerOnly(ctx.model);
+    // [S35] the phone listens in every profile without `lldp run`; it speaks only once it has heard LLDP
+    this.running = this.answerOnly || lldpRunning(ctx.config);
     this.timerS = lldpTimerS(ctx.config);
     this.holdtimeS = lldpHoldtimeS(ctx.config);
     this.reinitS = lldpReinitS(ctx.config);
     const noTransmit = new Set<PortId>();
     const noReceive = new Set<PortId>();
-    for (const view of discoveryPorts(ctx)) {
+    for (const view of discoveryActivePorts(ctx)) {
       if (!lldpPortTransmits(ctx.config, view.id)) noTransmit.add(view.id);
       if (!lldpPortReceives(ctx.config, view.id)) noReceive.add(view.id);
     }
     this.noTransmit = noTransmit;
     this.noReceive = noReceive;
+  }
+
+  /** [S35] May the daemon send? Always, except on an answer-only model that has not heard LLDP yet. */
+  private speaks(): boolean {
+    return !this.answerOnly || this.awake;
+  }
+
+  /** Does `view` take part: an eligible port, and on an answer-only model the uplink only ([S35]). */
+  private takesPart(ctx: ProcessCtx, view: PortView): boolean {
+    if (!discoveryPortEligible(ctx.model, view)) return false;
+    return !this.answerOnly || discoveryUplink(ctx)?.id === view.id;
+  }
+
+  /** [S35] The voice VLAN of a switch's bridged port (`switchport voice vlan`), else undefined (never on the phone). */
+  private voiceVlanOf(ctx: ProcessCtx, view: PortView): number | undefined {
+    if (this.answerOnly || discoveryRoleOf(ctx.model, view) !== 'switched') return undefined;
+    return readSwitchport(ctx.config, view.id, ctx.model).voiceVlan;
+  }
+
+  /** [S35] True when a row on `port` carries the neighbour's LLDP-MED capabilities. */
+  private hasMedNeighbour(table: Table<LldpNeighbourRow>, port: PortId): boolean {
+    return table.find((r) => r.localPort === port && r.medCapabilities !== undefined).length > 0;
+  }
+
+  /**
+   * [S35] The phone's answer after storing a row from `who` on its uplink: the first frame heard wakes it (one frame at
+   * once, then every `lldp timer`); a newly learned voice VLAN restarts its DHCP unless `voice vlan` is typed.
+   */
+  private answer(ctx: ProcessCtx, view: PortView, who: string, learnedBefore: number | undefined): Action[] {
+    const out: Action[] = [];
+    if (!this.awake) {
+      this.awake = true;
+      this.emit(ctx, `heard ${who} on ${view.id}: answering`, { port: view.id, neighbour: who });
+      if (view.operUp && !this.noTransmit.has(view.id)) {
+        out.push(this.advertise(ctx, view.id));
+        if (this.nextTxAt === undefined) out.push(...this.armTx(ctx));
+      }
+    }
+    const restart = phoneVoiceVlanRestart(ctx, learnedBefore);
+    if (restart.length > 0) {
+      const vlan = phoneLearnedVoiceVlan(ctx);
+      this.emit(ctx, `voice VLAN ${vlan} learned from ${who} on ${view.id}; restarting DHCP in it`, { port: view.id, neighbour: who, vlan });
+      out.push(...restart);
+    }
+    return out;
   }
 
   private table(ctx: ProcessCtx): Table<LldpNeighbourRow> | undefined {
@@ -434,6 +539,7 @@ class LldpDaemon implements Process {
     if (this.ageAt !== undefined) actions.push({ type: 'cancelTimer', key: LLDP_AGE_TIMER });
     this.nextTxAt = undefined;
     this.ageAt = undefined;
+    this.awake = false;
   }
 
   private armTx(ctx: ProcessCtx): Action[] {
@@ -444,9 +550,9 @@ class LldpDaemon implements Process {
 
   private onTx(ctx: ProcessCtx): Action[] {
     this.nextTxAt = undefined;
-    if (!this.running) return [];
+    if (!this.running || !this.speaks()) return [];
     const actions: Action[] = [];
-    for (const view of discoveryPorts(ctx)) if (view.operUp && !this.noTransmit.has(view.id)) actions.push(this.advertise(ctx, view.id));
+    for (const view of discoveryActivePorts(ctx)) if (view.operUp && !this.noTransmit.has(view.id)) actions.push(this.advertise(ctx, view.id));
     if (actions.length > 0) actions.push(...this.armTx(ctx));
     return actions;
   }
@@ -502,6 +608,17 @@ class LldpDaemon implements Process {
     if (description !== undefined) adv.portDescription = description;
     const address = discoveryManagementAddress(ctx, port);
     if (address !== undefined) adv.mgmtAddress = address;
+    if (this.answerOnly) {
+      // [S35] the phone: the MED capability TLV, an endpoint of class III (communication device)
+      adv.medCapabilities = LLDP_PHONE_MED_CAPABILITIES;
+      adv.medDeviceType = LLDP_MED_DEVICE.endpointClass3;
+    } else {
+      // [S35] a switch: the voice policy on a voice port, only to a neighbour that advertised MED
+      const view = ctx.ports.get(port);
+      const voice = view === undefined ? undefined : this.voiceVlanOf(ctx, view);
+      const table = this.table(ctx);
+      if (voice !== undefined && table !== undefined && this.hasMedNeighbour(table, port)) adv.medVlan = voice;
+    }
     const pdu = ctx.newPdu(lldpFrameSpecs(mac, adv), { tag: LLDP_TAG, background: true });
     this.sent++;
     this.emit(ctx, `sent LLDP on ${port}, ttl ${adv.ttl} s`, { port, pdu: pdu.id });

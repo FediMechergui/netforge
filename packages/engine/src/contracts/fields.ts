@@ -540,6 +540,8 @@ export const PROTO_FIELDS: Readonly<Record<string, ProtoFieldTable>> = Object.fr
     f('seqPresent', 'bool', 'Sequence number present bit.', { default: false }),
     f('version', 'uint', 'GRE version (0).', u(3, { default: 0 })),
     f('protocolType', 'uint', 'Protocol of the carried packet (ethertype space), filled from the next layer.', u(16)),
+    // P3c [C17] (`tunnel key <n>`)
+    f('key', 'uint', 'Key (present only when keyPresent is set): both tunnel ends must carry the same key.', u(32)),
   ], 'IP protocol 47; the inner packet follows (the tunnel owner rewraps once, so the PduId never changes).'),
   // [S19]
   ppp: table('ppp', 'P3', [
@@ -687,6 +689,45 @@ export const PROTO_FIELDS: Readonly<Record<string, ProtoFieldTable>> = Object.fr
     f('refAdvRouter', 'ipv4', 'Intra-area-prefix LSA: the advertising router of the referenced LSA.'),
     f('prefixes', 'string', "Prefix-carrying LSAs: '<prefix>/<len>' entries joined by ';', each with ',<metric>' in an intra-area-prefix LSA (the per-prefix option bits are written as zero)."),
   ], 'The LSA header (20 bytes, RFC 5340 A.4.2) and, in an update, its body. The encoder reads the enclosing ospf6.type through ctx.outer.'),
+  // ── P3c, written by the W1b pdu item with their codecs (ARCHITECTURE-P3C §3.4, §3.5) ──
+  // [S29]
+  tftp: table('tftp', 'P3c', [
+    f('opcode', 'uint', 'Opcode: 1 read request, 2 write request, 3 data, 4 acknowledgement, 5 error, 6 option acknowledgement.', u(16, REQ)),
+    f('filename', 'string', 'Read and write requests: the file asked for (NUL-terminated on the wire).'),
+    f('mode', 'string', "Read and write requests: the transfer mode ('octet'; NetForge daemons answer any other mode with error 0).", { default: 'octet' }),
+    f('tsize', 'uint', 'Transfer size option: 0 in a request, the size of the file in bytes in the option acknowledgement (present only when the packet carries it).', u(32)),
+    f('block', 'uint', 'Data and acknowledgement: the block number (data from 1; acknowledgement 0 answers a write request or an option acknowledgement).', u(16)),
+    f('data', 'bytes', 'Data: up to 512 bytes; a shorter block (0 bytes included) ends the transfer.'),
+    f('errorCode', 'uint', 'Error: 0 undefined, 1 file not found, 2 access violation, 3 disk full, 4 illegal operation, 5 unknown transfer id, 6 file exists, 8 option refused.', u(16)),
+    f('errorMsg', 'string', 'Error: the message text.'),
+  ], 'UDP 69 for the request (RFC 1350); the transfer itself moves between the two ephemeral ports the ends chose. The transfer size option (RFC 2349) is the only option modelled.'),
+  // [S33] [C23]
+  snmp: table('snmp', 'P3c', [
+    f('version', 'uint', 'Version on the wire: 1 = v2c, 3 = v3; 0 = v1 (decoded for display only: the agent refuses it).', u(8, { default: 1 })),
+    f('community', 'string', 'v1 and v2c: the community name, in clear text on the wire.'),
+    f('pdu', 'string', "PDU type: 'get' 0xA0, 'getnext' 0xA1, 'response' 0xA2, 'set' 0xA3, 'getbulk' 0xA5, 'trap' 0xA7 (SNMPv2 trap), 'report' 0xA8.", REQ),
+    f('requestId', 'int', 'Request id; a response carries the id of its request.', u(32, { default: 0 })),
+    f('errorStatus', 'uint', 'Error status: 0 noError, 1 tooBig, 5 genErr, 6 noAccess, 7 wrongType, 10 wrongValue, 16 authorizationError, 17 notWritable.', u(8, { default: 0 })),
+    f('errorIndex', 'uint', 'Error index: the 1-based position of the varbind that caused the error (0 = none).', u(8, { default: 0 })),
+    f('nonRepeaters', 'uint', 'Get-bulk only, in the error-status position: how many leading varbinds get one answer each.', u(8)),
+    f('maxRepetitions', 'uint', 'Get-bulk only, in the error-index position: how many answers each remaining varbind gets.', u(8)),
+    f('varbinds', 'string', "Variable bindings '<oid>=<type>[:<value>]' joined by '; ' (types integer, octets, oid, ipaddress, counter32, gauge32, timeticks, counter64, null, noSuchObject, noSuchInstance, endOfMibView; octets as a quoted string or 0x hex; counter64 as decimal text).", { default: '' }),
+    f('malformed', 'bool', 'The bytes are not a message of the SNMP subset (the agent drops it).', DEC),
+    // [C23] the v3 message header and the user-based security model's parameters
+    f('msgId', 'uint', 'v3: message id.', u(32)),
+    f('msgMaxSize', 'uint', 'v3: the largest message the sender accepts.', u(32)),
+    f('msgFlags', 'uint', 'v3: flags: authentication 1, privacy 2, reportable 4.', u(8)),
+    f('securityModel', 'uint', 'v3: security model (3 = user-based).', u(32)),
+    f('engineId', 'bytes', 'v3: the authoritative engine id.'),
+    f('engineBoots', 'uint', 'v3: the authoritative engine boot count.', u(32)),
+    f('engineTime', 'uint', 'v3: seconds since the authoritative engine last booted.', u(32)),
+    f('userName', 'string', 'v3: the user name.'),
+    f('authParams', 'bytes', 'v3: the authentication code (12 bytes when the message is authenticated, else empty).'),
+    f('privParams', 'bytes', 'v3: the privacy salt (8 bytes when the message is encrypted, else empty).'),
+    f('contextEngineId', 'bytes', 'v3: the context engine id of a plaintext scoped PDU.'),
+    f('contextName', 'string', 'v3: the context name of a plaintext scoped PDU.'),
+    f('encrypted', 'bytes', 'v3 with privacy: the encrypted scoped PDU (no PDU field is readable).'),
+  ], 'UDP 161 for requests and responses, UDP 162 for traps (RFC 3416 PDUs over the BER subset SNMP uses: definite lengths, INTEGER, OCTET STRING, NULL, OBJECT IDENTIFIER, SEQUENCE, IpAddress, Counter32, Gauge32, TimeTicks, Counter64 and the exceptions 0x80-0x82).'),
 });
 
 /** One next-protocol dispatch entry (pdu/codecs/dispatch.ts builds its tables from these). */
@@ -707,10 +748,12 @@ const d = (space: DispatchSpace, key: number, proto: ProtoName, since: BuildStag
  * dispatch. P2 adds the spaces 'llc.sap' (non-SNAP llc.dsap) and 'nf.pid' (llc.type when llc.oui is NF_OUI); a
  * P2 entry whose codec is not registered yet decodes as payload (dispatch.ts), so the entries are decode-neutral
  * until their codec lands. P3 adds the space 'ppp.proto' ([S19] ppp.protocol), the P3 entries, and un-reserves
- * UDP 123 (ntp), [S25] UDP 514 (syslog) and [S13] TCP 22/23 (ssh/telnet); UDP 69, 161 and TCP 21 stay reserved.
+ * UDP 123 (ntp), [S25] UDP 514 (syslog) and [S13] TCP 22/23 (ssh/telnet); TCP 21 stays reserved (UDP 69 and 161 until P3c).
  * Dispatch does not depend on a world's profile: only decoding changes, never bytes (ARCHITECTURE-P3 §9.2 item 14).
  * P3c [S6] adds the space 'ipv6.nh' (pdu/codecs/dispatch.ts IPV6_NH_SPACE): IPv6-only next-header entries that the
  * IPv6 header and its extension headers consult before 'ipproto' (next header 89 is ospf6; IPv4 protocol 89 stays ospf).
+ * P3c W1b un-reserves UDP 69 (tftp [S29]) and 161 (snmp [S33]), which keep their 'P1' stage (the P3a R22 precedent),
+ * and adds UDP 162 (snmp traps).
  */
 export const DISPATCH_TABLE: readonly DispatchEntry[] = Object.freeze([
   d('ethertype', 0x0800, 'ipv4', 'P0'),
@@ -731,9 +774,9 @@ export const DISPATCH_TABLE: readonly DispatchEntry[] = Object.freeze([
   d('tcp.port', 53, 'dns', 'P1'),
   d('tcp.port', 80, 'http', 'P1'),
   d('tcp.port', 8080, 'http', 'P1'),
-  d('udp.port', 69, 'tftp', 'P1', true),
+  d('udp.port', 69, 'tftp', 'P1'), // [S29] reserved until P3c: decoded by the W1b pdu tftp codec (ARCHITECTURE-P3C §2.3)
   d('udp.port', 123, 'ntp', 'P1'), // reserved until P3: decoded by the W1 pdu ntp codec (ARCHITECTURE-P3 §2.3)
-  d('udp.port', 161, 'snmp', 'P1', true),
+  d('udp.port', 161, 'snmp', 'P1'), // [S33] reserved until P3c: decoded by the W1b pdu snmp codec
   d('udp.port', 514, 'syslog', 'P1'), // [S25] reserved until P3
   d('tcp.port', 21, 'ftp', 'P1', true),
   d('tcp.port', 22, 'ssh', 'P1'), // [S13] reserved until P3
@@ -770,4 +813,5 @@ export const DISPATCH_TABLE: readonly DispatchEntry[] = Object.freeze([
   d('udp.port', 500, 'ikev2', 'P3'), // [C13]
   // ── P3c (ARCHITECTURE-P3C §2.3): the IPv6-only next-header space, consulted before 'ipproto' by the IPv6 layers ──
   d('ipv6.nh', 89, 'ospf6', 'P3c'), // [S6] IPv4 protocol 89 stays ospf
+  d('udp.port', 162, 'snmp', 'P3c'), // [S33] traps (the reverse lookup of snmp stays 161)
 ]);

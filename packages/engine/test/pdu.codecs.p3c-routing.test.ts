@@ -222,7 +222,7 @@ describe('[S6] OSPFv3 codec (RFC 5340 bytes) and IPv6 next header 89', () => {
     expect(nextIpv6Proto(253)).toBe('payload');
     expect(lookupNext('ipproto', 89)).toBe('ospf');
     expect(keyForProto('ipv6.nh', 'ospf6')).toBe(89);
-    expect(DISPATCH_TABLE.filter((e) => e.since === 'P3c').map((e) => `${e.space} ${e.key} ${e.proto}`)).toEqual(['ipv6.nh 89 ospf6']);
+    expect(DISPATCH_TABLE.filter((e) => e.since === 'P3c').map((e) => `${e.space} ${e.key} ${e.proto}`)).toEqual(['ipv6.nh 89 ospf6', 'udp.port 162 snmp']); // W1b adds the trap port
     const b = encodeLayers([ip6(), hello6()]); // ipv6.nextHeader omitted: filled from 'ospf6'
     expect(Array.from(b)).toEqual(hex(IPV6_HELLO6));
     const layers = decodeLayers(b, 'ipv6');
@@ -363,8 +363,8 @@ describe('[S6] OSPFv3 codec (RFC 5340 bytes) and IPv6 next header 89', () => {
   });
 
   it('declares the ospf6 and ospf6-lsa tables at P3c, and every decoded field is a name of its table', () => {
-    expect(Object.values(PROTO_FIELDS).filter((t) => t.since === 'P3c').map((t) => t.proto)).toEqual(['ospf6', 'ospf6-lsa']);
-    expect([...CODECS.keys()].slice(-2)).toEqual(['ospf6', 'ospf6-lsa']);
+    expect(Object.values(PROTO_FIELDS).filter((t) => t.since === 'P3c').map((t) => t.proto)).toEqual(['ospf6', 'ospf6-lsa', 'tftp', 'snmp']); // W1b appends tftp and snmp
+    expect([...CODECS.keys()].slice(-4)).toEqual(['ospf6', 'ospf6-lsa', 'tftp', 'snmp']);
     const frames: [Uint8Array, string][] = [
       [bytesOf(IPV6_HELLO6), 'ipv6'], [bytesOf(LSU6), 'ospf6'], [bytesOf(DBD6), 'ospf6'], [bytesOf(LSR6), 'ospf6'],
       [bytesOf(LSU_SUMMARIES), 'ospf'], [bytesOf(HELLO_SIMPLE), 'ospf'], [bytesOf(HELLO_MD5_BODY + HELLO_MD5_DIGEST), 'ospf'],

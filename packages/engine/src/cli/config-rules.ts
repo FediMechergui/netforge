@@ -41,6 +41,18 @@
  * No P1 or P2 grammar line matches a P3 rule, and every P3 key is new in the child orders, so every P1/P2 rendering
  * and storage is unchanged.
  *
+ * P3c (ARCHITECTURE-P3C §5, D10; W1b cli), in the delimited block below: a rule for every P3c line of §5, so daemon
+ * tests store lines through `startupConfig` before the grammar arrives (W3a):
+ *  - the sections `ipv6 router ospf <pid>` (`config-rtr`, `OSPF6_CHILD_ORDER`), `ipv6 access-list <name>`
+ *    (`config-ipv6-acl`, sequenced per section like the IPv4 sections) and `arp access-list <name>` (`config-arp-nacl`);
+ *  - the multi-instance lines, one slot per instance: `ip ospf message-digest-key <id>`, `monitor session <n>`,
+ *    `snmp-server community <s>` and `snmp-server host <a>`, `storm-control <class> level`;
+ *  - `secretToken` on the key lines (`ip ospf authentication-key`, `ip ospf message-digest-key … md5`, the [C23]
+ *    `snmp-server user … auth`); `bothForms` for `ip unreachables` (`no ip unreachables` is stored as typed);
+ *  - NO rule for `config-register` (D10: an immediate command that writes the register, never a `ConfigAst` line).
+ * No P1, P2 or P3 grammar line matches a P3c rule (the P3c grammar is new), and every new child-order key is new, so
+ * every earlier rendering and storage is unchanged.
+ *
  * Pure data and pure functions; no state, no I/O.
  */
 import type { ConfigLineRule, ConfigRenderSlot, ConfigRuleSet } from '../contracts/config.js';
@@ -65,6 +77,7 @@ export const INTERFACE_CHILD_ORDER: readonly string[] = [
   'mac-address',
   'no switchport',
   'switchport',
+  'storm-control', // [S16] (P3c: a key no P1/P2/P3 interface section holds)
   'spanning-tree',
   'channel-group',
   'encapsulation',
@@ -132,6 +145,12 @@ export const ROUTER_CHILD_ORDER: readonly string[] = [
  */
 export const EIGRP_CHILD_ORDER: readonly string[] = ['eigrp', 'metric', 'network', 'passive-interface', 'no passive-interface', 'maximum-paths'];
 
+/**
+ * @since P3c [S6] (ARCHITECTURE-P3C §5) Canonical order of the children of `ipv6 router ospf <pid>` (mode `config-rtr`):
+ * the OSPFv2 order restricted to the lines OSPFv3 takes (no `network`, no `area`, no `default-information`).
+ */
+export const OSPF6_CHILD_ORDER: readonly string[] = ['router-id', 'auto-cost', 'passive-interface', 'no passive-interface', 'maximum-paths'];
+
 /** @since P3 (§5.4) Canonical order of the children of a `class` section under `policy-map` (mode `config-pmap-c`). */
 export const POLICY_CLASS_CHILD_ORDER: readonly string[] = ['set', 'priority', 'bandwidth', 'shape', 'police', 'fair-queue', 'queue-limit'];
 
@@ -193,6 +212,10 @@ const IKE_KEYRING = ['crypto ikev2 keyring'] as const;
 const IKE_PEER = ['peer'] as const;
 const IKE_PROFILE = ['crypto ikev2 profile'] as const;
 const IPSEC_PROFILE = ['crypto ipsec profile'] as const;
+// P3c contexts (the context keys of the reserved modes of contracts/cli.ts MODES, ARCHITECTURE-P3C §2.11)
+const OSPF6 = ['ipv6 router ospf'] as const;
+const ACL6 = ['ipv6 access-list'] as const;
+const ARP_NACL = ['arp access-list'] as const;
 
 /** @since P3 (D12) Sequencing of the entries of an `ip access-list` section (one sequence per section). */
 const SEQ_SECTION = { sequenced: { list: 'section' } } as const;
@@ -206,6 +229,11 @@ const SEQ_BY_NUMBER = { sequenced: { list: { token: 1 } } } as const;
 const QOS_CMAP_SECTION = { renderSlot: 'dhcp', order: 3 } as const;
 const QOS_PMAP_SECTION = { renderSlot: 'dhcp', order: 4 } as const;
 const CRYPTO_SECTION = { renderSlot: 'dhcp', order: 5 } as const;
+
+/** @since P3c [S11] `ipv6 access-list` sections follow the IPv6 routes in the `ipv6-post` slot (order 0). */
+const ACL6_SECTION = { renderSlot: 'ipv6-post', order: 1 } as const;
+/** @since P3c [S14] `arp access-list` sections follow the IPv4 access-list sections (order 2) in the `ip-post` slot. */
+const ARP_NACL_SECTION = { renderSlot: 'ip-post', order: 3 } as const;
 
 /** Build one rule from a space-separated pattern. */
 function rule(
@@ -578,6 +606,79 @@ export const CONFIG_LINE_RULES: readonly ConfigLineRule[] = Object.freeze([
   rule('logging facility <facility>', G, 2, 'single'),
   // `logging <addr>` (the alias of `logging host <addr>`); every keyword form above is more specific
   rule('logging <address>', G, 2, 'multi'),
+
+  // ── P3c (ARCHITECTURE-P3C §5; W1b cli): every P3c line, ahead of the grammar (W3a) ──
+  // [S5] OSPF authentication: one slot per area in the router section; per interface the mode, the plain key (a secret)
+  // and the MD5 keys, one slot per key id (multi-instance: `no ip ospf message-digest-key 1` removes key 1 only)
+  rule('area <area> authentication <rest>', ROUTER, 3, 'single'),
+  rule('ip ospf authentication <rest>', IF, 3, 'single', { group: 'ip' }),
+  rule('ip ospf authentication-key <key>', IF, 3, 'single', { group: 'ip', secretToken: 3 }),
+  rule('ip ospf message-digest-key <id> md5 <key>', IF, 4, 'single', { group: 'ip', secretToken: 5 }),
+  // [C7] (`ip mtu <bytes>` is the [S18] rule above)
+  rule('ip ospf mtu-ignore', IF, 3, 'single', { group: 'ip' }),
+  // [S6] OSPFv3: the `ipv6 router ospf <pid>` section (identity 4, so a second pid is another slot the handler refuses,
+  // `ospf6OneProcess`) and the interface lines, mirroring the OSPFv2 identities
+  rule('ipv6 router ospf <pid>', G, 4, 'single', {
+    section: { mode: 'config-rtr', separator: true, childOrder: OSPF6_CHILD_ORDER },
+    renderSlot: 'router',
+    order: 1,
+  }),
+  rule('router-id <address>', OSPF6, 1, 'single'),
+  rule('passive-interface default', OSPF6, 2, 'single'),
+  rule('passive-interface <interface>', OSPF6, 2, 'multi', { bothForms: true }),
+  rule('auto-cost reference-bandwidth <mbps>', OSPF6, 2, 'single'),
+  rule('maximum-paths <paths>', OSPF6, 1, 'single'),
+  rule('ipv6 ospf <pid> area <area>', IF, 2, 'single', { group: 'ipv6' }),
+  rule('ipv6 ospf cost <cost>', IF, 3, 'single', { group: 'ipv6' }),
+  rule('ipv6 ospf priority <priority>', IF, 3, 'single', { group: 'ipv6' }),
+  rule('ipv6 ospf hello-interval <seconds>', IF, 3, 'single', { group: 'ipv6' }),
+  rule('ipv6 ospf dead-interval <seconds>', IF, 3, 'single', { group: 'ipv6' }),
+  rule('ipv6 ospf network <type>', IF, 3, 'single', { group: 'ipv6' }),
+  // [S11] IPv6 access lists: the section's entries are sequenced per section, like the IPv4 sections (D12); the
+  // interface filter is one stored line per list and direction (the handler replaces the same direction, as
+  // `ip access-group`); the vty filter is one slot
+  rule('ipv6 access-list <name>', G, 3, 'single', { section: { mode: 'config-ipv6-acl', separator: true }, ...ACL6_SECTION }),
+  rule('permit <rest>', ACL6, 1, 'multi', SEQ_SECTION),
+  rule('deny <rest>', ACL6, 1, 'multi', SEQ_SECTION),
+  rule('remark <rest>', ACL6, 1, 'multi', { freeTextFrom: 1, ...SEQ_SECTION }),
+  rule('ipv6 traffic-filter <list> <direction>', IF, 2, 'multi', { group: 'ipv6' }),
+  rule('ipv6 access-class <list> <direction>', LINE, 2, 'single', { group: 'ipv6' }),
+  // [S12] `ip unreachables` and `no ip unreachables` share one slot, each stored as typed
+  rule('ip unreachables', IF, 2, 'single', { group: 'ip', bothForms: true }),
+  // [S14] ARP access lists (entries in typed order, first match) and the inspection filter and validation lines; a
+  // filter line keeps its VLAN list as typed (the l2 reader lets the last line naming a VLAN win, RC5 (g))
+  rule('arp access-list <name>', G, 3, 'single', { section: { mode: 'config-arp-nacl', separator: true }, ...ARP_NACL_SECTION }),
+  rule('permit <rest>', ARP_NACL, 1, 'multi'),
+  rule('deny <rest>', ARP_NACL, 1, 'multi'),
+  rule('ip arp inspection filter <acl> <rest>', G, 5, 'multi', { group: 'ip', renderSlot: 'ip-pre' }),
+  rule('ip arp inspection validate <rest>', G, 4, 'single', { group: 'ip', renderSlot: 'ip-pre' }),
+  // [S15] IP source guard
+  rule('ip verify source <rest>', IF, 3, 'single', { group: 'ip' }),
+  // [S16] storm control: one level slot per traffic class (multi-instance), and both actions may be configured
+  // (`errdisable recovery cause storm-control` is the P2 rule above)
+  rule('storm-control <class> level <rest>', IF, 3, 'single'),
+  rule('storm-control action <action>', IF, 2, 'multi'),
+  // [C17] the GRE key (`keepalive <s> <n>` is the P1 `keepalive` rule above)
+  rule('tunnel key <key>', IF, 2, 'single'),
+  // [S29] the files a router's TFTP server offers (one line per file); [S30] the boot images, in typed order, after the
+  // hostname as on a real router (`clock timezone` is order 1)
+  rule('tftp-server <file>', G, 2, 'single'),
+  rule('boot system <rest>', G, 2, 'multi', { renderSlot: 'hostname', order: 0.5 }),
+  // [S31] `config-register 0x<hex>` has NO rule (D10): it writes the register at once and is never stored
+  // [S33] SNMP v2c: one slot per community and per trap host (multi-instance); location and contact are free text;
+  // `snmp-server enable traps <type> …` is one slot per trap type, the bare form its own slot
+  rule('snmp-server community <community> <rest>', G, 3, 'single'),
+  rule('snmp-server host <address> <rest>', G, 3, 'single'),
+  rule('snmp-server location <rest>', G, 2, 'single', { freeTextFrom: 2 }),
+  rule('snmp-server contact <rest>', G, 2, 'single', { freeTextFrom: 2 }),
+  rule('snmp-server enable traps <type> <rest>', G, 4, 'single'),
+  rule('snmp-server enable traps', G, 3, 'single'),
+  // [C23] SNMPv3: one slot per group and per user; the user's keys are secret from the auth key on
+  rule('snmp-server group <group> <rest>', G, 3, 'single'),
+  rule('snmp-server user <user> <group> v3 auth <hash> <rest>', G, 3, 'single', { secretToken: 7 }),
+  // [S34] SPAN: every source and destination line of a session shares the session's identity (multi-instance), so
+  // `no monitor session <n>` removes the whole session
+  rule('monitor session <session> <rest>', G, 3, 'multi'),
 
   // ── generic group folding (any other `ip …` / `ipv6 …` line) ──
   rule('ip <setting> <rest>', ANY, 2, 'multi', { group: 'ip', renderSlot: 'ip-pre' }),

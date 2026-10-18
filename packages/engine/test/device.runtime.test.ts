@@ -318,10 +318,11 @@ describe('device runtime: config lines', () => {
     const h = harness({ processes: p.processes });
     boot(h);
     // a line with no rule of its own: `ip domain-lookup` is a stored negation from P1 W5 (§6), so it is no
-    // longer an example of the `no …` fallback node this test is about
-    expect(h.device.applyConfigLine([], ['snmp-server', 'community', 'lab'], true)).toEqual({ ok: true });
-    expect(h.device.running.render()).toContain('no snmp-server community lab');
-    expect(p.arp.calls.at(-1)?.delta?.line).toEqual(['no', 'snmp-server', 'community', 'lab']);
+    // longer an example of the `no …` fallback node this test is about; nor is `snmp-server community`, which has its
+    // [S33] rule from P3c W1b on (ARCHITECTURE-P3C §9.2 item 13)
+    expect(h.device.applyConfigLine([], ['ip', 'ftp', 'username', 'lab'], true)).toEqual({ ok: true });
+    expect(h.device.running.render()).toContain('no ip ftp username lab');
+    expect(p.arp.calls.at(-1)?.delta?.line).toEqual(['no', 'ip', 'ftp', 'username', 'lab']);
   });
 
   it('shutdown / no shutdown drive setPortAdmin, portState, a LINK log and deps.onPortAdmin', () => {

@@ -9,11 +9,13 @@
  *    fills it from the inner layer (`LINK_FIELDS.gre`) when a builder omits it.
  *  • The tunnels of P3a send the 4-byte header only (no keepalives, keys or sequence numbers, D17). The optional
  *    words are still decoded, and encoded when their bit is set: the checksum is the IP one's-complement sum over the
- *    GRE header and payload (RFC 2784 §2.5), the key and sequence words are written as zero (no field carries them).
+ *    GRE header and payload (RFC 2784 §2.5); the sequence word is written as zero (no field carries it).
+ *  • P3c [C17] (`tunnel key <n>`): the key word is the `key` field (u32, default 0), decoded when K is set and written
+ *    when K is set; a header without K carries no `key` field, so every P3a decode is unchanged.
  *  • The layer covers the rest of the IP payload; there is no trailer.
  */
 import type { Codec, DecodedLayer, FieldValue } from '../../contracts/pdu.js';
-import { internetChecksum, numField, readU16, writeU16 } from '../checksum.js';
+import { internetChecksum, numField, readU16, readU32, writeU16, writeU32 } from '../checksum.js';
 import { nextProto } from './dispatch.js';
 
 /** Length of the base GRE header. */
@@ -53,6 +55,11 @@ function decode(bytes: Uint8Array, offset: number, length: number): DecodedLayer
   fieldRanges.protocolType = [offset + 2, 2];
   const hdr = GRE_BASE_HEADER + (fields.checksumPresent ? 4 : 0) + (fields.keyPresent ? 4 : 0) + (fields.seqPresent ? 4 : 0);
   if (avail < hdr) return { fields, fieldRanges, headerLength: avail, length: avail, error: 'GRE optional fields truncated' };
+  if (fields.keyPresent) {
+    const at = offset + GRE_BASE_HEADER + (fields.checksumPresent ? 4 : 0);
+    fields.key = readU32(bytes, at);
+    fieldRanges.key = [at, 4];
+  }
   const out: DecodedLayer = { fields, fieldRanges, headerLength: hdr, length: avail };
   if (fields.version !== 0) out.error = `GRE version ${fields.version} is not simulated`;
   if (avail > hdr) out.next = { proto: nextProto('ethertype', fields.protocolType), offset: offset + hdr, length: avail - hdr };
@@ -73,6 +80,11 @@ function encode(fields: Record<string, FieldValue>, payload: Uint8Array): Uint8A
   out[0] = (c ? FLAG_C : 0) | (k ? FLAG_K : 0) | (s ? FLAG_S : 0);
   out[1] = version;
   writeU16(out, 2, protocolType);
+  if (k) {
+    const key = numField(p, fields, 'key', 0);
+    if (key < 0 || key > 0xffffffff) throw new Error(`gre.key out of range: ${key}`);
+    writeU32(out, GRE_BASE_HEADER + (c ? 4 : 0), key);
+  }
   out.set(payload, hdr);
   if (c) writeU16(out, GRE_BASE_HEADER, internetChecksum(out, 0, out.length));
   return out;
@@ -80,10 +92,10 @@ function encode(fields: Record<string, FieldValue>, payload: Uint8Array): Uint8A
 
 function summarize(fields: Readonly<Record<string, FieldValue>>): string {
   const type = typeof fields.protocolType === 'number' ? hex16(fields.protocolType) : '?';
-  return `GRE protocol ${type}`;
+  return typeof fields.key === 'number' ? `GRE protocol ${type}, key ${fields.key}` : `GRE protocol ${type}`;
 }
 
-/** GRE codec [S18]. Required on encode: `protocolType` (the registry fills it from the inner layer). */
+/** GRE codec [S18] (the key word [C17]). Required on encode: `protocolType` (the registry fills it from the inner layer). */
 export const greCodec: Codec = {
   proto: 'gre',
   defaults: Object.freeze({ checksumPresent: false, keyPresent: false, seqPresent: false, version: 0, protocolType: null }),

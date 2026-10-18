@@ -119,9 +119,10 @@ describe('config rules', () => {
     expect(rf([['ip', 'dhcp', 'pool', 'LAN']], ['network', '10.0.0.0', '255.0.0.0'])?.cardinality).toBe('single');
     expect(rf([], ['switchport'])).toBeUndefined();
     // ARCHITECTURE-P3 §9.2 item 20d (W1 cli, the approved [S24] rules of §5.7): `logging buffered` has its rule now;
-    // a global line without a rule is still undefined (snmp-server)
+    // a global line without a rule is still undefined (ftp-server; ARCHITECTURE-P3C §9.2 item 12: `snmp-server` has
+    // its [S33] rule from W1b on, so the rule-less example moved to a word that has none)
     expect(rf([], ['logging', 'buffered'])).toEqual({ pattern: ['logging', 'buffered', '<rest>'], contexts: [''], identity: 2, cardinality: 'single' });
-    expect(rf([], ['snmp-server', 'community', 'public'])).toBeUndefined();
+    expect(rf([], ['ftp-server', 'username', 'public'])).toBeUndefined();
     expect(ruleContextKey([['line', 'vty', '0', '4']])).toBe('line');
   });
 
