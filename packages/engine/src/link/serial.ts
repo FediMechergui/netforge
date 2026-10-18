@@ -36,6 +36,17 @@
  *    can negotiate, authenticate and recover. Every HDLC answer is exactly `keepaliveExempt`'s.
  * A link with no PPP end takes exactly the P1 path: every HDLC result is unchanged.
  *
+ * P3c [C16] (ARCHITECTURE-P3C §7 W1c media) — the transparent access-line end. A serial `access-line` port (NF-CSU-DSU,
+ * NF-INTERNET; `SerialEndInput.accessLine`) relays the frames of the line instead of terminating it, so:
+ *  • it never reports `encapsulation-mismatch`: it takes the far end's encapsulation for every rule here (and so for
+ *    `serialLineReady`); the port's stored `encap` is not read or changed. When both ends are access lines, each keeps
+ *    its own stored encapsulation (the unit-to-cloud line, HDLC as before).
+ *  • when the line it takes is `ppp`, it runs no PPP of its own: its line protocol is up once the line is clocked (no
+ *    `ppp-negotiating`, and its HDLC keepalive latch is not read), and the link's PPP `downReason` reads only the
+ *    terminating end.
+ *  • when the line it takes is `hdlc`, it follows exactly the HDLC rules above (its keepalive latch included), so every
+ *    P1/P2 HDLC chain through a unit or the cloud evaluates exactly as before.
+ *
  * Every wording here is original.
  */
 import type { PortRef } from '../contracts/ids.js';
@@ -130,6 +141,11 @@ export interface SerialEndInput {
    * (absent = never reported: negotiating).
    */
   ppp?: SerialPppEndState;
+  /**
+   * @since P3c [C16] (optional by meaning) This end is a serial `access-line` port (a CSU/DSU or provider cloud port):
+   * a transparent relay end that takes the far end's encapsulation (file header). Absent = a terminating end (P3 rules).
+   */
+  accessLine?: boolean;
 }
 
 export interface SerialLinkInput {
@@ -161,7 +177,9 @@ export interface SerialLinkResult {
 
 /** Evaluate clocking, encapsulation and the per-end keepalive latches of a carrier-up serial link. */
 export function evaluateSerialLine(input: SerialLinkInput): SerialLinkResult {
-  const { a, b, dceEnd } = input;
+  const { dceEnd } = input;
+  const a = transparentEnd(input.a, input.b);
+  const b = transparentEnd(input.b, input.a);
   const dce = dceEnd === 'a' ? a : b;
 
   let clockBps: number | undefined;
@@ -187,6 +205,8 @@ export function evaluateSerialLine(input: SerialLinkInput): SerialLinkResult {
       phy.lineProtocol = false;
       phy.lineProtocolReason = 'encapsulation-mismatch';
     } else if (end.encap === 'ppp') {
+      // P3c [C16]: a transparent access-line end runs no PPP; its line protocol is up on a clocked line
+      if (end.accessLine === true) return phy;
       // P3 [S19]: a PPP end's line protocol is its daemon's last report
       const reason = serialPppEndDownReason(end.ppp);
       if (reason !== undefined) {
@@ -212,14 +232,24 @@ export function evaluateSerialLine(input: SerialLinkInput): SerialLinkResult {
   if (noClock) result.downReason = 'no-clock';
   else if (encapMismatch) result.downReason = 'encapsulation-mismatch';
   else if (a.encap === 'ppp') {
-    // P3 [S19] (both ends are ppp here): the most telling reason of either end
-    const reasons = [serialPppEndDownReason(a.ppp), serialPppEndDownReason(b.ppp)];
+    // P3 [S19] (both ends are ppp here): the most telling reason of either end; P3c [C16] a transparent end has none
+    const reasons = [a, b].filter((e) => e.accessLine !== true).map((e) => serialPppEndDownReason(e.ppp));
     const reason = SERIAL_PPP_REASON_ORDER.find((r) => reasons.includes(r));
     if (reason !== undefined) result.downReason = reason;
   } else if (a.keepaliveLatched || b.keepaliveLatched) result.downReason = 'keepalive-missed';
   if (clockBps !== undefined) result.clockBps = clockBps;
   if (negotiatedBps !== undefined) result.negotiatedBps = negotiatedBps;
   return result;
+}
+
+/**
+ * @since P3c [C16] The end as the line rules see it: a transparent access-line end facing a terminating end takes that
+ * end's encapsulation (a copy; the caller's input and the port's stored `encap` are untouched). Every other end is
+ * returned as given.
+ */
+function transparentEnd(end: SerialEndInput, far: SerialEndInput): SerialEndInput {
+  if (end.accessLine !== true || far.accessLine === true || end.encap === far.encap) return end;
+  return { ...end, encap: far.encap };
 }
 
 /**

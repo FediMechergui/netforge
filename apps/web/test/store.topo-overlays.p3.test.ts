@@ -40,6 +40,8 @@ import type { TopoOverlayState } from '../src/store/types';
 import { device, port, snapshot } from './canvas-fixtures';
 
 const P3_DEFAULTS = { qos: false, ospf: false, ospfArea: null, wan: false, eigrp: false, eigrpPrefix: null } as const;
+// ARCHITECTURE-P3C RC1 (f) (W1c web-canvas): the P3c keys every slice now carries, at their defaults
+const P3C_DEFAULTS = { routePath: false, routeTo: null, neighbours: false, neighbourProtocol: 'both' } as const;
 
 function resetSlice(): void {
   for (const k of ['qos', 'ospf', 'wan', 'eigrp'] as const) store.getState().setTopoOverlay(k, false);
@@ -52,7 +54,7 @@ afterEach(resetSlice);
 
 describe('the P3 keys of the slice', () => {
   it('start with every P3 overlay off and nothing chosen, exactly as the canvas registry falls back to', () => {
-    expect(DEFAULT_TOPO_OVERLAYS).toEqual({ vlan: false, stp: false, stpVlan: null, vlanFocus: null, capwap: false, ...P3_DEFAULTS });
+    expect(DEFAULT_TOPO_OVERLAYS).toEqual({ vlan: false, stp: false, stpVlan: null, vlanFocus: null, capwap: false, ...P3_DEFAULTS, ...P3C_DEFAULTS });
     expect(TOPO_OVERLAY_DEFAULTS).toEqual(DEFAULT_TOPO_OVERLAYS);
     expect(store.getState().topoOverlays).toEqual(DEFAULT_TOPO_OVERLAYS);
   });
@@ -80,6 +82,7 @@ describe('the P3 keys of the slice', () => {
       wan: true,
       eigrp: true,
       eigrpPrefix: '10.4.0.0/24',
+      ...P3C_DEFAULTS,
     });
     const held = store.getState().topoOverlays;
     store.getState().setTopoOverlay('ospfArea', '0.0.0.1');
@@ -106,14 +109,14 @@ describe('the persisted-slice migration (§9.2 item 23)', () => {
       learn: { lastCourse: 'ccna2' },
     };
     const out = sanitizePersistedUi(p2Record, 'light');
-    expect(out.topoOverlays).toEqual({ vlan: true, stp: true, capwap: false, stpVlan: 20, vlanFocus: null, ...P3_DEFAULTS });
+    expect(out.topoOverlays).toEqual({ vlan: true, stp: true, capwap: false, stpVlan: 20, vlanFocus: null, ...P3_DEFAULTS, ...P3C_DEFAULTS });
     expect(out.learn).toEqual({ lastCourse: 'ccna2' });
     expect(out.theme).toBe('light');
     expect(out.palette.recent).toEqual(['router.nf2911']);
   });
 
-  it('a P3 record comes back as stored when every value is valid', () => {
-    const slice: TopoOverlayState = {
+  it('a P3 record comes back as stored when every value is valid (with the P3c keys at their defaults)', () => {
+    const slice: Omit<TopoOverlayState, keyof typeof P3C_DEFAULTS> = {
       vlan: false,
       stp: true,
       stpVlan: 10,
@@ -126,7 +129,7 @@ describe('the persisted-slice migration (§9.2 item 23)', () => {
       eigrp: true,
       eigrpPrefix: '192.168.4.0/22',
     };
-    expect(sanitizePersistedUi({ topoOverlays: slice }).topoOverlays).toEqual(slice);
+    expect(sanitizePersistedUi({ topoOverlays: slice }).topoOverlays).toEqual({ ...slice, ...P3C_DEFAULTS });
   });
 
   it('a malformed P3 value falls back to its default, key by key', () => {
@@ -175,8 +178,16 @@ function eigrpRouter(id: string, prefixes: string[]): DeviceSnapshot {
 
 describe('the "Routing, WAN and QoS overlays" menu model', () => {
   it('lists one toggle per P3 boolean, in §2.14 order, with stable ids and its own labels', () => {
-    expect(ROUTING_OVERLAY_MENU.map((m) => m.key)).toEqual(['qos', 'ospf', 'wan', 'eigrp']);
-    expect(ROUTING_OVERLAY_MENU.map((m) => m.id)).toEqual(['topo-overlay-qos', 'topo-overlay-ospf', 'topo-overlay-wan', 'topo-overlay-eigrp']);
+    // ARCHITECTURE-P3C §2.12 (W1c web-canvas): [S7] the route path and [S26] the neighbours follow, ids by overlay id
+    expect(ROUTING_OVERLAY_MENU.map((m) => m.key)).toEqual(['qos', 'ospf', 'wan', 'eigrp', 'routePath', 'neighbours']);
+    expect(ROUTING_OVERLAY_MENU.map((m) => m.id)).toEqual([
+      'topo-overlay-qos',
+      'topo-overlay-ospf',
+      'topo-overlay-wan',
+      'topo-overlay-eigrp',
+      'topo-overlay-route-path',
+      'topo-overlay-neighbours',
+    ]);
     expect(Object.isFrozen(ROUTING_OVERLAY_MENU)).toBe(true);
     for (const m of ROUTING_OVERLAY_MENU) expect(Object.isFrozen(m)).toBe(true);
     // no id or label shared with the P2 section
@@ -192,6 +203,7 @@ describe('the "Routing, WAN and QoS overlays" menu model', () => {
     expect(ROUTING_SELECTOR_MENU.map((s) => [s.id, s.key, s.shows])).toEqual([
       ['ospf-area', 'ospfArea', 'ospf'],
       ['eigrp-prefix', 'eigrpPrefix', 'eigrp'],
+      ['route-to', 'routeTo', 'routePath'],
     ]);
     const vlanIds = new Set(VLAN_SELECTOR_MENU.map((s) => s.id));
     for (const s of ROUTING_SELECTOR_MENU) {

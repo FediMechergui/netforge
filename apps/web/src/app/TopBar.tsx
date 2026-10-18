@@ -14,6 +14,9 @@
  * P3 keys: four toggles (`ROUTING_OVERLAY_MENU`: the QoS queues, [S1] OSPF, [S18]/[S19] WAN, [C1] EIGRP) and, while
  * the matching overlay is on, the [S1] area selector and the [C1] destination selector (`ROUTING_SELECTOR_MENU`),
  * listing what the world's OSPF and EIGRP rows name. Web-canvas (W3) draws the four overlays from the same slice.
+ * @since P3c (ARCHITECTURE-P3C §2.12; W1c web-canvas, a reviewed edit with the persisted-slice migration) The same
+ * section gains [S7] "Path to a destination" with its destination selector (every address the world's ports hold) and
+ * [S26] "Discovered neighbours" with its protocol choice (`NEIGHBOUR_PROTOCOL_MENU`: CDP and LLDP, CDP, LLDP).
  * The concept tools listed come from the concept registry (`conceptMenuEntries`), so a tool registered in
  * `concept/ConceptView.tsx` appears here without a menu edit.
  *
@@ -24,8 +27,9 @@ import type { SimSnapshot } from '@netforge/engine';
 import { DEFAULT_METRES_PER_UNIT } from '@netforge/engine/contracts';
 import { engine, defaultSeed } from '../bridge/client';
 import type { PlaybackMode } from '../bridge/protocol';
-import { ROUTING_OVERLAY_MODULES, SWITCHING_OVERLAY_MODULES, VLAN_OVERLAY, type OverlayId } from '../canvas/overlays/registry';
+import { ROUTING_OVERLAY_MODULES, SWITCHING_OVERLAY_MODULES, VLAN_OVERLAY, type OverlayId, type RoutingOverlayToggle } from '../canvas/overlays/registry';
 import { eigrpPrefixesOf } from '../canvas/overlays/eigrp-model';
+import { routeDestinationsOf } from '../canvas/overlays/route-path-model';
 import { ospfAreasOf } from '../canvas/overlays/ospf-model';
 import { CONCEPT_TOOLS, isConceptToolBuilt } from '../concept/ConceptView';
 import { DOCK_MIN_HEIGHT, DOCK_OPEN_HEIGHT, DOCK_TABS, INSPECTOR_HIDDEN_BELOW, INSPECTOR_OPEN_WIDTH } from '../dock/registry';
@@ -131,13 +135,13 @@ export function vlanChoices(snapshot: Pick<SimSnapshot, 'devices'> | null | unde
 // Its own section and constants, so the P2 "Switching overlays" menu keeps mirroring the canvas registry's P2
 // entries. Ids follow the same `topo-overlay-<overlay id>` rule (the W3 registry ids are qos, ospf, wan and eigrp).
 
-/** @since P3 The P3 overlays of the `topoOverlays` slice (§2.14 order). */
-export type RoutingOverlayKey = 'qos' | 'ospf' | 'wan' | 'eigrp';
+/** @since P3 The P3 overlays of the `topoOverlays` slice (§2.14 order); @since P3c [S7] `routePath`, [S26] `neighbours`. */
+export type RoutingOverlayKey = RoutingOverlayToggle;
 
 /** @since P3 A P3 toggle of the `topoOverlays` slice as the View menu lists it. */
 export interface RoutingOverlayMenuEntry {
-  /** Stable id (`data-menu-id`): `topo-overlay-<key>`. */
-  readonly id: `topo-overlay-${RoutingOverlayKey}`;
+  /** Stable id (`data-menu-id`): `topo-overlay-<overlay id>` (the key for the P3 overlays). */
+  readonly id: `topo-overlay-${OverlayId}`;
   readonly key: RoutingOverlayKey;
   readonly label: string;
   readonly hint: string;
@@ -148,15 +152,15 @@ export interface RoutingOverlayMenuEntry {
  * P3 overlay of the registry with a toggle, `ROUTING_OVERLAY_MODULES` (§9.2 item 30g; the SPF overlay has none).
  */
 export const ROUTING_OVERLAY_MENU: readonly RoutingOverlayMenuEntry[] = Object.freeze(
-  ROUTING_OVERLAY_MODULES.map((m) => Object.freeze<RoutingOverlayMenuEntry>({ id: `topo-overlay-${m.toggle}` as const, key: m.toggle, label: m.label, hint: m.hint })),
+  ROUTING_OVERLAY_MODULES.map((m) => Object.freeze<RoutingOverlayMenuEntry>({ id: `topo-overlay-${m.id}` as const, key: m.toggle, label: m.label, hint: m.hint })),
 );
 
 /** @since P3 A routing selector of the slice: which area or destination an overlay draws (null = `none`). */
 export interface RoutingSelectorMenuEntry {
   /** Stable id (`data-menu-id` of its heading; each choice is `<id>-<value>` or `<id>-none`). */
-  readonly id: 'ospf-area' | 'eigrp-prefix';
-  readonly key: Extract<keyof TopoOverlayState, 'ospfArea' | 'eigrpPrefix'>;
-  readonly shows: Extract<RoutingOverlayKey, 'ospf' | 'eigrp'>;
+  readonly id: 'ospf-area' | 'eigrp-prefix' | 'route-to';
+  readonly key: Extract<keyof TopoOverlayState, 'ospfArea' | 'eigrpPrefix' | 'routeTo'>;
+  readonly shows: Extract<RoutingOverlayKey, 'ospf' | 'eigrp' | 'routePath'>;
   readonly label: string;
   /** The label of the null choice. */
   readonly none: string;
@@ -167,7 +171,7 @@ export interface RoutingSelectorMenuEntry {
   values(snapshot: SimSnapshot): string[];
 }
 
-/** @since P3 The two routing selectors, in menu order (exhaustive over the slice's P3 selector keys). */
+/** @since P3 The routing selectors, in menu order (exhaustive over the slice's string selector keys; P3c adds `routeTo`). */
 export const ROUTING_SELECTOR_MENU: readonly RoutingSelectorMenuEntry[] = Object.freeze([
   Object.freeze<RoutingSelectorMenuEntry>({
     id: 'ospf-area',
@@ -189,6 +193,29 @@ export const ROUTING_SELECTOR_MENU: readonly RoutingSelectorMenuEntry[] = Object
     choiceLabel: (prefix) => prefix,
     values: (snapshot) => eigrpPrefixesOf(snapshot),
   }),
+  Object.freeze<RoutingSelectorMenuEntry>({
+    id: 'route-to',
+    key: 'routeTo',
+    shows: 'routePath',
+    label: 'Path destination',
+    none: 'No destination',
+    hint: 'The address whose path the overlay follows, from every device that forwards.',
+    choiceLabel: (address) => address,
+    values: (snapshot) => routeDestinationsOf(snapshot),
+  }),
+]);
+
+/** @since P3c [S26] One choice of the neighbours overlay's protocol (`data-menu-id` `neighbour-protocol-<value>`). */
+export interface NeighbourProtocolMenuEntry {
+  readonly value: TopoOverlayState['neighbourProtocol'];
+  readonly label: string;
+}
+
+/** @since P3c [S26] The neighbours overlay's protocol choices, shown while the overlay is on (exhaustive). */
+export const NEIGHBOUR_PROTOCOL_MENU: readonly NeighbourProtocolMenuEntry[] = Object.freeze([
+  Object.freeze<NeighbourProtocolMenuEntry>({ value: 'both', label: 'CDP and LLDP' }),
+  Object.freeze<NeighbourProtocolMenuEntry>({ value: 'cdp', label: 'CDP only' }),
+  Object.freeze<NeighbourProtocolMenuEntry>({ value: 'lldp', label: 'LLDP only' }),
 ]);
 
 /**
@@ -496,6 +523,24 @@ function ViewMenu() {
               onPick={(v) => setTopoOverlay(sel.key, v)}
             />
           ))}
+          {topo.neighbours && (
+            <>
+              <MenuHeading>
+                <span title="Which discovery protocol's entries the overlay shows." data-menu-id="neighbour-protocol">
+                  Neighbours from
+                </span>
+              </MenuHeading>
+              {NEIGHBOUR_PROTOCOL_MENU.map((p) => (
+                <RadioItem
+                  key={p.value}
+                  id={`neighbour-protocol-${p.value}`}
+                  checked={topo.neighbourProtocol === p.value}
+                  label={p.label}
+                  onPick={() => setTopoOverlay('neighbourProtocol', p.value)}
+                />
+              ))}
+            </>
+          )}
           <MenuSeparator />
           <MenuHeading>Canvas scale</MenuHeading>
           {CANVAS_SCALE_PRESETS.map((m) => (

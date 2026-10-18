@@ -15,7 +15,8 @@
  * Persisted to localStorage (try/catch): theme, palette.collapsed/recent, cable.media, overlays, dock layout,
  * (P2 W2 web-shell) `topoOverlays` and `learn.lastCourse`, and (P2, store/store.ts `rememberEntryView`) whether the
  * last surface was the sandbox or the course layer. (P3 W2 web-shell) `topoOverlays` gains the QoS, OSPF, WAN and
- * EIGRP keys: a stored P2 record has none of them, and each takes its default (store/persist.ts).
+ * EIGRP keys: a stored P2 record has none of them, and each takes its default (store/persist.ts). (P3c W1c web-canvas)
+ * `topoOverlays` gains the [S7] route-path and [S26] neighbours keys the same way (the one P3c migration).
  */
 import type {
   CaptureId,
@@ -183,6 +184,17 @@ export interface TopoOverlayState {
   eigrp: boolean;
   /** @since P3 [C1] The destination the EIGRP overlay draws ('10.0.12.0/24'); null = the first one a router knows. */
   eigrpPrefix: string | null;
+  /**
+   * @since P3c [S7] (ARCHITECTURE-P3C §2.12; W1c web-canvas) The route-path overlay: each device's next hop towards
+   * `routeTo`, loops, black holes, ECMP, tunnels and NAT.
+   */
+  routePath: boolean;
+  /** @since P3c [S7] The destination the route-path overlay follows (an IPv4 or IPv6 address); null = none chosen. */
+  routeTo: string | null;
+  /** @since P3c [S26] The neighbours overlay: the CDP and LLDP entries at each cable end, and "map from here". */
+  neighbours: boolean;
+  /** @since P3c [S26] Which discovery protocol the neighbours overlay shows. */
+  neighbourProtocol: 'cdp' | 'lldp' | 'both';
 }
 
 /**

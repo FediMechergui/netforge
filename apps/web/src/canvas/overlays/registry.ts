@@ -23,6 +23,11 @@
  * class-drop samples (`qos-model.ts` `pushLoadSample`), created on first use, so the load sleeves and the lanes' drop
  * tags compare against a sample about one second of simulated time old.
  *
+ * @since P3c (ARCHITECTURE-P3C §2.12, §6; W1c web-canvas) Two more entries: [S7] `route-path` (each device's next hop
+ * towards `topoOverlays.routeTo`, `route-path-model.ts`) and [S26] `neighbours` (the CDP/LLDP entries at the cable ends,
+ * `neighbours-model.ts`), painted after the WAN layer and before the QoS sleeves, and listed last in the routing menu.
+ * The neighbours entry's "map from here" starts from `OverlaySyncInput.from` (the selected device).
+ *
  * Every cross-module reference is resolved at call time (the builders are called from inside arrow functions and the
  * memo caches are created on first use), so importing this module reads nothing from another module (f4f883e).
  * Pure: no Pixi, no store access (the slice arrives in `input`).
@@ -31,6 +36,12 @@ import type { BuildStage, DeviceId, DeviceSnapshot, SimSnapshot, SimTime } from 
 import type { RoutingUiState, TopoOverlayState } from '../../store/types';
 import { buildCapwapOverlay, deriveDeviceCapwap, type CapwapOverlayModel, type DeviceCapwap } from './capwap-model';
 import { buildEigrpOverlay, deriveDeviceEigrp, type DeviceEigrp, type EigrpOverlayModel } from './eigrp-model';
+import {
+  buildNeighboursOverlay,
+  deriveDeviceNeighbours,
+  type DeviceNeighbours,
+  type NeighboursModel,
+} from './neighbours-model';
 import { buildL2Overlay, deriveDeviceL2, type DeviceL2, type L2OverlayModel } from './l2-model';
 import { buildOspfOverlay, deriveDeviceOspf, type DeviceOspf, type OspfOverlayModel } from './ospf-model';
 import {
@@ -43,6 +54,7 @@ import {
   type LoadSample,
   type QosLayerModel,
 } from './qos-model';
+import { buildRoutePathOverlay, deriveDeviceRoute, type DeviceRoute, type RoutePathModel } from './route-path-model';
 import { buildSpfOverlay, lsdbOf, type DeviceLsdb, type SpfOverlayModel } from './spf-model';
 import { buildStpOverlay, deriveDeviceStp, type DeviceStp, type StpOverlayModel } from './stp-model';
 import { buildWanOverlay, deriveDeviceWan, type DeviceWan, type WanOverlayModel } from './wan-model';
@@ -56,12 +68,12 @@ export type OverlayId = 'vlan' | 'stp' | 'capwap' | 'qos' | 'ospf' | 'spf' | 'wa
 /** The P2 booleans of the slice: the "Switching overlays" toggles. */
 export type SwitchingOverlayToggle = 'vlan' | 'stp' | 'capwap';
 /**
- * @since P3 The P3 booleans of the slice: the "Routing, WAN and QoS overlays" toggles. ([S7] 'routePath' and [S26]
- * 'neighbours' join with the slice members `TopoOverlayState.routePath` / `.neighbours`, in the change of the first of
- * the two items to land, which owns the persisted-slice version bump, ARCHITECTURE-P3C §2.12: a toggle is a boolean key
- * of the slice, and the View menu indexes the slice by it.)
+ * @since P3 The P3 booleans of the slice: the "Routing, WAN and QoS overlays" toggles. @since P3c [S7] 'routePath' and
+ * [S26] 'neighbours' (ARCHITECTURE-P3C §2.12, RC1 (f)), with the slice members `TopoOverlayState.routePath` /
+ * `.neighbours` and the one persisted-slice migration (W1c web-canvas): a toggle is a boolean key of the slice, and
+ * the View menu indexes the slice by it.
  */
-export type RoutingOverlayToggle = 'qos' | 'ospf' | 'wan' | 'eigrp';
+export type RoutingOverlayToggle = 'qos' | 'ospf' | 'wan' | 'eigrp' | 'routePath' | 'neighbours';
 /** A boolean key of the `topoOverlays` slice that shows an overlay. */
 export type OverlayToggle = SwitchingOverlayToggle | RoutingOverlayToggle;
 
@@ -81,6 +93,8 @@ export interface OverlaySyncInput {
   readonly reducedMotion?: boolean;
   /** @since P3 [S3] The SPF stepper's selection; absent = the `spf` layer is off. */
   readonly routing?: OverlayRoutingInput;
+  /** @since P3c [S26] "Map from here": the selected device the neighbours map starts from; absent or null = no map. */
+  readonly from?: DeviceId | null;
 }
 
 /** One registered overlay. `D` is its per-device data, `M` its render model, `T` its toggle. */
@@ -126,6 +140,8 @@ const qosPerDevice = lazyMemo<DeviceQos>(() => deriveDeviceQos);
 const ospfPerDevice = lazyMemo<DeviceOspf>(() => deriveDeviceOspf);
 const wanPerDevice = lazyMemo<DeviceWan>(() => deriveDeviceWan);
 const eigrpPerDevice = lazyMemo<DeviceEigrp>(() => deriveDeviceEigrp);
+const routePerDevice = lazyMemo<DeviceRoute>(() => deriveDeviceRoute);
+const neighboursPerDevice = lazyMemo<DeviceNeighbours>(() => deriveDeviceNeighbours);
 
 function selectAll<T>(snapshot: SimSnapshot, perDevice: (d: DeviceSnapshot) => T): ReadonlyMap<DeviceId, T> {
   const out = new Map<DeviceId, T>();
@@ -297,10 +313,52 @@ export const EIGRP_OVERLAY: OverlayModule<DeviceEigrp, EigrpOverlayModel, 'eigrp
     input.state.eigrp && input.snapshot !== null ? buildEigrpOverlay(input.snapshot, { prefix: input.state.eigrpPrefix }, eigrpPerDevice()) : null,
 });
 
+// ── P3c ──────────────────────────────────────────────────────────────────────
+
+/**
+ * @since P3c [S7] The route-path overlay: for one destination, each device's next hop (hosts by their default gateway),
+ * `↻` loops, `∅` black holes, ECMP fan-out, a tunnel as one hop and `NAT` at an inside interface (IPv4 and IPv6).
+ */
+export const ROUTE_PATH_OVERLAY: OverlayModule<DeviceRoute, RoutePathModel, 'routePath'> = Object.freeze({
+  id: 'route-path',
+  label: 'Path to a destination',
+  hint: 'For one address, shows where each device sends a packet next, and marks loops and black holes.',
+  since: 'P3c',
+  objectives: Object.freeze([
+    'ccna2-29-how-a-router-chooses',
+    'ccna2-31-default-and-floating-routes',
+    'ccna2-32-ipv6-static-routes',
+    'ccna2-34-finding-faults',
+    'ccna3-34-finding-faults-across-layers',
+  ]),
+  toggle: 'routePath',
+  select: (snapshot: SimSnapshot) => selectAll(snapshot, routePerDevice()),
+  sync: (input: OverlaySyncInput) =>
+    input.state.routePath && input.snapshot !== null ? buildRoutePathOverlay(input.snapshot, { to: input.state.routeTo }, routePerDevice()) : null,
+});
+
+/**
+ * @since P3c [S26] The neighbours overlay: a chip per CDP/LLDP entry at its cable end with the holdtime ring, a hollow
+ * glyph where a device listens and hears nobody, and "map from here" from the selected device.
+ */
+export const NEIGHBOURS_OVERLAY: OverlayModule<DeviceNeighbours, NeighboursModel, 'neighbours'> = Object.freeze({
+  id: 'neighbours',
+  label: 'Discovered neighbours',
+  hint: 'Shows what each device learned about its neighbours, and dims what the selected device could not discover.',
+  since: 'P3c',
+  objectives: Object.freeze(['ccna3-28-who-is-next-door']),
+  toggle: 'neighbours',
+  select: (snapshot: SimSnapshot) => selectAll(snapshot, neighboursPerDevice()),
+  sync: (input: OverlaySyncInput) =>
+    input.state.neighbours && input.snapshot !== null
+      ? buildNeighboursOverlay(input.snapshot, { protocol: input.state.neighbourProtocol, now: input.now, from: input.from ?? null }, neighboursPerDevice())
+      : null,
+});
+
 /**
  * Every topology overlay, in paint order (bottom first): the P2 overlays as before, then the OSPF zones and
- * adjacencies, the EIGRP successors, the SPF tree, the WAN rails and tunnels, and last the QoS sleeves and queues (beside
- * the cables, so nothing covers them).
+ * adjacencies, the EIGRP successors, the SPF tree, the WAN rails and tunnels, the [S7] route path and the [S26]
+ * neighbours, and last the QoS sleeves and queues (beside the cables, so nothing covers them).
  */
 export const OVERLAY_MODULES: readonly OverlayModule<unknown, unknown>[] = Object.freeze([
   VLAN_OVERLAY as OverlayModule<unknown, unknown>,
@@ -310,6 +368,8 @@ export const OVERLAY_MODULES: readonly OverlayModule<unknown, unknown>[] = Objec
   EIGRP_OVERLAY as OverlayModule<unknown, unknown>,
   SPF_OVERLAY as OverlayModule<unknown, unknown>,
   WAN_OVERLAY as OverlayModule<unknown, unknown>,
+  ROUTE_PATH_OVERLAY as OverlayModule<unknown, unknown>,
+  NEIGHBOURS_OVERLAY as OverlayModule<unknown, unknown>,
   QOS_OVERLAY as OverlayModule<unknown, unknown>,
 ]);
 
@@ -320,12 +380,17 @@ export const SWITCHING_OVERLAY_MODULES: readonly OverlayModule<unknown, unknown,
   CAPWAP_OVERLAY as OverlayModule<unknown, unknown, SwitchingOverlayToggle>,
 ]);
 
-/** @since P3 The P3 overlays the "Routing, WAN and QoS overlays" menu toggles, in its order (§2.14: qos, ospf, wan, eigrp). */
+/**
+ * @since P3 The P3 overlays the "Routing, WAN and QoS overlays" menu toggles, in its order (§2.14: qos, ospf, wan, eigrp);
+ * @since P3c then [S7] the route path and [S26] the neighbours.
+ */
 export const ROUTING_OVERLAY_MODULES: readonly OverlayModule<unknown, unknown, RoutingOverlayToggle>[] = Object.freeze([
   QOS_OVERLAY as OverlayModule<unknown, unknown, RoutingOverlayToggle>,
   OSPF_OVERLAY as OverlayModule<unknown, unknown, RoutingOverlayToggle>,
   WAN_OVERLAY as OverlayModule<unknown, unknown, RoutingOverlayToggle>,
   EIGRP_OVERLAY as OverlayModule<unknown, unknown, RoutingOverlayToggle>,
+  ROUTE_PATH_OVERLAY as OverlayModule<unknown, unknown, RoutingOverlayToggle>,
+  NEIGHBOURS_OVERLAY as OverlayModule<unknown, unknown, RoutingOverlayToggle>,
 ]);
 
 /** The overlay with this id. */
@@ -357,4 +422,9 @@ export const TOPO_OVERLAY_DEFAULTS: Readonly<TopoOverlayState> = Object.freeze({
   wan: false,
   eigrp: false,
   eigrpPrefix: null,
+  // P3c (ARCHITECTURE-P3C §2.12, RC1 (f); W1c web-canvas, the one P3c migration): [S7] and [S26] at their defaults
+  routePath: false,
+  routeTo: null,
+  neighbours: false,
+  neighbourProtocol: 'both',
 });

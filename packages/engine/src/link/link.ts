@@ -531,6 +531,8 @@ export function createLinkModel(deps: LinkModelDeps, options: LinkModelOptions =
     const settings = deps.portSettings(ref);
     if (settings !== undefined) end.settings = settings;
     if (p.spec.clockSource === true) end.clockSource = true;
+    // P3c [C16]: a CSU/DSU access-line end is transparent to the line's encapsulation (link/serial.ts)
+    if (roleOf(p) === 'access-line') end.accessLine = true;
     // P3 [S19]: a ppp end's last report (read by evaluateSerialLine only when the end uses ppp)
     const ppp = pppEnds.get(portKey(ref));
     if (ppp !== undefined) end.ppp = ppp;

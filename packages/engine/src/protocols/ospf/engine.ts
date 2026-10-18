@@ -5,32 +5,39 @@
  * LSDB with MinLSArrival and MaxAge, origination with MinLSInterval and the self-war cap, the SPF throttle, the debug
  * ring, the table rows and every timer of the daemon (protocols/ospf.ts's module header describes the behaviour).
  *
- * The daemon factory keeps what reads the configuration and the packets' outer layers: the process start decision
- * (router id), which interfaces run (`IfaceWant`), the RIB watch and the packet demultiplexer; it hands the engine its
- * `resync` as a hook. Part 2 (W1c) parameterises the family-specific parts left here (the IPv4 packet layer, the
- * v2 hello fields, the v2 LSA bodies and routes) behind an `OspfFamily` adapter.
+ * Part 2 (W1c, zero-diff) moved every family-specific part behind the `OspfFamily` adapter (below): the outer packet
+ * layer and its send request, the hello fields and checks, the multicast groups, the LSA wire forms, scopes and orders,
+ * the self-originated LSA bodies, the route computation and its batch, the three table rows, and the daemon half that
+ * reads the configuration (the process start decision, which interfaces run (`IfaceWant`), the RIB watch, the packet
+ * demultiplexer's outer layers). `createOspfProcess(family)` is the daemon shell both families share:
+ * `ospf` = engine + protocols/ospf/family-v4.ts (OSPFv2), and `ospfv3` = engine + family-v6.ts (W2a/W3a [S6]).
+ *
+ * Addresses are strings: for v2 the interface and neighbour addresses are IPv4; a v3 family carries link-local IPv6
+ * addresses in the same slots. The v2 flooding helpers (protocols/ospf/flood.ts) answer with the v2 group addresses,
+ * which the engine maps onto the family's groups (`groupOf`, the identity for v2).
  */
-import { ipv4ToU32, prefixLenToMask, type Ipv4Address } from '../../contracts/addr.js';
+import { ipv4ToU32, type Ipv4Address } from '../../contracts/addr.js';
 import type { PortRole } from '../../contracts/catalog.js';
+import type { ConfigDelta } from '../../contracts/config.js';
 import type { PortId, ProcessName } from '../../contracts/ids.js';
-import { IPPROTO_OSPF, OSPF_ALL_DROUTERS, OSPF_ALL_ROUTERS, type FieldValue, type LayerSpec, type LayerView, type Pdu, type PduMeta } from '../../contracts/pdu.js';
-import type { Action, DebugEvent, FsmTransition, ProcessCtx, StateView } from '../../contracts/process.js';
+import { OSPF_ALL_DROUTERS, OSPF_ALL_ROUTERS, type FieldValue, type LayerSpec, type LayerView, type Pdu, type PduMeta, type ProtoName } from '../../contracts/pdu.js';
+import type { Action, DebugEvent, FsmMachine, FsmTransition, Process, ProcessCtx, ProcessRequest, StateView } from '../../contracts/process.js';
 import {
   ospfNbrKey,
   type OspfAreaId,
-  type OspfInterfaceRow,
   type OspfIsmState,
   type OspfLsaRow,
-  type OspfNeighborRow,
   type OspfNetworkType,
   type OspfNsmState,
   type OspfStateView,
-  type RouteRow,
   type SpfTree,
   type Table,
+  type TableName,
+  type TableRow,
 } from '../../contracts/tables.js';
 import { SEC, type SimTime } from '../../contracts/time.js';
-import { compareLsaInstances, lsaAgeAt, lsaChecksumAndLength, LSA_INITIAL_SEQ, LSA_MAX_AGE_S, LSA_MIN_ARRIVAL_NS, LSA_REFRESH_S, nextLsaSeq, type LsaInstance } from '../../core/ospf-lsa.js';
+import type { ProcessEvent } from '../../contracts/transport.js';
+import { compareLsaInstances, lsaAgeAt, LSA_INITIAL_SEQ, LSA_MAX_AGE_S, LSA_MIN_ARRIVAL_NS, LSA_REFRESH_S, nextLsaSeq, type LsaInstance } from '../../core/ospf-lsa.js';
 import type { SpfRootIface } from '../../core/ospf-spf.js';
 import { OSPF_DD_FLAG, OSPF_PACKET, ospfPacketText } from '../../pdu/codecs/ospf.js';
 import {
@@ -39,25 +46,11 @@ import {
 } from './config.js';
 import { drEventsFromHello, electDesignatedRouter, ospfAdjacencyOk, OSPF_NO_DR, type OspfDrCandidate, type OspfHelloDeclaration } from './dr.js';
 import { ackDirectly, directDestination, floodOut, type FloodIface, type OspfAckCase } from './flood.js';
-import { checkOspfHello, OSPF_OPTION_E } from './hello-check.js';
+import type { OspfHelloCheck } from './hello-check.js';
 import { ismOutcome, OSPF_ISM_EVENT_NAMES } from './ism.js';
 import {
-  isOspfLsaType,
-  lsaBodyEqual,
-  lsaHeaderLayerOf,
   lsaKeyOf,
-  lsaLayerOf,
-  lsaRowOf,
-  lsaScopeOf,
-  lsaText,
-  lsaWireOf,
-  lsdbForArea,
-  lsrEntryOf,
-  OSPF_OPTIONS,
-  parseLsrEntries,
   rowInstance,
-  sortedLsdb,
-  wireHeaderLayerOf,
   wireInstance,
   type OspfLsaBody,
   type OspfLsaWire,
@@ -79,8 +72,8 @@ import {
   ospfNeighborRole,
   type OspfNsmEvent,
 } from './nsm.js';
-import { defaultExternalBody, lsaGenAt, networkLsaBody, routerLsaBody, type OriginIface } from './originate.js';
-import { computeOspfRoutes, ospfRouteText, type OspfAreaRoot } from './routes.js';
+import { lsaGenAt } from './originate.js';
+import type { OspfAreaRoot } from './routes.js';
 
 /** @since P3 The daemon's process name (D7). */
 export const OSPF_PROCESS: ProcessName = 'ospf';
@@ -98,8 +91,6 @@ export const OSPF_SPF_DELAY_NS = 5 * SEC;
 export const OSPF_SPF_HOLD_NS = 10 * SEC;
 /** @since P3 The MaxAge sweep interval (§4.2). */
 export const OSPF_MAXAGE_SWEEP_NS = 60 * SEC;
-/** @since P3 The DSCP of every OSPF packet (D7: the classic TOS 0xc0). */
-export const OSPF_DSCP = 48;
 /** @since P3 Two newer copies of one self-originated LSA within this window are a router id conflict (`self-war`). */
 export const OSPF_SELF_WAR_WINDOW_NS = 60 * SEC;
 /**
@@ -110,10 +101,7 @@ export const OSPF_SELF_WAR_WINDOW_NS = 60 * SEC;
  */
 export const OSPF_SELF_WAR_MAX_COPIES = 8;
 
-const NAME = OSPF_PROCESS;
 const DEBUG_RING = 256;
-const ALL_ROUTERS: Ipv4Address = OSPF_ALL_ROUTERS;
-const ALL_DROUTERS: Ipv4Address = OSPF_ALL_DROUTERS;
 
 export interface Proc {
   readonly pid: number;
@@ -241,14 +229,155 @@ function fingerprint(row: object): string {
   return parts.join('|');
 }
 
-/** @since P3c What the engine calls back into the daemon that owns it. */
-export interface OspfEngineHooks {
-  /** The coalesced `resync` timer fired: read the configuration and the ports, then reconcile. */
-  resync(ctx: ProcessCtx, out: Out): void;
+/** @since P3c One received packet as the family's demultiplexer reads its outer layers (`OspfFamily.decode`). */
+export interface OspfPacketIn {
+  /** Source and destination of the enclosing IP header (v2: IPv4; v3: the link-local source, ff02::5/6 or unicast). */
+  readonly src: string;
+  readonly dst: string;
+  readonly version: number;
+  readonly type: number;
+  readonly routerId: Ipv4Address;
+  readonly area: OspfAreaId;
+  /** The header's checksum verdict (`false` = mismatch) and the codec's error text. */
+  readonly checksumValid: FieldValue | undefined;
+  readonly error?: string;
+  /** The OSPF header's fields (hello, DBD and LSR bodies are read from them). */
+  readonly fields: Readonly<Record<string, FieldValue>>;
+  /** The chained LSA layers (full LSAs or header copies), in packet order. */
+  readonly lsas: readonly LayerView[];
+}
+
+/**
+ * @since P3c The LSA half of a family: wire forms, scopes, orders and the rows of self-originated LSAs. v2 is
+ * protocols/ospf/lsdb.ts (types 1, 2, 5; scope = the area or 'as'); a v3 family adds the link scope (`link:<port>`,
+ * type 0x0008) and the function-coded types 0x2001… through the same members.
+ */
+export interface OspfLsaOps {
+  /** The PDU layer an LSA (or an LSA header copy) travels in ('ospf-lsa'; v3 'ospf6-lsa'). */
+  readonly proto: ProtoName;
+  /** One LSA layer's fields as an LSA (undefined when the header is incomplete). */
+  wireOf(fields: Readonly<Record<string, FieldValue>>): OspfLsaWire | undefined;
+  /** An LSA type the family speaks (anything else is a SeqNumberMismatch in a DBD, discarded in an update). */
+  isKnownType(type: number): boolean;
+  /** The flooding scope of an LSA of `type` received on `port` in `area` (or originated under the key scope `area`). */
+  scopeOf(type: number, area: OspfAreaId, port?: PortId): OspfAreaId | 'as';
+  /** The rows a database description to a neighbour on `i` summarises (unsorted). */
+  forIface(rows: Iterable<OspfLsaRow>, i: Iface): OspfLsaRow[];
+  /** An LSA of `scope` is flooded out `i`. */
+  floodsOn(scope: OspfAreaId | 'as', i: Iface): boolean;
+  /** Database order (§4.5). */
+  sorted(rows: Iterable<OspfLsaRow>): OspfLsaRow[];
+  /** A full LSA as an update carries it at `now`. */
+  layerOf(row: OspfLsaRow, now: SimTime): LayerSpec;
+  /** A header copy of an installed row at `now` (DBD). */
+  headerLayerOf(row: OspfLsaRow, now: SimTime): LayerSpec;
+  /** A header copy of a received LSA (acknowledgement). */
+  wireHeaderLayerOf(w: OspfLsaWire): LayerSpec;
+  /** The row of a received full LSA installed at `now`. */
+  rowOf(w: OspfLsaWire, scope: OspfAreaId | 'as', now: SimTime, self: boolean): OspfLsaRow;
+  /** The row of a self-originated LSA: `body` with sequence `seq`, its checksum and length, installed at `now`. */
+  selfRowOf(key: string, scope: OspfAreaId | 'as', body: OspfLsaBody, seq: number, now: SimTime): OspfLsaRow;
+  /** Content equality (the header is not content). */
+  bodyEqual(a: Partial<OspfLsaBody>, b: Partial<OspfLsaBody>): boolean;
+  /** The debug text of an LSA. */
+  text(l: Pick<OspfLsaWire, 'type' | 'lsid' | 'advRouter' | 'seq'>): string;
+  /** One link-state request entry, and the entries of a request packet. */
+  requestEntryOf(type: number, lsid: Ipv4Address, advRouter: Ipv4Address): string;
+  parseRequests(text: string): { type: number; lsid: Ipv4Address; advRouter: Ipv4Address }[];
+  /** The router-LSA type (1; v3 0x2001): a self-war over it logs the router id conflict. */
+  readonly routerType: number;
+}
+
+/** @since P3c What desiredSelf hands the family: the running process and the engine's interfaces. */
+export interface OspfOriginView {
+  readonly proc: Proc;
+  readonly cfg: OspfConfig | undefined;
+  /** Interfaces in canonical port order. */
+  readonly ifaces: readonly Iface[];
+  /** The areas of the interfaces, in first-seen canonical order. */
+  readonly areas: readonly OspfAreaId[];
+  readonly haveDefault: boolean;
+  readonly lsdb: ReadonlyMap<string, OspfLsaRow>;
+}
+
+/**
+ * @since P3c [S6] The OSPF family adapter (ARCHITECTURE-P3C D7): everything the shared engine does not know about the
+ * address family and the packet version. One instance per daemon instance (it may keep per-instance state, as v2's IP
+ * identification counter). v2: protocols/ospf/family-v4.ts; v3: family-v6.ts (W2a/W3a).
+ */
+export interface OspfFamily {
+  /** The daemon name: the process of every debug event and the StateView, the owner of every request. */
+  readonly name: ProcessName;
+  /** The OSPF version a received packet must carry (2; v3 3). */
+  readonly version: number;
+  /** The `ctx.transition` machines ('ospf-if', 'ospf-nbr'; v3 'ospf6-if', 'ospf6-nbr'). */
+  readonly machines: { readonly iface: FsmMachine; readonly nbr: FsmMachine };
+  /** The three tables the engine writes. */
+  readonly tables: { readonly interfaces: TableName; readonly neighbors: TableName; readonly lsdb: TableName };
+  /** AllSPFRouters and AllDRouters (224.0.0.5/6; v3 ff02::5/6). */
+  readonly allRouters: string;
+  readonly allDRouters: string;
+  /** The options of the DBD (and, through `helloFields`, the hello): v2 E 0x02; v3 V6|E|R 0x13. */
+  readonly dbdOptions: number;
+  readonly lsa: OspfLsaOps;
+
+  // ── packets ──
+  /** The outer layers of one packet from `i` to `dst` (the IP header and the OSPF header with `fields`). */
+  packetLayers(proc: Proc, i: Iface, dst: string, type: number, fields: Record<string, FieldValue>): LayerSpec[];
+  /** The `meta.flow` of a packet from `i` to `dst`. */
+  flowOf(i: Iface, dst: string): string;
+  /** The request that sends `pdu` out `i` to `dst` (v2 `ipv4.send`; v3 `ipv6.send`). */
+  sendAction(proc: Proc, i: Iface, dst: string, type: number, pdu: Pdu): Action;
+  /** The hello's body fields (undefined: `i` cannot send a hello yet, e.g. no prefix; v3 adds the interface id). */
+  helloFields(i: Iface, heard: readonly Ipv4Address[]): Record<string, FieldValue> | undefined;
+  /** The hello checks (undefined: `i` cannot check a hello yet, the packet is ignored). */
+  checkHello(proc: Proc, i: Iface, f: Readonly<Record<string, FieldValue>>, src: string): OspfHelloCheck | undefined;
+  /** Join or leave a multicast group on `port` (v2 `ipv4.group`; v3 `ipv6.group`). */
+  groupAction(op: 'join' | 'leave', port: PortId, group: string): Action;
+  /** The outer layers of a received packet, or undefined when it is not one of this family's packets. */
+  decode(pdu: Pdu): OspfPacketIn | undefined;
+
+  // ── origination and routes ──
+  /** Every self LSA this router wants now, by key. */
+  desiredSelf(view: OspfOriginView): Map<string, OspfLsaBody>;
+  /** An LSA that names this router: its own advertising router, or a network-LSA for one of its addresses. */
+  isSelf(ctx: ProcessCtx, proc: Proc, ifaces: ReadonlyMap<PortId, Iface>, w: Pick<OspfLsaWire, 'type' | 'lsid' | 'advRouter'>): boolean;
+  /** The SPF of every area and the merged routes (rows in key order). */
+  computeRoutes(lsdb: readonly OspfLsaRow[], routerId: Ipv4Address, areas: readonly OspfAreaRoot[], opts: { readonly maximumPaths: number; readonly now: SimTime }): { readonly rows: readonly TableRow[]; readonly routes: readonly unknown[]; readonly trees: { area: OspfAreaId; tree: SpfTree }[] };
+  /** The ONE route batch of an SPF (v2 `ipv4.routes`; v3 `ipv6.routes`); `[]` withdraws every route. */
+  routesAction(rows: readonly TableRow[]): Action;
+  /** The debug text of one route row. */
+  routeText(r: TableRow): string;
+  /** The RIB watch request (v2 `ipv4.ribWatch`); `[]` stops watching. */
+  watchAction(keys: readonly string[]): Action;
+
+  // ── table rows ──
+  ifRow(ctx: ProcessCtx, proc: Proc, i: Iface): TableRow;
+  nbrRow(ctx: ProcessCtx, i: Iface, n: Nbr): TableRow;
+  /** The `lsdb` table row of an installed LSA (v2: the row itself). */
+  lsdbRow(row: OspfLsaRow): TableRow;
+
+  // ── the daemon half (createOspfProcess) ──
+  /** The device's configuration holds this family's process section. */
+  hasSection(ctx: ProcessCtx): boolean;
+  /** `delta` removes the section of the running process `pid` (stopped inside the configuration dispatch). */
+  removesOwnSection(delta: ConfigDelta, pid: number): boolean;
+  /** The request kind of `clear … ospf process`. */
+  readonly clearKind: ProcessRequest['kind'];
+  /** The coalesced `resync` timer fired: read the configuration and the ports, then reconcile the engine. */
+  resync(eng: OspfEngine, ctx: ProcessCtx, out: Out): void;
+  /** A transport event (v2: `ipv4.ribChanged`). */
+  onEvent(eng: OspfEngine, ctx: ProcessCtx, ev: ProcessEvent): Action[];
 }
 
 /** @since P3c The OSPF adjacency engine (the module header): one instance per daemon instance. */
-export function createOspfEngine(hooks: OspfEngineHooks) {
+export function createOspfEngine(family: OspfFamily): OspfEngine {
+  const NAME = family.name;
+  const L = family.lsa;
+  const ALL_ROUTERS = family.allRouters;
+  const ALL_DROUTERS = family.allDRouters;
+  /** flood.ts answers with the v2 group addresses: this family's groups (the identity for v2). */
+  const groupOf = (d: string): string => (d === OSPF_ALL_ROUTERS ? ALL_ROUTERS : d === OSPF_ALL_DROUTERS ? ALL_DROUTERS : d);
   let proc: Proc | undefined;
   let cfg: OspfConfig | undefined;
   const ifaces = new Map<PortId, Iface>();
@@ -268,14 +397,13 @@ export function createOspfEngine(hooks: OspfEngineHooks) {
   let inSpf = false;
   let trees: { area: OspfAreaId; tree: SpfTree }[] = [];
   let routesSent = false;
-  let lastRoutes: RouteRow[] = [];
+  let lastRoutes: readonly TableRow[] = [];
   let watchKeys: string[] = [];
   let haveDefault = false;
   let refreshAt: SimTime | undefined;
   let maxageArmed = false;
   let resyncArmed = false;
   let noRidLogged = false;
-  let ipId = 0;
   const ring: DebugEvent[] = [];
 
   // ── debug ─────────────────────────────────────────────────────────────────
@@ -300,74 +428,21 @@ export function createOspfEngine(hooks: OspfEngineHooks) {
 
   // ── tables ────────────────────────────────────────────────────────────────
 
-  const ifTable = (ctx: ProcessCtx): Table<OspfInterfaceRow> | undefined => ctx.tables.get<OspfInterfaceRow>('ospf-interfaces');
-  const nbrTable = (ctx: ProcessCtx): Table<OspfNeighborRow> | undefined => ctx.tables.get<OspfNeighborRow>('ospf-neighbors');
-  const lsdbTable = (ctx: ProcessCtx): Table<OspfLsaRow> | undefined => ctx.tables.get<OspfLsaRow>('ospf-lsdb');
-
-  function ifRowOf(ctx: ProcessCtx, i: Iface): OspfInterfaceRow {
-    const row: OspfInterfaceRow = {
-      key: i.port,
-      port: i.port,
-      process: proc!.pid,
-      routerId: proc!.routerId,
-      area: i.area,
-      networkType: i.networkType,
-      state: i.state,
-      cost: i.cost,
-      costSource: i.costSource,
-      priority: i.priority,
-      helloS: i.helloS,
-      deadS: i.deadS,
-      passive: i.passive,
-      neighbors: i.nbrs.size,
-      adjacent: [...i.nbrs.values()].filter((n) => n.state === 'full').length,
-      stateSince: i.stateSince,
-      updatedAt: ctx.now,
-    };
-    if (i.address !== undefined) row.address = i.address;
-    if (i.prefixLen !== undefined) row.prefixLen = i.prefixLen;
-    if (i.dr !== OSPF_NO_DR) {
-      row.drAddress = i.dr;
-      if (i.drRid !== undefined) row.dr = i.drRid;
-    }
-    if (i.bdr !== OSPF_NO_DR) {
-      row.bdrAddress = i.bdr;
-      if (i.bdrRid !== undefined) row.bdr = i.bdrRid;
-    }
-    if (i.waitUntil !== undefined) row.waitUntil = i.waitUntil;
-    if (i.rejected !== undefined) row.rejected = { ...i.rejected };
-    return row;
-  }
+  const ifTable = (ctx: ProcessCtx): Table<TableRow> | undefined => ctx.tables.get<TableRow>(family.tables.interfaces);
+  const nbrTable = (ctx: ProcessCtx): Table<TableRow> | undefined => ctx.tables.get<TableRow>(family.tables.neighbors);
+  const lsdbTable = (ctx: ProcessCtx): Table<TableRow> | undefined => ctx.tables.get<TableRow>(family.tables.lsdb);
 
   function writeIfRow(ctx: ProcessCtx, i: Iface): void {
     if (proc === undefined) return;
-    const row = ifRowOf(ctx, i);
+    const row = family.ifRow(ctx, proc, i);
     const fp = fingerprint(row);
     if (fp === i.rowFp) return;
     i.rowFp = fp;
     ifTable(ctx)?.set(row);
   }
 
-  function nbrRowOf(ctx: ProcessCtx, i: Iface, n: Nbr): OspfNeighborRow {
-    const row: OspfNeighborRow = {
-      key: ospfNbrKey(n.port, n.routerId),
-      port: n.port,
-      routerId: n.routerId,
-      address: n.address,
-      priority: n.priority,
-      state: n.state,
-      role: ospfNeighborRole(i.networkType, n.address, i.dr, i.bdr),
-      dr: n.declared?.dr ?? OSPF_NO_DR,
-      bdr: n.declared?.bdr ?? OSPF_NO_DR,
-      stateSince: n.stateSince,
-      updatedAt: ctx.now,
-    };
-    if (n.nbrMaster !== undefined) row.master = n.nbrMaster;
-    return row;
-  }
-
   function writeNbrRow(ctx: ProcessCtx, i: Iface, n: Nbr): void {
-    const row = nbrRowOf(ctx, i, n);
+    const row = family.nbrRow(ctx, i, n);
     const fp = fingerprint(row);
     if (fp === n.rowFp) return;
     n.rowFp = fp;
@@ -376,7 +451,7 @@ export function createOspfEngine(hooks: OspfEngineHooks) {
 
   function installRow(ctx: ProcessCtx, row: OspfLsaRow): void {
     lsdb.set(row.key, row);
-    lsdbTable(ctx)?.set(row);
+    lsdbTable(ctx)?.set(family.lsdbRow(row));
   }
 
   function removeRow(ctx: ProcessCtx, key: string, reason: 'aged' | 'cleared'): void {
@@ -426,41 +501,23 @@ export function createOspfEngine(hooks: OspfEngineHooks) {
     }
   }
 
-  function ipLayer(src: Ipv4Address, dst: Ipv4Address): LayerSpec {
-    ipId = (ipId + 1) & 0xffff;
-    return { proto: 'ipv4', fields: { src, dst, ttl: 1, protocol: IPPROTO_OSPF, dscp: OSPF_DSCP, id: ipId } };
-  }
-
   /** Build and send one OSPF packet out `i` to `dst`. */
-  function sendPacket(ctx: ProcessCtx, out: Out, i: Iface, dst: Ipv4Address, type: number, fields: Record<string, FieldValue>, inner: readonly LayerSpec[], detail: string): Pdu | undefined {
+  function sendPacket(ctx: ProcessCtx, out: Out, i: Iface, dst: string, type: number, fields: Record<string, FieldValue>, inner: readonly LayerSpec[], detail: string): Pdu | undefined {
     if (proc === undefined || i.address === undefined) return undefined;
     const tag = type === OSPF_PACKET.hello ? 'ospf-hello' : type === OSPF_PACKET.dbd ? 'ospf-dbd' : type === OSPF_PACKET.lsr ? 'ospf-lsr' : type === OSPF_PACKET.lsu ? 'ospf-lsu' : 'ospf-lsack';
-    const meta: Partial<PduMeta> = { tag, flow: `ipv4:${i.address}>${dst}:ospf`, ...(type === OSPF_PACKET.hello ? { background: true } : {}) };
-    const layers: LayerSpec[] = [
-      ipLayer(i.address, dst),
-      { proto: 'ospf', fields: { version: 2, type, routerId: proc.routerId, area: i.area, ...fields } },
-      ...inner,
-    ];
+    const meta: Partial<PduMeta> = { tag, flow: family.flowOf(i, dst), ...(type === OSPF_PACKET.hello ? { background: true } : {}) };
+    const layers: LayerSpec[] = [...family.packetLayers(proc, i, dst, type, fields), ...inner];
     const pdu = ctx.newPdu(layers, meta);
     debug(ctx, OSPF_DEBUG.packet, `${i.port}: sent ${ospfPacketText(type)} to ${dst}${detail === '' ? '' : `, ${detail}`} (pdu ${pdu.id})`, { port: i.port, dst, type, pdu: pdu.id });
-    out.actions.push({ type: 'request', to: 'ipv4', req: { kind: 'ipv4.send', pdu, iface: i.port, nextHop: dst, cause: `ospf ${proc.pid} ${ospfPacketText(type)} on ${i.port}` } });
+    out.actions.push(family.sendAction(proc, i, dst, type, pdu));
     return pdu;
   }
 
   function sendHello(ctx: ProcessCtx, out: Out, i: Iface, why: string): void {
-    if (i.address === undefined || i.prefixLen === undefined) return;
     const heard = [...i.nbrs.values()].filter((n) => nsmAtLeast(n.state, 'init')).sort(byRid).map((n) => n.routerId);
+    const fields = family.helloFields(i, heard);
+    if (fields === undefined) return;
     i.helloCount++;
-    const fields: Record<string, FieldValue> = {
-      mask: prefixLenToMask(i.prefixLen),
-      helloInterval: i.helloS,
-      options: OSPF_OPTIONS,
-      priority: i.priority,
-      deadInterval: i.deadS,
-      dr: i.dr,
-      bdr: i.bdr,
-      neighbors: heard.join(','),
-    };
     debug(ctx, OSPF_DEBUG.hello, `${i.port}: hello sent (${why}): DR ${i.dr}, BDR ${i.bdr}, neighbours ${heard.length === 0 ? 'none' : heard.join(', ')}`, { port: i.port, dr: i.dr, bdr: i.bdr, neighbors: heard });
     sendPacket(ctx, out, i, ALL_ROUTERS, OSPF_PACKET.hello, fields, [], `DR ${i.dr} BDR ${i.bdr}`);
   }
@@ -474,16 +531,16 @@ export function createOspfEngine(hooks: OspfEngineHooks) {
     const s = n.lastSent;
     if (s === undefined) return;
     const mtu = ctx.ports.get(i.port)?.mtu ?? OSPF_DBD_MTU_DEFAULT;
-    sendPacket(ctx, out, i, directDestination(i.networkType, n.address), OSPF_PACKET.dbd, { mtu, options: OSPF_OPTIONS, flags: s.flags, ddSeq: s.ddSeq >>> 0 }, s.headers, `seq ${s.ddSeq}, flags ${ddFlagsText(s.flags)}, ${s.headers.length} headers`);
+    sendPacket(ctx, out, i, groupOf(directDestination(i.networkType, n.address)), OSPF_PACKET.dbd, { mtu, options: family.dbdOptions, flags: s.flags, ddSeq: s.ddSeq >>> 0 }, s.headers, `seq ${s.ddSeq}, flags ${ddFlagsText(s.flags)}, ${s.headers.length} headers`);
   }
 
   function sendLsr(ctx: ProcessCtx, out: Out, i: Iface, n: Nbr): void {
     const batch = [...n.requests.entries()].slice(0, OSPF_LSR_MAX_ENTRIES);
     if (batch.length === 0) return;
     n.lastLsr = batch.map(([k]) => k);
-    const requests = batch.map(([, r]) => lsrEntryOf(r.type, r.lsid, r.advRouter)).join(';');
+    const requests = batch.map(([, r]) => L.requestEntryOf(r.type, r.lsid, r.advRouter)).join(';');
     debug(ctx, OSPF_DEBUG.flood, `${i.port}: requesting ${batch.length} ${batch.length === 1 ? 'LSA' : 'LSAs'} from ${n.routerId}`, { port: i.port, neighbor: n.routerId, requests });
-    sendPacket(ctx, out, i, directDestination(i.networkType, n.address), OSPF_PACKET.lsr, { requests }, [], `${batch.length} requests`);
+    sendPacket(ctx, out, i, groupOf(directDestination(i.networkType, n.address)), OSPF_PACKET.lsr, { requests }, [], `${batch.length} requests`);
   }
 
   function armRxmt(n: Nbr, out: Out): void {
@@ -492,7 +549,7 @@ export function createOspfEngine(hooks: OspfEngineHooks) {
     out.actions.push(timer(`rxmt:${n.port}:${n.routerId}`, OSPF_RXMT_NS, true));
   }
 
-  function queueFlood(out: Out, port: PortId, dst: Ipv4Address, key: string): void {
+  function queueFlood(out: Out, port: PortId, dst: string, key: string): void {
     const k = `${port}|${dst}`;
     let e = out.flood.get(k);
     if (e === undefined) {
@@ -503,7 +560,7 @@ export function createOspfEngine(hooks: OspfEngineHooks) {
   }
 
   function queueDirect(out: Out, i: Iface, n: Nbr, key: string): void {
-    const dst = directDestination(i.networkType, n.address);
+    const dst = groupOf(directDestination(i.networkType, n.address));
     const k = `${i.port}|${dst}`;
     let e = out.direct.get(k);
     if (e === undefined) {
@@ -514,29 +571,29 @@ export function createOspfEngine(hooks: OspfEngineHooks) {
   }
 
   function queueAck(out: Out, i: Iface, n: Nbr, w: OspfLsaWire): void {
-    const dst = directDestination(i.networkType, n.address);
+    const dst = groupOf(directDestination(i.networkType, n.address));
     const k = `${i.port}|${dst}`;
     let e = out.acks.get(k);
     if (e === undefined) {
       e = { port: i.port, dst, headers: new Map() };
       out.acks.set(k, e);
     }
-    e.headers.set(lsaKeyOf(lsaScopeOf(w.type, i.area), w.type, w.lsid, w.advRouter), wireHeaderLayerOf(w));
+    e.headers.set(lsaKeyOf(L.scopeOf(w.type, i.area, i.port), w.type, w.lsid, w.advRouter), L.wireHeaderLayerOf(w));
   }
 
   /** Emit the bundled updates (flooded, then direct) and acknowledgements of this handler call. */
   function finish(ctx: ProcessCtx, out: Out): void {
-    const updates = (bundles: Map<string, { port: PortId; dst: Ipv4Address; keys: Set<string> }>, kind: string): void => {
+    const updates = (bundles: Map<string, { port: PortId; dst: string; keys: Set<string> }>, kind: string): void => {
       for (const b of bundles.values()) {
         const i = ifaces.get(b.port);
         if (i === undefined || i.state === 'down') continue;
-        const rows = sortedLsdb([...b.keys].map((k) => lsdb.get(k)).filter((r): r is OspfLsaRow => r !== undefined));
+        const rows = L.sorted([...b.keys].map((k) => lsdb.get(k)).filter((r): r is OspfLsaRow => r !== undefined));
         let chunk: OspfLsaRow[] = [];
         let bytes = 4;
         const flush = (): void => {
           if (chunk.length === 0) return;
-          debug(ctx, OSPF_DEBUG.flood, `${i.port}: ${kind} update to ${b.dst}: ${chunk.map((r) => lsaText(r)).join('; ')}`, { port: i.port, dst: b.dst, lsas: chunk.map((r) => r.key) });
-          sendPacket(ctx, out, i, b.dst, OSPF_PACKET.lsu, {}, chunk.map((r) => lsaLayerOf(r, ctx.now)), `${chunk.length} ${chunk.length === 1 ? 'LSA' : 'LSAs'}`);
+          debug(ctx, OSPF_DEBUG.flood, `${i.port}: ${kind} update to ${b.dst}: ${chunk.map((r) => L.text(r)).join('; ')}`, { port: i.port, dst: b.dst, lsas: chunk.map((r) => r.key) });
+          sendPacket(ctx, out, i, b.dst, OSPF_PACKET.lsu, {}, chunk.map((r) => L.layerOf(r, ctx.now)), `${chunk.length} ${chunk.length === 1 ? 'LSA' : 'LSAs'}`);
           chunk = [];
           bytes = 4;
         };
@@ -580,7 +637,7 @@ export function createOspfEngine(hooks: OspfEngineHooks) {
 
   const running = (i: Iface): boolean => i.state !== 'down';
 
-  function wantedGroups(i: Iface): Ipv4Address[] {
+  function wantedGroups(i: Iface): string[] {
     if (proc === undefined || i.silent || i.state === 'down' || i.state === 'loopback') return [];
     return i.state === 'dr' || i.state === 'backup' ? [ALL_ROUTERS, ALL_DROUTERS] : [ALL_ROUTERS];
   }
@@ -593,7 +650,7 @@ export function createOspfEngine(hooks: OspfEngineHooks) {
       if (has === should) continue;
       if (should) i.joined.add(g);
       else i.joined.delete(g);
-      out.actions.push({ type: 'request', to: 'ipv4', req: { kind: 'ipv4.group', op: should ? 'join' : 'leave', iface: i.port, group: g, owner: NAME } });
+      out.actions.push(family.groupAction(should ? 'join' : 'leave', i.port, g));
     }
   }
 
@@ -602,7 +659,7 @@ export function createOspfEngine(hooks: OspfEngineHooks) {
     if (from === to) return;
     i.state = to;
     i.stateSince = ctx.now;
-    transition(ctx, `${i.port}: interface ${from} -> ${to} (${cause})`, { machine: 'ospf-if', subject: i.port, port: i.port, from, to, cause });
+    transition(ctx, `${i.port}: interface ${from} -> ${to} (${cause})`, { machine: family.machines.iface, subject: i.port, port: i.port, from, to, cause });
     if (from === 'waiting') {
       i.waitUntil = undefined;
       out.actions.push(cancel(`wait:${i.port}`));
@@ -754,7 +811,7 @@ export function createOspfEngine(hooks: OspfEngineHooks) {
     if (from === to) return;
     n.state = to;
     n.stateSince = ctx.now;
-    const fsm: FsmTransition = { machine: 'ospf-nbr', subject: `${i.port} ${n.routerId}`, port: i.port, from, to, cause, ...(pdu !== undefined ? { pdu: pdu.id } : {}) };
+    const fsm: FsmTransition = { machine: family.machines.nbr, subject: `${i.port} ${n.routerId}`, port: i.port, from, to, cause, ...(pdu !== undefined ? { pdu: pdu.id } : {}) };
     transition(ctx, `${i.port}: neighbour ${n.routerId} (${n.address}) ${from} -> ${to} (${cause})`, fsm);
     if (nsmRank(to) < nsmRank('exstart')) clearExchange(n, out);
     if ((from === 'exchange' || from === 'loading') && to !== 'exchange' && to !== 'loading') out.checkMaxAge = true;
@@ -791,7 +848,7 @@ export function createOspfEngine(hooks: OspfEngineHooks) {
 
   /** NegotiationDone: Exchange, with the summary of every LSA of the area (MaxAge copies left out). */
   function negotiationDone(ctx: ProcessCtx, out: Out, i: Iface, n: Nbr): void {
-    n.summary = sortedLsdb(lsdbForArea(lsdb.values(), i.area))
+    n.summary = L.sorted(L.forIface(lsdb.values(), i))
       .filter((r) => r.maxAge !== true)
       .map((r) => r.key);
     n.allSent = false;
@@ -805,7 +862,7 @@ export function createOspfEngine(hooks: OspfEngineHooks) {
     while (n.summary.length > 0 && headers.length < OSPF_DBD_MAX_HEADERS) {
       const key = n.summary.shift()!;
       const row = lsdb.get(key);
-      if (row !== undefined) headers.push(lsaHeaderLayerOf(row, ctx.now));
+      if (row !== undefined) headers.push(L.headerLayerOf(row, ctx.now));
     }
     return { headers, more: n.summary.length > 0 };
   }
@@ -813,9 +870,9 @@ export function createOspfEngine(hooks: OspfEngineHooks) {
   /** Read the LSA headers of a DBD into the request list; false on an unknown LSA type (SeqNumberMismatch). */
   function takeHeaders(ctx: ProcessCtx, i: Iface, n: Nbr, layers: readonly LayerView[]): boolean {
     for (const l of layers) {
-      const w = lsaWireOf(l.fields);
-      if (w === undefined || !isOspfLsaType(w.type)) return false;
-      const key = lsaKeyOf(lsaScopeOf(w.type, i.area), w.type, w.lsid, w.advRouter);
+      const w = L.wireOf(l.fields);
+      if (w === undefined || !L.isKnownType(w.type)) return false;
+      const key = lsaKeyOf(L.scopeOf(w.type, i.area, i.port), w.type, w.lsid, w.advRouter);
       const db = lsdb.get(key);
       if (db === undefined || compareLsaInstances(wireInstance(w), rowInstance(db, ctx.now)) > 0) {
         n.requests.set(key, { ...wireInstance(w), type: w.type, lsid: w.lsid, advRouter: w.advRouter });
@@ -856,23 +913,11 @@ export function createOspfEngine(hooks: OspfEngineHooks) {
 
   // ── receive ───────────────────────────────────────────────────────────────
 
-  function rxHello(ctx: ProcessCtx, out: Out, i: Iface, pdu: Pdu, src: Ipv4Address, f: Readonly<Record<string, FieldValue>>): void {
-    if (proc === undefined || i.address === undefined || i.prefixLen === undefined) return;
+  function rxHello(ctx: ProcessCtx, out: Out, i: Iface, pdu: Pdu, src: string, f: Readonly<Record<string, FieldValue>>): void {
+    if (proc === undefined || i.address === undefined) return;
+    const check = family.checkHello(proc, i, f, src);
+    if (check === undefined) return;
     const routerId = str(f.routerId);
-    const hello = {
-      routerId,
-      area: str(f.area),
-      src,
-      mask: str(f.mask),
-      helloS: num(f.helloInterval),
-      deadS: num(f.deadInterval),
-      options: num(f.options),
-      authType: num(f.auType),
-    };
-    const check = checkOspfHello(
-      { routerId: proc.routerId, area: i.area, networkType: i.networkType, address: i.address, prefixLen: i.prefixLen, helloS: i.helloS, deadS: i.deadS, options: OSPF_OPTION_E, authType: 0 },
-      hello,
-    );
     if (!check.ok) {
       i.rejected = { from: src, routerId, reason: check.text, at: ctx.now };
       debug(ctx, OSPF_DEBUG.hello, `${i.port}: hello from ${routerId} (${src}) refused: ${check.text}`, { port: i.port, from: src, routerId, reason: check.reason });
@@ -989,10 +1034,10 @@ export function createOspfEngine(hooks: OspfEngineHooks) {
   function rxLsr(ctx: ProcessCtx, out: Out, i: Iface, n: Nbr, pdu: Pdu, f: Readonly<Record<string, FieldValue>>): void {
     out.actions.push({ type: 'consume', pdu });
     if (!nsmAtLeast(n.state, 'exchange')) return;
-    const entries = parseLsrEntries(str(f.requests));
+    const entries = L.parseRequests(str(f.requests));
     debug(ctx, OSPF_DEBUG.flood, `${i.port}: ${n.routerId} requests ${entries.length} ${entries.length === 1 ? 'LSA' : 'LSAs'}`, { port: i.port, neighbor: n.routerId });
     for (const e of entries) {
-      const key = lsaKeyOf(lsaScopeOf(e.type, i.area), e.type, e.lsid, e.advRouter);
+      const key = lsaKeyOf(L.scopeOf(e.type, i.area, i.port), e.type, e.lsid, e.advRouter);
       if (!lsdb.has(key)) {
         enterExStart(ctx, out, i, n, OSPF_NSM_EVENT_NAMES['bad-ls-req'], true);
         return;
@@ -1008,22 +1053,19 @@ export function createOspfEngine(hooks: OspfEngineHooks) {
 
   function isSelf(ctx: ProcessCtx, w: Pick<OspfLsaWire, 'type' | 'lsid' | 'advRouter'>): boolean {
     if (proc === undefined) return false;
-    if (w.advRouter === proc.routerId) return true;
-    if (w.type !== 2) return false;
-    for (const i of ifaces.values()) if (i.address === w.lsid) return true;
-    return ctx.ownAddress(w.lsid) !== undefined;
+    return family.isSelf(ctx, proc, ifaces, w);
   }
 
   function rxLsu(ctx: ProcessCtx, out: Out, i: Iface, n: Nbr, pdu: Pdu, lsas: readonly LayerView[]): void {
     out.actions.push({ type: 'consume', pdu });
     if (!nsmAtLeast(n.state, 'exchange') || proc === undefined) return;
     for (const l of lsas) {
-      const w = lsaWireOf(l.fields);
-      if (w === undefined || w.checksumValid === false || !isOspfLsaType(w.type)) {
+      const w = L.wireOf(l.fields);
+      if (w === undefined || w.checksumValid === false || !L.isKnownType(w.type)) {
         debug(ctx, OSPF_DEBUG.flood, `${i.port}: discarded an LSA from ${n.routerId}: ${w === undefined ? 'incomplete header' : w.checksumValid === false ? 'bad checksum' : `unknown type ${w.type}`}`, { port: i.port });
         continue;
       }
-      const scope = lsaScopeOf(w.type, i.area);
+      const scope = L.scopeOf(w.type, i.area, i.port);
       const key = lsaKeyOf(scope, w.type, w.lsid, w.advRouter);
       const db = lsdb.get(key);
       const inst = wireInstance(w);
@@ -1034,14 +1076,14 @@ export function createOspfEngine(hooks: OspfEngineHooks) {
       const cmp = db === undefined ? 1 : compareLsaInstances(inst, rowInstance(db, ctx.now));
       if (cmp > 0) {
         if (db !== undefined && !db.self && !byRequest.has(key) && ctx.now - db.installedAt < LSA_MIN_ARRIVAL_NS) {
-          debug(ctx, OSPF_DEBUG.flood, `${i.port}: ${lsaText(w)} from ${n.routerId} discarded: the last copy arrived less than 1 s ago`, { port: i.port, lsa: key });
+          debug(ctx, OSPF_DEBUG.flood, `${i.port}: ${L.text(w)} from ${n.routerId} discarded: the last copy arrived less than 1 s ago`, { port: i.port, lsa: key });
           continue;
         }
         const self = isSelf(ctx, w);
         if (n.requests.has(key)) byRequest.add(key);
         else byRequest.delete(key);
-        const row = lsaRowOf(w, scope, ctx.now, self && w.advRouter === proc.routerId);
-        const floodedBack = installAndFlood(ctx, out, row, { port: i.port, routerId: n.routerId }, `${lsaText(w)} from ${n.routerId}`);
+        const row = L.rowOf(w, scope, ctx.now, self && w.advRouter === proc.routerId);
+        const floodedBack = installAndFlood(ctx, out, row, { port: i.port, routerId: n.routerId }, `${L.text(w)} from ${n.routerId}`);
         if (ackDirectly(floodedBack ? 'newer-flooded-back' : 'newer')) queueAck(out, i, n, w);
         if (self) selfNewer(ctx, out, row);
         continue;
@@ -1078,9 +1120,9 @@ export function createOspfEngine(hooks: OspfEngineHooks) {
     out.actions.push({ type: 'consume', pdu });
     if (!nsmAtLeast(n.state, 'exchange')) return;
     for (const l of lsas) {
-      const w = lsaWireOf(l.fields);
+      const w = L.wireOf(l.fields);
       if (w === undefined) continue;
-      const key = lsaKeyOf(lsaScopeOf(w.type, i.area), w.type, w.lsid, w.advRouter);
+      const key = lsaKeyOf(L.scopeOf(w.type, i.area, i.port), w.type, w.lsid, w.advRouter);
       const entry = n.rxmt.get(key);
       if (entry !== undefined && compareLsaInstances(wireInstance(w), entry) === 0) {
         n.rxmt.delete(key);
@@ -1097,8 +1139,8 @@ export function createOspfEngine(hooks: OspfEngineHooks) {
     const prev = lsdb.get(row.key);
     installRow(ctx, row);
     debug(ctx, OSPF_DEBUG.flood, `installed ${what}${row.maxAge === true ? ' (MaxAge)' : ''}`, { lsa: row.key, seq: row.seq });
-    const changed = prev === undefined || (prev.maxAge === true) !== (row.maxAge === true) || !lsaBodyEqual(prev, row);
-    if (changed) scheduleSpf(ctx, out, `${lsaText(row)}${row.maxAge === true ? ' flushed' : prev === undefined ? ' added' : ' changed'}`);
+    const changed = prev === undefined || (prev.maxAge === true) !== (row.maxAge === true) || !L.bodyEqual(prev, row);
+    if (changed) scheduleSpf(ctx, out, `${L.text(row)}${row.maxAge === true ? ' flushed' : prev === undefined ? ' added' : ' changed'}`);
     if (!row.self) armMaxAge(out);
     if (row.maxAge === true) out.checkMaxAge = true;
     return flood(ctx, out, row, from);
@@ -1109,7 +1151,7 @@ export function createOspfEngine(hooks: OspfEngineHooks) {
     let floodedBack = false;
     for (const i of ordered(ctx)) {
       if (!running(i) || i.silent || i.state === 'loopback') continue;
-      if (row.scope !== 'as' && row.scope !== i.area) continue;
+      if (!L.floodsOn(row.scope, i)) continue;
       const nbrs = [...i.nbrs.values()].sort(byRid);
       const view: FloodIface = {
         networkType: i.networkType,
@@ -1137,20 +1179,11 @@ export function createOspfEngine(hooks: OspfEngineHooks) {
         armRxmt(n, out);
       }
       if (v.send && v.dst !== undefined) {
-        queueFlood(out, i.port, v.dst, row.key);
+        queueFlood(out, i.port, groupOf(v.dst), row.key);
         if (from !== undefined && from.port === i.port) floodedBack = true;
       }
     }
     return floodedBack;
-  }
-
-  /** The OSPF interfaces as the router-LSA sees them. */
-  function originIfaces(ctx: ProcessCtx): OriginIface[] {
-    return ordered(ctx).map((i) => {
-      const full = [...i.nbrs.values()].filter((n) => n.state === 'full').sort(byRid).map((n) => ({ routerId: n.routerId, address: n.address }));
-      const o: OriginIface = { port: i.port, area: i.area, networkType: i.networkType, state: i.state, cost: i.cost, dr: i.dr, fullNeighbors: full };
-      return i.address !== undefined && i.prefixLen !== undefined ? { ...o, address: i.address, prefixLen: i.prefixLen } : o;
-    });
   }
 
   function areasOf(ctx: ProcessCtx): OspfAreaId[] {
@@ -1161,31 +1194,15 @@ export function createOspfEngine(hooks: OspfEngineHooks) {
 
   /** Every self LSA this router wants now, by key. */
   function desiredSelf(ctx: ProcessCtx): Map<string, OspfLsaBody> {
-    const out = new Map<string, OspfLsaBody>();
-    if (proc === undefined) return out;
-    const rid = proc.routerId;
-    const oifs = originIfaces(ctx);
-    const areas = areasOf(ctx);
-    const external = cfg?.process?.defaultOriginate !== undefined && (cfg.process.defaultOriginate === 'always' || haveDefault);
-    for (const area of areas) {
-      const body = routerLsaBody(rid, area, oifs, { areaBorder: areas.length > 1, asbr: external });
-      const key = lsaKeyOf(area, 1, rid, rid);
-      const had = lsdb.get(key);
-      if (body.links.length > 0 || (had !== undefined && had.maxAge !== true)) out.set(key, body);
-    }
-    for (const o of oifs) {
-      const body = networkLsaBody(rid, o);
-      if (body !== undefined) out.set(lsaKeyOf(o.area, 2, body.lsid, rid), body);
-    }
-    if (external) out.set(lsaKeyOf('as', 5, '0.0.0.0', rid), defaultExternalBody(rid));
-    return out;
+    if (proc === undefined) return new Map<string, OspfLsaBody>();
+    return family.desiredSelf({ proc, cfg, ifaces: ordered(ctx), areas: areasOf(ctx), haveDefault, lsdb });
   }
 
   function originateAll(ctx: ProcessCtx, out: Out): void {
     if (proc === undefined) return;
     const want = desiredSelf(ctx);
     for (const [key, body] of want) originate(ctx, out, key, body, false);
-    for (const row of sortedLsdb(lsdb.values())) {
+    for (const row of L.sorted(lsdb.values())) {
       if (row.advRouter !== proc.routerId || row.maxAge === true || want.has(row.key)) continue;
       flushSelf(ctx, out, row, 'no longer originated');
     }
@@ -1196,7 +1213,7 @@ export function createOspfEngine(hooks: OspfEngineHooks) {
   function originate(ctx: ProcessCtx, out: Out, key: string, body: OspfLsaBody, force: boolean, fromWar = false): void {
     if (proc === undefined) return;
     const db = lsdb.get(key);
-    if (!force && db !== undefined && db.maxAge !== true && lsaBodyEqual(db, body)) {
+    if (!force && db !== undefined && db.maxAge !== true && L.bodyEqual(db, body)) {
       if (!db.self) installRow(ctx, { ...db, self: true, updatedAt: ctx.now });
       dropGen(out, key);
       return;
@@ -1224,32 +1241,10 @@ export function createOspfEngine(hooks: OspfEngineHooks) {
     }
     dropGen(out, key);
     const seq = db === undefined ? LSA_INITIAL_SEQ : (nextLsaSeq(db.seq) ?? LSA_INITIAL_SEQ);
-    const scope = lsaScopeOf(body.type, key.slice(0, key.indexOf('|')));
-    const content = { ...body, seq };
-    const { checksum, length } = lsaChecksumAndLength(content);
-    const row: OspfLsaRow = {
-      key,
-      scope,
-      type: body.type,
-      lsid: body.lsid,
-      advRouter: body.advRouter,
-      seq,
-      ageAtInstall: 0,
-      installedAt: ctx.now,
-      checksum,
-      length,
-      options: body.options,
-      self: true,
-      updatedAt: ctx.now,
-    };
-    if (body.flags !== undefined) row.flags = { ...body.flags };
-    if (body.links !== undefined) row.links = body.links.map((l) => ({ ...l }));
-    if (body.mask !== undefined) row.mask = body.mask;
-    if (body.attached !== undefined) row.attached = [...body.attached];
-    if (body.metric !== undefined) row.metric = body.metric;
-    if (body.external !== undefined) row.external = { ...body.external };
+    const scope = L.scopeOf(body.type, key.slice(0, key.indexOf('|')));
+    const row = L.selfRowOf(key, scope, body, seq, ctx.now);
     lastOrig.set(key, ctx.now);
-    installAndFlood(ctx, out, row, undefined, `own ${lsaText(row)}`);
+    installAndFlood(ctx, out, row, undefined, `own ${L.text(row)}`);
   }
 
   function dropGen(out: Out, key: string): void {
@@ -1261,8 +1256,8 @@ export function createOspfEngine(hooks: OspfEngineHooks) {
   function flushSelf(ctx: ProcessCtx, out: Out, row: OspfLsaRow, why: string): void {
     dropGen(out, row.key);
     const flushed: OspfLsaRow = { ...row, ageAtInstall: LSA_MAX_AGE_S, installedAt: ctx.now, maxAge: true, updatedAt: ctx.now };
-    debug(ctx, OSPF_DEBUG.flood, `flushing ${lsaText(row)} (${why})`, { lsa: row.key });
-    installAndFlood(ctx, out, flushed, undefined, lsaText(row));
+    debug(ctx, OSPF_DEBUG.flood, `flushing ${L.text(row)} (${why})`, { lsa: row.key });
+    installAndFlood(ctx, out, flushed, undefined, L.text(row));
   }
 
   /** RFC 2328 §13.4: a newer copy of a self-originated LSA arrived. */
@@ -1271,7 +1266,7 @@ export function createOspfEngine(hooks: OspfEngineHooks) {
     const prev = warSeen.get(row.key);
     const count = prev !== undefined && ctx.now - prev.at < OSPF_SELF_WAR_WINDOW_NS ? prev.count + 1 : 1;
     warSeen.set(row.key, { at: ctx.now, count, logged: prev?.logged === true && count > 1 });
-    if (count >= 2 && row.type === 1 && warSeen.get(row.key)!.logged !== true) {
+    if (count >= 2 && row.type === L.routerType && warSeen.get(row.key)!.logged !== true) {
       warSeen.get(row.key)!.logged = true;
       logConflict(ctx, out, row.key, `OSPF process ${proc.pid}: another router also uses router ID ${proc.routerId}; its link-state advertisements keep replacing this router's own.`);
     }
@@ -1292,13 +1287,13 @@ export function createOspfEngine(hooks: OspfEngineHooks) {
 
   function removeAckedMaxAge(ctx: ProcessCtx): void {
     if (anyExchanging()) return;
-    for (const row of sortedLsdb(lsdb.values())) {
+    for (const row of L.sorted(lsdb.values())) {
       if (row.maxAge !== true) continue;
       let held = false;
       for (const i of ifaces.values()) for (const n of i.nbrs.values()) if (n.rxmt.has(row.key)) held = true;
       if (held) continue;
       removeRow(ctx, row.key, 'aged');
-      debug(ctx, OSPF_DEBUG.flood, `removed ${lsaText(row)} (MaxAge, acknowledged)`, { lsa: row.key });
+      debug(ctx, OSPF_DEBUG.flood, `removed ${L.text(row)} (MaxAge, acknowledged)`, { lsa: row.key });
     }
   }
 
@@ -1352,7 +1347,7 @@ export function createOspfEngine(hooks: OspfEngineHooks) {
       for (const i of ordered(ctx)) if (i.area === area && running(i) && i.address !== undefined) rootIfaces.push({ port: i.port, address: i.address });
       if (rootIfaces.length > 0) areas.push({ area, rootIfaces });
     }
-    const res = computeOspfRoutes(sortedLsdb(lsdb.values()), proc.routerId, areas, { maximumPaths: cfg?.process?.maximumPaths ?? 4, now: ctx.now });
+    const res = family.computeRoutes(L.sorted(lsdb.values()), proc.routerId, areas, { maximumPaths: cfg?.process?.maximumPaths ?? 4, now: ctx.now });
     trees = res.trees;
     spfRuns++;
     lastSpfAt = ctx.now;
@@ -1362,13 +1357,13 @@ export function createOspfEngine(hooks: OspfEngineHooks) {
     reportRouteChanges(ctx, res.rows);
     lastRoutes = res.rows;
     routesSent = true;
-    out.actions.push({ type: 'request', to: 'ipv4', req: { kind: 'ipv4.routes', owner: NAME, rows: res.rows } });
+    out.actions.push(family.routesAction(res.rows));
   }
 
-  function reportRouteChanges(ctx: ProcessCtx, rows: readonly RouteRow[]): void {
-    const text = (list: readonly RouteRow[]): Map<string, string> => {
+  function reportRouteChanges(ctx: ProcessCtx, rows: readonly TableRow[]): void {
+    const text = (list: readonly TableRow[]): Map<string, string> => {
       const m = new Map<string, string>();
-      for (const r of list) m.set(r.key, `${m.has(r.key) ? `${m.get(r.key)!}, ` : ''}${ospfRouteText(r)}`);
+      for (const r of list) m.set(r.key, `${m.has(r.key) ? `${m.get(r.key)!}, ` : ''}${family.routeText(r)}`);
       return m;
     };
     const before = text(lastRoutes);
@@ -1453,14 +1448,14 @@ export function createOspfEngine(hooks: OspfEngineHooks) {
     for (const key of [...lsdb.keys()]) removeRow(ctx, key, 'cleared');
     byRequest.clear();
     if (routesSent) {
-      out.actions.push({ type: 'request', to: 'ipv4', req: { kind: 'ipv4.routes', owner: NAME, rows: [] } });
+      out.actions.push(family.routesAction([]));
       reportRouteChanges(ctx, []);
       routesSent = false;
       lastRoutes = [];
     }
     if (watchKeys.length > 0) {
       watchKeys = [];
-      out.actions.push({ type: 'request', to: 'ipv4', req: { kind: 'ipv4.ribWatch', owner: NAME, keys: [] } });
+      out.actions.push(family.watchAction([]));
     }
     haveDefault = false;
     debug(ctx, OSPF_DEBUG.adj, `OSPF process ${proc.pid} stopped (${why})`, { pid: proc.pid });
@@ -1519,7 +1514,7 @@ export function createOspfEngine(hooks: OspfEngineHooks) {
     switch (kind) {
       case 'resync':
         resyncArmed = false;
-        hooks.resync(ctx, out);
+        family.resync(surface, ctx, out);
         return;
       case 'spf':
         if (spfDue !== undefined) runSpf(ctx, out);
@@ -1541,7 +1536,7 @@ export function createOspfEngine(hooks: OspfEngineHooks) {
       case 'refresh':
         refreshAt = undefined;
         if (proc === undefined) return;
-        for (const r of sortedLsdb(lsdb.values())) {
+        for (const r of L.sorted(lsdb.values())) {
           if (!r.self || r.maxAge === true || r.advRouter !== proc.routerId) continue;
           if (r.installedAt + Math.max(0, LSA_REFRESH_S - r.ageAtInstall) * SEC > ctx.now) continue;
           const want = desiredSelf(ctx).get(r.key);
@@ -1553,11 +1548,11 @@ export function createOspfEngine(hooks: OspfEngineHooks) {
         maxageArmed = false;
         if (proc === undefined) return;
         let others = false;
-        for (const r of sortedLsdb(lsdb.values())) {
+        for (const r of L.sorted(lsdb.values())) {
           if (r.self && r.maxAge !== true) continue;
           others = true;
           if (r.maxAge !== true && lsaAgeAt(r, ctx.now) >= LSA_MAX_AGE_S) {
-            installAndFlood(ctx, out, { ...r, ageAtInstall: LSA_MAX_AGE_S, installedAt: ctx.now, maxAge: true, updatedAt: ctx.now }, undefined, `${lsaText(r)} (reached MaxAge)`);
+            installAndFlood(ctx, out, { ...r, ageAtInstall: LSA_MAX_AGE_S, installedAt: ctx.now, maxAge: true, updatedAt: ctx.now }, undefined, `${L.text(r)} (reached MaxAge)`);
           }
         }
         out.checkMaxAge = true;
@@ -1666,9 +1661,9 @@ export function createOspfEngine(hooks: OspfEngineHooks) {
     return { process: NAME, state: view as unknown as Record<string, unknown> };
   }
 
-  // ── the engine's surface (what the daemon factory reaches) ────────────────
+  // ── the engine's surface (what the family and the daemon shell reach) ───
 
-  return {
+  const surface: OspfEngine = {
     get proc(): Proc | undefined {
       return proc;
     },
@@ -1722,7 +1717,177 @@ export function createOspfEngine(hooks: OspfEngineHooks) {
       return ring;
     },
   };
+  return surface;
 }
 
-/** @since P3c The engine one OSPF daemon runs on (the module header). */
-export type OspfEngine = ReturnType<typeof createOspfEngine>;
+/** @since P3c The engine one OSPF daemon runs on (the module header): what its family and the daemon shell reach. */
+export interface OspfEngine {
+  readonly proc: Proc | undefined;
+  cfg: OspfConfig | undefined;
+  readonly lastSpfAt: SimTime | undefined;
+  /** The `ospfNoRouterId` log was written (once per process absence). */
+  noRidLogged: boolean;
+  /** The RIB holds a default route from another source (`default-information originate`). */
+  haveDefault: boolean;
+  /** The keys of the last RIB watch request. */
+  watchKeys: string[];
+  readonly ifaces: Map<PortId, Iface>;
+  readonly lsdb: Map<string, OspfLsaRow>;
+  debug(ctx: ProcessCtx, category: string, message: string, data?: Record<string, unknown>): void;
+  armResync(): Action[];
+  /** Run `fn` with an accumulator, settle elections, origination and MaxAge removals, then emit the bundles. */
+  run(ctx: ProcessCtx, fn: (out: Out) => void): Action[];
+  finish(ctx: ProcessCtx, out: Out): void;
+  ordered(ctx: ProcessCtx): Iface[];
+  scheduleSpf(ctx: ProcessCtx, out: Out, reason: string): void;
+  flushSelf(ctx: ProcessCtx, out: Out, row: OspfLsaRow, why: string): void;
+  start(ctx: ProcessCtx, p: OspfProcessConfig, routerId: Ipv4Address, source: string): void;
+  stop(ctx: ProcessCtx, out: Out, why: string): void;
+  /** The interface half of a resync: reconcile the running interfaces with `wanted`. */
+  reconcile(ctx: ProcessCtx, out: Out, wanted: readonly IfaceWant[]): void;
+  onTimerKey(ctx: ProcessCtx, out: Out, key: string): void;
+  rxHello(ctx: ProcessCtx, out: Out, i: Iface, pdu: Pdu, src: string, f: Readonly<Record<string, FieldValue>>): void;
+  rxDbd(ctx: ProcessCtx, out: Out, i: Iface, n: Nbr, pdu: Pdu, f: Readonly<Record<string, FieldValue>>, lsas: readonly LayerView[]): void;
+  rxLsr(ctx: ProcessCtx, out: Out, i: Iface, n: Nbr, pdu: Pdu, f: Readonly<Record<string, FieldValue>>): void;
+  rxLsu(ctx: ProcessCtx, out: Out, i: Iface, n: Nbr, pdu: Pdu, lsas: readonly LayerView[]): void;
+  rxAck(ctx: ProcessCtx, out: Out, i: Iface, n: Nbr, pdu: Pdu, lsas: readonly LayerView[]): void;
+  stateSnapshot(): StateView;
+  debugEvents(): readonly DebugEvent[];
+}
+
+/**
+ * @since P3c [S6] The daemon shell both OSPF families share: the engine plus `family` as a `Process`. Configuration and
+ * link changes arm the coalesced resync (the family reads the configuration there); a packet is demultiplexed on the
+ * family's outer layers, then handed to the engine by type; `clear … ospf process` restarts the process, flushing this
+ * router's LSAs first when the configured router id differs from the running one.
+ */
+export function createOspfProcess(family: OspfFamily): Process {
+  const eng = createOspfEngine(family);
+  const resync = (ctx: ProcessCtx, out: Out): void => family.resync(eng, ctx, out);
+
+  return {
+    name: family.name,
+
+    init(ctx: ProcessCtx): Action[] {
+      return family.hasSection(ctx) ? eng.armResync() : [];
+    },
+
+    onPdu(ctx: ProcessCtx, pdu: Pdu, port: PortId): Action[] {
+      return eng.run(ctx, (out) => {
+        const p = family.decode(pdu);
+        if (p === undefined) {
+          out.actions.push({ type: 'drop', pdu, reason: 'other', detail: 'not an OSPF packet', port });
+          return;
+        }
+        if (p.checksumValid === false) {
+          out.actions.push({ type: 'drop', pdu, reason: 'bad-checksum', detail: p.error ?? 'OSPF checksum mismatch', port });
+          return;
+        }
+        const i = eng.ifaces.get(port);
+        if (eng.proc === undefined || i === undefined || i.state === 'down' || i.silent || i.state === 'loopback') {
+          out.actions.push({ type: 'drop', pdu, reason: 'other', detail: `OSPF does not run on ${port}${i?.silent === true ? ' (passive)' : ''}`, port });
+          return;
+        }
+        const { src, dst, type } = p;
+        if (src === i.address) {
+          out.actions.push({ type: 'consume', pdu });
+          return;
+        }
+        if (p.version !== family.version) {
+          out.actions.push({ type: 'drop', pdu, reason: 'other', detail: `OSPF version ${p.version} is not spoken here`, port });
+          return;
+        }
+        if (dst === family.allDRouters && i.state !== 'dr' && i.state !== 'backup') {
+          out.actions.push({ type: 'drop', pdu, reason: 'not-for-me', detail: `${port} is neither DR nor BDR (AllDRouters)`, port });
+          return;
+        }
+        const lsas = p.lsas;
+        eng.debug(ctx, OSPF_DEBUG.packet, `${port}: received ${ospfPacketText(type)} from ${p.routerId} (${src})${lsas.length > 0 ? `, ${lsas.length} LSAs` : ''} (pdu ${pdu.id})`, { port, from: src, type, pdu: pdu.id });
+        if (type === OSPF_PACKET.hello) {
+          eng.rxHello(ctx, out, i, pdu, src, p.fields);
+          return;
+        }
+        if (p.area !== i.area) {
+          out.actions.push({ type: 'drop', pdu, reason: 'other', detail: `OSPF area ${p.area} does not match ${port}'s area ${i.area}`, port });
+          return;
+        }
+        const n = i.nbrs.get(p.routerId);
+        if (n === undefined) {
+          out.actions.push({ type: 'drop', pdu, reason: 'other', detail: `no OSPF neighbour ${p.routerId} on ${port}`, port });
+          return;
+        }
+        switch (type) {
+          case OSPF_PACKET.dbd:
+            eng.rxDbd(ctx, out, i, n, pdu, p.fields, lsas);
+            return;
+          case OSPF_PACKET.lsr:
+            eng.rxLsr(ctx, out, i, n, pdu, p.fields);
+            return;
+          case OSPF_PACKET.lsu:
+            eng.rxLsu(ctx, out, i, n, pdu, lsas);
+            return;
+          case OSPF_PACKET.lsack:
+            eng.rxAck(ctx, out, i, n, pdu, lsas);
+            return;
+          default:
+            out.actions.push({ type: 'drop', pdu, reason: 'other', detail: `unknown OSPF packet type ${type}`, port });
+        }
+      });
+    },
+
+    onTimer(ctx: ProcessCtx, key: string): Action[] {
+      return eng.run(ctx, (out) => eng.onTimerKey(ctx, out, key));
+    },
+
+    onConfig(ctx: ProcessCtx, delta: ConfigDelta): Action[] {
+      // Removing the running process's own section destroys it at once (D7: the router id is chosen at process start),
+      // so a section removed and re-created in one instant starts a NEW process that picks its id again, never
+      // inheriting the deleted process's id; the coalesced resync then reconciles as usual (W5 fix, exposed by lab 07).
+      // Only the running process's own section counts: removing another section leaves the running process alone.
+      if (eng.proc !== undefined && family.removesOwnSection(delta, eng.proc.pid)) {
+        return [...eng.run(ctx, (out) => eng.stop(ctx, out, 'no router ospf')), ...eng.armResync()];
+      }
+      if (eng.proc === undefined && !family.hasSection(ctx)) return [];
+      return eng.armResync();
+    },
+
+    onLinkChange(ctx: ProcessCtx): Action[] {
+      if (eng.proc === undefined && !family.hasSection(ctx)) return [];
+      return eng.armResync();
+    },
+
+    onRequest(ctx: ProcessCtx, req: ProcessRequest): Action[] {
+      if (req.kind !== family.clearKind) return [];
+      return eng.run(ctx, (out) => {
+        if (eng.proc === undefined) {
+          resync(ctx, out);
+          return;
+        }
+        const configured = eng.cfg?.process?.routerId;
+        if (configured !== undefined && configured !== eng.proc.routerId) {
+          // the router id changes: flush this router's LSAs first, while its adjacencies still carry them
+          for (const row of family.lsa.sorted(eng.lsdb.values())) if (row.advRouter === eng.proc.routerId && row.maxAge !== true) eng.flushSelf(ctx, out, row, 'router ID changes');
+          eng.finish(ctx, out);
+        }
+        eng.stop(ctx, out, 'clear ip ospf process');
+        resync(ctx, out);
+      });
+    },
+
+    onEvent(ctx: ProcessCtx, ev: ProcessEvent): Action[] {
+      return family.onEvent(eng, ctx, ev);
+    },
+
+    onShutdown(): Action[] {
+      return [];
+    },
+
+    stateSnapshot(): StateView {
+      return eng.stateSnapshot();
+    },
+
+    debugEvents(): readonly DebugEvent[] {
+      return eng.debugEvents();
+    },
+  };
+}

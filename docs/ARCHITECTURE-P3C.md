@@ -2355,6 +2355,32 @@ did not match the code. The ruling accepts each fix it made:
 - **(i) Process.** One builder chained the preflight and a build with `;`, so a load refusal did not stop the build.
   Preflights must gate their command with `if ($?)` or `&&`.
 
+**W1c as built: ruling RC7 (architect, 2026-10-18).**
+- **(a) [C16].** The media builder's `link/serial.ts` transparent end needs two lines outside its scope, which the
+  architect added:
+  - `link/link.ts` `serialEnd` sets `accessLine` on an `access-line` port;
+  - `ETH_SWITCH_HANDLES` gains `{ layer: 'ppp', roles: BRIDGED_ROLES }`, with the exact pin in `l2.eth-switch` moved.
+
+  The builder's second eth-switch line (`encapCarries` lets a PPP frame leave an `hdlc`-stored access line) is
+  accepted. No P1/P2/P3 digest or lab status moved. The end-to-end proof (R1–CSU–cloud–CSU–R2) is W4a's
+  `accept.p3c.ppp-csu`. The CSU's `hdlc` daemon may keep sending keepalives toward a PPP router: the W2a/W2b l2 owner
+  checks this, and `ppp-csu` asserts that no keepalive or drop event names the access line on a PPP line.
+- **(b) [S6] part 2.** The `OspfFamily` adapter (engine.ts) and `family-v4.ts` are zero-diff. Four points are left for
+  the family-v6 item (W2a ospf6 plumbing, W3a ospfv3 daemon):
+  - the DR/BDR election must key on router id, not on the neighbour's address;
+  - `Iface` and `Nbr` gain interface ids;
+  - the internal LSDB row and body types widen or become generic for v3 bodies;
+  - the shell's v2 stop-reason wording becomes family-provided.
+
+  Each is an engine-internal change, with zero-diff for v2 still proven by the OSPF shards.
+- **(c) [S7]/[S26] overlays.**
+  - The persisted-slice migration keeps the storage key `netforge.ui.v1`, as P3 did: old records gain the four
+    keys at their defaults. §2.12's "one version bump" means this one migration, not a new key.
+  - The `app/TopBar.tsx` edit (`RoutingOverlayKey` = `RoutingOverlayToggle`, the route-to selector, the
+    neighbour-protocol menu) is accepted as a reviewed cross-owner edit.
+  - "Map from here" follows the canvas selection and persists nothing. The path walk ignores VLANs (cable walk).
+  - The main chunk is 1,606 kB (+28 kB, the two overlays).
+
 **W2a**
 
 15. [S36a] `test/wan.gre.test.ts:180-191` ("it stays down (no flap)"): becomes the flap — down at T, up at T + 10 s,

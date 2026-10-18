@@ -157,7 +157,8 @@ describe('protocols/eth-switch', () => {
     const sw = createEthSwitch();
     expect(sw.name).toBe('eth-switch');
     // P0.5 (process.ts, §9.2): every frame on a bridged role; HDLC too, for the transparent serial relay.
-    expect(sw.handles).toEqual([{ layer: 'ethernet', roles: BRIDGED_ROLES }, { layer: 'hdlc', roles: BRIDGED_ROLES }]);
+    // P3c [C16] (ARCHITECTURE-P3C RC7 (a)): PPP frames too, for the transparent relay of a PPP line
+    expect(sw.handles).toEqual([{ layer: 'ethernet', roles: BRIDGED_ROLES }, { layer: 'hdlc', roles: BRIDGED_ROLES }, { layer: 'ppp', roles: BRIDGED_ROLES }]);
     expect(sw.stateSnapshot()).toEqual({
       process: 'eth-switch',
       state: { vlan: 1, ageingNs: CAM_AGEING_NS, entries: 0, floods: 0, forwards: 0, filtered: 0, learned: 0, moved: 0, aged: 0 },

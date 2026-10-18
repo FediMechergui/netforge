@@ -7,9 +7,11 @@ import type { DeviceSnapshot, EigrpTopologyRow, OspfInterfaceRow, OspfNeighborRo
 import {
   CAPWAP_OVERLAY,
   EIGRP_OVERLAY,
+  NEIGHBOURS_OVERLAY,
   OSPF_OVERLAY,
   OVERLAY_MODULES,
   QOS_OVERLAY,
+  ROUTE_PATH_OVERLAY,
   ROUTING_OVERLAY_MODULES,
   SPF_OVERLAY,
   STP_OVERLAY,
@@ -53,9 +55,21 @@ function input(snap: SimSnapshot | null, state = ON, now = 0): OverlaySyncInput 
 
 describe('the registry', () => {
   it('lists the three overlays in paint order, each with its toggle and CCNA 2 objectives', () => {
-    // §2.14 (W3): the full paint order is the P2 overlays, then OSPF, EIGRP, SPF, WAN and QoS (exact lists)
-    expect(OVERLAY_MODULES.map((m) => m.id)).toEqual(['vlan', 'stp', 'capwap', 'ospf', 'eigrp', 'spf', 'wan', 'qos']);
-    expect(OVERLAY_MODULES).toEqual([VLAN_OVERLAY, STP_OVERLAY, CAPWAP_OVERLAY, OSPF_OVERLAY, EIGRP_OVERLAY, SPF_OVERLAY, WAN_OVERLAY, QOS_OVERLAY]);
+    // §2.14 (W3): the full paint order is the P2 overlays, then OSPF, EIGRP, SPF, WAN and QoS (exact lists);
+    // ARCHITECTURE-P3C §2.12 (W1c web-canvas): [S7] route-path and [S26] neighbours paint after WAN, before QoS
+    expect(OVERLAY_MODULES.map((m) => m.id)).toEqual(['vlan', 'stp', 'capwap', 'ospf', 'eigrp', 'spf', 'wan', 'route-path', 'neighbours', 'qos']);
+    expect(OVERLAY_MODULES).toEqual([
+      VLAN_OVERLAY,
+      STP_OVERLAY,
+      CAPWAP_OVERLAY,
+      OSPF_OVERLAY,
+      EIGRP_OVERLAY,
+      SPF_OVERLAY,
+      WAN_OVERLAY,
+      ROUTE_PATH_OVERLAY,
+      NEIGHBOURS_OVERLAY,
+      QOS_OVERLAY,
+    ]);
     expect(SWITCHING_OVERLAY_MODULES.map((m) => m.id)).toEqual(['vlan', 'stp', 'capwap']);
     expect(SWITCHING_OVERLAY_MODULES).toEqual([VLAN_OVERLAY, STP_OVERLAY, CAPWAP_OVERLAY]);
     for (const m of SWITCHING_OVERLAY_MODULES) {
@@ -67,21 +81,23 @@ describe('the registry', () => {
       for (const o of m.objectives) expect(o, o).toMatch(/^ccna2-\d{2}-[a-z0-9-]+$/);
     }
     expect(overlayById('stp')).toBe(STP_OVERLAY);
-    // 'ospf' is registered since W3; the overlays that are not approved never are (§2.14)
+    // 'ospf' is registered since W3; [S7] and [S26] since P3c W1c (approved in ARCHITECTURE-P3C §8.5c)
     expect(overlayById('ospf')).toBe(OSPF_OVERLAY);
-    expect(overlayById('route-path')).toBeUndefined();
-    expect(overlayById('neighbours')).toBeUndefined();
+    expect(overlayById('route-path')).toBe(ROUTE_PATH_OVERLAY);
+    expect(overlayById('neighbours')).toBe(NEIGHBOURS_OVERLAY);
+    expect(overlayById('toString')).toBeUndefined();
     expect(overlaysForLesson('ccna2-13-electing-a-root')).toEqual([STP_OVERLAY]);
     expect(overlaysForLesson('ccna2-09-router-on-a-stick')).toEqual([VLAN_OVERLAY]);
     expect(overlaysForLesson('ccna2-01-how-a-switch-forwards')).toEqual([]);
   });
 
   it('lists the P3 overlays: the View-menu toggles in §2.14 order, the SPF layer without a toggle, CCNA 3 objectives', () => {
-    expect(ROUTING_OVERLAY_MODULES.map((m) => m.id)).toEqual(['qos', 'ospf', 'wan', 'eigrp']);
-    expect(ROUTING_OVERLAY_MODULES).toEqual([QOS_OVERLAY, OSPF_OVERLAY, WAN_OVERLAY, EIGRP_OVERLAY]);
-    expect(ROUTING_OVERLAY_MODULES.map((m) => m.toggle)).toEqual(['qos', 'ospf', 'wan', 'eigrp']);
+    // ARCHITECTURE-P3C §2.12 (W1c web-canvas): the routing menu gains [S7] and [S26] last
+    expect(ROUTING_OVERLAY_MODULES.map((m) => m.id)).toEqual(['qos', 'ospf', 'wan', 'eigrp', 'route-path', 'neighbours']);
+    expect(ROUTING_OVERLAY_MODULES).toEqual([QOS_OVERLAY, OSPF_OVERLAY, WAN_OVERLAY, EIGRP_OVERLAY, ROUTE_PATH_OVERLAY, NEIGHBOURS_OVERLAY]);
+    expect(ROUTING_OVERLAY_MODULES.map((m) => m.toggle)).toEqual(['qos', 'ospf', 'wan', 'eigrp', 'routePath', 'neighbours']);
     expect(SPF_OVERLAY.toggle).toBeNull();
-    const p3 = OVERLAY_MODULES.filter((m) => !SWITCHING_OVERLAY_MODULES.includes(m as never));
+    const p3 = OVERLAY_MODULES.filter((m) => !SWITCHING_OVERLAY_MODULES.includes(m as never) && m.since === 'P3');
     expect(p3.map((m) => m.id)).toEqual(['ospf', 'eigrp', 'spf', 'wan', 'qos']);
     for (const m of p3) {
       expect(m.since).toBe('P3');
@@ -106,6 +122,27 @@ describe('the registry', () => {
     expect(overlaysForLesson('ccna3-14-how-an-acl-decides')).toEqual([]);
   });
 
+  it('lists the P3c overlays: [S7] route-path and [S26] neighbours, with their toggles and lessons', () => {
+    const p3c = OVERLAY_MODULES.filter((m) => m.since === 'P3c');
+    expect(p3c).toEqual([ROUTE_PATH_OVERLAY, NEIGHBOURS_OVERLAY]);
+    expect(p3c.map((m) => [m.id, m.toggle])).toEqual([
+      ['route-path', 'routePath'],
+      ['neighbours', 'neighbours'],
+    ]);
+    for (const m of p3c) {
+      expect(m.label.length).toBeGreaterThan(0);
+      expect(m.hint.length).toBeGreaterThan(0);
+      expect(m.objectives.length).toBeGreaterThan(0);
+      for (const o of m.objectives) expect(o, o).toMatch(/^ccna[23]-\d{2}-[a-z0-9-]+$/);
+      expect(m.label + m.hint).not.toMatch(/cisco|packet tracer|ios\b/i);
+    }
+    expect(overlaysForLesson('ccna3-28-who-is-next-door')).toEqual([NEIGHBOURS_OVERLAY]);
+    expect(overlaysForLesson('ccna2-29-how-a-router-chooses')).toEqual([ROUTE_PATH_OVERLAY]);
+    // the slice toggles and their defaults (TOPO_OVERLAY_DEFAULTS mirrors the store's DEFAULT_TOPO_OVERLAYS)
+    expect(TOPO_OVERLAY_DEFAULTS.routePath).toBe(false);
+    expect(TOPO_OVERLAY_DEFAULTS.neighbours).toBe(false);
+  });
+
   it('gives the scene one underlay container per overlay, in the same order', () => {
     expect([...TOPO_LAYER_ORDER]).toEqual(OVERLAY_MODULES.map((m) => m.id));
   });
@@ -124,6 +161,11 @@ describe('the registry', () => {
       wan: false,
       eigrp: false,
       eigrpPrefix: null,
+      // ARCHITECTURE-P3C RC1 (f) (W1c web-canvas): the P3c keys
+      routePath: false,
+      routeTo: null,
+      neighbours: false,
+      neighbourProtocol: 'both',
     });
   });
 

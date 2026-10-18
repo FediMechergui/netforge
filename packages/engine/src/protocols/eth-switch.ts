@@ -230,12 +230,14 @@ export function backupDistributionDetail(port: PortId): string {
 }
 
 /**
- * Frame selectors: every Ethernet frame on a bridged port, plus non-Ethernet (HDLC) frames on bridged ports for the
- * transparent relay of serial access lines. Keyed daemons (arp/ipv4/hdlc) win their own ethertypes on L3 roles.
+ * Frame selectors: every Ethernet frame on a bridged port, plus non-Ethernet (HDLC, and since P3c [C16] PPP) frames on
+ * bridged ports for the transparent relay of serial access lines. Keyed daemons (arp/ipv4/hdlc) win their own ethertypes on L3 roles.
  */
 export const ETH_SWITCH_HANDLES: readonly DemuxSelector[] = Object.freeze([
   Object.freeze({ layer: 'ethernet', roles: BRIDGED_ROLES }),
   Object.freeze({ layer: 'hdlc', roles: BRIDGED_ROLES }),
+  // P3c [C16]: PPP frames too, so a serial access line relays a PPP line across the provider cloud
+  Object.freeze({ layer: 'ppp', roles: BRIDGED_ROLES }),
 ]) as readonly DemuxSelector[];
 
 /** True for group addresses (broadcast or multicast): the I/G bit of the first octet. */
@@ -266,6 +268,7 @@ function encapOf(view: PortView): PortEncap {
 /** Can a frame whose outer layer is `outer` leave through a port of encapsulation `encap`? (dot11 radios rewrap Ethernet.) */
 function encapCarries(encap: PortEncap, outer: string): boolean {
   if (outer === 'ethernet') return encap === 'ethernet' || encap === 'dot11';
+  if (outer === 'ppp') return encap === 'ppp' || encap === 'hdlc'; // P3c [C16] a serial access line (stored hdlc) relays PPP
   return encap === outer;
 }
 
@@ -384,7 +387,7 @@ class EthSwitch implements Process {
       return [{ type: 'drop', pdu, reason: 'other', detail: DETAIL_NOT_BRIDGED, port }];
     }
     const outer = pdu.layers[0]?.proto;
-    if (outer === 'hdlc') return this.relay(ctx, pdu, port, outer);
+    if (outer === 'hdlc' || outer === 'ppp') return this.relay(ctx, pdu, port, outer); // P3c [C16] PPP through a CSU/DSU and the cloud
     const eth = pdu.layer('ethernet');
     if (eth === undefined) {
       this.emit(ctx, `dropped pdu ${pdu.id} from ${port}: ${DETAIL_NO_ETHERNET}`, { port, pdu: pdu.id });

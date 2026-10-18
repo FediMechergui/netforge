@@ -4,10 +4,11 @@
  * One `Scene` per <Canvas/> mount. It owns the Pixi `Application`, the camera
  * (world container transform), the background dot grid, and the draw layers in
  * paint order: rf (range rings) → vlan → stp → capwap → ospf → eigrp → spf →
- * wan → qos (the topology overlays' underlays: VLAN tints and trunk rails, the
+ * wan → route-path → neighbours → qos (the topology overlays' underlays: VLAN tints and trunk rails, the
  * active spanning tree, controller tunnels; ARCHITECTURE-P2 §6; @since P3 the
  * OSPF zones and adjacencies, EIGRP successors, the SPF tree, WAN rails and
- * tunnels, QoS load sleeves, ARCHITECTURE-P3 §6) → cables → air (association lines, radio beams)
+ * tunnels, QoS load sleeves, ARCHITECTURE-P3 §6; @since P3c the [S7] route path and
+ * the [S26] neighbours, ARCHITECTURE-P3C §6) → cables → air (association lines, radio beams)
  * → packets → markers → devices → labels (signal bars, dBm text, phase badges,
  * channel labels, VLAN chips, spanning-tree letters and crowns, controller-tunnel
  * badges) → overlay
@@ -230,7 +231,7 @@ export function viewKey(view: Rect, zoom: number): string {
  * The topology overlays' underlay containers, in paint order (bottom first) — the same order and ids as the overlay
  * registry (`canvas/overlays/registry.ts` `OVERLAY_MODULES`), so a registry entry finds its container by id.
  */
-export const TOPO_LAYER_ORDER = Object.freeze(['vlan', 'stp', 'capwap', 'ospf', 'eigrp', 'spf', 'wan', 'qos'] as const);
+export const TOPO_LAYER_ORDER = Object.freeze(['vlan', 'stp', 'capwap', 'ospf', 'eigrp', 'spf', 'wan', 'route-path', 'neighbours', 'qos'] as const);
 export type TopoLayerId = (typeof TOPO_LAYER_ORDER)[number];
 
 export interface SceneLayers {
@@ -253,6 +254,10 @@ export interface SceneLayers {
   spf: Container;
   /** @since P3 [S18]/[S19] WAN overlay underlay (W3, `wan.ts`): tunnel tubes and PPP rails. */
   wan: Container;
+  /** @since P3c [S7] Route-path overlay underlay (W1c, `route-path.ts`): the hop tracks (glyphs go to `labels`). */
+  'route-path': Container;
+  /** @since P3c [S26] Neighbours overlay underlay (W1c, `neighbours.ts`): the tint of discovered links (chips go to `labels`). */
+  neighbours: Container;
   /** @since P3 QoS overlay underlay (W3, `qos.ts`): the load sleeves (stacks and lanes go to `labels`). */
   qos: Container;
   cables: Container;
@@ -330,6 +335,8 @@ export class Scene {
       eigrp: new Container(),
       spf: new Container(),
       wan: new Container(),
+      'route-path': new Container(),
+      neighbours: new Container(),
       qos: new Container(),
       cables: new Container(),
       air: new Container(),
@@ -388,9 +395,9 @@ export class Scene {
   }
 
   /**
-   * The underlay container of a topology overlay (by registry id). @since P3c (ARCHITECTURE-P3C §2.12, W0 compile stub)
-   * `OverlayId` names [S7] 'route-path' and [S26] 'neighbours' before their layers exist: each item adds its id to
-   * `TOPO_LAYER_ORDER` with its module, so an id without a container is a programming error.
+   * The underlay container of a topology overlay (by registry id). @since P3c (ARCHITECTURE-P3C §2.12) [S7]
+   * 'route-path' and [S26] 'neighbours' have their containers since W1c; an id without a container is a programming
+   * error.
    */
   topoLayer(id: OverlayId): Container {
     if (!(TOPO_LAYER_ORDER as readonly string[]).includes(id)) throw new Error(`No overlay layer "${id}" in this build.`);

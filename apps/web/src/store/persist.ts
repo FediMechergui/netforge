@@ -10,12 +10,20 @@
  * values; the record keeps its key (`netforge.ui.v1`), so no other preference is lost. The two selectors keep only a
  * well-formed value (a dotted area id, an IPv4 prefix): anything else falls back to null.
  *
+ * P3c (ARCHITECTURE-P3C §2.12, RC1 (f); W1c web-canvas, the first [S7]/[S26] item): the one P3c persisted-slice
+ * migration. `topoOverlays` gains `routePath`/`routeTo` [S7] and `neighbours`/`neighbourProtocol` [S26]. A record
+ * stored by a P2 or P3 build has none of them, so each takes its default (false, null, false, 'both') while every
+ * other key keeps its stored value; the record keeps its key (`netforge.ui.v1`), as the P3 migration did, so no other
+ * preference is lost. `routeTo` keeps only an IPv4 or IPv6 address (stored canonical), `neighbourProtocol` only one of
+ * its three words.
+ *
  * Everything goes through try/catch: storage may be missing (private mode, sandboxed frames, tests) and stored
  * values are untrusted, so every field is validated and unknown or malformed values fall back to the defaults.
  * The theme keeps its P0 key; the rest lives in one versioned JSON record.
  */
 import type { MediaType } from '@netforge/engine';
 import { MEDIA } from '@netforge/engine/contracts';
+import { normalizeIp } from '@netforge/engine/pure';
 import type { StoreApi } from 'zustand';
 import { MEDIA_PICKER_ORDER } from '../vocab/media';
 import { DOCK_OPEN_HEIGHT, INSPECTOR_OPEN_WIDTH, isDockTabAvailable } from '../dock/registry';
@@ -43,6 +51,7 @@ export const DEFAULT_OVERLAYS: Readonly<WirelessOverlayState> = Object.freeze({
  * @since P2 Every switching overlay off and no VLAN chosen (the same values as the canvas registry's
  * `TOPO_OVERLAY_DEFAULTS`, kept here so the store reads nothing from the canvas at module scope).
  * @since P3 Every routing, WAN and QoS overlay off, no area and no destination chosen.
+ * @since P3c [S7] [S26] The route-path and neighbours overlays off, no destination, both discovery protocols.
  */
 export const DEFAULT_TOPO_OVERLAYS: Readonly<TopoOverlayState> = Object.freeze({
   vlan: false,
@@ -56,6 +65,10 @@ export const DEFAULT_TOPO_OVERLAYS: Readonly<TopoOverlayState> = Object.freeze({
   wan: false,
   eigrp: false,
   eigrpPrefix: null,
+  routePath: false,
+  routeTo: null,
+  neighbours: false,
+  neighbourProtocol: 'both',
 });
 /** @since P2 Highest VLAN id a persisted selector may name (802.1Q VID range). */
 export const VLAN_ID_MAX = 4094;
@@ -66,7 +79,7 @@ export const DEFAULT_DOCK_TAB: DockTab = 'terminal';
 export const DEFAULT_DOCK_HEIGHT = DOCK_OPEN_HEIGHT;
 export const DEFAULT_INSPECTOR_WIDTH = INSPECTOR_OPEN_WIDTH;
 const OVERLAY_KEYS = Object.keys(DEFAULT_OVERLAYS) as (keyof WirelessOverlayState)[];
-const TOPO_TOGGLE_KEYS = ['vlan', 'stp', 'capwap', 'qos', 'ospf', 'wan', 'eigrp'] as const;
+const TOPO_TOGGLE_KEYS = ['vlan', 'stp', 'capwap', 'qos', 'ospf', 'wan', 'eigrp', 'routePath', 'neighbours'] as const;
 const TOPO_VLAN_KEYS = ['stpVlan', 'vlanFocus'] as const;
 
 export interface PersistedUi {
@@ -114,6 +127,19 @@ export function isPrefixChoice(v: unknown): v is string | null {
   if (slash < 0 || !DOTTED_QUAD.test(v.slice(0, slash))) return false;
   const len = v.slice(slash + 1);
   return /^(?:3[0-2]|[12]?\d)$/.test(len);
+}
+
+/** @since P3c [S7] Longest address text a persisted route-path destination may hold (a full IPv6 address is 39). */
+const ROUTE_TO_LIMIT = 45;
+
+/** @since P3c [S7] A route-path destination: null (none) or an IPv4 or IPv6 address. */
+export function isRouteTarget(v: unknown): v is string | null {
+  return v === null || (typeof v === 'string' && v.length > 0 && v.length <= ROUTE_TO_LIMIT && normalizeIp(v) !== null);
+}
+
+/** @since P3c [S26] A neighbours protocol choice. */
+export function isNeighbourProtocol(v: unknown): v is TopoOverlayState['neighbourProtocol'] {
+  return v === 'cdp' || v === 'lldp' || v === 'both';
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -187,6 +213,10 @@ export function sanitizePersistedUi(raw: unknown, theme: unknown = undefined): P
     // P3: the two routing selectors (a P2 record has neither: they stay null).
     if (isAreaChoice(raw.topoOverlays.ospfArea)) out.topoOverlays.ospfArea = raw.topoOverlays.ospfArea;
     if (isPrefixChoice(raw.topoOverlays.eigrpPrefix)) out.topoOverlays.eigrpPrefix = raw.topoOverlays.eigrpPrefix;
+    // P3c: the route-path destination (canonical text) and the discovery protocol (a P2/P3 record has neither)
+    const routeTo = raw.topoOverlays.routeTo;
+    if (typeof routeTo === 'string' && isRouteTarget(routeTo)) out.topoOverlays.routeTo = normalizeIp(routeTo);
+    if (isNeighbourProtocol(raw.topoOverlays.neighbourProtocol)) out.topoOverlays.neighbourProtocol = raw.topoOverlays.neighbourProtocol;
   }
 
   // P2: the course context (a course id the catalogue may or may not still know; the consumer treats it as a name).

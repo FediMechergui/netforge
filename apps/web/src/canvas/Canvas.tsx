@@ -32,6 +32,11 @@
  * layer (`spf.ts`), which has no toggle: it draws the SPF stepper's frame (`routingUi`) while the link-state browser
  * is the dock's tab. Every animating layer runs its `animate` every frame (none waits for another to go quiet).
  *
+ * @since P3c (W1c web-canvas, ARCHITECTURE-P3C §6) [S7] the route path (`route-path.ts`, `topoOverlays.routePath` and
+ * `.routeTo`) and [S26] the neighbours (`neighbours.ts`, `topoOverlays.neighbours`), between the WAN layer and the QoS
+ * sleeves; the neighbours' "map from here" starts from the selected device, and their holdtime rings follow the sim
+ * clock (rebuilt while an entry runs down; the model rounds the rings, so the layer redraws only when one moves).
+ *
  * Keyboard bridge: `registerCanvasA11y(api)` is the pinned hook the a11y layer calls to hand the canvas its
  * `focusDevice` / `screenPoint` / `beginCable` functions; it returns the unregister function.
  *
@@ -43,7 +48,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent, RefObject } from 'react';
-import type { DeviceId, PortRef, SimSnapshot } from '@netforge/engine';
+import type { DeviceId, PortRef, Selection, SimSnapshot } from '@netforge/engine';
 import { buildCableLookup, portCompatibility, serialDceHint, type CableLookup, type PortCompat } from '../app/cable/cable-compat';
 import { dockPaneShown } from '../dock/registry';
 import { openDeviceSurface, type DeviceSurface } from '../shared/openDeviceSurface';
@@ -60,14 +65,18 @@ import { EigrpLayer } from './eigrp';
 import { attachInteraction, deleteDevice, setDevicePower, type ContextMenuRequest, type InteractionA11y } from './interaction';
 import { L2Layer, untaggedVlanOf } from './l2';
 import { MarkerLayer } from './markers';
+import { NeighboursLayer } from './neighbours';
+import { neighboursModelNeedsClock, type NeighboursModel } from './overlays/neighbours-model';
 import { OspfLayer, ospfModelNeedsClock } from './ospf';
 import type { DeviceL2, L2OverlayModel } from './overlays/l2-model';
 import type { OspfOverlayModel } from './overlays/ospf-model';
 import {
   CAPWAP_OVERLAY,
   EIGRP_OVERLAY,
+  NEIGHBOURS_OVERLAY,
   OSPF_OVERLAY,
   QOS_OVERLAY,
+  ROUTE_PATH_OVERLAY,
   SPF_OVERLAY,
   STP_OVERLAY,
   TOPO_OVERLAY_DEFAULTS,
@@ -80,6 +89,7 @@ import type { StpOverlayModel } from './overlays/stp-model';
 import { PacketLayer } from './packets';
 import { computeLayout, deviceBounds, emptyLayout, snapshotReplaced, type Layout, type Position } from './ports';
 import { QosLayer } from './qos';
+import { RoutePathLayer } from './route-path';
 import { DEFAULT_METRES_PER_UNIT, RfLayer } from './rf';
 import { Scene, lodFor, textResolutionFor, viewKey } from './scene';
 import { SpfLayer } from './spf';
@@ -329,6 +339,11 @@ function DeviceMenu({ menu, onClose, host }: { menu: ContextMenuRequest; onClose
 
 // ── frame loop ──────────────────────────────────────────────────────────────
 
+/** @since P3c [S26] The device "map from here" starts from: the selected device, else none. */
+function selectedDeviceOf(selection: Selection | null | undefined): DeviceId | null {
+  return selection?.kind === 'device' ? selection.id : null;
+}
+
 function isDefaultCamera(c: { x: number; y: number; zoom: number }): boolean {
   return c.x === 0 && c.y === 0 && c.zoom === 1;
 }
@@ -350,6 +365,8 @@ function runCanvas(scene: Scene, tip: HTMLElement, openMenu: (m: ContextMenuRequ
   const eigrp = new EigrpLayer(scene.topoLayer(EIGRP_OVERLAY.id), scene.layers.labels);
   const spf = new SpfLayer(scene.topoLayer(SPF_OVERLAY.id), scene.layers.labels);
   const wan = new WanLayer(scene.topoLayer(WAN_OVERLAY.id), scene.layers.labels);
+  const routePath = new RoutePathLayer(scene.topoLayer(ROUTE_PATH_OVERLAY.id), scene.layers.labels);
+  const neighbours = new NeighboursLayer(scene.topoLayer(NEIGHBOURS_OVERLAY.id), scene.layers.labels);
   const qos = new QosLayer(scene.topoLayer(QOS_OVERLAY.id), scene.layers.labels);
 
   let layout: Layout = emptyLayout();
@@ -411,6 +428,7 @@ function runCanvas(scene: Scene, tip: HTMLElement, openMenu: (m: ContextMenuRequ
   let l2Model: L2OverlayModel | null = null;
   let stpModel: StpOverlayModel | null = null;
   let ospfModel: OspfOverlayModel | null = null;
+  let neighboursModel: NeighboursModel | null = null;
   // the VLAN overlay's per-device ends of the current snapshot (untagged-leg colouring), rebuilt per snapshot
   let l2Ends: { snap: SimSnapshot; ends: ReadonlyMap<DeviceId, DeviceL2> } | null = null;
   let lastFocus = initial.a11y.canvasFocus;
@@ -659,6 +677,10 @@ function runCanvas(scene: Scene, tip: HTMLElement, openMenu: (m: ContextMenuRequ
       eigrp.sync({ model: EIGRP_OVERLAY.sync(input), layout, theme, zoom, lod, view, textResolution: res, wall, cableGeometry });
       spf.sync({ model: SPF_OVERLAY.sync(input), layout, theme, zoom, lod, view, textResolution: res, cableGeometry });
       wan.sync({ model: WAN_OVERLAY.sync(input), layout, theme, zoom, lod, view, textResolution: res, wall, cableGeometry });
+      // P3c (W1c): [S7] the route path and [S26] the neighbours ("map from here" from the selected device)
+      routePath.sync({ model: ROUTE_PATH_OVERLAY.sync(input), layout, theme, zoom, lod, view, textResolution: res, cableGeometry });
+      neighboursModel = NEIGHBOURS_OVERLAY.sync({ ...input, from: selectedDeviceOf(st.selection) });
+      neighbours.sync({ model: neighboursModel, layout, theme, zoom, lod, view, textResolution: res, cableGeometry });
       qos.sync({ model: QOS_OVERLAY.sync(input), layout, theme, zoom, lod, view, textResolution: res, cableGeometry });
       interaction.refresh();
       scene.dirty = true;
@@ -672,6 +694,11 @@ function runCanvas(scene: Scene, tip: HTMLElement, openMenu: (m: ContextMenuRequ
       if (ospfModel !== null && ospfModelNeedsClock(ospfModel)) {
         ospfModel = OSPF_OVERLAY.sync({ state: topo, snapshot: snap, now, reducedMotion, routing });
         ospf.sync({ model: ospfModel, layout, theme: scene.theme, zoom, lod, view, textResolution: res, wall, cableGeometry });
+        scene.dirty = true;
+      }
+      if (neighboursModel !== null && neighboursModelNeedsClock(neighboursModel)) {
+        neighboursModel = NEIGHBOURS_OVERLAY.sync({ state: topo, snapshot: snap, now, from: selectedDeviceOf(st.selection) });
+        neighbours.sync({ model: neighboursModel, layout, theme: scene.theme, zoom, lod, view, textResolution: res, cableGeometry });
         scene.dirty = true;
       }
     }
@@ -752,6 +779,8 @@ function runCanvas(scene: Scene, tip: HTMLElement, openMenu: (m: ContextMenuRequ
     eigrp.destroy();
     spf.destroy();
     wan.destroy();
+    routePath.destroy();
+    neighbours.destroy();
     qos.destroy();
     air.destroy();
     rf.destroy();

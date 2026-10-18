@@ -48,14 +48,19 @@ describe('the slice', () => {
     expect(store.getState().topoOverlays).toEqual(DEFAULT_TOPO_OVERLAYS);
     expect(DEFAULT_TOPO_OVERLAYS).toEqual(TOPO_OVERLAY_DEFAULTS);
     // ARCHITECTURE-P3 §9.2 item 23: the default object gains the P3 keys (qos; [S1] ospf, ospfArea; [S18]/[S19] wan;
-    // [C1] eigrp, eigrpPrefix), still pinned exactly
+    // [C1] eigrp, eigrpPrefix), still pinned exactly; ARCHITECTURE-P3C RC1 (f) (W1c web-canvas, the one P3c migration):
+    // [S7] routePath, routeTo and [S26] neighbours, neighbourProtocol
     expect(Object.keys(DEFAULT_TOPO_OVERLAYS).sort()).toEqual([
       'capwap',
       'eigrp',
       'eigrpPrefix',
+      'neighbourProtocol',
+      'neighbours',
       'ospf',
       'ospfArea',
       'qos',
+      'routePath',
+      'routeTo',
       'stp',
       'stpVlan',
       'vlan',
@@ -91,6 +96,10 @@ describe('the slice', () => {
       wan: false,
       eigrp: false,
       eigrpPrefix: null,
+      routePath: false,
+      routeTo: null,
+      neighbours: false,
+      neighbourProtocol: 'both',
     });
     store.getState().setTopoOverlay('stpVlan', null);
     expect(store.getState().topoOverlays.stpVlan).toBeNull();
@@ -154,6 +163,10 @@ describe('persistence', () => {
       wan: false,
       eigrp: false,
       eigrpPrefix: null,
+      routePath: false,
+      routeTo: null,
+      neighbours: false,
+      neighbourProtocol: 'both',
     });
     expect(out.learn).toEqual({ lastCourse: 'ccna1' });
   });
